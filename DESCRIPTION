@@ -8,7 +8,7 @@ Description: Automates feature engineering using a genetic algorithm approach to
 License: MIT
 Encoding: UTF-8
 LazyData: true
-Imports: 
+Imports: rpart,
     data.table,
     lightgbm,
     xgboost,

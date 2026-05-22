@@ -229,62 +229,6 @@ evo_transformers$truncated_svd <- create_transformer(
   }
 )
 
-
-# GenieClust Distance
-evo_transformers$genie_dist <- create_transformer(
-  name = "genie_dist",
-  type = "multivariate",
-  input_type = "numeric",
-  fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    k <- if (!is.null(gene$params$k)) gene$params$k else 3
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    tryCatch({
-      # genieclust requires >= 2 columns. If 1, duplicate it to trick the algorithm.
-      if (ncol(x) == 1) {
-        x_genie <- cbind(x, x)
-      } else {
-        x_genie <- x
-      }
-      
-      # Prevent genieclust C++ segfault on zero-variance matrices
-      if (max(x_genie) == min(x_genie)) {
-        return(list(centers = NULL, valid = FALSE))
-      }
-      
-      h <- genieclust::genie(x_genie, k = k)
-      labels <- as.integer(h)
-      
-      # Calculate geometric centroids of the hierarchical clusters
-      centers <- matrix(0, nrow = k, ncol = ncol(x))
-      for (i in 1:k) {
-        if (sum(labels == i) > 1) {
-          centers[i, ] <- colMeans(x[labels == i, , drop = FALSE])
-        } else if (sum(labels == i) == 1) {
-          centers[i, ] <- x[labels == i, ]
-        }
-      }
-      list(centers = centers, valid = TRUE)
-    }, error = function(e) {
-      list(centers = NULL, valid = FALSE)
-    })
-  },
-  apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    if (comp_idx > nrow(state$centers)) comp_idx <- nrow(state$centers)
-    sqrt(rowSums((sweep(x, 2, state$centers[comp_idx, ]))^2))
-  },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("Genie", comp_idx, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
-)
-
 # GenieClust Cluster ID
 evo_transformers$genie_cluster <- create_transformer(
   name = "genie_cluster",
@@ -304,22 +248,21 @@ evo_transformers$genie_cluster <- create_transformer(
       
       # Prevent genieclust C++ segfault on zero-variance matrices
       if (max(x_genie) == min(x_genie)) {
-        return(list(centers = NULL, valid = FALSE))
+        return(list(model = NULL, valid = FALSE))
       }
       
       h <- genieclust::genie(x_genie, k = k)
       labels <- as.integer(h)
-      centers <- matrix(0, nrow = k, ncol = ncol(x))
-      for (i in 1:k) {
-        if (sum(labels == i) > 1) {
-          centers[i, ] <- colMeans(x[labels == i, , drop = FALSE])
-        } else if (sum(labels == i) == 1) {
-          centers[i, ] <- x[labels == i, ]
-        }
-      }
-      list(centers = centers, valid = TRUE)
+      
+      # Train a lightning-fast decision tree surrogate to map new data to clusters
+      df_train <- as.data.frame(x)
+      df_train$target <- as.factor(labels)
+      # Control depth to prevent overfitting and ensure extreme speed
+      model <- rpart::rpart(target ~ ., data = df_train, method = "class", control = rpart::rpart.control(maxdepth = 5))
+      
+      list(model = model, valid = TRUE)
     }, error = function(e) {
-      list(centers = NULL, valid = FALSE)
+      list(model = NULL, valid = FALSE)
     })
   },
   apply_func = function(data, gene, state = NULL) {
@@ -327,8 +270,14 @@ evo_transformers$genie_cluster <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
-    apply(x, 1, function(row) {
-      which.min(colSums((t(state$centers) - row)^2))
+    df_new <- as.data.frame(x)
+    
+    # Predict using the decision tree surrogate
+    tryCatch({
+      preds <- stats::predict(state$model, df_new, type = "class")
+      as.numeric(as.character(preds))
+    }, error = function(e) {
+      rep(0, nrow(x))
     })
   },
   name_generator = function(gene) {
