@@ -1,0 +1,19 @@
+Package: evoFE
+Type: Package
+Title: Evolutionary Feature Engineering
+Version: 0.1.0
+Author: User
+Maintainer: User <user@example.com>
+Description: Automates feature engineering using a genetic algorithm approach to find optimal feature transformations.
+License: MIT
+Encoding: UTF-8
+LazyData: true
+Imports: 
+    data.table,
+    lightgbm,
+    xgboost,
+    stats,
+    genieclust,
+    dbscan,
+    uwot
+Config/roxygen2/version: 8.0.0
