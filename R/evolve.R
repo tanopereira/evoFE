@@ -1,3 +1,10 @@
+truncate_cols <- function(cols, max_show = 10) {
+  if (length(cols) <= max_show) {
+    return(paste(cols, collapse = ", "))
+  }
+  paste0(paste(cols[1:max_show], collapse = ", "), ", ... (+ ", length(cols) - max_show, " more)")
+}
+
 #' Run evolutionary feature engineering
 #'
 #' @param data A data.frame or data.table
@@ -37,8 +44,8 @@ evolve_features <- function(data, target_col, task = "classification",
     message(sprintf("  Task: %s", task))
     message(sprintf("  Evaluator: %s", evaluator))
     message(sprintf("  Generations: %d, Population Size: %d, CV Folds: %d", generations, pop_size, cv_folds))
-    message(sprintf("  Original Numeric columns: %s", paste(numeric_cols, collapse = ", ")))
-    message(sprintf("  Original Categorical columns: %s", paste(categorical_cols, collapse = ", ")))
+    message(sprintf("  Original Numeric columns: %s", truncate_cols(numeric_cols)))
+    message(sprintf("  Original Categorical columns: %s", truncate_cols(categorical_cols)))
   }
   
   pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2)
@@ -121,8 +128,13 @@ evolve_features <- function(data, target_col, task = "classification",
         gene_counts <- table(gene_formulas)
         gene_counts <- sort(gene_counts, decreasing = TRUE)
         message("  Active Gene Pool (frequency in population):")
-        for (name in names(gene_counts)) {
+        show_count <- min(15, length(gene_counts))
+        for (i in 1:show_count) {
+          name <- names(gene_counts)[i]
           message(sprintf("    - %s: %d", name, gene_counts[[name]]))
+        }
+        if (length(gene_counts) > show_count) {
+          message(sprintf("    ... and %d other genes", length(gene_counts) - show_count))
         }
       } else {
         message("  Active Gene Pool: [Empty]")
