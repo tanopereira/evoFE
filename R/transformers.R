@@ -229,69 +229,6 @@ evo_transformers$truncated_svd <- create_transformer(
   }
 )
 
-# K-Means Distance
-evo_transformers$kmeans_dist <- create_transformer(
-  name = "kmeans_dist",
-  type = "multivariate",
-  input_type = "numeric",
-  fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    k <- if (!is.null(gene$params$k)) gene$params$k else 3
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    tryCatch({
-      km <- stats::kmeans(x, centers = k, nstart = 1)
-      list(centers = km$centers, valid = TRUE)
-    }, error = function(e) {
-      list(centers = NULL, valid = FALSE)
-    })
-  },
-  apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    if (comp_idx > nrow(state$centers)) comp_idx <- nrow(state$centers)
-    sqrt(rowSums((sweep(x, 2, state$centers[comp_idx, ]))^2))
-  },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("KMD", comp_idx, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
-)
-
-# K-Means Cluster ID
-evo_transformers$kmeans_cluster <- create_transformer(
-  name = "kmeans_cluster",
-  type = "multivariate",
-  input_type = "numeric",
-  fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    k <- if (!is.null(gene$params$k)) gene$params$k else 3
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    tryCatch({
-      km <- stats::kmeans(x, centers = k, nstart = 1)
-      list(centers = km$centers, valid = TRUE)
-    }, error = function(e) {
-      list(centers = NULL, valid = FALSE)
-    })
-  },
-  apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    apply(x, 1, function(row) {
-      which.min(colSums((t(state$centers) - row)^2))
-    })
-  },
-  name_generator = function(gene) {
-    k <- if (!is.null(gene$params$k)) gene$params$k else 3
-    paste0("KMC_", k, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
-)
 
 # GenieClust Distance
 evo_transformers$genie_dist <- create_transformer(
@@ -401,45 +338,6 @@ evo_transformers$genie_cluster <- create_transformer(
 )
 
 
-# UMAP Coordinate
-evo_transformers$umap <- create_transformer(
-  name = "umap",
-  type = "multivariate",
-  input_type = "numeric",
-  fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    tryCatch({
-      # Train UMAP to extract 3 dimensions
-      n_comp <- min(3, ncol(x))
-      u <- uwot::umap(x, n_components = n_comp, n_neighbors = 15, ret_model = TRUE, n_threads = 1, n_sgd_threads = 1)
-      list(model = u, valid = TRUE)
-    }, error = function(e) {
-      list(model = NULL, valid = FALSE)
-    })
-  },
-  apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    
-    # uwot prediction
-    tryCatch({
-      preds <- uwot::umap_transform(x, state$model, n_threads = 1, n_sgd_threads = 1)
-      if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
-      preds[, comp_idx]
-    }, error = function(e) {
-      rep(0, nrow(x))
-    })
-  },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("UMAP", comp_idx, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
-)
 
 # --- STATEFUL CATEGORICAL TRANSFORMERS ---
 

@@ -6,11 +6,11 @@
 create_gene <- function(transformer_name, input_cols) {
   transformer <- evo_transformers[[transformer_name]]
   params <- list()
-  if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
+  if (transformer_name %in% c("pca", "truncated_svd")) {
     params$comp_idx <- sample(1:3, 1)
-  } else if (transformer_name %in% c("kmeans_dist", "genie_dist", "kmeans_cluster", "genie_cluster")) {
+  } else if (transformer_name %in% c("genie_dist", "genie_cluster")) {
     params$k <- sample(3:7, 1)
-    if (transformer_name %in% c("kmeans_dist", "genie_dist")) {
+    if (transformer_name %in% c("genie_dist")) {
       params$comp_idx <- sample(1:params$k, 1)
     }
   }
