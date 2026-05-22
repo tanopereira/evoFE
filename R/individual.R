@@ -8,8 +8,6 @@ create_gene <- function(transformer_name, input_cols) {
   params <- list()
   if (transformer_name %in% c("pca", "truncated_svd")) {
     params$comp_idx <- sample(1:3, 1)
-  } else if (transformer_name == "genie_cluster") {
-    params$k <- sample(3:7, 1)
   }
   gene <- list(
     transformer_name = transformer_name,

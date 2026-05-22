@@ -12,8 +12,5 @@ Imports: rpart,
     data.table,
     lightgbm,
     xgboost,
-    stats,
-    genieclust,
-    dbscan,
-    uwot
+    stats
 Config/roxygen2/version: 8.0.0

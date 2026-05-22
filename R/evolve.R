@@ -21,7 +21,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             generations = 10, pop_size = 10, cv_folds = 3, 
                             early_stopping_rounds = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE, verbose = TRUE) {
-  # Prevent macOS OpenMP thread collisions between data.table, lightgbm, uwot, and genieclust
+  # Prevent macOS OpenMP thread collisions between data.table, lightgbm, and other libraries
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
     RhpcBLASctl::omp_set_num_threads(1)
     RhpcBLASctl::blas_set_num_threads(1)
