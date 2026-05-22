@@ -15,12 +15,13 @@ truncate_cols <- function(cols, max_show = 10) {
 #' @param cv_folds Number of cross-validation folds
 #' @param early_stopping_rounds Stop if fitness doesn't improve for this many generations
 #' @param evaluator The ML model to use ("lightgbm" or "xgboost")
+#' @param crossover_type Crossover type: "both" (default, 50% random / 50% union), "random", or "union"
 #' @param verbose Logical. If TRUE, prints progress.
 #' @export
 evolve_features <- function(data, target_col, task = "classification", 
                             generations = 10, pop_size = 10, cv_folds = 3, 
                             early_stopping_rounds = 3, evaluator = "lightgbm",
-                            dynamic_population = TRUE, verbose = TRUE) {
+                            dynamic_population = TRUE, crossover_type = "both", verbose = TRUE) {
   # Prevent macOS OpenMP thread collisions between data.table, lightgbm, and other libraries
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
     RhpcBLASctl::omp_set_num_threads(1)
@@ -224,10 +225,26 @@ evolve_features <- function(data, target_col, task = "classification",
         p1 <- survivors[[p1_idx]]
         p2 <- survivors[[p2_idx]]
         
-        if (verbose) {
-          message(sprintf("  Individual %d via Crossover (Parent %d x Parent %d):", idx, p1_idx, p2_idx))
+        # Determine whether to use union or random crossover
+        use_union <- FALSE
+        if (crossover_type == "union") {
+          use_union <- TRUE
+        } else if (crossover_type == "both") {
+          use_union <- stats::runif(1) < 0.5
         }
-        child <- crossover(p1, p2, verbose = verbose)
+        
+        if (use_union) {
+          if (verbose) {
+            message(sprintf("  Individual %d via Union Crossover (Parent %d x Parent %d):", idx, p1_idx, p2_idx))
+          }
+          child <- union_crossover(p1, p2, verbose = verbose)
+        } else {
+          if (verbose) {
+            message(sprintf("  Individual %d via Crossover (Parent %d x Parent %d):", idx, p1_idx, p2_idx))
+          }
+          child <- crossover(p1, p2, verbose = verbose)
+        }
+        
         if (stats::runif(1) < 0.2) {
           child <- mutate(child, verbose = verbose, importances = global_importances_vec, temperature = temperature)
         }

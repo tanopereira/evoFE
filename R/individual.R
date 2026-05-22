@@ -254,3 +254,37 @@ crossover <- function(ind1, ind2, verbose = FALSE) {
   
   create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols)
 }
+
+#' Union Crossover of two individuals
+#'
+#' @param ind1 Parent 1
+#' @param ind2 Parent 2
+#' @param verbose Logical. Whether to print crossover details.
+#' @export
+union_crossover <- function(ind1, ind2, verbose = FALSE) {
+  genes1 <- ind1$genes
+  genes2 <- ind2$genes
+  
+  len1_before <- length(genes1)
+  len2_before <- length(genes2)
+  
+  child_genes <- c(genes1, genes2)
+  
+  # Basic deduplication based on output_col
+  if (length(child_genes) > 0) {
+    out_cols <- sapply(child_genes, function(g) g$output_col)
+    child_genes <- child_genes[!duplicated(out_cols)]
+  }
+  
+  if (verbose) {
+    child_genes_str <- if (length(child_genes) > 0) {
+      paste(sapply(child_genes, gene_to_formula), collapse = ", ")
+    } else {
+      "None"
+    }
+    message(sprintf("    [Union Crossover] Parent 1 (%d genes) x Parent 2 (%d genes) -> Child genes: [%s]",
+                    len1_before, len2_before, child_genes_str))
+  }
+  
+  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols)
+}
