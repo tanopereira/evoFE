@@ -459,6 +459,16 @@ evolve_features <- function(data, target_col, task = "classification",
   
   best_ind <- pop[[1]]
   
+  if (evaluation_strategy == "split" && !is.null(shared_splits$holdout)) {
+    best_ind <- evaluate_fitness(best_ind, data, target_col, task = task, cv_folds = cv_folds,
+                                 evaluation_strategy = evaluation_strategy,
+                                 split_ids = split_ids_val, shared_splits = shared_splits,
+                                 evaluator = evaluator, fold_ids = fold_ids, 
+                                 shared_folds = shared_folds,
+                                 shared_full = shared_full, state_cache = state_cache,
+                                 threads = threads, evaluate_holdout = TRUE)
+  }
+  
   if (verbose) {
     message(sprintf("\nEvolution Complete. Best Fitness: %.4f", best_ind$fitness))
     if (!is.null(best_ind$holdout_fitness) && !is.na(best_ind$holdout_fitness)) {

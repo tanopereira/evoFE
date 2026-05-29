@@ -167,8 +167,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              split_ids = NULL, shared_splits = NULL,
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
-                             state_cache = NULL, threads = 8) {
-  if (!is.na(ind$fitness)) return(ind)
+                             state_cache = NULL, threads = 8,
+                             evaluate_holdout = FALSE) {
+  if (!is.na(ind$fitness) && (!evaluate_holdout || !is.null(ind$holdout_fitness))) return(ind)
   
   num_class <- NULL
   classes <- NULL
@@ -205,7 +206,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     if (is.null(res)) {
       # Lethal mutation: invalid gene dependency graph
       ind$fitness <- if (task == "classification" || task == "multiclass") -Inf else -Inf
-      ind$holdout_fitness <- -Inf
+      ind$holdout_fitness <- if (evaluate_holdout) -Inf else NULL
       return(ind)
     }
     
@@ -252,7 +253,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
     
     # Optional holdout evaluation
-    if (!is.null(holdout_fold)) {
+    if (evaluate_holdout && !is.null(holdout_fold)) {
       res_holdout <- tryCatch({
         apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
       }, error = function(e) {
