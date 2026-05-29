@@ -5,8 +5,9 @@
 #' @param val_data Optional validation data.frame or data.table.
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
+#' @param data_hash Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.
 #' @export
-apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL) {
+apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, data_hash = NULL) {
   t_def <- evo_transformers[[gene$transformer_name]]
   
   col_exists_train <- gene$output_col %in% names(train_data)
@@ -19,7 +20,9 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   state <- NULL
   has_cached_state <- FALSE
   if (!is.null(state_cache) && !is.null(target_col)) {
-    data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+    if (is.null(data_hash)) {
+      data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+    }
     cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
     if (exists(cache_key, envir = state_cache)) {
       state <- get(cache_key, envir = state_cache)
@@ -40,7 +43,9 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         state <- t_def$fit_func(train_data, gene, target_col)
         gene$state <- state
         if (!is.null(state_cache) && !is.null(target_col)) {
-          data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+          if (is.null(data_hash)) {
+            data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+          }
           cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
           assign(cache_key, state, envir = state_cache)
         }
@@ -108,13 +113,20 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
     NULL
   }
   
+  # Pre-compute target column hash once for all genes (avoids redundant hashing)
+  pre_hash <- if (!is.null(state_cache) && !is.null(target_col)) {
+    digest::digest(dt_train[[target_col]], algo = "xxhash64")
+  } else {
+    NULL
+  }
+  
   new_genes <- list()
   for (gene in ind$genes) {
     res <- tryCatch({
       if (!all(gene$input_cols %in% names(dt_train))) {
         stop("Input column missing")
       }
-      apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache)
+      apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash)
     }, error = function(e) {
       list(skip = TRUE)
     })
