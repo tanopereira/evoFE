@@ -167,6 +167,9 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param target_col Name of the target column.
 #' @param task "classification" or "regression".
 #' @param cv_folds Number of cross-validation folds.
+#' @param evaluation_strategy Character string, either "cv" (cross-validation) or "split" (train/validation split).
+#' @param split_ids Optional vector of pre-defined split assignments (e.g. "train", "val", "holdout").
+#' @param shared_splits Optional list of shared data.table splits for in-place caching.
 #' @param evaluator The ML model to use ("lightgbm" or "xgboost").
 #' @param fold_ids Optional vector of pre-defined fold assignments.
 #' @param shared_folds Optional list of shared data.table CV folds for in-place caching.

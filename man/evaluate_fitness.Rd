@@ -32,6 +32,12 @@ evaluate_fitness(
 
 \item{cv_folds}{Number of cross-validation folds.}
 
+\item{evaluation_strategy}{Character string, either "cv" (cross-validation) or "split" (train/validation split).}
+
+\item{split_ids}{Optional vector of pre-defined split assignments (e.g. "train", "val", "holdout").}
+
+\item{shared_splits}{Optional list of shared data.table splits for in-place caching.}
+
 \item{evaluator}{The ML model to use ("lightgbm" or "xgboost").}
 
 \item{fold_ids}{Optional vector of pre-defined fold assignments.}

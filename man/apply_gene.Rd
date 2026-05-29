@@ -9,7 +9,8 @@ apply_gene(
   train_data,
   val_data = NULL,
   target_col = NULL,
-  state_cache = NULL
+  state_cache = NULL,
+  data_hash = NULL
 )
 }
 \arguments{
@@ -22,6 +23,8 @@ apply_gene(
 \item{target_col}{Name of the target column.}
 
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
+
+\item{data_hash}{Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.}
 }
 \description{
 Apply a single gene to a dataset

@@ -9,6 +9,8 @@
 #' @param name_generator function(input_cols) returning output column name
 #' @param allow_replace Logical. Whether column sampling allows replacement.
 #' @import data.table
+#' @importFrom uwot umap
+#' @importFrom genieclust genie
 #' @export
 create_transformer <- function(name, type, input_type = "numeric", output_type = "numeric", fit_func = NULL, apply_func, name_generator, allow_replace = FALSE) {
   structure(
