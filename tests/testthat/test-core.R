@@ -95,7 +95,7 @@ test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", 
   gene_dead <- create_gene("deadwood", c("x1", "x2"))
   res_dead <- apply_gene(gene_dead, df, target_col = "target")
   expect_true(gene_dead$output_col %in% names(res_dead$train))
-  expect_type(res_dead$train[[gene_dead$output_col]], "double")
+  expect_s3_class(res_dead$train[[gene_dead$output_col]], "factor")
 })
 
 test_that("Constant columns are skipped and individual survives", {

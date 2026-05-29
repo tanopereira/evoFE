@@ -1206,6 +1206,7 @@ evo_transformers$deadwood <- create_transformer(
   name = "deadwood",
   type = "multivariate",
   input_type = "numeric",
+  output_type = "categorical",
   fit_func = function(data, gene, target_col = NULL) {
     input_cols <- gene$input_cols
     if (length(input_cols) < 2) {

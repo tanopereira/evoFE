@@ -225,7 +225,7 @@ These combine a **categorical** grouping column with a **numeric** value column.
 | `genie` | categorical | Genie robust hierarchical clustering |
 | `lumbermark` | categorical | Lumbermark hierarchical clustering |
 | `mst_score` | numeric | Minimum Spanning Tree-based anomaly score |
-| `deadwood` | numeric | Deadwood anomaly detection (outlier indicators) |
+| `deadwood` | categorical | Deadwood anomaly detection (outlier indicators) |
 
 ## Hierarchical Features (Gene Chaining)
 
