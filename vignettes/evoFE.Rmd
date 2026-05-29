@@ -169,7 +169,7 @@ round(probs, 3)
 
 ## Transformer Reference
 
-evoFE ships with **27 built-in transformers** that the genetic algorithm can
+evoFE ships with **29 built-in transformers** that the genetic algorithm can
 select from during evolution. The table below groups them by category.
 
 ### Arithmetic (numeric → numeric)
@@ -223,7 +223,9 @@ These combine a **categorical** grouping column with a **numeric** value column.
 | Transformer | Output | Description |
 |:---|:---:|:---|
 | `genie` | categorical | Genie robust hierarchical clustering |
+| `lumbermark` | categorical | Lumbermark hierarchical clustering |
 | `mst_score` | numeric | Minimum Spanning Tree-based anomaly score |
+| `deadwood` | numeric | Deadwood anomaly detection (outlier indicators) |
 
 ## Hierarchical Features (Gene Chaining)
 
