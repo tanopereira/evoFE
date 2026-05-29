@@ -89,7 +89,7 @@ test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", 
   expect_true(gene_lumb$params$k >= 2 && gene_lumb$params$k <= 5)
   res_lumb <- apply_gene(gene_lumb, df, target_col = "target")
   expect_true(gene_lumb$output_col %in% names(res_lumb$train))
-  expect_type(res_lumb$train[[gene_lumb$output_col]], "integer")
+  expect_s3_class(res_lumb$train[[gene_lumb$output_col]], "factor")
   
   # Test Deadwood
   gene_dead <- create_gene("deadwood", c("x1", "x2"))
