@@ -167,9 +167,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              split_ids = NULL, shared_splits = NULL,
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
-                             state_cache = NULL, threads = 8,
-                             evaluate_holdout = FALSE) {
-  if (!is.na(ind$fitness) && (!evaluate_holdout || !is.null(ind$holdout_fitness))) return(ind)
+                             state_cache = NULL, threads = 8) {
+  if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
   classes <- NULL
@@ -180,21 +179,18 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
   }
   
   if (evaluation_strategy == "split") {
-    # Train / Validation / Holdout split strategy
+    # Train / Validation split strategy
     if (!is.null(shared_splits)) {
       train_fold <- shared_splits$train
       val_fold <- shared_splits$val
-      holdout_fold <- shared_splits$holdout # might be NULL
     } else {
       train_fold <- data.table::as.data.table(data[split_ids == "train", ])
       val_fold <- data.table::as.data.table(data[split_ids == "val", ])
-      holdout_fold <- if ("holdout" %in% split_ids) data.table::as.data.table(data[split_ids == "holdout", ]) else NULL
     }
     
-    # Copy train/val/holdout folds so we can modify them when applying recipe
+    # Copy train/val folds so we can modify them when applying recipe
     train_fold <- data.table::copy(train_fold)
     val_fold <- data.table::copy(val_fold)
-    if (!is.null(holdout_fold)) holdout_fold <- data.table::copy(holdout_fold)
     
     # Apply genes
     res <- tryCatch({
@@ -206,7 +202,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     if (is.null(res)) {
       # Lethal mutation: invalid gene dependency graph
       ind$fitness <- if (task == "classification" || task == "multiclass") -Inf else -Inf
-      ind$holdout_fitness <- if (evaluate_holdout) -Inf else NULL
+      ind$holdout_fitness <- NULL
       return(ind)
     }
     
@@ -252,44 +248,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$fitness <- -val_score
     }
     
-    # Optional holdout evaluation
-    if (evaluate_holdout && !is.null(holdout_fold)) {
-      res_holdout <- tryCatch({
-        apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
-      }, error = function(e) {
-        NULL
-      })
-      
-      if (!is.null(res_holdout)) {
-        x_holdout <- data.matrix(res_holdout$train[, features, with = FALSE])
-        x_holdout[!is.finite(x_holdout)] <- NA
-        
-        # Predict on holdout using the trained model
-        if (evaluator == "lightgbm") {
-          preds_holdout <- stats::predict(res_model$model, x_holdout)
-        } else if (evaluator == "xgboost") {
-          dmatrix_holdout <- xgboost::xgb.DMatrix(data = x_holdout)
-          preds_holdout <- stats::predict(res_model$model, dmatrix_holdout)
-        }
-        
-        if (task == "classification") {
-          ind$holdout_fitness <- compute_exp_neg_logloss(holdout_fold[[target_col]], preds_holdout)
-        } else if (task == "multiclass") {
-          y_holdout_encoded <- as.integer(factor(holdout_fold[[target_col]], levels = classes)) - 1
-          if (!is.matrix(preds_holdout)) {
-            preds_holdout <- matrix(preds_holdout, ncol = num_class, byrow = TRUE)
-          }
-          ind$holdout_fitness <- compute_exp_neg_multiclass_logloss(y_holdout_encoded, preds_holdout, num_class)
-        } else {
-          holdout_rmse <- sqrt(mean((holdout_fold[[target_col]] - preds_holdout)^2))
-          ind$holdout_fitness <- -holdout_rmse
-        }
-      } else {
-        ind$holdout_fitness <- -Inf
-      }
-    } else {
-      ind$holdout_fitness <- NULL
-    }
+    ind$holdout_fitness <- NULL
     
     # Propagate the updated genes (with state)
     ind$genes <- res$ind$genes
@@ -396,6 +355,94 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     ind$holdout_fitness <- NULL
   }
   
+  ind
+}
+
+#' Evaluate holdout fitness for an individual
+#' @keywords internal
+evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits, 
+                                     target_col, task, evaluator, threads, 
+                                     state_cache, classes, num_class) {
+  if (!is.null(shared_splits)) {
+    train_fold <- shared_splits$train
+    val_fold <- shared_splits$val
+    holdout_fold <- shared_splits$holdout
+  } else {
+    train_fold <- data.table::as.data.table(data[split_ids == "train", ])
+    val_fold <- data.table::as.data.table(data[split_ids == "val", ])
+    holdout_fold <- if ("holdout" %in% split_ids) data.table::as.data.table(data[split_ids == "holdout", ]) else NULL
+  }
+  
+  if (is.null(holdout_fold)) {
+    ind$holdout_fitness <- NULL
+    return(ind)
+  }
+  
+  train_fold <- data.table::copy(train_fold)
+  val_fold <- data.table::copy(val_fold)
+  holdout_fold <- data.table::copy(holdout_fold)
+  
+  res <- tryCatch({
+    apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
+  }, error = function(e) NULL)
+  
+  if (is.null(res)) {
+    ind$holdout_fitness <- -Inf
+    return(ind)
+  }
+  
+  train_fold_feat <- res$train
+  val_fold_feat <- res$val
+  
+  gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
+  features <- c(res$ind$numeric_cols, res$ind$categorical_cols, gene_cols)
+  
+  x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
+  x_val <- data.matrix(val_fold_feat[, features, with = FALSE])
+  x_train[!is.finite(x_train)] <- NA
+  x_val[!is.finite(x_val)] <- NA
+  y_train <- train_fold_feat[[target_col]]
+  if (task == "multiclass") {
+    y_train <- as.integer(factor(y_train, levels = classes)) - 1
+  }
+  
+  res_model <- train_model(x_train, y_train, x_val, task = task,
+                            evaluator = evaluator, threads = threads,
+                            num_class = num_class)
+  
+  res_holdout <- tryCatch({
+    apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
+  }, error = function(e) NULL)
+  
+  if (!is.null(res_holdout)) {
+    x_holdout <- data.matrix(res_holdout$train[, features, with = FALSE])
+    x_holdout[!is.finite(x_holdout)] <- NA
+    
+    if (evaluator == "lightgbm") {
+      preds_holdout <- stats::predict(res_model$model, x_holdout)
+    } else if (evaluator == "xgboost") {
+      dmatrix_holdout <- xgboost::xgb.DMatrix(data = x_holdout)
+      preds_holdout <- stats::predict(res_model$model, dmatrix_holdout)
+    }
+    
+    if (task == "classification") {
+      ind$holdout_fitness <- compute_exp_neg_logloss(holdout_fold[[target_col]], preds_holdout)
+    } else if (task == "multiclass") {
+      y_holdout_encoded <- as.integer(factor(holdout_fold[[target_col]], levels = classes)) - 1
+      if (!is.matrix(preds_holdout)) {
+        preds_holdout <- matrix(preds_holdout, ncol = num_class, byrow = TRUE)
+      }
+      ind$holdout_fitness <- compute_exp_neg_multiclass_logloss(y_holdout_encoded, preds_holdout, num_class)
+    } else {
+      holdout_rmse <- sqrt(mean((holdout_fold[[target_col]] - preds_holdout)^2))
+      ind$holdout_fitness <- -holdout_rmse
+    }
+  } else {
+    ind$holdout_fitness <- -Inf
+  }
+  
+  # Propagate updated genes
+  ind$genes <- res$ind$genes
   ind
 }
 

@@ -18,8 +18,7 @@ evaluate_fitness(
   shared_folds = NULL,
   shared_full = NULL,
   state_cache = NULL,
-  threads = 8,
-  evaluate_holdout = FALSE
+  threads = 8
 )
 }
 \arguments{
