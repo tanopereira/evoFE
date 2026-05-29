@@ -37,6 +37,12 @@ evolve_features(
 
 \item{cv_folds}{Number of cross-validation folds}
 
+\item{evaluation_strategy}{"cv" or "split". Strategy to evaluate candidate recipes.}
+
+\item{split_ratio}{A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).}
+
+\item{split_ids}{An optional character vector of split assignments (e.g. "train", "val", "holdout").}
+
 \item{early_stopping_rounds}{Stop if fitness doesn't improve for this many generations}
 
 \item{evaluator}{The ML model to use ("lightgbm" or "xgboost")}

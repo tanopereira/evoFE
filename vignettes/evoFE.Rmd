@@ -31,8 +31,8 @@ applied to new data at prediction time.
 
 1. **Initialisation** — A population of individuals is created. Each individual
    is a "recipe" containing a set of feature transformations (genes).
-2. **Evaluation** — Every individual is scored via cross-validated model
-   performance (LightGBM or XGBoost).
+2. **Evaluation** — Every individual is scored via cross-validated or
+   split model performance (LightGBM or XGBoost).
 3. **Selection** — The top 50 % survive to breed.
 4. **Breeding** — Survivors are combined (crossover) and randomly altered
    (mutation) to produce the next generation.
@@ -282,6 +282,15 @@ for (g in ind$genes) {
 }
 ```
 
+## Evaluation Strategies
+
+`evoFE` supports two evaluation strategies for scoring individuals:
+
+1. **Cross-Validation (`cv`)**: The default strategy. Evaluates the fitness of individuals using $K$-fold cross-validation (`cv_folds` parameter).
+2. **Train/Validation/Holdout Split (`split`)**: Useful for faster evaluation on larger datasets. You configure it with `evaluation_strategy = "split"` and `split_ratio` (e.g., `c(0.6, 0.2, 0.2)`).
+   - The first two portions of `split_ratio` are used as the **Train** and **Validation** sets to score the candidate recipes during the evolutionary search.
+   - The third portion (if provided) is the **Holdout** set. To prevent data leakage/snooping and optimize computation time, the holdout set is **only evaluated once** at the very end of evolution on the final selected best individual.
+
 ## Tuning Parameters
 
 ### Key parameters for `evolve_features()`
@@ -290,7 +299,10 @@ for (g in ind$genes) {
 |:---|:---:|:---|
 | `generations` | 10 | Maximum number of evolutionary generations |
 | `pop_size` | 10 | Number of individuals per generation |
-| `cv_folds` | 3 | Cross-validation folds for fitness evaluation |
+| `evaluation_strategy` | `"cv"` | Evaluation method: `"cv"` (cross-validation) or `"split"` (train/val/holdout split) |
+| `cv_folds` | 3 | Cross-validation folds for fitness evaluation (only used if strategy is `"cv"`) |
+| `split_ratio` | `c(0.6, 0.2, 0.2)` | Proportions for Train/Val/Holdout split (only used if strategy is `"split"`) |
+| `split_ids` | `NULL` | Optional user-defined vector of split assignments (`"train"`, `"val"`, `"holdout"`) |
 | `early_stopping_rounds` | 3 | Stop if no improvement for *n* generations |
 | `evaluator` | `"lightgbm"` | Model backend: `"lightgbm"` or `"xgboost"` |
 | `dynamic_population` | `TRUE` | Expand population during stagnation |

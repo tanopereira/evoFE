@@ -168,6 +168,9 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param generations Number of generations (max iterations)
 #' @param pop_size Population size
 #' @param cv_folds Number of cross-validation folds
+#' @param evaluation_strategy "cv" or "split". Strategy to evaluate candidate recipes.
+#' @param split_ratio A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
+#' @param split_ids An optional character vector of split assignments (e.g. "train", "val", "holdout").
 #' @param early_stopping_rounds Stop if fitness doesn't improve for this many generations
 #' @param evaluator The ML model to use ("lightgbm" or "xgboost")
 #' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
