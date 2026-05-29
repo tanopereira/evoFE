@@ -3,3 +3,4 @@
 ^evoFE_.*\.tar\.gz$
 ^docs$
 \.DS_Store$
+^LICENSE\.md$
