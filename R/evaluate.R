@@ -18,8 +18,9 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   
   state <- NULL
   has_cached_state <- FALSE
-  if (!is.null(state_cache)) {
-    cache_key <- digest::digest(gene_to_state_formula(gene), algo = "md5", serialize = FALSE)
+  if (!is.null(state_cache) && !is.null(target_col)) {
+    data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+    cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
     if (exists(cache_key, envir = state_cache)) {
       state <- get(cache_key, envir = state_cache)
       gene$state <- state
@@ -38,8 +39,9 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       } else {
         state <- t_def$fit_func(train_data, gene, target_col)
         gene$state <- state
-        if (!is.null(state_cache)) {
-          cache_key <- digest::digest(gene_to_state_formula(gene), algo = "md5", serialize = FALSE)
+        if (!is.null(state_cache) && !is.null(target_col)) {
+          data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+          cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
           assign(cache_key, state, envir = state_cache)
         }
       }
@@ -195,7 +197,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     
     # Apply genes
     res <- tryCatch({
-      apply_individual(ind, train_fold, val_fold, target_col)
+      apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
     }, error = function(e) {
       NULL
     })
@@ -252,7 +254,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Optional holdout evaluation
     if (!is.null(holdout_fold)) {
       res_holdout <- tryCatch({
-        apply_individual(res$ind, holdout_fold, NULL, NULL)
+        apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
       }, error = function(e) {
         NULL
       })
@@ -323,7 +325,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       
       # Apply genes
       res <- tryCatch({
-        apply_individual(ind, train_fold, val_fold, target_col)
+        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
       }, error = function(e) {
         NULL
       })

@@ -228,7 +228,8 @@ test_that("State caching and fit-skipping works correctly", {
   expect_false(is.null(res3$gene$state))
   
   # Verify that the state was indeed stored in the state_cache
-  cache_key <- digest::digest(gene_to_state_formula(gene), algo = "md5", serialize = FALSE)
+  data_hash <- digest::digest(shared_full[["target"]], algo = "xxhash64")
+  cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
   expect_true(exists(cache_key, envir = state_cache))
   
   # 4. Now run on shared_full where the column exists and state_cache is passed.
