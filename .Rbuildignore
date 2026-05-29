@@ -1,4 +1,5 @@
 ^scratch$
 ^evoFE\.Rcheck$
 ^evoFE_.*\.tar\.gz$
+^docs$
 \.DS_Store$
