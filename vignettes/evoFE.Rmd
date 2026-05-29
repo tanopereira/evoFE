@@ -169,7 +169,7 @@ round(probs, 3)
 
 ## Transformer Reference
 
-evoFE ships with **29 built-in transformers** that the genetic algorithm can
+evoFE ships with **30 built-in transformers** that the genetic algorithm can
 select from during evolution. The table below groups them by category.
 
 ### Arithmetic (numeric → numeric)
@@ -204,6 +204,7 @@ These combine a **categorical** grouping column with a **numeric** value column.
 |:---|:---:|:---|
 | `target_encode` | cat → num | Supervised mean-target encoding with leave-one-out |
 | `frequency_encode` | cat → num | Proportion of each category in the data |
+| `one_hot_encode` | cat → num | Binary one-hot encoding indicator for a specific category (or "other" for rare categories) |
 | `quantile_binning` | num → num | Assign quantile rank (1–5) |
 | `log_binning` | num → num | Assign log-scale bin index |
 | `quantile_binning_cat` | num → cat | Same as `quantile_binning`, output as factor |

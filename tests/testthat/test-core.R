@@ -718,3 +718,43 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
   expect_true(!is.null(res_manual$best_individual$holdout_fitness))
 })
 
+test_that("one_hot_encode transformer works", {
+  set.seed(42)
+  n <- 50
+  cat_col <- c(rep("A", 30), rep("B", 15), rep("C", 5))
+  df <- data.table::as.data.table(data.frame(
+    cat_val = factor(cat_col),
+    target = sample(0:1, n, replace = TRUE)
+  ))
+  
+  # Test OHE component 1 (should map to "A")
+  gene_ohe1 <- create_gene("one_hot_encode", "cat_val")
+  gene_ohe1$params$comp_idx <- 1
+  res_ohe1 <- apply_gene(gene_ohe1, df, target_col = "target")
+  
+  expect_true(gene_ohe1$output_col %in% names(res_ohe1$train))
+  expect_equal(res_ohe1$train[[gene_ohe1$output_col]], as.numeric(df$cat_val == "A"))
+  
+  # Test OHE component 2 (should map to "B")
+  gene_ohe2 <- create_gene("one_hot_encode", "cat_val")
+  gene_ohe2$params$comp_idx <- 2
+  res_ohe2 <- apply_gene(gene_ohe2, df, target_col = "target")
+  
+  expect_true(gene_ohe2$output_col %in% names(res_ohe2$train))
+  expect_equal(res_ohe2$train[[gene_ohe2$output_col]], as.numeric(df$cat_val == "B"))
+  
+  # Test OHE component 6 ("other" - should map to "C" because C is < 5% or not in top 5, actually C is 5/50 = 10%, let's make it 2%)
+  cat_col_rare <- c(rep("A", 45), rep("B", 4), rep("C", 1))
+  df_rare <- data.table::as.data.table(data.frame(
+    cat_val = factor(cat_col_rare),
+    target = sample(0:1, n, replace = TRUE)
+  ))
+  
+  gene_ohe6 <- create_gene("one_hot_encode", "cat_val")
+  gene_ohe6$params$comp_idx <- 6
+  res_ohe6 <- apply_gene(gene_ohe6, df_rare, target_col = "target")
+  
+  expect_true(gene_ohe6$output_col %in% names(res_ohe6$train))
+  expect_equal(res_ohe6$train[[gene_ohe6$output_col]], as.numeric(df_rare$cat_val == "C"))
+})
+

@@ -10,6 +10,8 @@ create_gene <- function(transformer_name, input_cols) {
     params$comp_idx <- sample(1:3, 1)
   } else if (transformer_name == "umap") {
     params$comp_idx <- sample(1:2, 1)
+  } else if (transformer_name == "one_hot_encode") {
+    params$comp_idx <- sample(1:6, 1)
   } else if (transformer_name == "genie") {
     params$k <- sample(2:5, 1)
   } else if (transformer_name == "lumbermark") {
@@ -34,7 +36,10 @@ create_gene <- function(transformer_name, input_cols) {
 #' @param gene A gene list
 #' @export
 gene_to_formula <- function(gene) {
-  if (!is.null(gene$params$comp_idx)) {
+  if (gene$transformer_name == "one_hot_encode") {
+    comp_str <- if (gene$params$comp_idx == 6) "other" else as.character(gene$params$comp_idx)
+    sprintf("ohe_%s(%s)", comp_str, paste(gene$input_cols, collapse = ", "))
+  } else if (!is.null(gene$params$comp_idx)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$Q)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, paste(gene$input_cols, collapse = ", "))

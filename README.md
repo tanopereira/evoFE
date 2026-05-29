@@ -95,7 +95,7 @@ predictions <- predict_model(recipe, df[1:5, ])
 | :--- | :--- |
 | **Arithmetic** | `log`, `sqrt`, `reciprocal`, `add`, `subtract`, `multiply`, `divide`, `normalized_difference`, `log_ratio` |
 | **Group-by Aggregations** | `groupby_mean`, `groupby_sd`, `groupby_max`, `groupby_min`, `groupby_ratio`, `groupby_zscore` |
-| **Encoding & Binning** | `target_encode`, `frequency_encode`, `quantile_binning`, `log_binning`, `quantile_binning_cat`, `log_binning_cat` |
+| **Encoding & Binning** | `target_encode`, `frequency_encode`, `one_hot_encode`, `quantile_binning`, `log_binning`, `quantile_binning_cat`, `log_binning_cat` |
 | **Dimensionality Reduction** | `pca`, `truncated_svd`, `random_projection`, `umap` |
 | **Graph & Clustering** | `genie`, `lumbermark`, `mst_score`, `deadwood` |
 

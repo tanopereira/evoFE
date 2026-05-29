@@ -1357,3 +1357,65 @@ evo_transformers$deadwood <- create_transformer(
   }
 )
 
+# One-Hot Encoding
+evo_transformers$one_hot_encode <- create_transformer(
+  name = "one_hot_encode",
+  type = "unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    
+    # Calculate category frequencies
+    freq <- table(x, useNA = "no")
+    df_freq <- as.data.frame(freq, stringsAsFactors = FALSE)
+    if (nrow(df_freq) == 0) {
+      return(list(top_categories = character(0)))
+    }
+    names(df_freq) <- c("category", "count")
+    total_n <- length(x[!is.na(x)])
+    df_freq$pct <- df_freq$count / max(1, total_n)
+    
+    # Keep categories with frequency >= 5%, up to a maximum of 5 categories
+    # Sorted by frequency descending
+    df_freq <- df_freq[order(df_freq$count, decreasing = TRUE), ]
+    top_cats <- df_freq$category[df_freq$pct >= 0.05]
+    if (length(top_cats) > 5) {
+      top_cats <- top_cats[1:5]
+    }
+    
+    list(top_categories = top_cats)
+  },
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    
+    if (is.null(state) || is.null(state$top_categories)) {
+      return(rep(0, length(x)))
+    }
+    
+    top_cats <- state$top_categories
+    
+    if (comp_idx == 6) {
+      # "other" category: not in top categories, or NA
+      as.numeric(!(x %in% top_cats) | is.na(x))
+    } else {
+      # 1 to 5: check if category exists at this index
+      if (comp_idx <= length(top_cats)) {
+        target_cat <- top_cats[comp_idx]
+        as.numeric(!is.na(x) & x == target_cat)
+      } else {
+        # Index is out of bounds (fewer than comp_idx categories kept)
+        rep(0, length(x))
+      }
+    }
+  },
+  name_generator = function(gene) {
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    idx_str <- if (comp_idx == 6) "other" else as.character(comp_idx)
+    paste0("ohe_", idx_str, "_", gene$input_cols[1])
+  }
+)
+
