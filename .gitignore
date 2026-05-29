@@ -1,0 +1,12 @@
+# R specific ignore files
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+.Rproj.user/
+
+# Package build and check files
+/*.tar.gz
+/*.Rcheck/
+/scratch/
+/00LOCK-*

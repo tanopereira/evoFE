@@ -4,7 +4,24 @@
 \alias{apply_individual}
 \title{Apply an entire individual's recipe to data}
 \usage{
-apply_individual(ind, train_data, val_data = NULL, target_col = NULL)
+apply_individual(
+  ind,
+  train_data,
+  val_data = NULL,
+  target_col = NULL,
+  state_cache = NULL
+)
+}
+\arguments{
+\item{ind}{An evo_individual object.}
+
+\item{train_data}{A data.frame or data.table representing the training data.}
+
+\item{val_data}{Optional validation data.frame or data.table.}
+
+\item{target_col}{Name of the target column.}
+
+\item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 }
 \description{
 Apply an entire individual's recipe to data

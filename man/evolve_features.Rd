@@ -11,8 +11,16 @@ evolve_features(
   generations = 10,
   pop_size = 10,
   cv_folds = 3,
+  evaluation_strategy = "cv",
+  split_ratio = c(0.6, 0.2, 0.2),
+  split_ids = NULL,
   early_stopping_rounds = 3,
   evaluator = "lightgbm",
+  dynamic_population = TRUE,
+  crossover_type = "both",
+  threads = 8,
+  max_clustering_size = 5000,
+  seed = NULL,
   verbose = TRUE
 )
 }
@@ -32,6 +40,16 @@ evolve_features(
 \item{early_stopping_rounds}{Stop if fitness doesn't improve for this many generations}
 
 \item{evaluator}{The ML model to use ("lightgbm" or "xgboost")}
+
+\item{dynamic_population}{Logical. If TRUE, population expands dynamically during stagnation.}
+
+\item{crossover_type}{Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"}
+
+\item{threads}{Number of threads to use for parallel execution (default 8)}
+
+\item{max_clustering_size}{Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)}
+
+\item{seed}{Optional integer seed for reproducibility.}
 
 \item{verbose}{Logical. If TRUE, prints progress.}
 }

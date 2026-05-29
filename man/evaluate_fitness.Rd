@@ -10,9 +10,39 @@ evaluate_fitness(
   target_col,
   task = "classification",
   cv_folds = 3,
+  evaluation_strategy = "cv",
+  split_ids = NULL,
+  shared_splits = NULL,
   evaluator = "lightgbm",
-  fold_ids = NULL
+  fold_ids = NULL,
+  shared_folds = NULL,
+  shared_full = NULL,
+  state_cache = NULL,
+  threads = 8
 )
+}
+\arguments{
+\item{ind}{An evo_individual object.}
+
+\item{data}{A data.frame or data.table containing the dataset.}
+
+\item{target_col}{Name of the target column.}
+
+\item{task}{"classification" or "regression".}
+
+\item{cv_folds}{Number of cross-validation folds.}
+
+\item{evaluator}{The ML model to use ("lightgbm" or "xgboost").}
+
+\item{fold_ids}{Optional vector of pre-defined fold assignments.}
+
+\item{shared_folds}{Optional list of shared data.table CV folds for in-place caching.}
+
+\item{shared_full}{Optional data.table of the full dataset for in-place caching.}
+
+\item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
+
+\item{threads}{Number of threads to use for parallel execution (default 8)}
 }
 \description{
 Evaluate the fitness of an individual

@@ -8,8 +8,20 @@ initialize_population(
   pop_size,
   numeric_cols,
   categorical_cols,
-  initial_genes = 2
+  initial_genes = 2,
+  task = "classification"
 )
+}
+\arguments{
+\item{pop_size}{Population size.}
+
+\item{numeric_cols}{Vector of numeric column names.}
+
+\item{categorical_cols}{Vector of categorical column names.}
+
+\item{initial_genes}{Number of initial genes per individual.}
+
+\item{task}{Task type ("classification", "regression", or "multiclass").}
 }
 \description{
 Initialize a population

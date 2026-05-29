@@ -4,7 +4,24 @@
 \alias{apply_gene}
 \title{Apply a single gene to a dataset}
 \usage{
-apply_gene(gene, train_data, val_data = NULL, target_col = NULL)
+apply_gene(
+  gene,
+  train_data,
+  val_data = NULL,
+  target_col = NULL,
+  state_cache = NULL
+)
+}
+\arguments{
+\item{gene}{A gene list representing a feature transformation.}
+
+\item{train_data}{A data.frame or data.table representing the training data.}
+
+\item{val_data}{Optional validation data.frame or data.table.}
+
+\item{target_col}{Name of the target column.}
+
+\item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 }
 \description{
 Apply a single gene to a dataset

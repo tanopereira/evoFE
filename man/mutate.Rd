@@ -4,12 +4,33 @@
 \alias{mutate}
 \title{Mutate an individual}
 \usage{
-mutate(ind, verbose = FALSE, force_add = FALSE)
+mutate(
+  ind,
+  verbose = FALSE,
+  force_add = FALSE,
+  importances = numeric(0),
+  temperature = 1,
+  task = "classification",
+  tested_gene_outputs = NULL
+)
 }
 \arguments{
-\item{ind}{An evo_individual}
+\item{ind}{An evo_individual.}
 
 \item{verbose}{Logical. Whether to print mutation details.}
+
+\item{force_add}{Logical. If TRUE, forces adding a new gene.}
+
+\item{importances}{A numeric vector of feature importances.}
+
+\item{temperature}{A numeric temperature value controlling selection weights.}
+
+\item{task}{The task type ("classification", "regression", or "multiclass")}
+
+\item{tested_gene_outputs}{Character vector of gene output names that have
+been evaluated in a previous generation and are safe for chaining. When
+NULL (default), all existing gene outputs are available. Pass character(0)
+to block all chaining (e.g. during initialization).}
 }
 \description{
 Mutate an individual

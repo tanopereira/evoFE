@@ -1,0 +1,366 @@
+---
+title: "Getting Started with evoFE"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with evoFE}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## What is evoFE?
+
+**evoFE** (Evolutionary Feature Engineering) uses a genetic algorithm to
+automatically discover useful feature transformations for tabular data. Instead
+of manually crafting interaction terms, ratios, or binning strategies, you let
+evolution explore the space of possible transformations and keep the ones that
+improve predictive performance.
+
+The result is an **evo_recipe** — a reusable transformation pipeline that can be
+applied to new data at prediction time.
+
+### How it works
+
+1. **Initialisation** — A population of individuals is created. Each individual
+   is a "recipe" containing a set of feature transformations (genes).
+2. **Evaluation** — Every individual is scored via cross-validated model
+   performance (LightGBM or XGBoost).
+3. **Selection** — The top 50 % survive to breed.
+4. **Breeding** — Survivors are combined (crossover) and randomly altered
+   (mutation) to produce the next generation.
+5. **Repeat** — The cycle continues until the fitness plateaus or the
+   generation budget is exhausted.
+
+## Installation
+
+```r
+# Install from local source
+devtools::install_local("path/to/evoFE")
+
+# Or install directly from a git repo
+# devtools::install_github("your-org/evoFE")
+```
+
+## Quick Start — Binary Classification
+
+Let's classify whether a car has an automatic or manual transmission using the
+`mtcars` dataset.
+
+```{r binary-classification}
+library(evoFE)
+
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)   # target: 0 = automatic, 1 = manual
+
+res <- evolve_features(
+  data      = df,
+  target_col = "am",
+  task       = "classification",
+  evaluator  = "xgboost",
+  generations = 5,
+  pop_size    = 8,
+  cv_folds    = 3,
+  early_stopping_rounds = 3,
+  seed        = 42,
+  verbose     = TRUE
+)
+```
+
+The returned `evo_recipe` object contains the best individual (feature recipe),
+the fitted model, and the evolution history.
+
+```{r binary-inspect}
+# View the winning recipe
+cat("Best recipe:", individual_to_recipe_string(res$best_individual), "\n")
+cat("Fitness:    ", res$best_individual$fitness, "\n")
+```
+
+### Applying the recipe to new data
+
+`predict()` applies the evolved transformations to new data and returns the
+engineered feature matrix:
+
+```{r binary-predict-features}
+engineered <- predict(res, df[1:5, ])
+head(engineered)
+```
+
+`predict_model()` goes one step further — it applies the transformations **and**
+runs the trained model to produce predictions:
+
+```{r binary-predict-model}
+preds <- predict_model(res, df[1:5, ])
+preds
+```
+
+## Regression
+
+Predict petal length from the iris dataset:
+
+```{r regression}
+data(iris)
+
+res_reg <- evolve_features(
+  data      = iris[, 1:5],
+  target_col = "Petal.Length",
+  task       = "regression",
+  evaluator  = "xgboost",
+  generations = 5,
+  pop_size    = 8,
+  cv_folds    = 3,
+  early_stopping_rounds = 3,
+  seed        = 123,
+  verbose     = TRUE
+)
+
+cat("Best recipe:", individual_to_recipe_string(res_reg$best_individual), "\n")
+cat("Fitness (neg RMSE):", res_reg$best_individual$fitness, "\n")
+```
+
+```{r regression-predict}
+preds_reg <- predict_model(res_reg, iris[1:10, ])
+# Compare predictions to actuals
+data.frame(
+  actual    = iris$Petal.Length[1:10],
+  predicted = round(preds_reg, 2)
+)
+```
+
+## Multiclass Classification
+
+Classify iris species (3 classes). Note `task = "multiclass"`:
+  
+```{r multiclass}
+iris_mc <- iris
+iris_mc$Species <- as.character(iris_mc$Species)
+
+res_mc <- evolve_features(
+  data      = iris_mc,
+  target_col = "Species",
+  task       = "multiclass",
+  evaluator  = "xgboost",
+  generations = 5,
+  pop_size    = 8,
+  cv_folds    = 3,
+  early_stopping_rounds = 3,
+  seed        = 99,
+  verbose     = TRUE
+)
+
+cat("Best recipe:", individual_to_recipe_string(res_mc$best_individual), "\n")
+```
+
+For multiclass, `predict_model()` returns a probability matrix — one column per
+class:
+
+```{r multiclass-predict}
+probs <- predict_model(res_mc, iris_mc[c(1, 51, 101), ])
+round(probs, 3)
+```
+
+## Transformer Reference
+
+evoFE ships with **27 built-in transformers** that the genetic algorithm can
+select from during evolution. The table below groups them by category.
+
+### Arithmetic (numeric → numeric)
+
+| Transformer | Arity | Description |
+|:---|:---:|:---|
+| `log` | unary | Natural logarithm (safe: `log(abs(x) + 1)`) |
+| `sqrt` | unary | Square root (safe: `sqrt(abs(x))`) |
+| `reciprocal` | unary | `1 / (x + ε)` |
+| `add` | multi | Element-wise sum of 2+ columns |
+| `subtract` | binary | `x₁ − x₂` |
+| `multiply` | multi | Element-wise product of 2+ columns |
+| `divide` | binary | `x₁ / (x₂ + ε)` |
+| `normalized_difference` | binary | `(x₁ − x₂) / (x₁ + x₂ + ε)` |
+| `log_ratio` | binary | `log((x₁ + ε) / (x₂ + ε))` |
+
+### Group-by aggregations (mixed → numeric)
+
+These combine a **categorical** grouping column with a **numeric** value column.
+
+| Transformer | Description |
+|:---|:---|
+| `groupby_mean` | Mean of value within each group |
+| `groupby_sd` | Standard deviation within each group |
+| `groupby_max` / `groupby_min` | Max / min within each group |
+| `groupby_ratio` | `value / group_mean` |
+| `groupby_zscore` | `(value − group_mean) / group_sd` |
+
+### Encoding & binning
+
+| Transformer | Input → Output | Description |
+|:---|:---:|:---|
+| `target_encode` | cat → num | Supervised mean-target encoding with leave-one-out |
+| `frequency_encode` | cat → num | Proportion of each category in the data |
+| `quantile_binning` | num → num | Assign quantile rank (1–5) |
+| `log_binning` | num → num | Assign log-scale bin index |
+| `quantile_binning_cat` | num → cat | Same as `quantile_binning`, output as factor |
+| `log_binning_cat` | num → cat | Same as `log_binning`, output as factor |
+
+### Dimensionality reduction (numeric → numeric)
+
+| Transformer | Description |
+|:---|:---|
+| `pca` | First principal component of 2+ columns |
+| `truncated_svd` | First component from truncated SVD |
+| `random_projection` | Random linear combination of 2+ columns |
+| `umap` | Low-dimensional UMAP projection |
+
+### Manifold & Graph Learning (numeric → categorical/numeric)
+
+| Transformer | Output | Description |
+|:---|:---:|:---|
+| `genie` | categorical | Genie robust hierarchical clustering |
+| `mst_score` | numeric | Minimum Spanning Tree-based anomaly score |
+
+## Hierarchical Features (Gene Chaining)
+
+One of evoFE's powerful capabilities is **hierarchical feature construction**.
+After a gene has been evaluated and proven useful, subsequent generations can
+build *on top of* its output.
+
+For example:
+
+```
+Gen 1: log_ratio(Sepal.Length, Petal.Width)        → tested ✓
+Gen 2: divide(Petal.Width, logratio(…))            → chains from tested gene ✓
+```
+
+**Important safety rule**: a gene can only chain from outputs that have been
+evaluated in a **previous** generation. A brand-new untested gene is never used
+as input for another gene in the same individual. This prevents fragile
+dependency chains built on unproven transformations.
+
+## Understanding the Output
+
+`evolve_features()` returns an `evo_recipe` S3 object with:
+
+| Field | Description |
+|:---|:---|
+| `best_individual` | The winning recipe (list of genes, column sets, fitness) |
+| `best_model` | The final LightGBM/XGBoost model trained on all data |
+| `history` | Full final-generation population (for inspection) |
+| `task` | The task type used |
+| `evaluator` | The evaluator used |
+| `classes` | Class labels (multiclass only) |
+
+### Inspecting the recipe
+
+```{r inspect-recipe}
+ind <- res$best_individual
+
+# Human-readable recipe string
+cat(individual_to_recipe_string(ind), "\n")
+
+# Number of evolved genes
+cat("Evolved genes:", length(ind$genes), "\n")
+
+# Original columns retained
+cat("Numeric cols: ", paste(ind$numeric_cols, collapse = ", "), "\n")
+cat("Categorical cols:", paste(ind$categorical_cols, collapse = ", "), "\n")
+
+# Individual gene details
+for (g in ind$genes) {
+  cat(sprintf("  %s(%s) → %s\n",
+    g$transformer_name,
+    paste(g$input_cols, collapse = ", "),
+    g$output_col))
+}
+```
+
+## Tuning Parameters
+
+### Key parameters for `evolve_features()`
+
+| Parameter | Default | Description |
+|:---|:---:|:---|
+| `generations` | 10 | Maximum number of evolutionary generations |
+| `pop_size` | 10 | Number of individuals per generation |
+| `cv_folds` | 3 | Cross-validation folds for fitness evaluation |
+| `early_stopping_rounds` | 3 | Stop if no improvement for *n* generations |
+| `evaluator` | `"lightgbm"` | Model backend: `"lightgbm"` or `"xgboost"` |
+| `dynamic_population` | `TRUE` | Expand population during stagnation |
+| `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |
+| `threads` | 8 | Parallelism for model training |
+| `seed` | `NULL` | RNG seed for reproducibility |
+
+### Practical advice
+
+- **Start small**: `generations = 5, pop_size = 8` is enough to validate the
+  pipeline. Scale up once you confirm the setup works.
+- **Increase `pop_size`** for wider exploration. Useful when you have many
+  columns (> 20) and diverse transformer options.
+- **Increase `generations`** for deeper search. Works best when combined with
+  `dynamic_population = TRUE` so stagnation triggers population expansion.
+- **Use `seed`** for reproducible experiments and benchmarking.
+- **`crossover_type = "union"`** tends to produce larger recipes (more features).
+  `"random"` keeps recipes leaner.
+
+## Reproducibility
+
+Setting a seed guarantees identical results across runs:
+
+```{r reproducibility}
+r1 <- evolve_features(iris[,1:5], "Petal.Length", task = "regression",
+                       generations = 3, pop_size = 5, evaluator = "xgboost",
+                       seed = 42, verbose = FALSE)
+r2 <- evolve_features(iris[,1:5], "Petal.Length", task = "regression",
+                       generations = 3, pop_size = 5, evaluator = "xgboost",
+                       seed = 42, verbose = FALSE)
+
+identical(r1$best_individual$fitness, r2$best_individual$fitness)
+identical(
+  individual_to_recipe_string(r1$best_individual),
+  individual_to_recipe_string(r2$best_individual)
+)
+```
+
+## End-to-End Example: Train/Test Split
+
+A realistic workflow with hold-out evaluation:
+
+```{r end-to-end}
+data(iris)
+set.seed(1)
+idx <- sample(nrow(iris), 0.7 * nrow(iris))
+train <- iris[idx, ]
+test  <- iris[-idx, ]
+
+# Evolve on training data only
+recipe <- evolve_features(
+  data      = train[, 1:4],               # exclude Species
+  target_col = "Petal.Length",
+  task       = "regression",
+  evaluator  = "xgboost",
+  generations = 5,
+  pop_size    = 8,
+  seed        = 7,
+  verbose     = FALSE
+)
+
+# Predict on held-out test data
+test_preds <- predict_model(recipe, test[, 1:4])
+
+# Evaluate
+rmse <- sqrt(mean((test$Petal.Length - test_preds)^2))
+cat(sprintf("Test RMSE: %.4f\n", rmse))
+cat(sprintf("Recipe:    %s\n", individual_to_recipe_string(recipe$best_individual)))
+```
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

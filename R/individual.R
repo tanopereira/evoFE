@@ -8,6 +8,16 @@ create_gene <- function(transformer_name, input_cols) {
   params <- list()
   if (transformer_name %in% c("pca", "truncated_svd")) {
     params$comp_idx <- sample(1:3, 1)
+  } else if (transformer_name == "umap") {
+    params$comp_idx <- sample(1:2, 1)
+  } else if (transformer_name == "genie") {
+    params$k <- sample(2:5, 1)
+  } else if (transformer_name == "lumbermark") {
+    params$k <- sample(2:5, 1)
+  } else if (transformer_name %in% c("quantile_binning", "quantile_binning_cat")) {
+    params$Q <- sample(3:10, 1)
+  } else if (transformer_name %in% c("log_binning", "log_binning_cat")) {
+    params$base <- sample(2:10, 1)
   }
   gene <- list(
     transformer_name = transformer_name,
@@ -26,8 +36,24 @@ create_gene <- function(transformer_name, input_cols) {
 gene_to_formula <- function(gene) {
   if (!is.null(gene$params$comp_idx)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, paste(gene$input_cols, collapse = ", "))
+  } else if (!is.null(gene$params$Q)) {
+    sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, paste(gene$input_cols, collapse = ", "))
+  } else if (!is.null(gene$params$base)) {
+    sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, paste(gene$input_cols, collapse = ", "))
   } else {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
+  }
+}
+
+#' Convert a gene to a formula string for state caching (ignoring component index)
+#'
+#' @param gene A gene list
+#' @export
+gene_to_state_formula <- function(gene) {
+  if (gene$transformer_name %in% c("pca", "truncated_svd", "umap")) {
+    sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
+  } else {
+    gene_to_formula(gene)
   }
 }
 
@@ -41,6 +67,33 @@ individual_to_recipe_string <- function(ind) {
   paste0("[", paste(formulas, collapse = ", "), "]")
 }
 
+topological_sort_genes <- function(genes, original_cols) {
+  if (length(genes) == 0) return(list())
+  
+  available <- original_cols
+  sorted_genes <- list()
+  remaining_genes <- genes
+  
+  made_progress <- TRUE
+  while (length(remaining_genes) > 0 && made_progress) {
+    made_progress <- FALSE
+    keep_indices <- c()
+    for (i in seq_along(remaining_genes)) {
+      gene <- remaining_genes[[i]]
+      if (all(gene$input_cols %in% available)) {
+        sorted_genes <- c(sorted_genes, list(gene))
+        available <- c(available, gene$output_col)
+        made_progress <- TRUE
+      } else {
+        keep_indices <- c(keep_indices, i)
+      }
+    }
+    remaining_genes <- remaining_genes[keep_indices]
+  }
+  
+  sorted_genes
+}
+
 #' Create an individual
 #'
 #' @param genes List of genes
@@ -48,9 +101,11 @@ individual_to_recipe_string <- function(ind) {
 #' @param categorical_cols Vector of categorical column names
 #' @export
 create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0)) {
+  original_cols <- c(numeric_cols, categorical_cols)
+  sorted_genes <- topological_sort_genes(genes, original_cols)
   structure(
     list(
-      genes = genes,
+      genes = sorted_genes,
       numeric_cols = numeric_cols,
       categorical_cols = categorical_cols,
       fitness = NA_real_
@@ -61,11 +116,36 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 
 #' Mutate an individual
 #'
-#' @param ind An evo_individual
+#' @param ind An evo_individual.
 #' @param verbose Logical. Whether to print mutation details.
+#' @param force_add Logical. If TRUE, forces adding a new gene.
+#' @param importances A numeric vector of feature importances.
+#' @param temperature A numeric temperature value controlling selection weights.
+#' @param task The task type ("classification", "regression", or "multiclass")
+#' @param tested_gene_outputs Character vector of gene output names that have
+#'   been evaluated in a previous generation and are safe for chaining. When
+#'   NULL (default), all existing gene outputs are available. Pass character(0)
+#'   to block all chaining (e.g. during initialization).
 #' @export
-mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0) {
+mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL) {
   if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0) return(ind)
+  
+  # Categorize existing gene outputs by type, restricted to tested genes
+  gene_num <- character(0)
+  gene_cat <- character(0)
+  for (gene in ind$genes) {
+    # Skip if this gene's output hasn't been evaluated yet
+    if (!is.null(tested_gene_outputs) && !(gene$output_col %in% tested_gene_outputs)) {
+      next
+    }
+    t_def <- evo_transformers[[gene$transformer_name]]
+    out_type <- if (!is.null(t_def$output_type)) t_def$output_type else "numeric"
+    if (out_type == "categorical") {
+      gene_cat <- c(gene_cat, gene$output_col)
+    } else {
+      gene_num <- c(gene_num, gene$output_col)
+    }
+  }
   
   weighted_sample <- function(cols, size, replace = FALSE) {
     if (length(cols) == 0) return(character(0))
@@ -109,11 +189,17 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       idx <- if (length(multi_idx) == 1) multi_idx else sample(multi_idx, 1)
       gene_to_mod <- ind$genes[[idx]]
       
-      gene_outputs <- if (length(ind$genes) > 1) vapply(ind$genes[-idx], function(g) g$output_col, character(1)) else character(0)
-      avail_num <- c(ind$numeric_cols, gene_outputs)
+      gene_num_ex <- setdiff(gene_num, gene_to_mod$output_col)
+      avail_num <- c(ind$numeric_cols, gene_num_ex)
       unused <- setdiff(avail_num, gene_to_mod$input_cols)
       
-      if (length(unused) > 0 && length(gene_to_mod$input_cols) < 5) {
+      t_name <- gene_to_mod$transformer_name
+      max_cols <- if (t_name %in% c("add", "multiply")) {
+        min(5, length(avail_num))
+      } else {
+        max(2, floor((1 - exp(-1)) * length(avail_num)))
+      }
+      if (length(unused) > 0 && length(gene_to_mod$input_cols) < max_cols) {
         new_col <- weighted_sample(unused, 1)
         old_formula <- gene_to_formula(gene_to_mod)
         gene_to_mod$input_cols <- c(gene_to_mod$input_cols, new_col)
@@ -143,14 +229,15 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
   
   if (mut_type == 3) {
     # Add a random gene
-    t_name <- sample(names(evo_transformers), 1)
+    allowed_transformers <- names(evo_transformers)
+    if (task == "multiclass") {
+      allowed_transformers <- setdiff(allowed_transformers, "target_encode")
+    }
+    t_name <- sample(allowed_transformers, 1)
     t_def <- evo_transformers[[t_name]]
     
-    # All current transformers output numeric columns, so they can be reused
-    gene_outputs <- if (length(ind$genes) > 0) vapply(ind$genes, function(g) g$output_col, character(1)) else character(0)
-    
-    avail_num <- c(ind$numeric_cols, gene_outputs)
-    avail_cat <- ind$categorical_cols
+    avail_num <- c(ind$numeric_cols, gene_num)
+    avail_cat <- c(ind$categorical_cols, gene_cat)
     
     # Select available columns based on input_type
     available_cols <- if (t_def$input_type == "numeric") {
@@ -179,7 +266,12 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       cols <- weighted_sample(available_cols, 2, replace = allow_rep)
     } else if (t_def$type == "multivariate") {
       if (length(available_cols) < 2) return(ind)
-      num_cols <- sample(2:min(5, length(available_cols)), 1)
+      max_cols <- if (t_name %in% c("add", "multiply")) {
+        min(5, length(available_cols))
+      } else {
+        max(2, floor((1 - exp(-1)) * length(available_cols)))
+      }
+      num_cols <- if (max_cols == 2) 2 else sample(2:max_cols, 1)
       allow_rep <- if (!is.null(t_def$allow_replace)) t_def$allow_replace else FALSE
       cols <- weighted_sample(available_cols, num_cols, replace = allow_rep)
     } else if (t_def$input_type == "mixed") {
@@ -191,23 +283,49 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       cols <- weighted_sample(available_cols, 1)
     }
     
-    new_gene <- create_gene(t_name, cols)
-    
-    # Avoid exact duplicates
-    existing_out <- sapply(ind$genes, function(g) g$output_col)
-    if (!(new_gene$output_col %in% existing_out)) {
-      ind$genes <- c(ind$genes, list(new_gene))
-      ind$fitness <- NA_real_
-      if (verbose) {
-        message(sprintf("    [Mutation] Added gene: %s (%s)", 
-                        new_gene$output_col, gene_to_formula(new_gene)))
+    # If the transformer is multi-component, add all components
+    new_genes_to_add <- list()
+    if (t_name %in% c("pca", "truncated_svd")) {
+      for (comp in 1:3) {
+        g <- create_gene(t_name, cols)
+        g$params$comp_idx <- comp
+        g$output_col <- t_def$name_generator(g)
+        new_genes_to_add <- c(new_genes_to_add, list(g))
+      }
+    } else if (t_name == "umap") {
+      for (comp in 1:2) {
+        g <- create_gene(t_name, cols)
+        g$params$comp_idx <- comp
+        g$output_col <- t_def$name_generator(g)
+        new_genes_to_add <- c(new_genes_to_add, list(g))
       }
     } else {
-      if (verbose) {
-        message(sprintf("    [Mutation] Attempted to add duplicate gene: %s (%s) (skipped)", new_gene$output_col, gene_to_formula(new_gene)))
+      new_gene <- create_gene(t_name, cols)
+      new_genes_to_add <- list(new_gene)
+    }
+    
+    # Avoid exact duplicates and add genes
+    existing_out <- sapply(ind$genes, function(g) g$output_col)
+    added_any <- FALSE
+    for (g in new_genes_to_add) {
+      if (!(g$output_col %in% existing_out)) {
+        ind$genes <- c(ind$genes, list(g))
+        added_any <- TRUE
+        if (verbose) {
+          message(sprintf("    [Mutation] Added gene: %s (%s)", 
+                          g$output_col, gene_to_formula(g)))
+        }
+      } else {
+        if (verbose) {
+          message(sprintf("    [Mutation] Attempted to add duplicate gene: %s (%s) (skipped)", g$output_col, gene_to_formula(g)))
+        }
       }
     }
+    if (added_any) {
+      ind$fitness <- NA_real_
+    }
   }
+  ind$genes <- topological_sort_genes(ind$genes, c(ind$numeric_cols, ind$categorical_cols))
   ind
 }
 

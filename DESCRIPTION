@@ -2,15 +2,26 @@ Package: evoFE
 Type: Package
 Title: Evolutionary Feature Engineering
 Version: 0.1.0
-Author: User
-Maintainer: User <user@example.com>
+Authors@R: person("Gustavo", "Pereira", role = c("aut", "cre"), email = "tanopereira@gmail.com")
 Description: Automates feature engineering using a genetic algorithm approach to find optimal feature transformations.
-License: MIT
+License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
-Imports: rpart,
+Imports: 
     data.table,
     lightgbm,
     xgboost,
-    stats
+    stats,
+    digest,
+    uwot,
+    quitefastmst,
+    genieclust
+Suggests: 
+    RhpcBLASctl,
+    testthat,
+    knitr,
+    rmarkdown,
+    lumbermark,
+    deadwood
+VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
+RoxygenNote: 7.3.2

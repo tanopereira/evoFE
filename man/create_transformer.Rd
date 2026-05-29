@@ -8,9 +8,11 @@ create_transformer(
   name,
   type,
   input_type = "numeric",
+  output_type = "numeric",
   fit_func = NULL,
   apply_func,
-  name_generator
+  name_generator,
+  allow_replace = FALSE
 )
 }
 \arguments{
@@ -20,11 +22,15 @@ create_transformer(
 
 \item{input_type}{Type of input: "numeric" or "categorical"}
 
+\item{output_type}{Type of output: "numeric" or "categorical"}
+
 \item{fit_func}{function(data, input_cols, target_col = NULL) returning state}
 
 \item{apply_func}{function(data, input_cols, state = NULL) returning new column vector}
 
 \item{name_generator}{function(input_cols) returning output column name}
+
+\item{allow_replace}{Logical. Whether column sampling allows replacement.}
 }
 \description{
 Create a transformer definition
