@@ -238,11 +238,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     x_train[!is.finite(x_train)] <- NA
     x_val[!is.finite(x_val)] <- NA
     y_train <- train_fold_feat[[target_col]]
+    y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
       y_train <- as.integer(factor(y_train, levels = classes)) - 1
+      y_val <- as.integer(factor(y_val, levels = classes)) - 1
     }
     
-    res_model <- train_model(x_train, y_train, x_val, task = task,
+    res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
                               evaluator = evaluator, threads = threads,
                               num_class = num_class, metric = metric,
                               verbose = verbose, ...)
@@ -324,11 +326,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       x_train[!is.finite(x_train)] <- NA
       x_val[!is.finite(x_val)] <- NA
       y_train <- train_fold_feat[[target_col]]
+      y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
         y_train <- as.integer(factor(y_train, levels = classes)) - 1
+        y_val <- as.integer(factor(y_val, levels = classes)) - 1
       }
       
-      res_model <- train_model(x_train, y_train, x_val, task = task,
+      res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
                                 evaluator = evaluator, threads = threads,
                                 num_class = num_class, metric = metric,
                                 verbose = verbose, ...)
@@ -413,11 +417,13 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   x_train[!is.finite(x_train)] <- NA
   x_val[!is.finite(x_val)] <- NA
   y_train <- train_fold_feat[[target_col]]
+  y_val <- val_fold_feat[[target_col]]
   if (task == "multiclass") {
     y_train <- as.integer(factor(y_train, levels = classes)) - 1
+    y_val <- as.integer(factor(y_val, levels = classes)) - 1
   }
   
-  res_model <- train_model(x_train, y_train, x_val, task = task,
+  res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
                             evaluator = evaluator, threads = threads,
                             num_class = num_class, metric = metric,
                             verbose = verbose, ...)

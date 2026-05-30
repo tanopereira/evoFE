@@ -10,7 +10,8 @@
 # @rawNamespace # NULL
 register_evaluator(
   "lightgbm_mbo",
-  train_func = function(x_train, y_train, x_val = NULL, task = "classification",
+  train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+                         task = "classification",
                          threads = 2, num_class = NULL, nrounds = 50,
                          metric = "default", mbo_iters = 5, mbo_init_design = 8,
                          mbo_folds = 3, verbose = FALSE, ...) {
@@ -22,63 +23,90 @@ register_evaluator(
       stop("The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required to use the 'lightgbm_mbo' evaluator. Please install them.")
     }
     
+    # Determine strategy: use provided validation set or internal CV
+    use_split <- !is.null(x_val) && !is.null(y_val)
+    
     if (verbose) {
-      message(sprintf("\n[MBO] Starting LightGBM Hyperparameter Tuning (Iters: %d, Folds: %d, Metric: %s)...", 
-                      mbo_iters, mbo_folds, metric))
+      if (use_split) {
+        message(sprintf("\n[MBO] Starting LightGBM Hyperparameter Tuning (Iters: %d, Strategy: split, Metric: %s)...", 
+                        mbo_iters, metric))
+      } else {
+        message(sprintf("\n[MBO] Starting LightGBM Hyperparameter Tuning (Iters: %d, Strategy: cv-%d, Metric: %s)...", 
+                        mbo_iters, mbo_folds, metric))
+      }
     }
     
-    # Define simple folds for internal cross-validation to guide tuning
-    set.seed(42)
-    n_samples <- nrow(x_train)
-    folds <- sample(rep(1:mbo_folds, length.out = n_samples))
+    if (!use_split) {
+      # CV mode: create internal folds for MBO objective evaluation
+      set.seed(42)
+      n_samples <- nrow(x_train)
+      folds <- sample(rep(1:mbo_folds, length.out = n_samples))
+    }
     
     # Objective function to evaluate hyperparameter sets
     fn <- function(x) {
-      scores <- numeric(mbo_folds)
-      for (i in seq_len(mbo_folds)) {
-        idx_train <- which(folds != i)
-        idx_val <- which(folds == i)
-        
-        x_tr <- x_train[idx_train, , drop = FALSE]
-        y_tr <- y_train[idx_train]
-        x_va <- x_train[idx_val, , drop = FALSE]
-        y_va <- y_train[idx_val]
-        
-        dtrain <- lightgbm::lgb.Dataset(data = x_tr, label = y_tr)
-        
-        params <- list(
-          objective = switch(task,
-            classification = "binary",
-            multiclass     = "multiclass",
-            "regression"),
-          num_leaves = x$num_leaves,
-          learning_rate = x$learning_rate,
-          max_depth = x$max_depth,
-          feature_fraction = x$feature_fraction,
-          num_threads = threads,
-          verbose = -1
-        )
-        if (task == "multiclass") params$num_class <- num_class
-        
+      params <- list(
+        objective = switch(task,
+          classification = "binary",
+          multiclass     = "multiclass",
+          "regression"),
+        num_leaves = x$num_leaves,
+        learning_rate = x$learning_rate,
+        max_depth = x$max_depth,
+        feature_fraction = x$feature_fraction,
+        num_threads = threads,
+        verbose = -1
+      )
+      if (task == "multiclass") params$num_class <- num_class
+      
+      if (use_split) {
+        # Split mode: train on x_train, evaluate on provided x_val/y_val
+        dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
         utils::capture.output({
           model <- lightgbm::lgb.train(
             params = params, data = dtrain, nrounds = nrounds, verbose = -1
           )
         })
-        
-        preds <- stats::predict(model, x_va)
-        scores[i] <- compute_metric(y_va, preds, task, metric = metric, num_class = num_class)
+        preds <- stats::predict(model, x_val)
+        score <- compute_metric(y_val, preds, task, metric = metric, num_class = num_class)
         rm(dtrain)
+        
+        if (verbose) {
+          message(sprintf("  [MBO Eval] lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f -> Val Fitness: %.4f", 
+                          x$learning_rate, x$num_leaves, x$max_depth, x$feature_fraction, score))
+        }
+        return(-score)
+      } else {
+        # CV mode: internal cross-validation on x_train
+        scores <- numeric(mbo_folds)
+        for (i in seq_len(mbo_folds)) {
+          idx_train <- which(folds != i)
+          idx_val <- which(folds == i)
+          
+          x_tr <- x_train[idx_train, , drop = FALSE]
+          y_tr <- y_train[idx_train]
+          x_va <- x_train[idx_val, , drop = FALSE]
+          y_va <- y_train[idx_val]
+          
+          dtrain <- lightgbm::lgb.Dataset(data = x_tr, label = y_tr)
+          utils::capture.output({
+            model <- lightgbm::lgb.train(
+              params = params, data = dtrain, nrounds = nrounds, verbose = -1
+            )
+          })
+          
+          preds <- stats::predict(model, x_va)
+          scores[i] <- compute_metric(y_va, preds, task, metric = metric, num_class = num_class)
+          rm(dtrain)
+        }
+        
+        mean_score <- mean(scores)
+        if (verbose) {
+          message(sprintf("  [MBO Eval] lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f -> CV Fitness: %.4f", 
+                          x$learning_rate, x$num_leaves, x$max_depth, x$feature_fraction, mean_score))
+        }
+        return(-mean_score)
       }
-      
-      # mlrMBO minimizes by default, and compute_metric is higher-is-better (fitness).
-      # Thus, return the negative of the mean score.
-      mean_score <- mean(scores)
-      if (verbose) {
-        message(sprintf("  [MBO Eval] lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f -> CV Fitness: %.4f", 
-                        x$learning_rate, x$num_leaves, x$max_depth, x$feature_fraction, mean_score))
-      }
-      return(-mean_score)
     }
     
     # Parameter Set to optimize
@@ -105,11 +133,21 @@ register_evaluator(
     # Generate initial design
     design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps)
     
-    # Configure robust surrogate model (regr.lm with standard error for numerical stability)
-    surrogate <- mlr::makeLearner("regr.lm", predict.type = "se")
-    
     # Run bayesian optimization
-    mbo_res <- mlrMBO::mbo(obj_fun, design = design, learner = surrogate, control = control, show.info = verbose)
+    # Try Kriging (GP) surrogate first; fall back to Random Forest if Kriging
+    # encounters numerical singularities (common on small datasets)
+    mbo_res <- tryCatch({
+      mlrMBO::mbo(obj_fun, design = design, control = control, show.info = verbose)
+    }, error = function(e) {
+      if (verbose) {
+        message("[MBO] Kriging surrogate failed, falling back to Random Forest surrogate.")
+      }
+      rf_surrogate <- mlr::makeLearner("regr.randomForest", predict.type = "se")
+      suppressWarnings(
+        mlrMBO::mbo(obj_fun, design = design, learner = rf_surrogate,
+                    control = control, show.info = verbose)
+      )
+    })
     best_params <- mbo_res$x
     
     if (verbose) {

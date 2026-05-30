@@ -7,6 +7,7 @@
 #' @param x_train Numeric matrix of training features.
 #' @param y_train Numeric vector of training labels.
 #' @param x_val Optional numeric matrix of validation features.
+#' @param y_val Optional numeric vector of validation labels.
 #' @param task Task type: "classification", "multiclass", or "regression".
 #' @param evaluator Model type: "lightgbm" or "xgboost".
 #' @param threads Number of threads.
@@ -17,7 +18,7 @@
 #'   \code{x_val} is NULL), and \code{importances} (named numeric vector or
 #'   NULL).
 #' @keywords internal
-train_model <- function(x_train, y_train, x_val = NULL,
+train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                         task = "classification", evaluator = "lightgbm",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
 
@@ -31,6 +32,7 @@ train_model <- function(x_train, y_train, x_val = NULL,
     x_train = x_train,
     y_train = y_train,
     x_val = x_val,
+    y_val = y_val,
     task = task,
     threads = threads,
     num_class = num_class,

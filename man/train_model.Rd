@@ -8,6 +8,7 @@ train_model(
   x_train,
   y_train,
   x_val = NULL,
+  y_val = NULL,
   task = "classification",
   evaluator = "lightgbm",
   threads = 2,
@@ -22,6 +23,8 @@ train_model(
 \item{y_train}{Numeric vector of training labels.}
 
 \item{x_val}{Optional numeric matrix of validation features.}
+
+\item{y_val}{Optional numeric vector of validation labels.}
 
 \item{task}{Task type: "classification", "multiclass", or "regression".}
 
