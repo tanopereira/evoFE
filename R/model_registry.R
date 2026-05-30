@@ -126,7 +126,9 @@ register_evaluator(
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
 
-    dtrain <- catboost::catboost.load_pool(data = as.data.frame(x_train), label = y_train)
+    df_train <- as.data.frame(x_train)
+    df_train[] <- lapply(df_train, as.numeric)
+    dtrain <- catboost::catboost.load_pool(data = df_train, label = y_train)
     
     params <- list(
       loss_function = switch(task,
@@ -143,7 +145,9 @@ register_evaluator(
 
     preds <- NULL
     if (!is.null(x_val)) {
-      dval <- catboost::catboost.load_pool(data = as.data.frame(x_val))
+      df_val <- as.data.frame(x_val)
+      df_val[] <- lapply(df_val, as.numeric)
+      dval <- catboost::catboost.load_pool(data = df_val)
       pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
       preds <- catboost::catboost.predict(model, dval, prediction_type = pred_type)
       
@@ -169,7 +173,9 @@ register_evaluator(
     if (system.file(package = "catboost") == "") {
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
-    dval <- catboost::catboost.load_pool(data = as.data.frame(x_new))
+    df_new <- as.data.frame(x_new)
+    df_new[] <- lapply(df_new, as.numeric)
+    dval <- catboost::catboost.load_pool(data = df_new)
     pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
     preds <- catboost::catboost.predict(model, dval, prediction_type = pred_type)
     

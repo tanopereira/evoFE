@@ -985,7 +985,8 @@ test_that("CatBoost evaluator checks for package availability", {
     )
   } else {
     # If catboost is installed, test that it trains and predicts successfully
-    x_train <- matrix(rnorm(20), ncol = 2)
+    # Use integer matrix to verify the fix for C++ REAL() type assertions on integers
+    x_train <- matrix(as.integer(rpois(20, 5)), ncol = 2)
     colnames(x_train) <- c("x1", "x2")
     y_train <- rbinom(10, 1, 0.5)
     
