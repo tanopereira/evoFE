@@ -7,6 +7,17 @@ truncate_cols <- function(cols, max_show = 10) {
 
 # --- Internal helpers ---
 
+#' Check if terminal supports ANSI colors
+#' @keywords internal
+supports_color <- function() {
+  term <- Sys.getenv("TERM")
+  if (term %in% c("dumb", "")) return(FALSE)
+  if (.Platform$OS.type == "windows") {
+    return(interactive() || !is.na(Sys.getenv("RSTUDIO", unset = NA)))
+  }
+  isatty(stdout()) || !is.na(Sys.getenv("RSTUDIO", unset = NA))
+}
+
 #' Stratified or random splitting helper
 #' @keywords internal
 stratified_split <- function(y, ratio) {
@@ -122,11 +133,20 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
     }
 
     if (verbose) {
-      new_best_str <- if (pop[[i]]$fitness > running_best_fitness) " (New Best!)" else ""
+      improved <- pop[[i]]$fitness > running_best_fitness
+      green_start <- if (supports_color()) "\033[32m" else ""
+      red_start   <- if (supports_color()) "\033[31m" else ""
+      color_reset <- if (supports_color()) "\033[0m" else ""
+      
+      new_best_str <- if (improved) " (New Best!)" else ""
       cache_str <- if (cached) " (cached)" else ""
-      message(sprintf("  Tested Individual %d%s -> Fitness: %.4f%s",
-                      i, new_best_str, pop[[i]]$fitness, cache_str))
-      if (pop[[i]]$fitness > running_best_fitness) {
+      msg_color <- if (improved) green_start else red_start
+      
+      msg <- sprintf("  Tested Individual %d%s -> Fitness: %.4f%s",
+                     i, new_best_str, pop[[i]]$fitness, cache_str)
+      message(paste0(msg_color, msg, color_reset))
+      
+      if (improved) {
         running_best_fitness <- pop[[i]]$fitness
       }
     }
