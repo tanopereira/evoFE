@@ -983,6 +983,21 @@ test_that("CatBoost evaluator checks for package availability", {
       train_model(x_train, y_train, task = "classification", evaluator = "catboost"),
       "The 'catboost' package is required"
     )
+  } else {
+    # If catboost is installed, test that it trains and predicts successfully
+    x_train <- matrix(rnorm(20), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(10, 1, 0.5)
+    
+    res <- train_model(x_train, y_train, x_val = x_train, task = "classification", evaluator = "catboost")
+    expect_type(res, "list")
+    expect_true(!is.null(res$model))
+    expect_length(res$predictions, 10)
+    
+    # Test predict function
+    evaluator_entry <- evo_evaluators[["catboost"]]
+    preds <- evaluator_entry$predict_func(res$model, x_train, task = "classification")
+    expect_length(preds, 10)
   }
 })
 

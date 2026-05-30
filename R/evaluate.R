@@ -424,12 +424,12 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     x_holdout <- data.matrix(res_holdout$train[, features, with = FALSE])
     x_holdout[!is.finite(x_holdout)] <- NA
     
-    if (evaluator == "lightgbm") {
-      preds_holdout <- stats::predict(res_model$model, x_holdout)
-    } else if (evaluator == "xgboost") {
-      dmatrix_holdout <- xgboost::xgb.DMatrix(data = x_holdout)
-      preds_holdout <- stats::predict(res_model$model, dmatrix_holdout)
+    evaluator_entry <- evo_evaluators[[evaluator]]
+    if (is.null(evaluator_entry)) {
+      stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s", 
+                   evaluator, paste(names(evo_evaluators), collapse = ", ")))
     }
+    preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task)
     
     if (task == "multiclass") {
       y_holdout_encoded <- as.integer(factor(holdout_fold[[target_col]], levels = classes)) - 1
