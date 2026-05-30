@@ -117,7 +117,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                                     evaluator = evaluator, fold_ids = fold_ids, 
                                     shared_folds = shared_folds,
                                     shared_full = shared_full, state_cache = state_cache,
-                                    threads = threads, metric = metric)
+                                    threads = threads, metric = metric, verbose = verbose)
       assign(cache_key, pop[[i]], envir = fitness_cache)
     }
 
@@ -489,7 +489,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
     best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
                                          target_col, task, evaluator, threads, state_cache,
-                                         classes, num_class, metric = metric)
+                                         classes, num_class, metric = metric, verbose = verbose)
   }
   
   if (verbose) {
@@ -522,7 +522,8 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   
   res_model <- train_model(x_full, y_full, task = task, evaluator = evaluator,
-                            threads = threads, num_class = num_class, metric = metric)
+                            threads = threads, num_class = num_class, metric = metric,
+                            verbose = verbose)
   best_model <- res_model$model
   
   structure(

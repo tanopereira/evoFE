@@ -13,13 +13,18 @@ register_evaluator(
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
                          threads = 2, num_class = NULL, nrounds = 50,
                          metric = "default", mbo_iters = 5, mbo_init_design = 8,
-                         mbo_folds = 3, ...) {
+                         mbo_folds = 3, verbose = FALSE, ...) {
     
     # Check for required packages
     if (!requireNamespace("mlrMBO", quietly = TRUE) ||
         !requireNamespace("ParamHelpers", quietly = TRUE) ||
         !requireNamespace("smoof", quietly = TRUE)) {
       stop("The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required to use the 'lightgbm_mbo' evaluator. Please install them.")
+    }
+    
+    if (verbose) {
+      message(sprintf("\n[MBO] Starting LightGBM Hyperparameter Tuning (Iters: %d, Folds: %d, Metric: %s)...", 
+                      mbo_iters, mbo_folds, metric))
     }
     
     # Define simple folds for internal cross-validation to guide tuning
@@ -68,7 +73,12 @@ register_evaluator(
       
       # mlrMBO minimizes by default, and compute_metric is higher-is-better (fitness).
       # Thus, return the negative of the mean score.
-      return(-mean(scores))
+      mean_score <- mean(scores)
+      if (verbose) {
+        message(sprintf("  [MBO Eval] lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f -> CV Fitness: %.4f", 
+                        x$learning_rate, x$num_leaves, x$max_depth, x$feature_fraction, mean_score))
+      }
+      return(-mean_score)
     }
     
     # Parameter Set to optimize
@@ -99,8 +109,13 @@ register_evaluator(
     surrogate <- mlr::makeLearner("regr.lm", predict.type = "se")
     
     # Run bayesian optimization
-    mbo_res <- mlrMBO::mbo(obj_fun, design = design, learner = surrogate, control = control, show.info = FALSE)
+    mbo_res <- mlrMBO::mbo(obj_fun, design = design, learner = surrogate, control = control, show.info = verbose)
     best_params <- mbo_res$x
+    
+    if (verbose) {
+      message(sprintf("[MBO] Optimization Complete. Best Parameters: lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f", 
+                      best_params$learning_rate, best_params$num_leaves, best_params$max_depth, best_params$feature_fraction))
+    }
     
     # Train final model on full dataset with best parameters
     dtrain_full <- lightgbm::lgb.Dataset(data = x_train, label = y_train)

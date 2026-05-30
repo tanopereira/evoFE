@@ -184,7 +184,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
                              state_cache = NULL, threads = 2,
-                             metric = "default") {
+                             metric = "default", verbose = FALSE) {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
@@ -242,7 +242,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     
     res_model <- train_model(x_train, y_train, x_val, task = task,
                               evaluator = evaluator, threads = threads,
-                              num_class = num_class, metric = metric)
+                              num_class = num_class, metric = metric,
+                              verbose = verbose)
     preds <- res_model$predictions
     
     # Store importances (single fold)
@@ -327,7 +328,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       
       res_model <- train_model(x_train, y_train, x_val, task = task,
                                 evaluator = evaluator, threads = threads,
-                                num_class = num_class, metric = metric)
+                                num_class = num_class, metric = metric,
+                                verbose = verbose)
       preds <- res_model$predictions
       if (!is.null(res_model$importances)) {
         fold_importances[[f]] <- res_model$importances
@@ -368,7 +370,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 #' @keywords internal
 evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits, 
                                      target_col, task, evaluator, threads, 
-                                     state_cache, classes, num_class, metric = "default") {
+                                     state_cache, classes, num_class, metric = "default",
+                                     verbose = FALSE) {
   if (!is.null(shared_splits)) {
     train_fold <- shared_splits$train
     val_fold <- shared_splits$val
@@ -414,7 +417,8 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   
   res_model <- train_model(x_train, y_train, x_val, task = task,
                             evaluator = evaluator, threads = threads,
-                            num_class = num_class, metric = metric)
+                            num_class = num_class, metric = metric,
+                            verbose = verbose)
   
   res_holdout <- tryCatch({
     apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
