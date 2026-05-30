@@ -18,7 +18,7 @@ evolve_features(
   evaluator = "lightgbm",
   dynamic_population = TRUE,
   crossover_type = "both",
-  threads = 8,
+  threads = 2,
   max_clustering_size = 5000,
   seed = NULL,
   verbose = TRUE
@@ -51,7 +51,7 @@ evolve_features(
 
 \item{crossover_type}{Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"}
 
-\item{threads}{Number of threads to use for parallel execution (default 8)}
+\item{threads}{Number of threads to use for parallel execution (default 2)}
 
 \item{max_clustering_size}{Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)}
 

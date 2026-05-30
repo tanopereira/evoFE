@@ -175,14 +175,14 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param shared_folds Optional list of shared data.table CV folds for in-place caching.
 #' @param shared_full Optional data.table of the full dataset for in-place caching.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
-#' @param threads Number of threads to use for parallel execution (default 8)
+#' @param threads Number of threads to use for parallel execution (default 2)
 #' @export
 evaluate_fitness <- function(ind, data, target_col, task = "classification", 
                              cv_folds = 3, evaluation_strategy = "cv",
                              split_ids = NULL, shared_splits = NULL,
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
-                             state_cache = NULL, threads = 8) {
+                             state_cache = NULL, threads = 2) {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL

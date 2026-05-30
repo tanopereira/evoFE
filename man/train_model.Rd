@@ -10,7 +10,7 @@ train_model(
   x_val = NULL,
   task = "classification",
   evaluator = "lightgbm",
-  threads = 8,
+  threads = 2,
   num_class = NULL,
   nrounds = 50
 )

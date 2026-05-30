@@ -175,7 +175,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param evaluator The ML model to use ("lightgbm" or "xgboost")
 #' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
 #' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
-#' @param threads Number of threads to use for parallel execution (default 8)
+#' @param threads Number of threads to use for parallel execution (default 2)
 #' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
 #' @param seed Optional integer seed for reproducibility.
 #' @param verbose Logical. If TRUE, prints progress.
@@ -186,7 +186,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             split_ids = NULL,
                             early_stopping_rounds = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE, crossover_type = "both", 
-                            threads = 8, max_clustering_size = 5000, 
+                            threads = 2, max_clustering_size = 5000, 
                             seed = NULL, verbose = TRUE) {
   if (!is.null(seed)) set.seed(seed)
   

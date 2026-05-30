@@ -18,7 +18,7 @@
 #' @keywords internal
 train_model <- function(x_train, y_train, x_val = NULL,
                         task = "classification", evaluator = "lightgbm",
-                        threads = 8, num_class = NULL, nrounds = 50) {
+                        threads = 2, num_class = NULL, nrounds = 50) {
 
   if (evaluator == "lightgbm") {
     dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
