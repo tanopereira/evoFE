@@ -138,10 +138,11 @@ register_evaluator(
       thread_count = threads,
       iterations = nrounds,
       learning_rate = 0.1,
-      logging_level = "Silent"
+      logging_level = "Silent",
+      allow_writing_files = FALSE
     )
 
-    model <- catboost::catboost.train(dtrain, params = params)
+    model <- suppressWarnings(catboost::catboost.train(dtrain, params = params))
 
     preds <- NULL
     if (!is.null(x_val)) {
@@ -149,7 +150,7 @@ register_evaluator(
       df_val[] <- lapply(df_val, as.numeric)
       dval <- catboost::catboost.load_pool(data = df_val)
       pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
-      preds <- catboost::catboost.predict(model, dval, prediction_type = pred_type)
+      preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
       
       # For multiclass, format shape as probability matrix
       if (task == "multiclass") {
@@ -177,7 +178,7 @@ register_evaluator(
     df_new[] <- lapply(df_new, as.numeric)
     dval <- catboost::catboost.load_pool(data = df_new)
     pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
-    preds <- catboost::catboost.predict(model, dval, prediction_type = pred_type)
+    preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
     
     if (task == "multiclass") {
       # In R predict_model, multiclass format checks are handled at the caller or class level,
