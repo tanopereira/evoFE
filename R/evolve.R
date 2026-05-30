@@ -522,7 +522,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   
   res_model <- train_model(x_full, y_full, task = task, evaluator = evaluator,
-                            threads = threads, num_class = num_class)
+                            threads = threads, num_class = num_class, metric = metric)
   best_model <- res_model$model
   
   structure(

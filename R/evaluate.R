@@ -242,7 +242,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     
     res_model <- train_model(x_train, y_train, x_val, task = task,
                               evaluator = evaluator, threads = threads,
-                              num_class = num_class)
+                              num_class = num_class, metric = metric)
     preds <- res_model$predictions
     
     # Store importances (single fold)
@@ -327,7 +327,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       
       res_model <- train_model(x_train, y_train, x_val, task = task,
                                 evaluator = evaluator, threads = threads,
-                                num_class = num_class)
+                                num_class = num_class, metric = metric)
       preds <- res_model$predictions
       if (!is.null(res_model$importances)) {
         fold_importances[[f]] <- res_model$importances
@@ -414,7 +414,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   
   res_model <- train_model(x_train, y_train, x_val, task = task,
                             evaluator = evaluator, threads = threads,
-                            num_class = num_class)
+                            num_class = num_class, metric = metric)
   
   res_holdout <- tryCatch({
     apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)

@@ -12,13 +12,14 @@
 #' @param threads Number of threads.
 #' @param num_class Number of classes (required for multiclass).
 #' @param nrounds Number of boosting rounds.
+#' @param ... Additional arguments passed to the evaluator training function.
 #' @return A list with elements \code{model}, \code{predictions} (NULL when
 #'   \code{x_val} is NULL), and \code{importances} (named numeric vector or
 #'   NULL).
 #' @keywords internal
 train_model <- function(x_train, y_train, x_val = NULL,
                         task = "classification", evaluator = "lightgbm",
-                        threads = 2, num_class = NULL, nrounds = 50) {
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
 
   evaluator_entry <- evo_evaluators[[evaluator]]
   if (is.null(evaluator_entry)) {
@@ -33,6 +34,7 @@ train_model <- function(x_train, y_train, x_val = NULL,
     task = task,
     threads = threads,
     num_class = num_class,
-    nrounds = nrounds
+    nrounds = nrounds,
+    ...
   )
 }

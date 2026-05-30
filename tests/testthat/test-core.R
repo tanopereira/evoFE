@@ -1001,6 +1001,39 @@ test_that("CatBoost evaluator checks for package availability", {
   }
 })
 
+test_that("lightgbm_mbo checks for package availability", {
+  # If mlrMBO, ParamHelpers, or smoof is not installed, it should raise a clear error
+  if (!requireNamespace("mlrMBO", quietly = TRUE) ||
+      !requireNamespace("ParamHelpers", quietly = TRUE) ||
+      !requireNamespace("smoof", quietly = TRUE)) {
+    x_train <- matrix(rnorm(20), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(10, 1, 0.5)
+    
+    expect_error(
+      train_model(x_train, y_train, task = "classification", evaluator = "lightgbm_mbo"),
+      "The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required"
+    )
+  } else {
+    # If installed, test that it trains and predicts successfully
+    x_train <- matrix(rnorm(40), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(20, 1, 0.5)
+    
+    res <- train_model(x_train, y_train, x_val = x_train, task = "classification", 
+                       evaluator = "lightgbm_mbo", mbo_iters = 2, mbo_init_design = 8, mbo_folds = 2)
+    expect_type(res, "list")
+    expect_true(!is.null(res$model))
+    expect_length(res$predictions, 20)
+    expect_true("best_params" %in% names(res))
+    
+    # Test predict function
+    evaluator_entry <- evo_evaluators[["lightgbm_mbo"]]
+    preds <- evaluator_entry$predict_func(res$model, x_train, task = "classification")
+    expect_length(preds, 20)
+  }
+})
+
 
 
 

@@ -12,7 +12,8 @@ train_model(
   evaluator = "lightgbm",
   threads = 2,
   num_class = NULL,
-  nrounds = 50
+  nrounds = 50,
+  ...
 )
 }
 \arguments{
@@ -31,6 +32,8 @@ train_model(
 \item{num_class}{Number of classes (required for multiclass).}
 
 \item{nrounds}{Number of boosting rounds.}
+
+\item{...}{Additional arguments passed to the evaluator training function.}
 }
 \value{
 A list with elements \code{model}, \code{predictions} (NULL when
