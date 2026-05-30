@@ -130,8 +130,8 @@ register_evaluator(
     control <- mlrMBO::makeMBOControl()
     control <- mlrMBO::setMBOControlTermination(control, iters = mbo_iters)
     
-    # Generate initial design
-    design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps)
+    # Generate initial design using Maximin Latin Hypercube Design (LHS)
+    design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps, fun = lhs::maximinLHS)
     if (!is.null(best_params)) {
       req_params <- c("learning_rate", "num_leaves", "max_depth", "feature_fraction")
       if (all(req_params %in% names(best_params))) {
