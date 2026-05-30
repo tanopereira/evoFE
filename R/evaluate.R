@@ -257,6 +257,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$importances <- numeric(0)
     }
     
+    if (!is.null(res_model$best_params)) {
+      ind$best_params <- res_model$best_params
+    }
+    
     # Validation score -> fitness
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
@@ -339,6 +343,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       preds <- res_model$predictions
       if (!is.null(res_model$importances)) {
         fold_importances[[f]] <- res_model$importances
+      }
+      if (!is.null(res_model$best_params)) {
+        ind$best_params <- res_model$best_params
       }
       
       if (task == "multiclass") {
@@ -426,7 +433,11 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
                             evaluator = evaluator, threads = threads,
                             num_class = num_class, metric = metric,
-                            verbose = verbose, ...)
+                            verbose = verbose, best_params = ind$best_params, ...)
+  
+  if (!is.null(res_model$best_params)) {
+    ind$best_params <- res_model$best_params
+  }
   
   res_holdout <- tryCatch({
     apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)

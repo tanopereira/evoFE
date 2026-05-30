@@ -1031,6 +1031,20 @@ test_that("lightgbm_mbo checks for package availability", {
     evaluator_entry <- evo_evaluators[["lightgbm_mbo"]]
     preds <- evaluator_entry$predict_func(res$model, x_train, task = "classification")
     expect_length(preds, 20)
+    
+    # Test passing best_params to seed the initial design
+    custom_params <- list(
+      learning_rate = 0.05,
+      num_leaves = 15,
+      max_depth = 4,
+      feature_fraction = 0.8
+    )
+    res_seeded <- train_model(x_train, y_train, x_val = x_train, task = "classification", 
+                              evaluator = "lightgbm_mbo", mbo_iters = 1, mbo_init_design = 5, mbo_folds = 2,
+                              best_params = custom_params, verbose = FALSE)
+    expect_type(res_seeded, "list")
+    expect_true(!is.null(res_seeded$model))
+    expect_true("best_params" %in% names(res_seeded))
   }
 })
 

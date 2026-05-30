@@ -509,6 +509,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (verbose) {
     message("Training final model on full dataset...")
   }
+  best_params <- best_ind$best_params
   res_full <- apply_individual(best_ind, shared_full, NULL, target_col, state_cache = state_cache)
   best_ind <- res_full$ind
   
@@ -524,7 +525,7 @@ evolve_features <- function(data, target_col, task = "classification",
   
   res_model <- train_model(x_full, y_full, task = task, evaluator = evaluator,
                             threads = threads, num_class = num_class, metric = metric,
-                            verbose = verbose, ...)
+                            verbose = verbose, best_params = best_params, ...)
   best_model <- res_model$model
   
   structure(

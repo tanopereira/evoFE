@@ -14,7 +14,7 @@ register_evaluator(
                          task = "classification",
                          threads = 2, num_class = NULL, nrounds = 50,
                          metric = "default", mbo_iters = 5, mbo_init_design = 8,
-                         mbo_folds = 3, verbose = FALSE, ...) {
+                         mbo_folds = 3, verbose = FALSE, best_params = NULL, ...) {
     
     # Check for required packages
     if (!requireNamespace("mlrMBO", quietly = TRUE) ||
@@ -132,6 +132,21 @@ register_evaluator(
     
     # Generate initial design
     design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps)
+    if (!is.null(best_params)) {
+      req_params <- c("learning_rate", "num_leaves", "max_depth", "feature_fraction")
+      if (all(req_params %in% names(best_params))) {
+        best_df <- data.frame(
+          learning_rate = as.numeric(best_params$learning_rate),
+          num_leaves = as.integer(best_params$num_leaves),
+          max_depth = as.integer(best_params$max_depth),
+          feature_fraction = as.numeric(best_params$feature_fraction)
+        )
+        design <- rbind(best_df, design)
+        if (verbose) {
+          message("[MBO] Seeding initial design with best parameters from previous tuning.")
+        }
+      }
+    }
     
     # Run bayesian optimization
     # Try Kriging (GP) surrogate first; fall back to Random Forest if Kriging
