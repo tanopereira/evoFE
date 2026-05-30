@@ -10,7 +10,5 @@
 
 0 errors | 0 warnings | 1 note
 
-* This is a new submission to CRAN.
-* The only note is the standard `New submission` note from `CRAN incoming feasibility`.
-
-
+* This is a resubmission. The vignette CPU time note in the previous pre-test has been resolved by reducing default thread count to 2.
+* The only remaining note is the standard `New submission` note from `CRAN incoming feasibility`.
