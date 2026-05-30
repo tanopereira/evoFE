@@ -46,7 +46,7 @@ applied to new data at prediction time.
 devtools::install_local("path/to/evoFE")
 
 # Or install directly from a git repo
-# devtools::install_github("your-org/evoFE")
+# devtools::install_github("tanopereira/evoFE")
 ```
 
 ## Quick Start — Binary Classification
