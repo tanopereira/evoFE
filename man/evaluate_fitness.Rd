@@ -19,7 +19,8 @@ evaluate_fitness(
   shared_full = NULL,
   state_cache = NULL,
   threads = 2,
-  metric = "default"
+  metric = "default",
+  verbose = FALSE
 )
 }
 \arguments{
@@ -52,6 +53,8 @@ evaluate_fitness(
 \item{threads}{Number of threads to use for parallel execution (default 2)}
 
 \item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
+
+\item{verbose}{Logical indicating if progress should be printed.}
 }
 \description{
 Evaluate the fitness of an individual

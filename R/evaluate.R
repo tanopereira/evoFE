@@ -177,6 +177,7 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
+#' @param verbose Logical indicating if progress should be printed.
 #' @export
 evaluate_fitness <- function(ind, data, target_col, task = "classification", 
                              cv_folds = 3, evaluation_strategy = "cv",
