@@ -100,7 +100,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          split_ids, shared_splits, evaluator,
                          fold_ids, shared_folds, shared_full, state_cache,
                          fitness_cache, threads, verbose, running_best_fitness,
-                         metric = "default") {
+                         metric = "default", ...) {
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) next
 
@@ -117,7 +117,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                                     evaluator = evaluator, fold_ids = fold_ids, 
                                     shared_folds = shared_folds,
                                     shared_full = shared_full, state_cache = state_cache,
-                                    threads = threads, metric = metric, verbose = verbose)
+                                    threads = threads, metric = metric, verbose = verbose, ...)
       assign(cache_key, pop[[i]], envir = fitness_cache)
     }
 
@@ -181,6 +181,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param seed Optional integer seed for reproducibility.
 #' @param verbose Logical. If TRUE, prints progress.
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
+#' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @export
 evolve_features <- function(data, target_col, task = "classification", 
                             generations = 10, pop_size = 10, cv_folds = 3, 
@@ -189,7 +190,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             early_stopping_rounds = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE, crossover_type = "both", 
                             threads = 2, max_clustering_size = 5000, 
-                            seed = NULL, verbose = TRUE, metric = "default") {
+                            seed = NULL, verbose = TRUE, metric = "default", ...) {
   if (!is.null(seed)) set.seed(seed)
   
   # Temporarily configure max clustering size and threads options
@@ -342,7 +343,7 @@ evolve_features <- function(data, target_col, task = "classification",
                               split_ids_val, shared_splits, evaluator,
                               fold_ids, shared_folds, shared_full, state_cache,
                               fitness_cache, threads, verbose, running_best_fitness,
-                              metric = metric)
+                              metric = metric, ...)
     pop <- eval_res$pop
     running_best_fitness <- eval_res$running_best_fitness
     
@@ -479,7 +480,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             split_ids_val, shared_splits, evaluator,
                             fold_ids, shared_folds, shared_full, state_cache,
                             fitness_cache, threads, verbose, running_best_fitness,
-                            metric = metric)
+                            metric = metric, ...)
   pop <- eval_res$pop
   fitness_vals <- sapply(pop, function(ind) ind$fitness)
   pop <- pop[order(fitness_vals, decreasing = TRUE)]
@@ -489,7 +490,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
     best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
                                          target_col, task, evaluator, threads, state_cache,
-                                         classes, num_class, metric = metric, verbose = verbose)
+                                         classes, num_class, metric = metric, verbose = verbose, ...)
   }
   
   if (verbose) {
@@ -523,7 +524,7 @@ evolve_features <- function(data, target_col, task = "classification",
   
   res_model <- train_model(x_full, y_full, task = task, evaluator = evaluator,
                             threads = threads, num_class = num_class, metric = metric,
-                            verbose = verbose)
+                            verbose = verbose, ...)
   best_model <- res_model$model
   
   structure(

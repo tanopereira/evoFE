@@ -20,7 +20,8 @@ evaluate_fitness(
   state_cache = NULL,
   threads = 2,
   metric = "default",
-  verbose = FALSE
+  verbose = FALSE,
+  ...
 )
 }
 \arguments{
@@ -55,6 +56,8 @@ evaluate_fitness(
 \item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
 
 \item{verbose}{Logical indicating if progress should be printed.}
+
+\item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
 \description{
 Evaluate the fitness of an individual

@@ -22,7 +22,8 @@ evolve_features(
   max_clustering_size = 5000,
   seed = NULL,
   verbose = TRUE,
-  metric = "default"
+  metric = "default",
+  ...
 )
 }
 \arguments{
@@ -61,6 +62,8 @@ evolve_features(
 \item{verbose}{Logical. If TRUE, prints progress.}
 
 \item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
+
+\item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
 \description{
 Run evolutionary feature engineering

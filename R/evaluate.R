@@ -178,6 +178,7 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param verbose Logical indicating if progress should be printed.
+#' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @export
 evaluate_fitness <- function(ind, data, target_col, task = "classification", 
                              cv_folds = 3, evaluation_strategy = "cv",
@@ -185,7 +186,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
                              state_cache = NULL, threads = 2,
-                             metric = "default", verbose = FALSE) {
+                             metric = "default", verbose = FALSE, ...) {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
@@ -372,7 +373,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits, 
                                      target_col, task, evaluator, threads, 
                                      state_cache, classes, num_class, metric = "default",
-                                     verbose = FALSE) {
+                                     verbose = FALSE, ...) {
   if (!is.null(shared_splits)) {
     train_fold <- shared_splits$train
     val_fold <- shared_splits$val

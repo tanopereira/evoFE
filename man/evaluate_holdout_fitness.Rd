@@ -17,7 +17,8 @@ evaluate_holdout_fitness(
   classes,
   num_class,
   metric = "default",
-  verbose = FALSE
+  verbose = FALSE,
+  ...
 )
 }
 \description{

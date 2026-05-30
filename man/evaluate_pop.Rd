@@ -22,7 +22,8 @@ evaluate_pop(
   threads,
   verbose,
   running_best_fitness,
-  metric = "default"
+  metric = "default",
+  ...
 )
 }
 \description{
