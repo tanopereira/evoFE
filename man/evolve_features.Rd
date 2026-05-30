@@ -21,7 +21,8 @@ evolve_features(
   threads = 2,
   max_clustering_size = 5000,
   seed = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  metric = "default"
 )
 }
 \arguments{
@@ -45,7 +46,7 @@ evolve_features(
 
 \item{early_stopping_rounds}{Stop if fitness doesn't improve for this many generations}
 
-\item{evaluator}{The ML model to use ("lightgbm" or "xgboost")}
+\item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
 
 \item{dynamic_population}{Logical. If TRUE, population expands dynamically during stagnation.}
 
@@ -58,6 +59,8 @@ evolve_features(
 \item{seed}{Optional integer seed for reproducibility.}
 
 \item{verbose}{Logical. If TRUE, prints progress.}
+
+\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
 }
 \description{
 Run evolutionary feature engineering

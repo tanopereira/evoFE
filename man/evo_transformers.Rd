@@ -7,5 +7,5 @@
 evo_transformers
 }
 \description{
-A list of default transformer definitions available for feature engineering.
+An environment containing default transformer definitions available for feature engineering.
 }

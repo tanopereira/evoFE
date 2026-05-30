@@ -35,14 +35,12 @@ predict_model <- function(object, newdata, ...) {
   x_new[!is.finite(x_new)] <- NA
   
   # Step 3: Run prediction
-  if (object$evaluator == "lightgbm") {
-    preds <- stats::predict(object$best_model, x_new)
-  } else if (object$evaluator == "xgboost") {
-    dmatrix <- xgboost::xgb.DMatrix(data = x_new)
-    preds <- stats::predict(object$best_model, dmatrix)
-  } else {
-    stop("Unknown evaluator.")
+  evaluator_entry <- evo_evaluators[[object$evaluator]]
+  if (is.null(evaluator_entry)) {
+    stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s", 
+                 object$evaluator, paste(names(evo_evaluators), collapse = ", ")))
   }
+  preds <- evaluator_entry$predict_func(object$best_model, x_new, task = object$task)
   
   if (!is.null(object$classes)) {
     if (!is.matrix(preds)) {

@@ -18,7 +18,8 @@ evaluate_fitness(
   shared_folds = NULL,
   shared_full = NULL,
   state_cache = NULL,
-  threads = 2
+  threads = 2,
+  metric = "default"
 )
 }
 \arguments{
@@ -38,7 +39,7 @@ evaluate_fitness(
 
 \item{shared_splits}{Optional list of shared data.table splits for in-place caching.}
 
-\item{evaluator}{The ML model to use ("lightgbm" or "xgboost").}
+\item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
 
 \item{fold_ids}{Optional vector of pre-defined fold assignments.}
 
@@ -49,6 +50,8 @@ evaluate_fitness(
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 
 \item{threads}{Number of threads to use for parallel execution (default 2)}
+
+\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
 }
 \description{
 Evaluate the fitness of an individual

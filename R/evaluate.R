@@ -170,19 +170,21 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param evaluation_strategy Character string, either "cv" (cross-validation) or "split" (train/validation split).
 #' @param split_ids Optional vector of pre-defined split assignments (e.g. "train", "val", "holdout").
 #' @param shared_splits Optional list of shared data.table splits for in-place caching.
-#' @param evaluator The ML model to use ("lightgbm" or "xgboost").
+#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
 #' @param fold_ids Optional vector of pre-defined fold assignments.
 #' @param shared_folds Optional list of shared data.table CV folds for in-place caching.
 #' @param shared_full Optional data.table of the full dataset for in-place caching.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
 #' @param threads Number of threads to use for parallel execution (default 2)
+#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @export
 evaluate_fitness <- function(ind, data, target_col, task = "classification", 
                              cv_folds = 3, evaluation_strategy = "cv",
                              split_ids = NULL, shared_splits = NULL,
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
-                             state_cache = NULL, threads = 2) {
+                             state_cache = NULL, threads = 2,
+                             metric = "default") {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
@@ -216,7 +218,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     
     if (is.null(res)) {
       # Lethal mutation: invalid gene dependency graph
-      ind$fitness <- if (task == "classification" || task == "multiclass") -Inf else -Inf
+      ind$fitness <- -Inf
       ind$holdout_fitness <- NULL
       return(ind)
     }
@@ -251,16 +253,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
     
     # Validation score -> fitness
-    if (task == "classification") {
-      val_score <- compute_exp_neg_logloss(val_fold_feat[[target_col]], preds)
-      ind$fitness <- val_score
-    } else if (task == "multiclass") {
+    if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-      val_score <- compute_exp_neg_multiclass_logloss(y_val_encoded, preds, num_class)
-      ind$fitness <- val_score
+      ind$fitness <- compute_metric(y_val_encoded, preds, task, metric, num_class)
     } else {
-      val_score <- sqrt(mean((val_fold_feat[[target_col]] - preds)^2))
-      ind$fitness <- -val_score
+      ind$fitness <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
     }
     
     ind$holdout_fitness <- NULL
@@ -307,7 +304,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       
       if (is.null(res)) {
         # Lethal mutation: invalid gene dependency graph
-        metrics[f] <- if (task == "classification" || task == "multiclass") -Inf else Inf
+        metrics[f] <- -Inf
         next
       }
       
@@ -336,22 +333,16 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         fold_importances[[f]] <- res_model$importances
       }
       
-      if (task == "classification") {
-        metrics[f] <- compute_exp_neg_logloss(val_fold_feat[[target_col]], preds)
-      } else if (task == "multiclass") {
+      if (task == "multiclass") {
         y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-        metrics[f] <- compute_exp_neg_multiclass_logloss(y_val_encoded, preds, num_class)
+        metrics[f] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
       } else {
-        metrics[f] <- sqrt(mean((val_fold_feat[[target_col]] - preds)^2))
+        metrics[f] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
       }
     }
     
     # Fitness: higher is better
-    if (task == "classification" || task == "multiclass") {
-      ind$fitness <- mean(metrics)
-    } else {
-      ind$fitness <- -mean(metrics)
-    }
+    ind$fitness <- mean(metrics)
     
     # Aggregate importances across folds
     all_feats <- unique(unlist(lapply(fold_importances, names)))
@@ -377,7 +368,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 #' @keywords internal
 evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits, 
                                      target_col, task, evaluator, threads, 
-                                     state_cache, classes, num_class) {
+                                     state_cache, classes, num_class, metric = "default") {
   if (!is.null(shared_splits)) {
     train_fold <- shared_splits$train
     val_fold <- shared_splits$val
@@ -440,17 +431,14 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
       preds_holdout <- stats::predict(res_model$model, dmatrix_holdout)
     }
     
-    if (task == "classification") {
-      ind$holdout_fitness <- compute_exp_neg_logloss(holdout_fold[[target_col]], preds_holdout)
-    } else if (task == "multiclass") {
+    if (task == "multiclass") {
       y_holdout_encoded <- as.integer(factor(holdout_fold[[target_col]], levels = classes)) - 1
       if (!is.matrix(preds_holdout)) {
         preds_holdout <- matrix(preds_holdout, ncol = num_class, byrow = TRUE)
       }
-      ind$holdout_fitness <- compute_exp_neg_multiclass_logloss(y_holdout_encoded, preds_holdout, num_class)
+      ind$holdout_fitness <- compute_metric(y_holdout_encoded, preds_holdout, task, metric, num_class)
     } else {
-      holdout_rmse <- sqrt(mean((holdout_fold[[target_col]] - preds_holdout)^2))
-      ind$holdout_fitness <- -holdout_rmse
+      ind$holdout_fitness <- compute_metric(holdout_fold[[target_col]], preds_holdout, task, metric)
     }
   } else {
     ind$holdout_fitness <- -Inf
@@ -460,4 +448,71 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   ind$genes <- res$ind$genes
   ind
 }
+
+# --- METRIC COMPUTATION HELPERS ---
+
+compute_auc <- function(y_true, y_pred) {
+  n_pos <- sum(y_true == 1)
+  n_neg <- sum(y_true == 0)
+  if (n_pos == 0 || n_neg == 0) return(0.5)
+  r <- rank(y_pred)
+  u <- sum(r[y_true == 1]) - (as.numeric(n_pos) * (n_pos + 1)) / 2
+  u / (as.numeric(n_pos) * n_neg)
+}
+
+compute_multiclass_auc <- function(y_true, y_pred_matrix, num_class) {
+  aucs <- numeric(num_class)
+  for (k in 1:num_class) {
+    y_true_bin <- as.integer(y_true == (k - 1))
+    aucs[k] <- compute_auc(y_true_bin, y_pred_matrix[, k])
+  }
+  mean(aucs)
+}
+
+compute_f1 <- function(y_true, y_pred) {
+  preds <- as.integer(y_pred >= 0.5)
+  tp <- sum(y_true == 1 & preds == 1)
+  fp <- sum(y_true == 0 & preds == 1)
+  fn <- sum(y_true == 1 & preds == 0)
+  precision <- if (tp + fp == 0) 0 else tp / (tp + fp)
+  recall <- if (tp + fn == 0) 0 else tp / (tp + fn)
+  if (precision + recall == 0) 0 else 2 * (precision * recall) / (precision + recall)
+}
+
+compute_mae <- function(y_true, y_pred) {
+  mean(abs(y_true - y_pred))
+}
+
+compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
+  if (is.function(metric)) {
+    return(metric(y_true, y_pred))
+  }
+  
+  metric <- tolower(metric)
+  
+  if (task == "classification") {
+    switch(metric,
+      auc = compute_auc(y_true, y_pred),
+      f1 = compute_f1(y_true, y_pred),
+      compute_exp_neg_logloss(y_true, y_pred)
+    )
+  } else if (task == "multiclass") {
+    switch(metric,
+      auc = {
+        if (!is.matrix(y_pred)) {
+          y_pred <- matrix(y_pred, ncol = num_class, byrow = TRUE)
+        }
+        compute_multiclass_auc(y_true, y_pred, num_class)
+      },
+      compute_exp_neg_multiclass_logloss(y_true, y_pred, num_class)
+    )
+  } else {
+    val_score <- switch(metric,
+      mae = compute_mae(y_true, y_pred),
+      sqrt(mean((y_true - y_pred)^2))
+    )
+    -val_score
+  }
+}
+
 

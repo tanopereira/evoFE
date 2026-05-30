@@ -79,9 +79,11 @@ The returned `evo_recipe` object contains the best individual (feature recipe),
 the fitted model, and the evolution history.
 
 ```{r binary-inspect}
-# View the winning recipe
-cat("Best recipe:", individual_to_recipe_string(res$best_individual), "\n")
-cat("Fitness:    ", res$best_individual$fitness, "\n")
+# Print high-level overview of the recipe
+print(res)
+
+# View a detailed structured summary
+summary(res)
 ```
 
 ### Applying the recipe to new data
@@ -169,7 +171,7 @@ round(probs, 3)
 
 ## Transformer Reference
 
-evoFE ships with **30 built-in transformers** that the genetic algorithm can
+evoFE ships with **32 built-in transformers** that the genetic algorithm can
 select from during evolution. The table below groups them by category.
 
 ### Arithmetic (numeric → numeric)
@@ -202,13 +204,15 @@ These combine a **categorical** grouping column with a **numeric** value column.
 
 | Transformer | Input → Output | Description |
 |:---|:---:|:---|
-| `target_encode` | cat → num | Supervised mean-target encoding with leave-one-out |
+| `target_encode` | cat → num | Supervised mean-target encoding with smoothing (for binary classification / regression) |
+| `target_encode_multiclass` | cat → num | Supervised mean-target encoding for multiclass classification tasks (one component per class-indicator) |
 | `frequency_encode` | cat → num | Proportion of each category in the data |
 | `one_hot_encode` | cat → num | Binary one-hot encoding indicator for a specific category (or "other" for rare categories) |
 | `quantile_binning` | num → num | Assign quantile rank (1–5) |
 | `log_binning` | num → num | Assign log-scale bin index |
 | `quantile_binning_cat` | num → cat | Same as `quantile_binning`, output as factor |
 | `log_binning_cat` | num → cat | Same as `log_binning`, output as factor |
+| `datetime_extract` | cat → num | Extracted datetime components (year, month, day, hour, day of week, or weekend indicator) from date/time columns |
 
 ### Dimensionality reduction (numeric → numeric)
 
@@ -245,6 +249,33 @@ Gen 2: divide(Petal.Width, logratio(…))            → chains from tested gene
 evaluated in a **previous** generation. A brand-new untested gene is never used
 as input for another gene in the same individual. This prevents fragile
 dependency chains built on unproven transformations.
+
+## Custom Transformer Registration
+
+`evoFE` makes it easy to register your own custom transformations, extending the genetic algorithm's vocabulary with domain-specific features. 
+
+Use `create_transformer()` to define your transformer, and register it with `register_transformer()` to make it available during evolution:
+
+```r
+library(evoFE)
+
+# 1. Define a transformer that adds 5 to a numeric variable
+add_five_trans <- create_transformer(
+  name = "add_five",
+  type = "unary",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    data[[gene$input_cols[1]]] + 5
+  },
+  name_generator = function(gene) paste0("add5_", gene$input_cols[1])
+)
+
+# 2. Register it with the package registry
+register_transformer("add_five", add_five_trans)
+
+# Now, "add_five" is part of the active transformer pool and will
+# be automatically selected, mutated, and chained during evolution!
+```
 
 ## Understanding the Output
 
@@ -292,6 +323,35 @@ for (g in ind$genes) {
    - The first two portions of `split_ratio` are used as the **Train** and **Validation** sets to score the candidate recipes during the evolutionary search.
    - The third portion (if provided) is the **Holdout** set. To prevent data leakage/snooping and optimize computation time, the holdout set is **only evaluated once** at the very end of evolution on the final selected best individual.
 
+## Alternative and Custom Metrics
+
+By default, `evoFE` optimizes for LogLoss on classification tasks and RMSE on regression tasks. However, you can optimize for other metrics by passing the `metric` parameter to `evolve_features()`:
+
+- **Binary Classification:** `"default"` (LogLoss), `"auc"` (Area Under the ROC Curve), or `"f1"` (F1-score at a 0.5 probability threshold).
+- **Multiclass Classification:** `"default"` (Multiclass LogLoss) or `"auc"` (One-vs-Rest macro-averaged AUC).
+- **Regression:** `"default"` (RMSE) or `"mae"` (Mean Absolute Error).
+- **Custom Metrics:** You can pass any custom function of the form `function(y_true, y_pred)` that returns a numeric value. **Note:** Since the genetic algorithm always *maximizes* fitness, ensure your custom metric returns a value where higher is better (e.g., negate error metrics).
+
+For example:
+
+```r
+# Evolve features optimizing for Area Under the ROC Curve (AUC)
+recipe_auc <- evolve_features(
+  data = df, target_col = "am", task = "classification",
+  metric = "auc", generations = 5, pop_size = 8
+)
+
+# Evolve features using a custom regression metric (e.g. Mean Absolute Percentage Error, negated)
+mape_metric <- function(y_true, y_pred) {
+  -mean(abs((y_true - y_pred) / y_true))
+}
+
+recipe_mape <- evolve_features(
+  data = iris[, 1:5], target_col = "Petal.Length", task = "regression",
+  metric = mape_metric, generations = 5, pop_size = 8
+)
+```
+
 ## Tuning Parameters
 
 ### Key parameters for `evolve_features()`
@@ -310,6 +370,7 @@ for (g in ind$genes) {
 | `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |
 | `threads` | 8 | Parallelism for model training |
 | `seed` | `NULL` | RNG seed for reproducibility |
+| `metric` | `"default"` | Optimization metric: `"default"`, `"auc"`, `"f1"`, `"mae"`, or a custom function |
 
 ### Practical advice
 

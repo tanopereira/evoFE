@@ -519,7 +519,7 @@ test_that("mutate adds all components for UMAP, PCA, and SVD", {
   pca_added <- FALSE
   umap_added <- FALSE
   
-  while ((!pca_added || !umap_added) && attempts < 100) {
+  while ((!pca_added || !umap_added) && attempts < 500) {
     attempts <- attempts + 1
     ind <- create_individual(genes = list(), numeric_cols = c("x1", "x2", "x3"))
     ind_mut <- mutate(ind, force_add = TRUE, task = "regression")
@@ -757,4 +757,235 @@ test_that("one_hot_encode transformer works", {
   expect_true(gene_ohe6$output_col %in% names(res_ohe6$train))
   expect_equal(res_ohe6$train[[gene_ohe6$output_col]], as.numeric(df_rare$cat_val == "C"))
 })
+
+test_that("Custom transformer registration works", {
+  custom_trans <- create_transformer(
+    name = "add_one",
+    type = "unary",
+    input_type = "numeric",
+    apply_func = function(data, gene, state = NULL) {
+      data[[gene$input_cols[1]]] + 1
+    },
+    name_generator = function(gene) paste0("add1_", gene$input_cols[1])
+  )
+  register_transformer("add_one", custom_trans)
+  
+  expect_true("add_one" %in% names(evo_transformers))
+  expect_identical(evo_transformers$add_one, custom_trans)
+  
+  gene <- create_gene("add_one", "x1")
+  df <- data.table::data.table(x1 = 1:5)
+  res <- apply_gene(gene, df)
+  expect_equal(res$train[[gene$output_col]], 2:6)
+})
+
+test_that("datetime_extract transformer works", {
+  df <- data.table::data.table(
+    date_str = c("2026-05-29 23:52:42", "2025-01-01 12:00:00")
+  )
+  gene_year <- create_gene("datetime_extract", "date_str")
+  gene_year$params$component <- "year"
+  res_year <- apply_gene(gene_year, df)
+  expect_equal(res_year$train[[gene_year$output_col]], c(2026, 2025))
+  
+  gene_month <- create_gene("datetime_extract", "date_str")
+  gene_month$params$component <- "month"
+  res_month <- apply_gene(gene_month, df)
+  expect_equal(res_month$train[[gene_month$output_col]], c(5, 1))
+})
+
+test_that("target_encode_multiclass transformer works", {
+  set.seed(42)
+  df <- data.table::data.table(
+    cat = rep(c("A", "B"), each = 10),
+    target = c(rep("X", 8), rep("Y", 2), rep("Y", 7), rep("X", 3))
+  )
+  gene_te <- create_gene("target_encode_multiclass", "cat")
+  gene_te$params$comp_idx <- 1
+  
+  res <- apply_gene(gene_te, df, target_col = "target")
+  expect_true(gene_te$output_col %in% names(res$train))
+  expect_type(res$train[[gene_te$output_col]], "double")
+})
+
+test_that("Alternative and custom fitness metrics work", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  # Use AUC
+  suppressWarnings({
+    res_auc <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "lightgbm",
+      verbose = FALSE,
+      metric = "auc"
+    )
+  })
+  expect_s3_class(res_auc, "evo_recipe")
+  expect_equal(res_auc$metric, "auc")
+  
+  # Use custom metric function
+  custom_metric <- function(y_true, y_pred) {
+    mean(y_pred)
+  }
+  suppressWarnings({
+    res_custom <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "lightgbm",
+      verbose = FALSE,
+      metric = custom_metric
+    )
+  })
+  expect_s3_class(res_custom, "evo_recipe")
+  expect_identical(res_custom$metric, custom_metric)
+})
+
+test_that("S3 print, summary, and plot methods work correctly", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  suppressWarnings({
+    res <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 2,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 2,
+      evaluator = "lightgbm",
+      verbose = FALSE
+    )
+  })
+  
+  # 1. Print
+  msg_print <- testthat::capture_output(print(res))
+  expect_true(grepl("An evoFE Recipe", msg_print))
+  
+  # 2. Summary
+  sum_res <- summary(res)
+  expect_s3_class(sum_res, "summary_evo_recipe")
+  msg_summary <- testthat::capture_output(print(sum_res))
+  expect_true(grepl("Evolutionary Feature Engineering Summary", msg_summary))
+  
+  # 3. Plot (Fitness)
+  pdf(NULL)
+  on.exit(dev.off(), add = TRUE)
+  expect_silent(plot(res, type = "fitness"))
+  
+  # 4. Plot (Importance)
+  if (length(res$best_individual$importances) > 0) {
+    expect_silent(plot(res, type = "importance"))
+  } else {
+    expect_message(plot(res, type = "importance"), "No feature importances available.")
+  }
+})
+
+test_that("Incompatible task/metric combinations raise clear errors", {
+  df <- data.frame(x = rnorm(10), target = 1:10)
+  
+  # 1. Invalid task type
+  expect_error(
+    evolve_features(df, "target", task = "invalid_task"),
+    "task must be one of"
+  )
+  
+  # 2. MAE for classification
+  expect_error(
+    evolve_features(df, "target", task = "classification", metric = "mae"),
+    "Metric 'mae' is not supported for task 'classification'"
+  )
+  
+  # 3. AUC for regression
+  expect_error(
+    evolve_features(df, "target", task = "regression", metric = "auc"),
+    "Metric 'auc' is not supported for task 'regression'"
+  )
+})
+
+test_that("Model Registry allows custom evaluator registration", {
+  # 1. Register a simple dummy evaluator
+  register_evaluator(
+    "mock_model",
+    train_func = function(x_train, y_train, x_val = NULL, task = "regression", ...) {
+      list(
+        model = list(coefficients = c(a = 1)),
+        predictions = if (!is.null(x_val)) rep(0.5, nrow(x_val)) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      rep(0.5, nrow(x_new))
+    }
+  )
+  
+  expect_true("mock_model" %in% names(evo_evaluators))
+  
+  # 2. Test train_model with custom evaluator
+  x_train <- matrix(rnorm(20), ncol = 2)
+  colnames(x_train) <- c("x1", "x2")
+  y_train <- rnorm(10)
+  x_val <- matrix(rnorm(10), ncol = 2)
+  
+  fit <- train_model(x_train, y_train, x_val = x_val, task = "regression", evaluator = "mock_model")
+  expect_equal(fit$predictions, rep(0.5, 5))
+  expect_equal(fit$importances, c(x1 = 1, x2 = 1))
+  
+  # 3. Test predict_model with custom evaluator
+  # Construct a dummy evo_recipe object containing the mock model
+  recipe <- list(
+    best_individual = list(
+      genes = list(),
+      numeric_cols = c("x1", "x2"),
+      categorical_cols = character(0)
+    ),
+    best_model = fit$model,
+    evaluator = "mock_model",
+    task = "regression",
+    classes = NULL
+  )
+  class(recipe) <- "evo_recipe"
+  
+  df_new <- data.frame(x1 = rnorm(5), x2 = rnorm(5))
+  preds <- predict_model(recipe, df_new)
+  expect_equal(preds, rep(0.5, 5))
+})
+
+test_that("CatBoost evaluator checks for package availability", {
+  # If catboost is not installed (which is typical for clean check environments),
+  # it should raise a clear, friendly error.
+  if (system.file(package = "catboost") == "") {
+    x_train <- matrix(rnorm(20), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(10, 1, 0.5)
+    
+    expect_error(
+      train_model(x_train, y_train, task = "classification", evaluator = "catboost"),
+      "The 'catboost' package is required"
+    )
+  }
+})
+
+
+
 

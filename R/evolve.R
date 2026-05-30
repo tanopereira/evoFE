@@ -99,7 +99,8 @@ stratified_split <- function(y, ratio) {
 evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strategy,
                          split_ids, shared_splits, evaluator,
                          fold_ids, shared_folds, shared_full, state_cache,
-                         fitness_cache, threads, verbose, running_best_fitness) {
+                         fitness_cache, threads, verbose, running_best_fitness,
+                         metric = "default") {
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) next
 
@@ -116,7 +117,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                                     evaluator = evaluator, fold_ids = fold_ids, 
                                     shared_folds = shared_folds,
                                     shared_full = shared_full, state_cache = state_cache,
-                                    threads = threads)
+                                    threads = threads, metric = metric)
       assign(cache_key, pop[[i]], envir = fitness_cache)
     }
 
@@ -172,13 +173,14 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param split_ratio A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
 #' @param split_ids An optional character vector of split assignments (e.g. "train", "val", "holdout").
 #' @param early_stopping_rounds Stop if fitness doesn't improve for this many generations
-#' @param evaluator The ML model to use ("lightgbm" or "xgboost")
+#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
 #' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
 #' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
 #' @param seed Optional integer seed for reproducibility.
 #' @param verbose Logical. If TRUE, prints progress.
+#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @export
 evolve_features <- function(data, target_col, task = "classification", 
                             generations = 10, pop_size = 10, cv_folds = 3, 
@@ -187,7 +189,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             early_stopping_rounds = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE, crossover_type = "both", 
                             threads = 2, max_clustering_size = 5000, 
-                            seed = NULL, verbose = TRUE) {
+                            seed = NULL, verbose = TRUE, metric = "default") {
   if (!is.null(seed)) set.seed(seed)
   
   # Temporarily configure max clustering size and threads options
@@ -211,6 +213,23 @@ evolve_features <- function(data, target_col, task = "classification",
     tryCatch({
       quitefastmst::omp_set_num_threads(threads)
     }, error = function(e) NULL)
+  }
+
+  if (!task %in% c("classification", "multiclass", "regression")) {
+    stop("task must be one of: 'classification', 'multiclass', 'regression'.")
+  }
+
+  if (!is.function(metric)) {
+    metric_lower <- tolower(metric)
+    valid_metrics <- list(
+      classification = c("default", "auc", "f1"),
+      multiclass = c("default", "auc"),
+      regression = c("default", "mae")
+    )
+    if (!metric_lower %in% valid_metrics[[task]]) {
+      stop(sprintf("Metric '%s' is not supported for task '%s'. Supported metrics are: %s",
+                   metric, task, paste(valid_metrics[[task]], collapse = ", ")))
+    }
   }
 
   if (!target_col %in% names(data)) {
@@ -256,6 +275,7 @@ evolve_features <- function(data, target_col, task = "classification",
   global_best_fitness <- -Inf
   running_best_fitness <- -Inf
   generations_without_improvement <- 0
+  fitness_history <- numeric(generations)
   
   # Fitness cache to avoid re-evaluating identical recipes
   fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
@@ -321,7 +341,8 @@ evolve_features <- function(data, target_col, task = "classification",
     eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
                               split_ids_val, shared_splits, evaluator,
                               fold_ids, shared_folds, shared_full, state_cache,
-                              fitness_cache, threads, verbose, running_best_fitness)
+                              fitness_cache, threads, verbose, running_best_fitness,
+                              metric = metric)
     pop <- eval_res$pop
     running_best_fitness <- eval_res$running_best_fitness
     
@@ -330,6 +351,7 @@ evolve_features <- function(data, target_col, task = "classification",
     pop <- pop[order(fitness_vals, decreasing = TRUE)]
     
     best_fitness <- pop[[1]]$fitness
+    fitness_history[g] <- best_fitness
     if (verbose) message(sprintf("  Gen %d Best Fitness: %.4f", g, best_fitness))
     
     if (verbose) {
@@ -348,6 +370,7 @@ evolve_features <- function(data, target_col, task = "classification",
     
     if (!is.null(early_stopping_rounds) && generations_without_improvement >= early_stopping_rounds) {
       message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_rounds))
+      fitness_history <- fitness_history[1:g]
       break
     }
     
@@ -455,7 +478,8 @@ evolve_features <- function(data, target_col, task = "classification",
   eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
                             split_ids_val, shared_splits, evaluator,
                             fold_ids, shared_folds, shared_full, state_cache,
-                            fitness_cache, threads, verbose, running_best_fitness)
+                            fitness_cache, threads, verbose, running_best_fitness,
+                            metric = metric)
   pop <- eval_res$pop
   fitness_vals <- sapply(pop, function(ind) ind$fitness)
   pop <- pop[order(fitness_vals, decreasing = TRUE)]
@@ -465,7 +489,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
     best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
                                          target_col, task, evaluator, threads, state_cache,
-                                         classes, num_class)
+                                         classes, num_class, metric = metric)
   }
   
   if (verbose) {
@@ -505,10 +529,12 @@ evolve_features <- function(data, target_col, task = "classification",
     list(
       best_individual = best_ind,
       history = pop,
+      fitness_history = fitness_history,
       task = task,
       best_model = best_model,
       evaluator = evaluator,
-      classes = classes
+      classes = classes,
+      metric = metric
     ),
     class = "evo_recipe"
   )
