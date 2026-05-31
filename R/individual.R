@@ -173,6 +173,13 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       exp(val / temperature)
     })
     
+    # Ensure weights are completely clean, positive, finite, and non-NA
+    weights[is.na(weights) | !is.finite(weights)] <- 0
+    weights[weights < 0] <- 0
+    if (sum(weights) == 0) {
+      weights <- rep(1, length(weights))
+    }
+    
     sample(cols, size, replace = replace, prob = weights)
   }
   
