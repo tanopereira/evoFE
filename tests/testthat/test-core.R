@@ -1140,3 +1140,50 @@ test_that("add, subtract, and multiply transformers handle integer overflow grac
   res_mult <- apply_gene(gene_mult, df_mult)
   expect_equal(res_mult$train[[gene_mult$output_col]], c(3e9, 3e9))
 })
+
+test_that("multivariate stateful transformers (deadwood, mst_score, genie, lumbermark) handle integer overflow gracefully", {
+  # Test with values whose differences exceed the threshold for squared operations (e.g. 100000L)
+  # 100000L ^ 2 = 10,000,000,000, which exceeds 2^31 - 1
+  df_fit <- data.table::data.table(
+    x1 = c(0L, 0L, 0L, 0L, 0L, 0L),
+    x2 = c(0L, 0L, 0L, 0L, 0L, 0L)
+  )
+  df_test <- data.table::data.table(
+    x1 = c(100000L, 100000L, 100000L, 100000L, 100000L, 100000L),
+    x2 = c(100000L, 100000L, 100000L, 100000L, 100000L, 100000L)
+  )
+  
+  # For deadwood
+  if (requireNamespace("deadwood", quietly = TRUE)) {
+    gene_dead <- create_gene("deadwood", c("x1", "x2"))
+    state_dead <- evo_transformers$deadwood$fit_func(df_fit, gene_dead)
+    
+    # Run apply with fallback R KNN by checking that it doesn't crash or overflow to NA
+    preds_dead <- evo_transformers$deadwood$apply_func(df_test, gene_dead, state_dead)
+    expect_false(any(is.na(preds_dead)))
+  }
+  
+  # For mst_score
+  if (requireNamespace("quitefastmst", quietly = TRUE)) {
+    gene_mst <- create_gene("mst_score", c("x1", "x2"))
+    state_mst <- evo_transformers$mst_score$fit_func(df_fit, gene_mst)
+    preds_mst <- evo_transformers$mst_score$apply_func(df_test, gene_mst, state_mst)
+    expect_false(any(is.na(preds_mst)))
+  }
+  
+  # For genie
+  if (requireNamespace("genieclust", quietly = TRUE)) {
+    gene_genie <- create_gene("genie", c("x1", "x2"))
+    state_genie <- evo_transformers$genie$fit_func(df_fit, gene_genie)
+    preds_genie <- evo_transformers$genie$apply_func(df_test, gene_genie, state_genie)
+    expect_false(any(is.na(preds_genie)))
+  }
+  
+  # For lumbermark
+  if (requireNamespace("lumbermark", quietly = TRUE)) {
+    gene_lumb <- create_gene("lumbermark", c("x1", "x2"))
+    state_lumb <- evo_transformers$lumbermark$fit_func(df_fit, gene_lumb)
+    preds_lumb <- evo_transformers$lumbermark$apply_func(df_test, gene_lumb, state_lumb)
+    expect_false(any(is.na(preds_lumb)))
+  }
+})

@@ -197,6 +197,7 @@ evo_transformers$pca <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     tryCatch({
       pca_model <- stats::prcomp(x, center = TRUE, scale. = TRUE)
       list(model = pca_model, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
@@ -210,6 +211,7 @@ evo_transformers$pca <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     if (is.null(state$preds_cache)) {
       # Fallback in case state didn't initialize it
@@ -243,6 +245,7 @@ evo_transformers$truncated_svd <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     tryCatch({
       res <- svd(x, nu = 0, nv = comp_idx)
       list(v = res$v, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
@@ -256,6 +259,7 @@ evo_transformers$truncated_svd <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     # Calculate full projection (all nv columns)
     if (is.null(state$preds_cache)) {
@@ -424,6 +428,7 @@ evo_transformers$umap <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     n_neighbors <- 15
     if (nrow(x) < 15) {
@@ -465,6 +470,7 @@ evo_transformers$umap <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
@@ -515,6 +521,7 @@ evo_transformers$mst_score <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
@@ -602,6 +609,7 @@ evo_transformers$mst_score <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
+    storage.mode(x_test) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
@@ -687,6 +695,7 @@ evo_transformers$genie <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
@@ -765,6 +774,7 @@ evo_transformers$genie <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(1, nrow(data)))
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
+    storage.mode(x_test) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
@@ -1052,6 +1062,7 @@ evo_transformers$random_projection <- create_transformer(
     if (is.null(state) || is.null(state$w)) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     as.vector(x %*% state$w)
   },
   name_generator = function(gene) {
@@ -1072,6 +1083,7 @@ evo_transformers$lumbermark <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
@@ -1150,6 +1162,7 @@ evo_transformers$lumbermark <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(1, nrow(data)))
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
+    storage.mode(x_test) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
@@ -1230,6 +1243,7 @@ evo_transformers$deadwood <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
@@ -1307,6 +1321,7 @@ evo_transformers$deadwood <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
+    storage.mode(x_test) <- "double"
     
     verbose <- getOption("evoFE.verbose", 0) >= 2
     if (verbose) {
