@@ -163,11 +163,13 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     if (length(cols) == 1) return(rep(cols, size))
     if (length(importances) == 0) return(sample(cols, size, replace = replace))
     
-    # Baseline for missing features: minimum of known, or 0.01
-    baseline <- if (length(importances) > 0) min(importances) else 0.01
+    # Baseline for missing features: minimum of known, or 0.01 (handling NAs/non-finites safely)
+    clean_importances <- importances[!is.na(importances) & is.finite(importances)]
+    baseline <- if (length(clean_importances) > 0) min(clean_importances) else 0.01
     
     weights <- sapply(cols, function(c) {
       val <- if (c %in% names(importances)) importances[[c]] else baseline
+      if (is.na(val) || !is.finite(val)) val <- baseline
       exp(val / temperature)
     })
     
