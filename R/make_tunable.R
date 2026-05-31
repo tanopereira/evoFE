@@ -1,20 +1,74 @@
 #' Create a Tunable Evaluator from a Registered Base Model
 #'
-#' @param base_model_name Character. Name of the registered base evaluator (e.g., "xgboost").
-#' @param param_ranges List. A nested list defining parameter bounds and types.
-#'   Example:
-#'   \code{
-#'   list(
-#'     learning_rate = list(type = "numeric", lower = 0.01, upper = 0.3),
-#'     max_depth = list(type = "integer", lower = 3, upper = 10)
-#'   )
+#' @description
+#' Wraps an existing registered model evaluator in a Bayesian Optimization tuning loop
+#' using the \pkg{mlrMBO} framework. It automatically generates a parameter space, constructs
+#' a cross-validation or split-validation objective function, searches for the optimal
+#' hyperparameters, and registers the tuned evaluator.
+#'
+#' @details
+#' The tuning loop uses a Latin Hypercube Design (LHS) for the initial parameters layout. It attempts
+#' to use a Kriging (Gaussian Process) surrogate model by default and automatically falls back to a
+#' Random Forest surrogate model if numerical singularities are encountered (which is common on small
+#' datasets).
+#'
+#' @param base_model_name Character. Name of the registered base evaluator (e.g., \code{"xgboost"}, \code{"lightgbm"}).
+#' @param param_ranges List. A nested list defining the parameter names, types, and bounds/values.
+#'   Each parameter definition must be a list containing:
+#'   \describe{
+#'     \item{\code{type}}{Character: \code{"numeric"}, \code{"integer"}, or \code{"discrete"}.}
+#'     \item{\code{lower}}{Numeric/Integer: Lower bound of the search space (required for \code{"numeric"} and \code{"integer"}).}
+#'     \item{\code{upper}}{Numeric/Integer: Upper bound of the search space (required for \code{"numeric"} and \code{"integer"}).}
+#'     \item{\code{values}}{Vector: Set of valid values (required for \code{"discrete"}).}
 #'   }
-#' @param tuner_name Character. The name under which to register the tuned evaluator.
+#' @param tuner_name Character. The name under which to register the tuned evaluator. Defaults to
+#'   \code{paste0(base_model_name, "_mbo")}.
+#'
+#' @return Invisibly returns \code{NULL}. Registers the tuned evaluator in the global \code{evo_evaluators} environment.
+#'
 #' @importFrom mlrMBO makeMBOControl setMBOControlTermination mbo
 #' @importFrom ParamHelpers makeParamSet makeNumericParam makeIntegerParam makeDiscreteParam generateDesign
 #' @importFrom smoof makeSingleObjectiveFunction
 #' @importFrom lhs maximinLHS
 #' @importFrom utils modifyList
+#'
+#' @examples
+#' \dontrun{
+#' # 1. Register a simple mock evaluator
+#' register_evaluator(
+#'   "mock_base",
+#'   train_func = function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", ...) {
+#'     args <- list(...)
+#'     val_score <- 100 - abs(args$param_a - 4.5)
+#'     list(
+#'       model = list(args = args, val_score = val_score),
+#'       predictions = if (!is.null(x_val)) rep(val_score, nrow(x_val)) else NULL
+#'     )
+#'   },
+#'   predict_func = function(model, x_new, task, ...) {
+#'     rep(model$val_score, nrow(x_new))
+#'   }
+#' )
+#'
+#' # 2. Make it tunable
+#' param_ranges <- list(
+#'   param_a = list(type = "numeric", lower = 1.0, upper = 8.0)
+#' )
+#' make_tunable("mock_base", param_ranges, tuner_name = "mock_tuned")
+#'
+#' # 3. Train the tuned model on mock data
+#' x_train <- matrix(rnorm(20), ncol = 2)
+#' colnames(x_train) <- c("x1", "x2")
+#' y_train <- rnorm(10)
+#' x_val <- matrix(rnorm(10), ncol = 2)
+#' y_val <- rnorm(5)
+#'
+#' fit <- train_model(
+#'   x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+#'   evaluator = "mock_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2
+#' )
+#' print(fit$best_params)
+#' }
 #' @export
 make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base_model_name, "_mbo")) {
   # 1. Retrieve the base model configuration
