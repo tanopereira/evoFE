@@ -472,12 +472,16 @@ evo_transformers$umap <- create_transformer(
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[UMAP Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
-    
-    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[UMAP Apply] Start on %d rows, %d cols. Component = %d", nrow(x), ncol(x), comp_idx))
@@ -611,12 +615,16 @@ evo_transformers$mst_score <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[MST Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
-    
-    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[MST Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -776,12 +784,16 @@ evo_transformers$genie <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(1, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[Genie Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(1, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
-    
-    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Genie Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -1164,12 +1176,16 @@ evo_transformers$lumbermark <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(1, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[Lumbermark Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(1, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
-    
-    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Lumbermark Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -1323,12 +1339,16 @@ evo_transformers$deadwood <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[Deadwood Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
-    
-    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Deadwood Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
