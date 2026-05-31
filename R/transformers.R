@@ -49,6 +49,11 @@ register_transformer <- function(name, transformer) {
   invisible(transformer)
 }
 
+is_verbose <- function() {
+  val <- getOption("evoFE.verbose", 0)
+  isTRUE(val) || val >= 2
+}
+
 # --- STATELESS UNARY TRANSFORMERS ---
 
 evo_transformers$log <- create_transformer(
@@ -435,7 +440,7 @@ evo_transformers$umap <- create_transformer(
       n_neighbors <- max(2, nrow(x) - 1)
     }
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[UMAP Fit] Start on %d rows, %d cols. n_neighbors = %d", nrow(x), ncol(x), n_neighbors))
@@ -472,7 +477,7 @@ evo_transformers$umap <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[UMAP Apply] Start on %d rows, %d cols. Component = %d", nrow(x), ncol(x), comp_idx))
@@ -523,7 +528,7 @@ evo_transformers$mst_score <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[MST Fit] Start on %d rows, %d cols.", nrow(x), ncol(x)))
@@ -611,7 +616,7 @@ evo_transformers$mst_score <- create_transformer(
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[MST Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -698,7 +703,7 @@ evo_transformers$genie <- create_transformer(
     storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Genie Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
@@ -776,7 +781,7 @@ evo_transformers$genie <- create_transformer(
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Genie Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -1086,7 +1091,7 @@ evo_transformers$lumbermark <- create_transformer(
     storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Lumbermark Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
@@ -1164,7 +1169,7 @@ evo_transformers$lumbermark <- create_transformer(
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Lumbermark Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -1245,7 +1250,7 @@ evo_transformers$deadwood <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Deadwood Fit] Start on %d rows, %d cols.", nrow(x), ncol(x)))
@@ -1323,7 +1328,7 @@ evo_transformers$deadwood <- create_transformer(
     x_test[is.na(x_test)] <- 0
     storage.mode(x_test) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Deadwood Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))

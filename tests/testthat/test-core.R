@@ -576,8 +576,8 @@ test_that("umap, genie, and mst_score respect evoFE.verbose option", {
     target = sample(0:1, 20, replace = TRUE)
   ))
   
-  # Set options(evoFE.verbose = 2)
-  options(evoFE.verbose = 2)
+  # Set options(evoFE.verbose = TRUE) to test truthiness
+  options(evoFE.verbose = TRUE)
   on.exit(options(evoFE.verbose = 0), add = TRUE)
   
   # Test UMAP fit messages
