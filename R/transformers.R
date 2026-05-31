@@ -96,7 +96,7 @@ evo_transformers$add <- create_transformer(
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    Reduce(`+`, lapply(input_cols, function(c) data[[c]]))
+    Reduce(`+`, lapply(input_cols, function(c) as.numeric(data[[c]])))
   },
   name_generator = function(gene) paste0("((", paste(gene$input_cols, collapse = "+"), "))"),
   allow_replace = TRUE
@@ -108,7 +108,7 @@ evo_transformers$subtract <- create_transformer(
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    data[[input_cols[1]]] - data[[input_cols[2]]]
+    as.numeric(data[[input_cols[1]]]) - as.numeric(data[[input_cols[2]]])
   },
   name_generator = function(gene) paste0("((", gene$input_cols[1], "-", gene$input_cols[2], "))")
 )
@@ -119,7 +119,7 @@ evo_transformers$multiply <- create_transformer(
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    Reduce(`*`, lapply(input_cols, function(c) data[[c]]))
+    Reduce(`*`, lapply(input_cols, function(c) as.numeric(data[[c]])))
   },
   name_generator = function(gene) paste0("((", paste(gene$input_cols, collapse = "*"), "))"),
   allow_replace = TRUE

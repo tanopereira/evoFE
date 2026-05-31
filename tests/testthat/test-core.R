@@ -1112,7 +1112,31 @@ test_that("make_tunable works correctly", {
   expect_length(preds, nrow(x_val))
 })
 
-
-
-
-
+test_that("add, subtract, and multiply transformers handle integer overflow gracefully", {
+  # Test with values that exceed the 32-bit signed integer limit (2^31 - 1 = 2147483647)
+  val1 <- 2000000000L
+  val2 <- 1500000000L
+  df <- data.table::data.table(
+    x1 = c(val1, val1),
+    x2 = c(val2, val2)
+  )
+  
+  # For add
+  gene_add <- create_gene("add", c("x1", "x2"))
+  res_add <- apply_gene(gene_add, df)
+  expect_equal(res_add$train[[gene_add$output_col]], c(3.5e9, 3.5e9))
+  
+  # For subtract
+  gene_sub <- create_gene("subtract", c("x1", "x2"))
+  res_sub <- apply_gene(gene_sub, df)
+  expect_equal(res_sub$train[[gene_sub$output_col]], c(5e8, 5e8))
+  
+  # For multiply
+  df_mult <- data.table::data.table(
+    x1 = c(1000000L, 1000000L),
+    x2 = c(3000L, 3000L)
+  )
+  gene_mult <- create_gene("multiply", c("x1", "x2"))
+  res_mult <- apply_gene(gene_mult, df_mult)
+  expect_equal(res_mult$train[[gene_mult$output_col]], c(3e9, 3e9))
+})
