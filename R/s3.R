@@ -35,6 +35,31 @@ print.evo_recipe <- function(x, ...) {
 #'
 #' @param object An \code{evo_recipe} object.
 #' @param ... Additional arguments (currently unused).
+#' @examples
+#' \donttest{
+#' data(mtcars)
+#' df <- mtcars
+#' df$am <- as.integer(df$am)
+#'
+#' recipe <- evolve_features(
+#'   data = df,
+#'   target_col = "am",
+#'   task = "classification",
+#'   evaluator = "xgboost",
+#'   generations = 2,
+#'   pop_size = 2,
+#'   cv_folds = 2,
+#'   seed = 42,
+#'   verbose = FALSE
+#' )
+#'
+#' # Print the recipe overview
+#' print(recipe)
+#'
+#' # Inspect a detailed summary
+#' recipe_summary <- summary(recipe)
+#' print(recipe_summary)
+#' }
 #' @export
 summary.evo_recipe <- function(object, ...) {
   res <- list(
@@ -102,6 +127,30 @@ print.summary_evo_recipe <- function(x, ...) {
 #' @param type Character string, either \code{"fitness"} (default) to plot the fitness trajectory,
 #'   or \code{"importance"} to plot a bar chart of the top feature importances of the winning model.
 #' @param ... Additional arguments passed to \code{plot} or \code{barplot}.
+#' @examples
+#' \donttest{
+#' data(mtcars)
+#' df <- mtcars
+#' df$am <- as.integer(df$am)
+#'
+#' recipe <- evolve_features(
+#'   data = df,
+#'   target_col = "am",
+#'   task = "classification",
+#'   evaluator = "xgboost",
+#'   generations = 2,
+#'   pop_size = 2,
+#'   cv_folds = 2,
+#'   seed = 42,
+#'   verbose = FALSE
+#' )
+#'
+#' # Plot the fitness curve
+#' plot(recipe, type = "fitness")
+#'
+#' # Plot feature importances
+#' plot(recipe, type = "importance")
+#' }
 #' @export
 plot.evo_recipe <- function(x, type = "fitness", ...) {
   type <- match.arg(type, c("fitness", "importance"))

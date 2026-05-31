@@ -181,6 +181,11 @@ test_that("Best model is saved and predict_model works", {
   preds <- predict_model(res, df)
   expect_type(preds, "double")
   expect_equal(length(preds), n)
+  
+  # predict_model should work on exactly 1 row (regression test for transpose bug)
+  preds_1 <- predict_model(res, df[1, , drop = FALSE])
+  expect_type(preds_1, "double")
+  expect_equal(length(preds_1), 1)
 })
 
 test_that("State caching and fit-skipping works correctly", {

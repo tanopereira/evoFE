@@ -15,6 +15,24 @@ evo_evaluators <- new.env(parent = emptyenv())
 #'   vector or matrix of predictions.
 #' @importFrom lightgbm lgb.train
 #' @importFrom xgboost xgb.train
+#' @examples
+#' # Register a simple mock evaluator
+#' register_evaluator(
+#'   "mock_eval",
+#'   train_func = function(x_train, y_train, x_val = NULL, task = "regression", ...) {
+#'     list(
+#'       model = list(weights = colMeans(x_train)),
+#'       predictions = if (!is.null(x_val)) rowMeans(x_val) else NULL,
+#'       importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+#'     )
+#'   },
+#'   predict_func = function(model, x_new, task, ...) {
+#'     rowMeans(x_new)
+#'   }
+#' )
+#'
+#' # Verify it is registered
+#' exists("mock_eval", envir = evo_evaluators)
 #' @export
 register_evaluator <- function(name, train_func, predict_func) {
   assign(name, list(train_func = train_func, predict_func = predict_func), envir = evo_evaluators)

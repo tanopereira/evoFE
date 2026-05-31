@@ -14,3 +14,21 @@ register_transformer(name, transformer)
 \description{
 Adds a user-defined feature transformer to the available pool for feature evolution.
 }
+\examples{
+# Create a custom transformer
+add_ten_trans <- create_transformer(
+  name = "add_ten",
+  type = "unary",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    data[[gene$input_cols[1]]] + 10
+  },
+  name_generator = function(gene) paste0("add10_", gene$input_cols[1])
+)
+
+# Register it
+register_transformer("add_ten", add_ten_trans)
+
+# Verify it is registered
+exists("add_ten", envir = evo_transformers)
+}

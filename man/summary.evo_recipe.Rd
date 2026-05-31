@@ -14,3 +14,29 @@
 \description{
 Computes and formats a detailed summary of the evolutionary feature engineering recipe.
 }
+\examples{
+\donttest{
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)
+
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 2,
+  pop_size = 2,
+  cv_folds = 2,
+  seed = 42,
+  verbose = FALSE
+)
+
+# Print the recipe overview
+print(recipe)
+
+# Inspect a detailed summary
+recipe_summary <- summary(recipe)
+print(recipe_summary)
+}
+}

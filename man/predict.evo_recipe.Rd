@@ -16,3 +16,26 @@
 \description{
 Apply feature engineering recipe to new data
 }
+\examples{
+\donttest{
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)
+
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 2,
+  pop_size = 2,
+  cv_folds = 2,
+  seed = 42,
+  verbose = FALSE
+)
+
+# Extract engineered features
+engineered_features <- predict(recipe, df[1:5, ])
+print(engineered_features)
+}
+}

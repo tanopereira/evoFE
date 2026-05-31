@@ -3,6 +3,28 @@
 #' @param object An evo_recipe object
 #' @param newdata A data.frame or data.table
 #' @param ... Additional arguments
+#' @examples
+#' \donttest{
+#' data(mtcars)
+#' df <- mtcars
+#' df$am <- as.integer(df$am)
+#'
+#' recipe <- evolve_features(
+#'   data = df,
+#'   target_col = "am",
+#'   task = "classification",
+#'   evaluator = "xgboost",
+#'   generations = 2,
+#'   pop_size = 2,
+#'   cv_folds = 2,
+#'   seed = 42,
+#'   verbose = FALSE
+#' )
+#'
+#' # Extract engineered features
+#' engineered_features <- predict(recipe, df[1:5, ])
+#' print(engineered_features)
+#' }
 #' @export
 predict.evo_recipe <- function(object, newdata, ...) {
   ind <- object$best_individual
@@ -21,6 +43,28 @@ predict.evo_recipe <- function(object, newdata, ...) {
 #' @param object An evo_recipe object containing the trained model and best individual
 #' @param newdata A data.frame or data.table to make predictions on
 #' @param ... Additional arguments (currently unused)
+#' @examples
+#' \donttest{
+#' data(mtcars)
+#' df <- mtcars
+#' df$am <- as.integer(df$am)
+#'
+#' recipe <- evolve_features(
+#'   data = df,
+#'   target_col = "am",
+#'   task = "classification",
+#'   evaluator = "xgboost",
+#'   generations = 2,
+#'   pop_size = 2,
+#'   cv_folds = 2,
+#'   seed = 42,
+#'   verbose = FALSE
+#' )
+#'
+#' # Get model predictions
+#' predictions <- predict_model(recipe, df[1:5, ])
+#' print(predictions)
+#' }
 #' @export
 predict_model <- function(object, newdata, ...) {
   if (is.null(object$best_model)) {
@@ -31,7 +75,7 @@ predict_model <- function(object, newdata, ...) {
   features_dt <- stats::predict(object, newdata)
   
   # Step 2: Convert to numeric matrix
-  x_new <- as.matrix(sapply(features_dt, as.numeric))
+  x_new <- data.matrix(features_dt)
   x_new[!is.finite(x_new)] <- NA
   
   # Step 3: Run prediction

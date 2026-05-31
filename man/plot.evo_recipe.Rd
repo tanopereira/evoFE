@@ -17,3 +17,28 @@ or \code{"importance"} to plot a bar chart of the top feature importances of the
 \description{
 Plots either the fitness trajectory over generations or the feature importances of the best individual.
 }
+\examples{
+\donttest{
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)
+
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 2,
+  pop_size = 2,
+  cv_folds = 2,
+  seed = 42,
+  verbose = FALSE
+)
+
+# Plot the fitness curve
+plot(recipe, type = "fitness")
+
+# Plot feature importances
+plot(recipe, type = "importance")
+}
+}

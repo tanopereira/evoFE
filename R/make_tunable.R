@@ -177,6 +177,9 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     mbo_res <- tryCatch({
       mlrMBO::mbo(obj_fun, design = design, control = control, show.info = verbose)
     }, error = function(e) {
+      if (!requireNamespace("mlr", quietly = TRUE) || !requireNamespace("randomForest", quietly = TRUE)) {
+        stop(sprintf("[MBO] Kriging surrogate failed, and fallback Random Forest surrogate is unavailable because suggested packages 'mlr' and/or 'randomForest' are not installed. Original Kriging error: %s", conditionMessage(e)))
+      }
       if (verbose) {
         message("[MBO] Kriging surrogate failed, falling back to Random Forest surrogate.")
       }

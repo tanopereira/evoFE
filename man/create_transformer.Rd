@@ -35,3 +35,16 @@ create_transformer(
 \description{
 Create a transformer definition
 }
+\examples{
+# Define a transformer that adds a constant value of 10 to a variable
+add_ten_trans <- create_transformer(
+  name = "add_ten",
+  type = "unary",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    data[[gene$input_cols[1]]] + 10
+  },
+  name_generator = function(gene) paste0("add10_", gene$input_cols[1])
+)
+print(add_ten_trans)
+}

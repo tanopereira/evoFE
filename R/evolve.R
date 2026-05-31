@@ -202,6 +202,26 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param verbose Logical. If TRUE, prints progress.
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
+#' @examples
+#' \donttest{
+#' # Quick classification example using mtcars
+#' data(mtcars)
+#' df <- mtcars
+#' df$am <- as.integer(df$am)
+#'
+#' recipe <- evolve_features(
+#'   data = df,
+#'   target_col = "am",
+#'   task = "classification",
+#'   evaluator = "xgboost",
+#'   generations = 2,
+#'   pop_size = 2,
+#'   cv_folds = 2,
+#'   seed = 42,
+#'   verbose = FALSE
+#' )
+#' print(recipe)
+#' }
 #' @export
 evolve_features <- function(data, target_col, task = "classification", 
                             generations = 10, pop_size = 10, cv_folds = 3, 
@@ -224,15 +244,31 @@ evolve_features <- function(data, target_col, task = "classification",
   
   # Prevent macOS OpenMP thread collisions between data.table, lightgbm, and other libraries
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    old_omp <- RhpcBLASctl::omp_get_max_threads()
+    old_blas <- RhpcBLASctl::blas_get_num_procs()
     RhpcBLASctl::omp_set_num_threads(threads)
     RhpcBLASctl::blas_set_num_threads(threads)
+    on.exit({
+      RhpcBLASctl::omp_set_num_threads(old_omp)
+      RhpcBLASctl::blas_set_num_threads(old_blas)
+    }, add = TRUE)
   }
   if (requireNamespace("data.table", quietly = TRUE)) {
+    old_dt <- data.table::getDTthreads()
     data.table::setDTthreads(threads)
+    on.exit({
+      data.table::setDTthreads(old_dt)
+    }, add = TRUE)
   }
   if (requireNamespace("quitefastmst", quietly = TRUE)) {
     tryCatch({
+      old_qf <- quitefastmst::omp_get_max_threads()
       quitefastmst::omp_set_num_threads(threads)
+      on.exit({
+        tryCatch({
+          quitefastmst::omp_set_num_threads(old_qf)
+        }, error = function(e) NULL)
+      }, add = TRUE)
     }, error = function(e) NULL)
   }
 

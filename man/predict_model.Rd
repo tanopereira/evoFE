@@ -16,3 +16,26 @@ predict_model(object, newdata, ...)
 \description{
 Predict target values using the fully evolved model
 }
+\examples{
+\donttest{
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)
+
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 2,
+  pop_size = 2,
+  cv_folds = 2,
+  seed = 42,
+  verbose = FALSE
+)
+
+# Get model predictions
+predictions <- predict_model(recipe, df[1:5, ])
+print(predictions)
+}
+}

@@ -11,6 +11,18 @@
 #' @import data.table
 #' @importFrom uwot umap
 #' @importFrom genieclust genie
+#' @examples
+#' # Define a transformer that adds a constant value of 10 to a variable
+#' add_ten_trans <- create_transformer(
+#'   name = "add_ten",
+#'   type = "unary",
+#'   input_type = "numeric",
+#'   apply_func = function(data, gene, state = NULL) {
+#'     data[[gene$input_cols[1]]] + 10
+#'   },
+#'   name_generator = function(gene) paste0("add10_", gene$input_cols[1])
+#' )
+#' print(add_ten_trans)
 #' @export
 create_transformer <- function(name, type, input_type = "numeric", output_type = "numeric", fit_func = NULL, apply_func, name_generator, allow_replace = FALSE) {
   structure(
@@ -40,6 +52,23 @@ evo_transformers <- new.env(parent = emptyenv())
 #'
 #' @param name Unique character string naming the transformer.
 #' @param transformer An object of class \code{evo_transformer} created via \code{create_transformer}.
+#' @examples
+#' # Create a custom transformer
+#' add_ten_trans <- create_transformer(
+#'   name = "add_ten",
+#'   type = "unary",
+#'   input_type = "numeric",
+#'   apply_func = function(data, gene, state = NULL) {
+#'     data[[gene$input_cols[1]]] + 10
+#'   },
+#'   name_generator = function(gene) paste0("add10_", gene$input_cols[1])
+#' )
+#'
+#' # Register it
+#' register_transformer("add_ten", add_ten_trans)
+#'
+#' # Verify it is registered
+#' exists("add_ten", envir = evo_transformers)
 #' @export
 register_transformer <- function(name, transformer) {
   if (!inherits(transformer, "evo_transformer")) {

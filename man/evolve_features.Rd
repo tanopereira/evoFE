@@ -68,3 +68,24 @@ evolve_features(
 \description{
 Run evolutionary feature engineering
 }
+\examples{
+\donttest{
+# Quick classification example using mtcars
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)
+
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 2,
+  pop_size = 2,
+  cv_folds = 2,
+  seed = 42,
+  verbose = FALSE
+)
+print(recipe)
+}
+}
