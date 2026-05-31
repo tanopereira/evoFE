@@ -14,7 +14,11 @@ Imports:
     digest,
     uwot,
     quitefastmst,
-    genieclust
+    genieclust,
+    ParamHelpers,
+    lhs,
+    mlrMBO,
+    smoof
 Suggests: 
     RhpcBLASctl,
     testthat,
@@ -23,9 +27,6 @@ Suggests:
     lumbermark,
     deadwood,
     mlr,
-    mlrMBO,
-    ParamHelpers,
-    smoof,
     DiceKriging,
     randomForest
 VignetteBuilder: knitr

@@ -1049,6 +1049,70 @@ test_that("lightgbm_mbo checks for package availability", {
   }
 })
 
+test_that("make_tunable works correctly", {
+  # 1. Error on unregistered model
+  expect_error(
+    make_tunable("non_existent_model", list(lr = list(type = "numeric", lower = 0.1, upper = 0.5))),
+    "is not registered in evo_evaluators"
+  )
+  
+  # 2. Register mock evaluator
+  register_evaluator(
+    "mock_base",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression",
+                           threads = 2, num_class = NULL, metric = "default", verbose = FALSE, ...) {
+      args <- list(...)
+      # Mock score: depends on parameters to optimize
+      val_score <- 100
+      if ("param_a" %in% names(args)) val_score <- val_score - abs(args$param_a - 4.5)
+      if ("param_b" %in% names(args)) val_score <- val_score - abs(args$param_b - 7)
+      
+      list(
+        model = list(args = args, val_score = val_score),
+        predictions = if (!is.null(x_val)) rep(val_score, nrow(x_val)) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      rep(model$val_score, nrow(x_new))
+    }
+  )
+  
+  # 3. Call make_tunable
+  param_ranges <- list(
+    param_a = list(type = "numeric", lower = 1.0, upper = 8.0),
+    param_b = list(type = "integer", lower = 1, upper = 10)
+  )
+  make_tunable("mock_base", param_ranges, tuner_name = "mock_base_tuned")
+  
+  expect_true("mock_base_tuned" %in% names(evo_evaluators))
+  
+  # 4. Train with the tuned evaluator
+  x_train <- matrix(rnorm(20), ncol = 2)
+  colnames(x_train) <- c("x1", "x2")
+  y_train <- rnorm(10)
+  x_val <- matrix(rnorm(10), ncol = 2)
+  y_val <- rnorm(5)
+  
+  res <- train_model(
+    x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+    evaluator = "mock_base_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2,
+    verbose = FALSE
+  )
+  
+  expect_type(res, "list")
+  expect_true("best_params" %in% names(res))
+  expect_true("param_a" %in% names(res$best_params))
+  expect_true("param_b" %in% names(res$best_params))
+  
+  # Verify that predictions are returned and predict_func works
+  expect_length(res$predictions, nrow(x_val))
+  evaluator_entry <- evo_evaluators[["mock_base_tuned"]]
+  preds <- evaluator_entry$predict_func(res$model, x_val, task = "regression")
+  expect_length(preds, nrow(x_val))
+})
+
+
 
 
 

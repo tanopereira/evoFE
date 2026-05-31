@@ -44,6 +44,13 @@ register_evaluator(
     )
     if (task == "multiclass") params$num_class <- num_class
 
+    extra_params <- list(...)
+    control_params <- c("verbose", "metric", "best_params", "y_val")
+    extra_params <- extra_params[!names(extra_params) %in% control_params]
+    for (name in names(extra_params)) {
+      params[[name]] <- extra_params[[name]]
+    }
+
     utils::capture.output({
       model <- lightgbm::lgb.train(
         params = params, data = dtrain, nrounds = nrounds, verbose = -1
@@ -87,6 +94,13 @@ register_evaluator(
       eta       = 0.1
     )
     if (task == "multiclass") params$num_class <- num_class
+
+    extra_params <- list(...)
+    control_params <- c("verbose", "metric", "best_params", "y_val")
+    extra_params <- extra_params[!names(extra_params) %in% control_params]
+    for (name in names(extra_params)) {
+      params[[name]] <- extra_params[[name]]
+    }
 
     utils::capture.output({
       model <- xgboost::xgb.train(
@@ -141,6 +155,13 @@ register_evaluator(
       logging_level = "Silent",
       allow_writing_files = FALSE
     )
+
+    extra_params <- list(...)
+    control_params <- c("verbose", "metric", "best_params", "y_val")
+    extra_params <- extra_params[!names(extra_params) %in% control_params]
+    for (name in names(extra_params)) {
+      params[[name]] <- extra_params[[name]]
+    }
 
     model <- suppressWarnings(catboost::catboost.train(dtrain, params = params))
 
