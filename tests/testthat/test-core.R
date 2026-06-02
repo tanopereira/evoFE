@@ -1347,4 +1347,42 @@ test_that("model_all_final_genes accumulates all unique genes, evaluates them, a
   expect_true(all(preds >= 0 & preds <= 1))
 })
 
+test_that("model_all_historical_genes collects genes across generations, evaluates them, and trains successfully based on performance", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(60),
+    x2 = rnorm(60),
+    target = sample(0:1, 60, replace = TRUE)
+  )
+  
+  # Run evolution with model_all_historical_genes = TRUE
+  res <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 2,
+    pop_size = 5,
+    evaluation_strategy = "cv",
+    cv_folds = 2,
+    early_stopping_rounds = 2,
+    evaluator = "lightgbm",
+    seed = 42,
+    model_all_historical_genes = TRUE,
+    verbose = FALSE
+  )
+  
+  expect_s3_class(res, "evo_recipe")
+  expect_true(is.numeric(res$best_individual$fitness))
+  expect_gt(res$best_individual$fitness, -Inf)
+  
+  # Verify that predict on the recipe works
+  preds_df <- predict(res, df[, 1:2])
+  expect_s3_class(preds_df, "data.table")
+  
+  # Verify predict_model succeeds
+  preds <- predict_model(res, df[, 1:2])
+  expect_length(preds, 60)
+  expect_true(all(preds >= 0 & preds <= 1))
+})
+
 

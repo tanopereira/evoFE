@@ -4,7 +4,7 @@
 \alias{register_evaluator}
 \title{Register a model evaluator}
 \usage{
-register_evaluator(name, train_func, predict_func)
+register_evaluator(name, train_func, predict_func, base_evaluator = NULL)
 }
 \arguments{
 \item{name}{Name of the evaluator.}

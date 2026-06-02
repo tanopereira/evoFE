@@ -24,6 +24,7 @@ evolve_features(
   verbose = TRUE,
   metric = "default",
   model_all_final_genes = FALSE,
+  model_all_historical_genes = FALSE,
   ...
 )
 }
@@ -65,6 +66,8 @@ evolve_features(
 \item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
 
 \item{model_all_final_genes}{Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.}
+
+\item{model_all_historical_genes}{Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }

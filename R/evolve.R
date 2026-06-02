@@ -202,6 +202,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param verbose Logical. If TRUE, prints progress.
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param model_all_final_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.
+#' @param model_all_historical_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @examples
 #' \donttest{
@@ -232,7 +233,8 @@ evolve_features <- function(data, target_col, task = "classification",
                             dynamic_population = TRUE, crossover_type = "both", 
                             threads = 2, max_clustering_size = 5000, 
                             seed = NULL, verbose = TRUE, metric = "default", 
-                            model_all_final_genes = FALSE, ...) {
+                            model_all_final_genes = FALSE,
+                            model_all_historical_genes = FALSE, ...) {
   if (!is.null(seed)) set.seed(seed)
   
   # Temporarily configure max clustering size and threads options
@@ -386,6 +388,8 @@ evolve_features <- function(data, target_col, task = "classification",
   # State cache for full dataset to avoid re-fitting stateful transformers
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   
+  historical_best_genes <- list()
+  
   for (g in 1:generations) {
     if (verbose) {
       if (global_best_fitness > -Inf) {
@@ -407,6 +411,9 @@ evolve_features <- function(data, target_col, task = "classification",
     # Sort population by fitness descending
     fitness_vals <- sapply(pop, function(ind) ind$fitness)
     pop <- pop[order(fitness_vals, decreasing = TRUE)]
+    
+    # Track historical best genes from this generation
+    historical_best_genes <- c(historical_best_genes, pop[[1]]$genes)
     
     best_fitness <- pop[[1]]$fitness
     fitness_history[g] <- best_fitness
@@ -595,6 +602,67 @@ evolve_features <- function(data, target_col, task = "classification",
       if (verbose) {
         message(sprintf("  Pooled features (fitness: %.4f) did not exceed best individual (fitness: %.4f). Using best individual.", 
                         super_ind$fitness, best_ind$fitness))
+      }
+    }
+  }
+  
+  if (model_all_historical_genes) {
+    if (verbose) {
+      message("\nEvaluating historical pooled features (best genes from all generations)...")
+    }
+    
+    # Append the final selected best individual's genes to historical best genes
+    historical_best_genes <- c(historical_best_genes, best_ind$genes)
+    
+    if (length(historical_best_genes) > 0) {
+      # De-duplicate genes by their unique output column name
+      unique_cols_hist <- unique(vapply(historical_best_genes, function(g) g$output_col, character(1)))
+      deduped_historical_genes <- list()
+      for (gene in historical_best_genes) {
+        if (gene$output_col %in% unique_cols_hist) {
+          deduped_historical_genes[[gene$output_col]] <- gene
+          unique_cols_hist <- setdiff(unique_cols_hist, gene$output_col)
+        }
+      }
+      deduped_historical_genes <- unname(deduped_historical_genes)
+      
+      # Create the historical super-individual
+      super_ind_hist <- create_individual(
+        genes = deduped_historical_genes, 
+        numeric_cols = numeric_cols, 
+        categorical_cols = categorical_cols
+      )
+      
+      # Evaluate the historical super-individual's fitness
+      super_ind_hist <- evaluate_fitness(
+        super_ind_hist, data, target_col, task = task, cv_folds = cv_folds,
+        evaluation_strategy = evaluation_strategy,
+        split_ids = split_ids_val, shared_splits = shared_splits,
+        evaluator = evaluator, fold_ids = fold_ids, 
+        shared_folds = shared_folds,
+        shared_full = shared_full, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = verbose, ...
+      )
+      
+      if (is.null(super_ind_hist$best_params) && !is.null(best_ind$best_params)) {
+        super_ind_hist$best_params <- best_ind$best_params
+      }
+      
+      if (super_ind_hist$fitness > best_ind$fitness) {
+        if (verbose) {
+          message(sprintf("  Historical pooled features improved validation fitness from %.4f to %.4f. Using historical pooled features.", 
+                          best_ind$fitness, super_ind_hist$fitness))
+        }
+        best_ind <- super_ind_hist
+      } else {
+        if (verbose) {
+          message(sprintf("  Historical pooled features (fitness: %.4f) did not exceed current best fitness (fitness: %.4f). Keeping current best individual.", 
+                          super_ind_hist$fitness, best_ind$fitness))
+        }
+      }
+    } else {
+      if (verbose) {
+        message("  No historical genes found to evaluate.")
       }
     }
   }
