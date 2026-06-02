@@ -480,13 +480,12 @@ evolve_features <- function(data, target_col, task = "classification",
     }
     temperature <- 0.1
     
-    # Determine target population size (Stagnation Expansion / Gradual Contraction)
+    # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
     target_pop_size <- pop_size
     if (dynamic_population) {
       if (generations_without_improvement > 0) {
-        # Expand population during stagnation
-        stagnation_size <- floor(pop_size * (dynamic_population_growth_rate ^ generations_without_improvement))
-        current_pop_size <- max(current_pop_size, stagnation_size)
+        # Expand population during stagnation relative to current size
+        current_pop_size <- max(current_pop_size + 1, floor(current_pop_size * dynamic_population_growth_rate))
       } else {
         # Gradual decay back to pop_size when there is improvement
         current_pop_size <- max(pop_size, floor(current_pop_size * dynamic_population_decay_rate))
