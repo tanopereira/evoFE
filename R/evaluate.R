@@ -430,8 +430,10 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     y_val <- as.integer(factor(y_val, levels = classes)) - 1
   }
   
-  # Determine the evaluator to use. If it is a tuner, we train the base evaluator directly
-  # using the best_params.
+  # Crucial distinction: The holdout fold is strictly for testing generalization performance on unseen
+  # data, and must NEVER be used to drive parameter tuning. Therefore, we bypass the tuner (e.g.
+  # lightgbm_mbo) and train the base evaluator (e.g. lightgbm) directly using the best parameters
+  # found during evolution.
   final_evaluator <- evaluator
   eval_entry <- evo_evaluators[[evaluator]]
   if (!is.null(eval_entry) && !is.null(eval_entry$base_evaluator)) {
