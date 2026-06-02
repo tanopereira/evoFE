@@ -201,6 +201,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param seed Optional integer seed for reproducibility.
 #' @param verbose Logical. If TRUE, prints progress.
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
+#' @param model_all_final_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @examples
 #' \donttest{
@@ -230,7 +231,8 @@ evolve_features <- function(data, target_col, task = "classification",
                             early_stopping_rounds = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE, crossover_type = "both", 
                             threads = 2, max_clustering_size = 5000, 
-                            seed = NULL, verbose = TRUE, metric = "default", ...) {
+                            seed = NULL, verbose = TRUE, metric = "default", 
+                            model_all_final_genes = FALSE, ...) {
   if (!is.null(seed)) set.seed(seed)
   
   # Temporarily configure max clustering size and threads options
@@ -546,6 +548,36 @@ evolve_features <- function(data, target_col, task = "classification",
     best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
                                          target_col, task, evaluator, threads, state_cache,
                                          classes, num_class, metric = metric, verbose = verbose, ...)
+  }
+  
+  if (model_all_final_genes) {
+    # 1. Collect all genes from all individuals in the final population
+    all_genes <- unlist(lapply(pop, function(ind) ind$genes), recursive = FALSE)
+    
+    # 2. De-duplicate genes by their unique output column name
+    unique_cols <- unique(vapply(all_genes, function(g) g$output_col, character(1)))
+    deduped_genes <- list()
+    for (gene in all_genes) {
+      if (gene$output_col %in% unique_cols) {
+        deduped_genes[[gene$output_col]] <- gene
+        unique_cols <- setdiff(unique_cols, gene$output_col)
+      }
+    }
+    deduped_genes <- unname(deduped_genes)
+    
+    # 3. Create the super-individual
+    super_ind <- create_individual(
+      genes = deduped_genes, 
+      numeric_cols = numeric_cols, 
+      categorical_cols = categorical_cols
+    )
+    
+    # Copy metadata from the single best individual so that print/summary functions don't break
+    super_ind$fitness <- best_ind$fitness
+    super_ind$holdout_fitness <- best_ind$holdout_fitness
+    super_ind$best_params <- best_ind$best_params
+    
+    best_ind <- super_ind
   }
   
   if (verbose) {
