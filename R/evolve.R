@@ -578,7 +578,7 @@ evolve_features <- function(data, target_col, task = "classification",
       evaluator = evaluator, fold_ids = fold_ids, 
       shared_folds = shared_folds,
       shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = FALSE, ...
+      threads = threads, metric = metric, verbose = verbose, ...
     )
     
     if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
