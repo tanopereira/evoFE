@@ -544,13 +544,11 @@ evolve_features <- function(data, target_col, task = "classification",
   
   best_ind <- pop[[1]]
   
-  if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
-    best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
-                                         target_col, task, evaluator, threads, state_cache,
-                                         classes, num_class, metric = metric, verbose = verbose, ...)
-  }
-  
   if (model_all_final_genes) {
+    if (verbose) {
+      message("\nEvaluating pooled features (all final genes)...")
+    }
+    
     # 1. Collect all genes from all individuals in the final population
     all_genes <- unlist(lapply(pop, function(ind) ind$genes), recursive = FALSE)
     
@@ -572,12 +570,39 @@ evolve_features <- function(data, target_col, task = "classification",
       categorical_cols = categorical_cols
     )
     
-    # Copy metadata from the single best individual so that print/summary functions don't break
-    super_ind$fitness <- best_ind$fitness
-    super_ind$holdout_fitness <- best_ind$holdout_fitness
-    super_ind$best_params <- best_ind$best_params
+    # 4. Evaluate the super-individual's fitness
+    super_ind <- evaluate_fitness(
+      super_ind, data, target_col, task = task, cv_folds = cv_folds,
+      evaluation_strategy = evaluation_strategy,
+      split_ids = split_ids_val, shared_splits = shared_splits,
+      evaluator = evaluator, fold_ids = fold_ids, 
+      shared_folds = shared_folds,
+      shared_full = shared_full, state_cache = state_cache,
+      threads = threads, metric = metric, verbose = FALSE, ...
+    )
     
-    best_ind <- super_ind
+    if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
+      super_ind$best_params <- best_ind$best_params
+    }
+    
+    if (super_ind$fitness > best_ind$fitness) {
+      if (verbose) {
+        message(sprintf("  Pooled features improved validation fitness from %.4f to %.4f. Using pooled features.", 
+                        best_ind$fitness, super_ind$fitness))
+      }
+      best_ind <- super_ind
+    } else {
+      if (verbose) {
+        message(sprintf("  Pooled features (fitness: %.4f) did not exceed best individual (fitness: %.4f). Using best individual.", 
+                        super_ind$fitness, best_ind$fitness))
+      }
+    }
+  }
+  
+  if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
+    best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
+                                         target_col, task, evaluator, threads, state_cache,
+                                         classes, num_class, metric = metric, verbose = verbose, ...)
   }
   
   if (verbose) {

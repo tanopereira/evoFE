@@ -1268,7 +1268,7 @@ test_that("baseline fitness is consistent across population sizes under split st
   expect_equal(fit_small, fit_large)
 })
 
-test_that("model_all_final_genes accumulates all unique genes and trains successfully", {
+test_that("model_all_final_genes accumulates all unique genes, evaluates them, and trains successfully based on performance", {
   set.seed(42)
   df <- data.frame(
     x1 = rnorm(60),
@@ -1294,18 +1294,24 @@ test_that("model_all_final_genes accumulates all unique genes and trains success
   
   expect_s3_class(res, "evo_recipe")
   
-  # 1. Verify that best_individual's genes are indeed the union of all unique genes in history
+  hist_best_ind <- res$history[[1]]
   history_genes <- unlist(lapply(res$history, function(ind) ind$genes), recursive = FALSE)
   unique_history_cols <- unique(vapply(history_genes, function(g) g$output_col, character(1)))
   
   best_genes_cols <- vapply(res$best_individual$genes, function(g) g$output_col, character(1))
   
-  expect_equal(sort(unique_history_cols), sort(best_genes_cols))
+  # The final best_individual's fitness must be at least as high as the historical best
+  expect_gte(res$best_individual$fitness, hist_best_ind$fitness)
+  
+  # Check if the super-individual was selected or the historical best
+  is_super_selected <- length(best_genes_cols) == length(unique_history_cols) && all(sort(best_genes_cols) == sort(unique_history_cols))
+  is_hist_selected <- length(best_genes_cols) == length(hist_best_ind$genes) && all(sort(best_genes_cols) == sort(vapply(hist_best_ind$genes, function(g) g$output_col, character(1))))
+  
+  expect_true(is_super_selected || is_hist_selected)
   
   # 2. Verify that predict on the recipe works
   preds_df <- predict(res, df[, 1:2])
   expect_s3_class(preds_df, "data.table")
-  # Ensure all best genes exist as columns in the predicted output
   expect_true(all(best_genes_cols %in% names(preds_df)))
   
   # 3. Verify predict_model succeeds
