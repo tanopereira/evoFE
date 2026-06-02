@@ -195,6 +195,8 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param early_stopping_rounds Stop if fitness doesn't improve for this many generations
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
 #' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
+#' @param dynamic_population_growth_rate Growth rate multiplier for population expansion during stagnation (default 1.5).
+#' @param dynamic_population_decay_rate Decay rate multiplier for population contraction back to baseline (default 0.7).
 #' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
@@ -230,7 +232,10 @@ evolve_features <- function(data, target_col, task = "classification",
                             evaluation_strategy = "cv", split_ratio = c(0.6, 0.2, 0.2),
                             split_ids = NULL,
                             early_stopping_rounds = 3, evaluator = "lightgbm",
-                            dynamic_population = TRUE, crossover_type = "both", 
+                            dynamic_population = TRUE,
+                            dynamic_population_growth_rate = 1.5,
+                            dynamic_population_decay_rate = 0.7,
+                            crossover_type = "both", 
                             threads = 2, max_clustering_size = 5000, 
                             seed = NULL, verbose = TRUE, metric = "default", 
                             model_all_final_genes = FALSE,
@@ -389,6 +394,7 @@ evolve_features <- function(data, target_col, task = "classification",
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   
   historical_best_genes <- list()
+  current_pop_size <- pop_size
   
   for (g in 1:generations) {
     if (verbose) {
@@ -474,10 +480,18 @@ evolve_features <- function(data, target_col, task = "classification",
     }
     temperature <- 0.1
     
-    # Determine target population size (Stagnation Expansion)
+    # Determine target population size (Stagnation Expansion / Gradual Contraction)
     target_pop_size <- pop_size
-    if (dynamic_population && generations_without_improvement > 0) {
-      target_pop_size <- floor(pop_size * (1.5 ^ generations_without_improvement))
+    if (dynamic_population) {
+      if (generations_without_improvement > 0) {
+        # Expand population during stagnation
+        stagnation_size <- floor(pop_size * (dynamic_population_growth_rate ^ generations_without_improvement))
+        current_pop_size <- max(current_pop_size, stagnation_size)
+      } else {
+        # Gradual decay back to pop_size when there is improvement
+        current_pop_size <- max(pop_size, floor(current_pop_size * dynamic_population_decay_rate))
+      }
+      target_pop_size <- current_pop_size
     }
     
     # Next generation

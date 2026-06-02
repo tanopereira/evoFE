@@ -17,6 +17,8 @@ evolve_features(
   early_stopping_rounds = 3,
   evaluator = "lightgbm",
   dynamic_population = TRUE,
+  dynamic_population_growth_rate = 1.5,
+  dynamic_population_decay_rate = 0.7,
   crossover_type = "both",
   threads = 2,
   max_clustering_size = 5000,
@@ -52,6 +54,10 @@ evolve_features(
 \item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
 
 \item{dynamic_population}{Logical. If TRUE, population expands dynamically during stagnation.}
+
+\item{dynamic_population_growth_rate}{Growth rate multiplier for population expansion during stagnation (default 1.5).}
+
+\item{dynamic_population_decay_rate}{Decay rate multiplier for population contraction back to baseline (default 0.7).}
 
 \item{crossover_type}{Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"}
 

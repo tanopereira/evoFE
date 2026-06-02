@@ -1385,4 +1385,35 @@ test_that("model_all_historical_genes collects genes across generations, evaluat
   expect_true(all(preds >= 0 & preds <= 1))
 })
 
+test_that("gradual population growth and decay works correctly during dynamic population expansion and recovery", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(30),
+    x2 = rnorm(30),
+    target = sample(0:1, 30, replace = TRUE)
+  )
+  
+  # Run evolution with dynamic population and custom growth/decay rates
+  res <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 3,
+    pop_size = 3,
+    evaluation_strategy = "cv",
+    cv_folds = 2,
+    early_stopping_rounds = 3,
+    evaluator = "lightgbm",
+    seed = 42,
+    dynamic_population = TRUE,
+    dynamic_population_growth_rate = 2.0,
+    dynamic_population_decay_rate = 0.5,
+    verbose = FALSE
+  )
+  
+  expect_s3_class(res, "evo_recipe")
+  expect_true(is.numeric(res$best_individual$fitness))
+  expect_gt(res$best_individual$fitness, -Inf)
+})
+
 
