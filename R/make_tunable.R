@@ -109,6 +109,17 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
 
     use_split <- !is.null(x_val) && !is.null(y_val)
+    
+    if (verbose) {
+      if (use_split) {
+        message(sprintf("\n[MBO] Starting %s Hyperparameter Tuning (Iters: %d, Strategy: split, Metric: %s)...", 
+                        base_model_name, mbo_iters, metric))
+      } else {
+        message(sprintf("\n[MBO] Starting %s Hyperparameter Tuning (Iters: %d, Strategy: cv-%d, Metric: %s)...", 
+                        base_model_name, mbo_iters, mbo_folds, metric))
+      }
+    }
+
     if (!use_split) {
       set.seed(42)
       folds <- sample(rep(1:mbo_folds, length.out = nrow(x_train)))
@@ -127,6 +138,11 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           trial_params
         ))
         score <- compute_metric(y_val, res$predictions, task, metric = metric, num_class = num_class)
+        
+        if (verbose) {
+          param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
+          message(sprintf("  [MBO Eval] %s -> Val Fitness: %.4f", param_str, score))
+        }
         return(-score) # Negate because MBO minimizes
       } else {
         # Cross-validation mode
@@ -146,7 +162,13 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           ))
           scores[i] <- compute_metric(y_train[idx_val], res$predictions, task, metric = metric, num_class = num_class)
         }
-        return(-mean(scores))
+        
+        mean_score <- mean(scores)
+        if (verbose) {
+          param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
+          message(sprintf("  [MBO Eval] %s -> CV Fitness: %.4f", param_str, mean_score))
+        }
+        return(-mean_score)
       }
     }
     
