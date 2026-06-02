@@ -635,9 +635,23 @@ evolve_features <- function(data, target_col, task = "classification",
     y_full <- as.integer(factor(y_full, levels = classes)) - 1
   }
   
-  res_model <- train_model(x_full, y_full, task = task, evaluator = evaluator,
-                            threads = threads, num_class = num_class, metric = metric,
-                            verbose = verbose, best_params = best_params, ...)
+  # Determine the evaluator to use. If it is a tuner, we train the base evaluator directly
+  # using the best_params.
+  final_evaluator <- evaluator
+  eval_entry <- evo_evaluators[[evaluator]]
+  if (!is.null(eval_entry) && !is.null(eval_entry$base_evaluator)) {
+    final_evaluator <- eval_entry$base_evaluator
+  }
+  
+  # Merge best_params into ...
+  final_args <- utils::modifyList(list(...), as.list(best_params))
+  
+  res_model <- do.call(train_model, c(
+    list(x_train = x_full, y_train = y_full, task = task, evaluator = final_evaluator,
+         threads = threads, num_class = num_class, metric = metric,
+         verbose = verbose),
+    final_args
+  ))
   best_model <- res_model$model
   
   structure(

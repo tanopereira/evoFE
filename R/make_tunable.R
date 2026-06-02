@@ -221,6 +221,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
   register_evaluator(
     name = tuner_name,
     train_func = tuned_train_func,
-    predict_func = base_evaluator$predict_func
+    predict_func = base_evaluator$predict_func,
+    base_evaluator = base_model_name
   )
 }

@@ -430,10 +430,24 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     y_val <- as.integer(factor(y_val, levels = classes)) - 1
   }
   
-  res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
-                            evaluator = evaluator, threads = threads,
-                            num_class = num_class, metric = metric,
-                            verbose = verbose, best_params = ind$best_params, ...)
+  # Determine the evaluator to use. If it is a tuner, we train the base evaluator directly
+  # using the best_params.
+  final_evaluator <- evaluator
+  eval_entry <- evo_evaluators[[evaluator]]
+  if (!is.null(eval_entry) && !is.null(eval_entry$base_evaluator)) {
+    final_evaluator <- eval_entry$base_evaluator
+  }
+  
+  # Merge best_params into ...
+  final_args <- utils::modifyList(list(...), as.list(ind$best_params))
+  
+  res_model <- do.call(train_model, c(
+    list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task,
+         evaluator = final_evaluator, threads = threads,
+         num_class = num_class, metric = metric,
+         verbose = verbose),
+    final_args
+  ))
   
   if (!is.null(res_model$best_params)) {
     ind$best_params <- res_model$best_params

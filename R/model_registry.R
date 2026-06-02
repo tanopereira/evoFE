@@ -34,8 +34,8 @@ evo_evaluators <- new.env(parent = emptyenv())
 #' # Verify it is registered
 #' exists("mock_eval", envir = evo_evaluators)
 #' @export
-register_evaluator <- function(name, train_func, predict_func) {
-  assign(name, list(train_func = train_func, predict_func = predict_func), envir = evo_evaluators)
+register_evaluator <- function(name, train_func, predict_func, base_evaluator = NULL) {
+  assign(name, list(train_func = train_func, predict_func = predict_func, base_evaluator = base_evaluator), envir = evo_evaluators)
 }
 
 # --- Register Default Evaluators ---

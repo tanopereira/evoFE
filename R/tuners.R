@@ -220,5 +220,6 @@ register_evaluator(
   },
   predict_func = function(model, x_new, task, ...) {
     stats::predict(model, x_new)
-  }
+  },
+  base_evaluator = "lightgbm"
 )
