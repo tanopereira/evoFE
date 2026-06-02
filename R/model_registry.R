@@ -63,7 +63,7 @@ register_evaluator(
     if (task == "multiclass") params$num_class <- num_class
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -114,7 +114,7 @@ register_evaluator(
     if (task == "multiclass") params$num_class <- num_class
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -175,7 +175,7 @@ register_evaluator(
     )
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]

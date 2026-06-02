@@ -14,7 +14,8 @@ register_evaluator(
                          task = "classification",
                          threads = 2, num_class = NULL, nrounds = 50,
                          metric = "default", mbo_iters = 5, mbo_init_design = 8,
-                         mbo_folds = 3, verbose = FALSE, best_params = NULL, ...) {
+                         mbo_folds = 3, mbo_infill_opt = "focussearch",
+                         verbose = FALSE, best_params = NULL, ...) {
     
     # Check for required packages
     if (!requireNamespace("mlrMBO", quietly = TRUE) ||
@@ -126,9 +127,15 @@ register_evaluator(
       minimize = TRUE
     )
     
-    # Configure MBO Control
+    if (!mbo_infill_opt %in% c("focussearch", "ea")) {
+      stop("mbo_infill_opt must be either 'focussearch' or 'ea'.")
+    }
+    if (mbo_infill_opt == "ea" && !requireNamespace("emoa", quietly = TRUE)) {
+      stop("The package 'emoa' is required to use the 'ea' infill optimizer. Please install it.")
+    }
     control <- mlrMBO::makeMBOControl()
     control <- mlrMBO::setMBOControlTermination(control, iters = mbo_iters)
+    control <- mlrMBO::setMBOControlInfill(control, opt = mbo_infill_opt)
     
     # Generate initial design using Maximin Latin Hypercube Design (LHS)
     design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps, fun = lhs::maximinLHS)

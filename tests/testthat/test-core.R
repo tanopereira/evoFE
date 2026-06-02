@@ -995,7 +995,8 @@ test_that("CatBoost evaluator checks for package availability", {
     colnames(x_train) <- c("x1", "x2")
     y_train <- rbinom(10, 1, 0.5)
     
-    res <- train_model(x_train, y_train, x_val = x_train, task = "classification", evaluator = "catboost")
+    res <- train_model(x_train, y_train, x_val = x_train, task = "classification", evaluator = "catboost",
+                       mbo_init_design = 5, mbo_iters = 3, mbo_folds = 2)
     expect_type(res, "list")
     expect_true(!is.null(res$model))
     expect_length(res$predictions, 10)
@@ -1115,6 +1116,25 @@ test_that("make_tunable works correctly", {
   evaluator_entry <- evo_evaluators[["mock_base_tuned"]]
   preds <- evaluator_entry$predict_func(res$model, x_val, task = "regression")
   expect_length(preds, nrow(x_val))
+
+  # Test tuning with EA optimizer
+  res_ea <- train_model(
+    x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+    evaluator = "mock_base_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2,
+    mbo_infill_opt = "ea", verbose = FALSE
+  )
+  expect_type(res_ea, "list")
+  expect_true("best_params" %in% names(res_ea))
+
+  # Test that invalid mbo_infill_opt throws error
+  expect_error(
+    train_model(
+      x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+      evaluator = "mock_base_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2,
+      mbo_infill_opt = "invalid_opt", verbose = FALSE
+    ),
+    "mbo_infill_opt must be either"
+  )
 })
 
 test_that("add, subtract, and multiply transformers handle integer overflow gracefully", {
@@ -1192,3 +1212,59 @@ test_that("multivariate stateful transformers (deadwood, mst_score, genie, lumbe
     expect_false(any(is.na(preds_lumb)))
   }
 })
+
+test_that("baseline fitness is consistent across population sizes under split strategy with same seed", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  # Run once with pop_size = 2
+  res_small <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 1,
+    pop_size = 2,
+    evaluation_strategy = "split",
+    split_ratio = c(0.6, 0.4),
+    early_stopping_rounds = 1,
+    evaluator = "lightgbm",
+    seed = 123,
+    verbose = FALSE
+  )
+  
+  # Run again with pop_size = 5
+  res_large <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 1,
+    pop_size = 5,
+    evaluation_strategy = "split",
+    split_ratio = c(0.6, 0.4),
+    early_stopping_rounds = 1,
+    evaluator = "lightgbm",
+    seed = 123,
+    verbose = FALSE
+  )
+  
+  # The baseline individual (original features only) is the one with genes list length 0.
+  # Let's find it in both runs and verify their fitness is identical.
+  get_baseline_fitness <- function(res) {
+    for (ind in res$history) {
+      if (length(ind$genes) == 0) {
+        return(ind$fitness)
+      }
+    }
+    stop("Baseline individual not found")
+  }
+  
+  fit_small <- get_baseline_fitness(res_small)
+  fit_large <- get_baseline_fitness(res_large)
+  
+  expect_equal(fit_small, fit_large)
+})
+

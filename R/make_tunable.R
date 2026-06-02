@@ -26,7 +26,7 @@
 #'
 #' @return Invisibly returns \code{NULL}. Registers the tuned evaluator in the global \code{evo_evaluators} environment.
 #'
-#' @importFrom mlrMBO makeMBOControl setMBOControlTermination mbo
+#' @importFrom mlrMBO makeMBOControl setMBOControlTermination setMBOControlInfill mbo
 #' @importFrom ParamHelpers makeParamSet makeNumericParam makeIntegerParam makeDiscreteParam generateDesign
 #' @importFrom smoof makeSingleObjectiveFunction
 #' @importFrom lhs maximinLHS
@@ -98,7 +98,8 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
   tuned_train_func <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                                task = "classification", threads = 2, num_class = NULL,
                                metric = "default", mbo_iters = 5, mbo_init_design = 8,
-                               mbo_folds = 3, verbose = FALSE, best_params = NULL, ...) {
+                               mbo_folds = 3, mbo_infill_opt = "focussearch",
+                               verbose = FALSE, best_params = NULL, ...) {
     
     # Check for required packages
     if (!requireNamespace("mlrMBO", quietly = TRUE) ||
@@ -155,8 +156,15 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       fn = fn, par.set = ps, has.simple.signature = FALSE, minimize = TRUE
     )
     
+    if (!mbo_infill_opt %in% c("focussearch", "ea")) {
+      stop("mbo_infill_opt must be either 'focussearch' or 'ea'.")
+    }
+    if (mbo_infill_opt == "ea" && !requireNamespace("emoa", quietly = TRUE)) {
+      stop("The package 'emoa' is required to use the 'ea' infill optimizer. Please install it.")
+    }
     control <- mlrMBO::makeMBOControl()
     control <- mlrMBO::setMBOControlTermination(control, iters = mbo_iters)
+    control <- mlrMBO::setMBOControlInfill(control, opt = mbo_infill_opt)
     
     # Generate initial design
     design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps, fun = lhs::maximinLHS)

@@ -319,26 +319,6 @@ evolve_features <- function(data, target_col, task = "classification",
     message(sprintf("  Original Numeric columns: %s", truncate_cols(numeric_cols)))
     message(sprintf("  Original Categorical columns: %s", truncate_cols(categorical_cols)))
   }
-  
-  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task)
-  
-  if (verbose) {
-    message("\n[Gen 0] Initialized Population:")
-    for (i in seq_along(pop)) {
-      message(sprintf("  Individual %d: %s", i, individual_to_recipe_string(pop[[i]])))
-    }
-  }
-  
-  global_best_fitness <- -Inf
-  running_best_fitness <- -Inf
-  generations_without_improvement <- 0
-  fitness_history <- numeric(generations)
-  
-  # Fitness cache to avoid re-evaluating identical recipes
-  fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
-  # State cache for full dataset to avoid re-fitting stateful transformers
-  state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  
   # Pre-calculate fixed CV folds or split IDs
   fold_ids <- NULL
   shared_folds <- NULL
@@ -384,6 +364,25 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   
   shared_full <- data.table::as.data.table(data)
+  
+  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task)
+  
+  if (verbose) {
+    message("\n[Gen 0] Initialized Population:")
+    for (i in seq_along(pop)) {
+      message(sprintf("  Individual %d: %s", i, individual_to_recipe_string(pop[[i]])))
+    }
+  }
+  
+  global_best_fitness <- -Inf
+  running_best_fitness <- -Inf
+  generations_without_improvement <- 0
+  fitness_history <- numeric(generations)
+  
+  # Fitness cache to avoid re-evaluating identical recipes
+  fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
+  # State cache for full dataset to avoid re-fitting stateful transformers
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
   
   for (g in 1:generations) {
     if (verbose) {
