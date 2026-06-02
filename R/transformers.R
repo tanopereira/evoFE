@@ -281,7 +281,7 @@ evo_transformers$truncated_svd <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     tryCatch({
-      res <- svd(x, nu = 0, nv = comp_idx)
+      res <- svd(x, nu = 0, nv = min(3, ncol(x)))
       list(v = res$v, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
     }, error = function(e) {
       list(v = NULL, valid = FALSE)

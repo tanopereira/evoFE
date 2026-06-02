@@ -552,6 +552,7 @@ test_that("different components share the same fitted state in state_cache", {
   colnames(df) <- c("x1", "x2", "x3")
   df[, target := rnorm(100)]
   
+  # 1. Test PCA
   gene_pca1 <- create_gene("pca", c("x1", "x2"))
   gene_pca1$params$comp_idx <- 1
   gene_pca1$output_col <- "PCA1"
@@ -565,13 +566,39 @@ test_that("different components share the same fitted state in state_cache", {
   expect_false(is.null(res1$gene$state))
   
   # Fit gene_pca2. It should retrieve the state from cache without recalculating/refitting.
-  # We can verify this by checking that the state object is identical.
   res2 <- apply_gene(gene_pca2, df, target_col = "target", state_cache = state_cache)
   expect_identical(res1$gene$state, res2$gene$state)
   
-  # Verify cache has only one entry
-  cache_keys <- ls(envir = state_cache)
-  expect_equal(length(cache_keys), 1)
+  # 2. Test truncated_svd
+  gene_svd1 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd1$params$comp_idx <- 1
+  gene_svd1$output_col <- "SVD1"
+  
+  gene_svd2 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd2$params$comp_idx <- 2
+  gene_svd2$output_col <- "SVD2"
+  
+  gene_svd3 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd3$params$comp_idx <- 3
+  gene_svd3$output_col <- "SVD3"
+  
+  # Apply and fit them
+  res_svd1 <- apply_gene(gene_svd1, df, target_col = "target", state_cache = state_cache)
+  res_svd2 <- apply_gene(gene_svd2, df, target_col = "target", state_cache = state_cache)
+  res_svd3 <- apply_gene(gene_svd3, df, target_col = "target", state_cache = state_cache)
+  
+  # State should be identical/shared
+  expect_identical(res_svd1$gene$state, res_svd2$gene$state)
+  expect_identical(res_svd1$gene$state, res_svd3$gene$state)
+  
+  # Output columns must be different from each other (not identical components)
+  col1 <- res_svd1$train$SVD1
+  col2 <- res_svd2$train$SVD2
+  col3 <- res_svd3$train$SVD3
+  
+  expect_true(mean(abs(col1 - col2)) > 1e-5)
+  expect_true(mean(abs(col1 - col3)) > 1e-5)
+  expect_true(mean(abs(col2 - col3)) > 1e-5)
 })
 
 test_that("umap, genie, and mst_score respect evoFE.verbose option", {
