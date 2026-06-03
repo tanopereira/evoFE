@@ -8,6 +8,10 @@
 #' @param apply_func function(data, input_cols, state = NULL) returning new column vector
 #' @param name_generator function(input_cols) returning output column name
 #' @param allow_replace Logical. Whether column sampling allows replacement.
+#' @return An \code{evo_transformer} S3 object: a list with elements
+#'   \code{name}, \code{type}, \code{input_type}, \code{output_type},
+#'   \code{fit_func}, \code{apply_func}, \code{name_generator}, and
+#'   \code{allow_replace}.
 #' @import data.table
 #' @importFrom uwot umap
 #' @importFrom genieclust genie
@@ -32,6 +36,8 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'
 #' A list of default transformer definitions available for feature engineering.
 #'
+#' @return A named list of \code{evo_transformer} objects, each defining a
+#'   feature transformation (e.g. \code{log}, \code{pca}, \code{target_encode}).
 #' @export
 evo_transformers <- list()
 
@@ -541,7 +547,6 @@ evo_transformers$mst_score <- create_transformer(
             if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
           }
         }, add = TRUE)
-        set.seed(42)
         sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
         x_sampled <- x_unique[sampled_rows, , drop = FALSE]
         if (verbose) {
@@ -714,7 +719,6 @@ evo_transformers$genie <- create_transformer(
             if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
           }
         }, add = TRUE)
-        set.seed(42)
         sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
         x_sampled <- x_unique[sampled_rows, , drop = FALSE]
         if (verbose) {
@@ -1095,7 +1099,6 @@ evo_transformers$lumbermark <- create_transformer(
             if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
           }
         }, add = TRUE)
-        set.seed(42)
         sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
         x_sampled <- x_unique[sampled_rows, , drop = FALSE]
         if (verbose) {
@@ -1252,7 +1255,6 @@ evo_transformers$deadwood <- create_transformer(
             if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
           }
         }, add = TRUE)
-        set.seed(42)
         sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
         x_sampled <- x_unique[sampled_rows, , drop = FALSE]
         if (verbose) {

@@ -9,6 +9,10 @@ gene_to_formula(gene)
 \arguments{
 \item{gene}{A gene list}
 }
+\value{
+A character string representing the gene as a human-readable
+  formula, e.g. \code{"log(col1)"} or \code{"pca2(col1, col2)"}.
+}
 \description{
 Convert a gene to a formula string
 }

@@ -11,6 +11,11 @@ create_gene(transformer_name, input_cols)
 
 \item{input_cols}{Vector of input column names}
 }
+\value{
+A gene list with elements \code{transformer_name}, \code{input_cols},
+  \code{params} (transformer-specific parameters), \code{state} (\code{NULL}
+  until fitted), and \code{output_col} (auto-generated column name).
+}
 \description{
 Create a single gene
 }

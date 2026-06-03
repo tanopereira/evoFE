@@ -9,6 +9,11 @@ individual_to_recipe_string(ind)
 \arguments{
 \item{ind}{An evo_individual}
 }
+\value{
+A character string listing all gene formulas in bracket notation,
+  e.g. \code{"[log(x), sqrt(y)]"}, or \code{"[Original features only]"}
+  when the individual has no genes.
+}
 \description{
 Convert an individual to a recipe string of formulas
 }

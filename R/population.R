@@ -5,6 +5,9 @@
 #' @param categorical_cols Vector of categorical column names.
 #' @param initial_genes Number of initial genes per individual.
 #' @param task Task type ("classification", "regression", or "multiclass").
+#' @return A list of \code{evo_individual} objects of length \code{pop_size}.
+#'   The first individual is a baseline with no genes; the remaining individuals
+#'   each carry \code{initial_genes} randomly generated genes.
 #' @export
 initialize_population <- function(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = "classification") {
   pop <- list()

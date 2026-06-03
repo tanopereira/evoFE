@@ -3,6 +3,9 @@
 #' @param object An evo_recipe object
 #' @param newdata A data.frame or data.table
 #' @param ... Additional arguments
+#' @return A \code{data.table} containing the engineered feature columns
+#'   (original plus all gene-derived columns) for \code{newdata}, ready for
+#'   downstream modelling.
 #' @export
 predict.evo_recipe <- function(object, newdata, ...) {
   ind <- object$best_individual
@@ -21,6 +24,9 @@ predict.evo_recipe <- function(object, newdata, ...) {
 #' @param object An evo_recipe object containing the trained model and best individual
 #' @param newdata A data.frame or data.table to make predictions on
 #' @param ... Additional arguments (currently unused)
+#' @return For binary classification and regression tasks a numeric vector of
+#'   predictions.  For multiclass tasks a numeric matrix with one column per
+#'   class (columns named after class levels).
 #' @export
 predict_model <- function(object, newdata, ...) {
   if (is.null(object$best_model)) {

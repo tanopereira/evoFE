@@ -32,6 +32,12 @@ create_transformer(
 
 \item{allow_replace}{Logical. Whether column sampling allows replacement.}
 }
+\value{
+An \code{evo_transformer} S3 object: a list with elements
+  \code{name}, \code{type}, \code{input_type}, \code{output_type},
+  \code{fit_func}, \code{apply_func}, \code{name_generator}, and
+  \code{allow_replace}.
+}
 \description{
 Create a transformer definition
 }

@@ -26,6 +26,13 @@ apply_gene(
 
 \item{data_hash}{Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.}
 }
+\value{
+A list with three elements: \code{train} (the modified training
+  \code{data.table} with the new gene column appended), \code{val} (the
+  modified validation \code{data.table} or \code{NULL}), and \code{gene}
+  (the gene list, with its \code{state} element populated if the transformer
+  is stateful).
+}
 \description{
 Apply a single gene to a dataset
 }

@@ -13,6 +13,10 @@ crossover(ind1, ind2, verbose = FALSE)
 
 \item{verbose}{Logical. Whether to print crossover details.}
 }
+\value{
+An \code{evo_individual} child created by randomly sampling genes
+  from both parents with duplicate gene outputs removed.
+}
 \description{
 Crossover two individuals
 }

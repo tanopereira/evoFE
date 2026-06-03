@@ -177,8 +177,13 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
-#' @param seed Optional integer seed for reproducibility.
 #' @param verbose Logical. If TRUE, prints progress.
+#' @return An \code{evo_recipe} S3 object: a list with elements
+#'   \code{best_individual} (the top-scoring \code{evo_individual}),
+#'   \code{history} (list of all evaluated individuals across generations),
+#'   \code{task}, \code{best_model} (the trained model object),
+#'   \code{evaluator}, and \code{classes} (class levels for multiclass tasks,
+#'   otherwise \code{NULL}).
 #' @export
 evolve_features <- function(data, target_col, task = "classification", 
                             generations = 10, pop_size = 10, cv_folds = 3, 
@@ -187,8 +192,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             early_stopping_rounds = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE, crossover_type = "both", 
                             threads = 2, max_clustering_size = 5000, 
-                            seed = NULL, verbose = TRUE) {
-  if (!is.null(seed)) set.seed(seed)
+                            verbose = TRUE) {
   
   # Temporarily configure max clustering size and threads options
   old_max_size <- getOption("evoFE.max_clustering_size")

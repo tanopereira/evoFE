@@ -9,6 +9,11 @@ gene_to_state_formula(gene)
 \arguments{
 \item{gene}{A gene list}
 }
+\value{
+A character string representing the gene formula suitable for
+  state caching.  For multi-component transformers (PCA, SVD, UMAP) the
+  component index is omitted so that all components share one cache key.
+}
 \description{
 Convert a gene to a formula string for state caching (ignoring component index)
 }

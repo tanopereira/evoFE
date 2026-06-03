@@ -20,7 +20,6 @@ evolve_features(
   crossover_type = "both",
   threads = 2,
   max_clustering_size = 5000,
-  seed = NULL,
   verbose = TRUE
 )
 }
@@ -55,9 +54,15 @@ evolve_features(
 
 \item{max_clustering_size}{Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)}
 
-\item{seed}{Optional integer seed for reproducibility.}
-
 \item{verbose}{Logical. If TRUE, prints progress.}
+}
+\value{
+An \code{evo_recipe} S3 object: a list with elements
+  \code{best_individual} (the top-scoring \code{evo_individual}),
+  \code{history} (list of all evaluated individuals across generations),
+  \code{task}, \code{best_model} (the trained model object),
+  \code{evaluator}, and \code{classes} (class levels for multiclass tasks,
+  otherwise \code{NULL}).
 }
 \description{
 Run evolutionary feature engineering

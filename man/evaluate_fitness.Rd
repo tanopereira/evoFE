@@ -50,6 +50,12 @@ evaluate_fitness(
 
 \item{threads}{Number of threads to use for parallel execution (default 2)}
 }
+\value{
+The input \code{evo_individual} with its \code{fitness} field set to
+  the computed score (higher is better), \code{importances} set to a named
+  numeric vector of feature importances, \code{holdout_fitness} set to
+  \code{NULL}, and \code{genes} updated with fitted transformer states.
+}
 \description{
 Evaluate the fitness of an individual
 }
