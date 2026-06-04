@@ -374,8 +374,8 @@ evolve_features <- function(data, target_col, task = "classification",
   
   shared_full <- data.table::as.data.table(data)
   
-  # Initialize population with only original features (Generation 0)
-  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 0, task = task)
+  # Initialize population with only 1 baseline individual (Generation 0)
+  pop <- initialize_population(1, numeric_cols, categorical_cols, initial_genes = 0, task = task)
   
   if (verbose) {
     message("\n[Gen 0] Initialized Population:")
@@ -449,7 +449,7 @@ evolve_features <- function(data, target_col, task = "classification",
     if (g == generations) break
     
     # Selection: keep top 50% of current population
-    num_survivors <- max(2, floor(length(pop) / 2))
+    num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
     survivors <- pop[1:num_survivors]
     
     # (Breeding starts silently)
