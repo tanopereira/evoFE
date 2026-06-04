@@ -591,8 +591,10 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p / (1 - p))
     }
     
-    # Laplace smooth the labels
-    y_smooth <- (y_true + alpha) / (1 + 2 * alpha)
+    # Laplace smooth the labels based on class counts
+    N1 <- sum(y_true == 1)
+    N0 <- sum(y_true == 0)
+    y_smooth <- ifelse(y_true == 1, (N1 + alpha) / (N1 + 2 * alpha), alpha / (N0 + 2 * alpha))
     
     obj_fn <- function(temp) {
       probs_T <- 1 / (1 + exp(-z / temp))
@@ -620,11 +622,16 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p)
     }
     
-    # One-hot encode and Laplace smooth labels
+    # Laplace smooth labels based on class counts
     n <- length(y_true)
-    y_one_hot <- matrix(0, nrow = n, ncol = num_class)
-    y_one_hot[cbind(1:n, y_true + 1)] <- 1
-    y_smooth <- (y_one_hot + alpha) / (1 + num_class * alpha)
+    class_counts <- tabulate(y_true + 1, nbins = num_class)
+    y_smooth <- matrix(0, nrow = n, ncol = num_class)
+    for (c in 1:num_class) {
+      Nc <- class_counts[c]
+      y_smooth[, c] <- ifelse(y_true == (c - 1), 
+                              (Nc + alpha) / (Nc + num_class * alpha), 
+                              alpha / (Nc + num_class * alpha))
+    }
     
     obj_fn <- function(temp) {
       z_scaled <- z / temp
