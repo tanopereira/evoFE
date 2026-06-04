@@ -924,6 +924,25 @@ test_that("eval-ts-refinement metric and training integration works", {
   expect_equal(score_logits_multi, score_probs_multi, tolerance = 1e-6)
   expect_gt(score_logits_multi, 0)
   
+  # Imbalanced multiclass test to verify row target summation to 1 and log-loss alignment
+  y_true_imb <- c(0, 0, 0, 1, 1, 2)
+  probs_imb <- matrix(c(
+    0.8, 0.1, 0.1,
+    0.9, 0.05, 0.05,
+    0.7, 0.2, 0.1,
+    0.1, 0.8, 0.1,
+    0.2, 0.7, 0.1,
+    0.8, 0.1, 0.1   # Incorrect prediction to prevent temperature shrinking to 0
+  ), ncol = 3, byrow = TRUE)
+  
+  # When alpha is tiny, TS-refinement should be very close to standard multiclass log-loss
+  score_imb_tiny_alpha <- compute_ts_refinement(y_true_imb, probs_imb, task = "multiclass", num_class = 3, alpha = 1e-5)
+  
+  p_true <- probs_imb[cbind(1:6, y_true_imb + 1)]
+  expected_logloss <- -mean(log(p_true))
+  
+  expect_equal(score_imb_tiny_alpha, expected_logloss, tolerance = 1e-2)
+  
   # Integrate with evolve_features
   df <- data.frame(
     x1 = rnorm(50),

@@ -625,12 +625,13 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     # Laplace smooth labels based on class counts
     n <- length(y_true)
     class_counts <- tabulate(y_true + 1, nbins = num_class)
+    N_k <- class_counts[y_true + 1]
     y_smooth <- matrix(0, nrow = n, ncol = num_class)
     for (c in 1:num_class) {
-      Nc <- class_counts[c]
-      y_smooth[, c] <- ifelse(y_true == (c - 1), 
-                              (Nc + alpha) / (Nc + num_class * alpha), 
-                              alpha / (Nc + num_class * alpha))
+      is_true_class <- (y_true == (c - 1))
+      y_smooth[, c] <- ifelse(is_true_class, 
+                              (N_k + alpha) / (N_k + num_class * alpha), 
+                              alpha / (N_k + num_class * alpha))
     }
     
     obj_fn <- function(temp) {
