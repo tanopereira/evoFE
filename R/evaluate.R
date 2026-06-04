@@ -530,12 +530,20 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
   metric <- tolower(metric)
   
   if (task == "classification") {
+    if (metric %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+      min_loss <- compute_ts_refinement(y_true, y_pred, task = task, is_logits = FALSE)
+      return(exp(-min_loss))
+    }
     switch(metric,
       auc = compute_auc(y_true, y_pred),
       f1 = compute_f1(y_true, y_pred),
       compute_exp_neg_logloss(y_true, y_pred)
     )
   } else if (task == "multiclass") {
+    if (metric %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+      min_loss <- compute_ts_refinement(y_true, y_pred, task = task, num_class = num_class, is_logits = FALSE)
+      return(exp(-min_loss))
+    }
     switch(metric,
       auc = {
         if (!is.matrix(y_pred)) {
@@ -553,5 +561,88 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
     -val_score
   }
 }
+
+
+#' Temperature Scaled Refinement Metric
+#'
+#' Computes the Temperature Scaled Refinement (TS-Refinement) metric for binary or multiclass classification.
+#' The metric finds the temperature $T$ that minimizes the Laplace-smoothed log-loss of the temperature-scaled prediction margins (logits).
+#'
+#' @param y_true Numeric vector of true labels (0/1 for classification, or 0 to C-1 for multiclass classification).
+#' @param y_pred Numeric vector or matrix of predicted probabilities (or logits, if \code{is_logits = TRUE}).
+#' @param task Character. Either \code{"classification"} (binary) or \code{"multiclass"}.
+#' @param num_class Integer. Number of classes (required for multiclass).
+#' @param alpha Numeric. Laplace smoothing parameter (default is 1).
+#' @param is_logits Logical. If \code{TRUE}, the input predictions \code{y_pred} are treated directly as prediction margins (logits). If \code{FALSE}, they are treated as probabilities and converted to logits.
+#' @return Numeric. The minimized smoothed log-loss.
+#' @export
+compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_class = NULL, alpha = 1, is_logits = FALSE) {
+  if (!task %in% c("classification", "multiclass")) {
+    stop("TS-Refinement metric is only supported for 'classification' and 'multiclass' tasks.")
+  }
+
+  if (task == "classification") {
+    y_pred <- as.numeric(y_pred)
+    if (is_logits) {
+      z <- y_pred
+    } else {
+      # Reconstruct logits (margins) from probabilities
+      p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
+      z <- log(p / (1 - p))
+    }
+    
+    # Laplace smooth the labels
+    y_smooth <- (y_true + alpha) / (1 + 2 * alpha)
+    
+    obj_fn <- function(temp) {
+      probs_T <- 1 / (1 + exp(-z / temp))
+      probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
+      ll <- -mean(y_smooth * log(probs_T) + (1 - y_smooth) * log(1 - probs_T))
+      ll
+    }
+    
+    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 1000))
+    return(opt$objective)
+    
+  } else if (task == "multiclass") {
+    if (is.null(num_class)) {
+      stop("num_class must be specified for multiclass TS-Refinement.")
+    }
+    
+    if (!is.matrix(y_pred)) {
+      y_pred <- matrix(y_pred, ncol = num_class, byrow = TRUE)
+    }
+    
+    if (is_logits) {
+      z <- y_pred
+    } else {
+      p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
+      z <- log(p)
+    }
+    
+    # One-hot encode and Laplace smooth labels
+    n <- length(y_true)
+    y_one_hot <- matrix(0, nrow = n, ncol = num_class)
+    y_one_hot[cbind(1:n, y_true + 1)] <- 1
+    y_smooth <- (y_one_hot + alpha) / (1 + num_class * alpha)
+    
+    obj_fn <- function(temp) {
+      z_scaled <- z / temp
+      z_max <- apply(z_scaled, 1, max)
+      z_stable <- z_scaled - z_max
+      exp_z <- exp(z_stable)
+      sum_exp_z <- rowSums(exp_z)
+      probs_T <- exp_z / sum_exp_z
+      probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
+      
+      ll <- -mean(rowSums(y_smooth * log(probs_T)))
+      ll
+    }
+    
+    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 1000))
+    return(opt$objective)
+  }
+}
+
 
 

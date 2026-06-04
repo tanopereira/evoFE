@@ -288,8 +288,8 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.function(metric)) {
     metric_lower <- tolower(metric)
     valid_metrics <- list(
-      classification = c("default", "auc", "f1"),
-      multiclass = c("default", "auc"),
+      classification = c("default", "auc", "f1", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
+      multiclass = c("default", "auc", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
       regression = c("default", "mae")
     )
     if (!metric_lower %in% valid_metrics[[task]]) {

@@ -888,6 +888,111 @@ test_that("Alternative and custom fitness metrics work", {
   expect_identical(res_custom$metric, custom_metric)
 })
 
+test_that("eval-ts-refinement metric and training integration works", {
+  set.seed(42)
+  # Create a binary classification dataset
+  y_true_bin <- c(1, 0, 1, 0, 1, 0, 1, 0)
+  # Logits: positive for 1, negative for 0
+  logits_bin <- c(1.5, -2.0, 0.8, -1.2, 2.5, -0.5, 1.1, -1.8)
+  probs_bin <- 1 / (1 + exp(-logits_bin))
+  
+  # Calculate metric using logits
+  score_logits <- compute_ts_refinement(y_true_bin, logits_bin, task = "classification", is_logits = TRUE)
+  # Calculate metric using probs
+  score_probs <- compute_ts_refinement(y_true_bin, probs_bin, task = "classification", is_logits = FALSE)
+  
+  # They should be identical
+  expect_equal(score_logits, score_probs, tolerance = 1e-6)
+  expect_gt(score_logits, 0)
+  
+  # Create a multiclass dataset
+  y_true_multi <- c(0, 1, 2, 0, 1, 2)
+  # Probabilities
+  probs_multi <- matrix(c(
+    0.8, 0.1, 0.1,
+    0.1, 0.7, 0.2,
+    0.2, 0.2, 0.6,
+    0.7, 0.2, 0.1,
+    0.1, 0.8, 0.1,
+    0.3, 0.1, 0.6
+  ), ncol = 3, byrow = TRUE)
+  logits_multi <- log(probs_multi)
+  
+  score_logits_multi <- compute_ts_refinement(y_true_multi, logits_multi, task = "multiclass", num_class = 3, is_logits = TRUE)
+  score_probs_multi <- compute_ts_refinement(y_true_multi, probs_multi, task = "multiclass", num_class = 3, is_logits = FALSE)
+  
+  expect_equal(score_logits_multi, score_probs_multi, tolerance = 1e-6)
+  expect_gt(score_logits_multi, 0)
+  
+  # Integrate with evolve_features
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  # 1. Test with lightgbm evaluator
+  suppressWarnings({
+    res_lgb <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "lightgbm",
+      verbose = FALSE,
+      metric = "eval-ts-refinement"
+    )
+  })
+  expect_s3_class(res_lgb, "evo_recipe")
+  expect_equal(tolower(res_lgb$metric), "eval-ts-refinement")
+  expect_gt(res_lgb$best_individual$fitness, 0)
+  
+  # 2. Test with xgboost evaluator
+  suppressWarnings({
+    res_xgb <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "xgboost",
+      verbose = FALSE,
+      metric = "eval-ts-refinement"
+    )
+  })
+  expect_s3_class(res_xgb, "evo_recipe")
+  expect_equal(tolower(res_xgb$metric), "eval-ts-refinement")
+  expect_gt(res_xgb$best_individual$fitness, 0)
+
+  # 3. Test direct train_model with booster-level early stopping and custom metric
+  x_tr <- data.matrix(df[1:30, c("x1", "x2")])
+  y_tr <- df$target[1:30]
+  x_va <- data.matrix(df[31:50, c("x1", "x2")])
+  y_va <- df$target[31:50]
+  
+  res_train_lgb <- train_model(
+    x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va,
+    task = "classification", evaluator = "lightgbm",
+    metric = "eval-ts-refinement", early_stopping_rounds = 3
+  )
+  expect_type(res_train_lgb, "list")
+  expect_true(!is.null(res_train_lgb$model))
+
+  res_train_xgb <- train_model(
+    x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va,
+    task = "classification", evaluator = "xgboost",
+    metric = "eval-ts-refinement", early_stopping_rounds = 3
+  )
+  expect_type(res_train_xgb, "list")
+  expect_true(!is.null(res_train_xgb$model))
+})
+
+
 test_that("S3 print, summary, and plot methods work correctly", {
   set.seed(42)
   df <- data.frame(

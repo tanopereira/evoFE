@@ -63,15 +63,48 @@ register_evaluator(
     if (task == "multiclass") params$num_class <- num_class
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
+    y_val <- extra_params$y_val
+    metric_arg <- extra_params$metric
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    use_ts_refinement <- FALSE
+    if (!is.null(metric_arg) && is.character(metric_arg)) {
+      if (tolower(metric_arg) %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+        use_ts_refinement <- TRUE
+      }
+    }
+
+    if (use_ts_refinement) {
+      params$metric <- "None"
+    }
+
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
     }
 
+    valids <- list()
+    if (use_ts_refinement && !is.null(x_val) && !is.null(y_val)) {
+      dval <- lightgbm::lgb.Dataset(data = x_val, label = y_val, reference = dtrain)
+      valids$val <- dval
+    }
+
+    lgb_eval <- function(preds, dtrain) {
+      labels <- lightgbm::get_field(dtrain, "label")
+      score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE)
+      list(name = "ts_refinement", value = score, higher_better = FALSE)
+    }
+
     utils::capture.output({
       model <- lightgbm::lgb.train(
-        params = params, data = dtrain, nrounds = nrounds, verbose = -1
+        params = params,
+        data = dtrain,
+        nrounds = nrounds,
+        valids = valids,
+        eval = if (use_ts_refinement) lgb_eval else NULL,
+        early_stopping_rounds = early_stopping_rounds,
+        verbose = -1
       )
     })
 
@@ -114,15 +147,51 @@ register_evaluator(
     if (task == "multiclass") params$num_class <- num_class
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
+    y_val <- extra_params$y_val
+    metric_arg <- extra_params$metric
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    use_ts_refinement <- FALSE
+    if (!is.null(metric_arg) && is.character(metric_arg)) {
+      if (tolower(metric_arg) %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+        use_ts_refinement <- TRUE
+      }
+    }
+
+    if (use_ts_refinement) {
+      params$eval_metric <- NULL
+    }
+
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
     }
 
+    evals <- list(train = dtrain)
+    dval_metric <- NULL
+    if (use_ts_refinement && !is.null(x_val) && !is.null(y_val)) {
+      dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val)
+      evals$val <- dval_metric
+    }
+
+    xgb_feval <- function(preds, dtrain) {
+      labels <- xgboost::getinfo(dtrain, "label")
+      is_logits <- (task == "classification")
+      score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = is_logits)
+      list(metric = "ts_refinement", value = score)
+    }
+
     utils::capture.output({
       model <- xgboost::xgb.train(
-        params = params, data = dtrain, nrounds = nrounds, verbose = 0
+        params = params,
+        data = dtrain,
+        nrounds = nrounds,
+        evals = evals,
+        custom_metric = if (use_ts_refinement) xgb_feval else NULL,
+        early_stopping_rounds = early_stopping_rounds,
+        maximize = if (use_ts_refinement) FALSE else NULL,
+        verbose = 0
       )
     })
 
@@ -139,6 +208,7 @@ register_evaluator(
     importances <- if (nrow(imp) > 0) stats::setNames(imp$Gain, imp$Feature) else NULL
 
     rm(dtrain)
+    if (!is.null(dval_metric)) rm(dval_metric)
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
