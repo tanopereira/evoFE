@@ -374,25 +374,50 @@ evolve_features <- function(data, target_col, task = "classification",
   
   shared_full <- data.table::as.data.table(data)
   
-  # Initialize population with only 1 baseline individual (Generation 0)
-  pop <- initialize_population(1, numeric_cols, categorical_cols, initial_genes = 0, task = task)
+  # Fitness cache to avoid re-evaluating identical recipes
+  fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
+  # State cache for full dataset to avoid re-fitting stateful transformers
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+
+  # 1. Generation 0: Evaluate baseline individual first (original features only)
+  baseline_ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols)
+  if (verbose) {
+    message("\n--- Generation 0 (Baseline) ---")
+    message(sprintf("  Individual 1: %s", individual_to_recipe_string(baseline_ind)))
+  }
+  baseline_ind <- evaluate_fitness(
+    baseline_ind, data, target_col, task = task, cv_folds = cv_folds,
+    evaluation_strategy = evaluation_strategy,
+    split_ids = split_ids_val, shared_splits = shared_splits,
+    evaluator = evaluator, fold_ids = fold_ids, 
+    shared_folds = shared_folds,
+    shared_full = shared_full, state_cache = state_cache,
+    threads = threads, metric = metric, verbose = FALSE, ...
+  )
+  if (verbose) {
+    message(sprintf("  Tested Individual 1 -> Fitness: %.4f", baseline_ind$fitness))
+  }
+
+  # Cache the baseline individual's fitness
+  recipe_str <- individual_to_recipe_string(baseline_ind)
+  cache_key <- digest::digest(recipe_str, algo = "md5", serialize = FALSE)
+  assign(cache_key, baseline_ind, envir = fitness_cache)
+  
+  # 2. Initialize population for Generation 1 using baseline importances
+  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances)
+  pop[[1]] <- baseline_ind
   
   if (verbose) {
-    message("\n[Gen 0] Initialized Population:")
+    message("\n[Gen 1] Initialized Population:")
     for (i in seq_along(pop)) {
       message(sprintf("  Individual %d: %s", i, individual_to_recipe_string(pop[[i]])))
     }
   }
   
-  global_best_fitness <- -Inf
-  running_best_fitness <- -Inf
+  global_best_fitness <- baseline_ind$fitness
+  running_best_fitness <- baseline_ind$fitness
   generations_without_improvement <- 0
   fitness_history <- numeric(generations)
-  
-  # Fitness cache to avoid re-evaluating identical recipes
-  fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
-  # State cache for full dataset to avoid re-fitting stateful transformers
-  state_cache <- new.env(hash = TRUE, parent = emptyenv())
   
   historical_best_genes <- list()
   current_pop_size <- pop_size
