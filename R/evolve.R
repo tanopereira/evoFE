@@ -120,6 +120,10 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
     cached <- exists(cache_key, envir = fitness_cache)
 
     if (cached) {
+      if (verbose) {
+        cached_ind <- get(cache_key, envir = fitness_cache)
+        message(sprintf("  [Cache Hit] Recipe: %s -> Fitness: %.4f", recipe_str, cached_ind$fitness))
+      }
       pop[[i]] <- get(cache_key, envir = fitness_cache)
     } else {
       pop[[i]] <- evaluate_fitness(pop[[i]], data, target_col, task = task, cv_folds = cv_folds,
@@ -624,7 +628,7 @@ evolve_features <- function(data, target_col, task = "classification",
       evaluator = evaluator, fold_ids = fold_ids, 
       shared_folds = shared_folds,
       shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = verbose, ...
+      threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE, ...
     )
     
     if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
@@ -680,7 +684,7 @@ evolve_features <- function(data, target_col, task = "classification",
         evaluator = evaluator, fold_ids = fold_ids, 
         shared_folds = shared_folds,
         shared_full = shared_full, state_cache = state_cache,
-        threads = threads, metric = metric, verbose = verbose, ...
+        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE, ...
       )
       
       if (is.null(super_ind_hist$best_params) && !is.null(best_ind$best_params)) {
@@ -713,6 +717,11 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   
   if (verbose) {
+    message("\nCache contents:")
+    for (k in ls(envir = fitness_cache)) {
+      ind_temp <- get(k, envir = fitness_cache)
+      message(sprintf("  Key: %s -> Recipe: %s -> Fitness: %.4f", k, individual_to_recipe_string(ind_temp), ind_temp$fitness))
+    }
     message(sprintf("\nEvolution Complete. Best Fitness: %.4f", best_ind$fitness))
     if (!is.null(best_ind$holdout_fitness) && !is.na(best_ind$holdout_fitness)) {
       message(sprintf("Best Holdout Fitness: %.4f", best_ind$holdout_fitness))

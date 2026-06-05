@@ -184,6 +184,7 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param verbose Logical indicating if progress should be printed.
+#' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @export
 evaluate_fitness <- function(ind, data, target_col, task = "classification", 
@@ -192,7 +193,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
                              state_cache = NULL, threads = 2,
-                             metric = "default", verbose = FALSE, ...) {
+                             metric = "default", verbose = FALSE, allow_prune = FALSE, ...) {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
@@ -219,7 +220,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     
     # Apply genes
     res <- tryCatch({
-      apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
+      apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
     }, error = function(e) {
       NULL
     })
