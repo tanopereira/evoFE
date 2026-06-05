@@ -29,7 +29,7 @@
 predict.evo_recipe <- function(object, newdata, ...) {
   ind <- object$best_individual
   
-  res <- apply_individual(ind, newdata, val_data = NULL, target_col = NULL)
+  res <- apply_individual(ind, newdata, val_data = NULL, target_col = NULL, allow_prune = TRUE)
   applied_ind <- res$ind
   
   gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)

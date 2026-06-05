@@ -109,15 +109,18 @@ test_that("Constant columns are skipped and individual survives", {
   gene_log <- create_gene("log", "x1")
   ind <- create_individual(genes = list(gene_log), numeric_cols = "x1")
   
-  # apply_individual should run without error and return the individual with 0 genes (skipped)
+  # apply_individual should return NULL when allow_prune is FALSE (default)
   res <- apply_individual(ind, df, target_col = "target")
-  expect_equal(length(res$ind$genes), 0)
-  expect_false(gene_log$output_col %in% names(res$train))
+  expect_null(res)
   
-  # evaluate_fitness should run without error and not set fitness to -Inf
+  # apply_individual should run and prune when allow_prune is TRUE
+  res_prune <- apply_individual(ind, df, target_col = "target", allow_prune = TRUE)
+  expect_equal(length(res_prune$ind$genes), 0)
+  expect_false(gene_log$output_col %in% names(res_prune$train))
+  
+  # evaluate_fitness should set fitness to -Inf due to constant column (lethal mutation)
   ind_eval <- evaluate_fitness(ind, df, target_col = "target", cv_folds = 2)
-  expect_true(is.numeric(ind_eval$fitness))
-  expect_gt(ind_eval$fitness, -Inf)
+  expect_equal(ind_eval$fitness, -Inf)
 })
 
 test_that("Genie, MST Score, Lumbermark, and Deadwood handle constant/all-zero data without crashing", {

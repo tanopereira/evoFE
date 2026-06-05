@@ -105,7 +105,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
 #' @export
-apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL) {
+apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = FALSE) {
   dt_train <- if (data.table::is.data.table(train_data)) train_data else data.table::as.data.table(train_data)
   dt_val <- if (!is.null(val_data)) {
     if (data.table::is.data.table(val_data)) val_data else data.table::as.data.table(val_data)
@@ -128,14 +128,20 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
       }
       apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash)
     }, error = function(e) {
-      list(skip = TRUE)
+      NULL
     })
     
-    if (is.null(res$skip)) {
-      dt_train <- res$train
-      dt_val <- res$val
-      new_genes <- c(new_genes, list(res$gene))
+    if (is.null(res) || !is.null(res$skip)) {
+      if (allow_prune) {
+        next
+      } else {
+        return(NULL)
+      }
     }
+    
+    dt_train <- res$train
+    dt_val <- res$val
+    new_genes <- c(new_genes, list(res$gene))
   }
   
   ind$genes <- new_genes
