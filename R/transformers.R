@@ -981,6 +981,7 @@ evo_transformers$quantile_binning <- create_transformer(
     boundaries <- state$boundaries
     if (length(boundaries) <= 1) return(rep(1L, length(x)))
     res <- findInterval(x, boundaries, all.inside = TRUE)
+    res[is.na(res)] <- 0
     as.integer(res)
   },
   name_generator = function(gene) {
