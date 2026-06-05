@@ -120,10 +120,6 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
     cached <- exists(cache_key, envir = fitness_cache)
 
     if (cached) {
-      if (verbose) {
-        cached_ind <- get(cache_key, envir = fitness_cache)
-        message(sprintf("  [Cache Hit] Recipe: %s -> Fitness: %.4f", recipe_str, cached_ind$fitness))
-      }
       pop[[i]] <- get(cache_key, envir = fitness_cache)
     } else {
       pop[[i]] <- evaluate_fitness(pop[[i]], data, target_col, task = task, cv_folds = cv_folds,
