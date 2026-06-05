@@ -23,6 +23,12 @@ apply_individual(
 
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 }
+\value{
+A list with three elements: \code{train} (the transformed training
+  \code{data.table} with all gene columns applied), \code{val} (the
+  transformed validation \code{data.table} or \code{NULL}), and \code{ind}
+  (the updated \code{evo_individual} whose genes now carry fitted states).
+}
 \description{
 Apply an entire individual's recipe to data
 }

@@ -23,6 +23,11 @@ initialize_population(
 
 \item{task}{Task type ("classification", "regression", or "multiclass").}
 }
+\value{
+A list of \code{evo_individual} objects of length \code{pop_size}.
+  The first individual is a baseline with no genes; the remaining individuals
+  each carry \code{initial_genes} randomly generated genes.
+}
 \description{
 Initialize a population
 }

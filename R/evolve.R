@@ -200,12 +200,17 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
-#' @param seed Optional integer seed for reproducibility.
 #' @param verbose Logical. If TRUE, prints progress.
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param model_all_final_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.
 #' @param model_all_historical_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
+#' @return An \code{evo_recipe} S3 object: a list with elements
+#'   \code{best_individual} (the top-scoring \code{evo_individual}),
+#'   \code{history} (list of all evaluated individuals across generations),
+#'   \code{task}, \code{best_model} (the trained model object),
+#'   \code{evaluator}, and \code{classes} (class levels for multiclass tasks,
+#'   otherwise \code{NULL}).
 #' @examples
 #' \donttest{
 #' # Quick classification example using mtcars

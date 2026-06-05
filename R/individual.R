@@ -2,6 +2,9 @@
 #'
 #' @param transformer_name Name of the transformer
 #' @param input_cols Vector of input column names
+#' @return A gene list with elements \code{transformer_name}, \code{input_cols},
+#'   \code{params} (transformer-specific parameters), \code{state} (\code{NULL}
+#'   until fitted), and \code{output_col} (auto-generated column name).
 #' @export
 create_gene <- function(transformer_name, input_cols) {
   transformer <- evo_transformers[[transformer_name]]
@@ -38,6 +41,8 @@ create_gene <- function(transformer_name, input_cols) {
 #' Convert a gene to a formula string
 #'
 #' @param gene A gene list
+#' @return A character string representing the gene as a human-readable
+#'   formula, e.g. \code{"log(col1)"} or \code{"pca2(col1, col2)"}.
 #' @export
 gene_to_formula <- function(gene) {
   if (gene$transformer_name == "one_hot_encode") {
@@ -59,6 +64,9 @@ gene_to_formula <- function(gene) {
 #' Convert a gene to a formula string for state caching (ignoring component index)
 #'
 #' @param gene A gene list
+#' @return A character string representing the gene formula suitable for
+#'   state caching.  For multi-component transformers (PCA, SVD, UMAP) the
+#'   component index is omitted so that all components share one cache key.
 #' @export
 gene_to_state_formula <- function(gene) {
   if (gene$transformer_name %in% c("pca", "truncated_svd", "umap")) {
@@ -71,6 +79,9 @@ gene_to_state_formula <- function(gene) {
 #' Convert an individual to a recipe string of formulas
 #'
 #' @param ind An evo_individual
+#' @return A character string listing all gene formulas in bracket notation,
+#'   e.g. \code{"[log(x), sqrt(y)]"}, or \code{"[Original features only]"}
+#'   when the individual has no genes.
 #' @export
 individual_to_recipe_string <- function(ind) {
   if (length(ind$genes) == 0) return("[Original features only]")
@@ -110,6 +121,10 @@ topological_sort_genes <- function(genes, original_cols) {
 #' @param genes List of genes
 #' @param numeric_cols Vector of numeric column names
 #' @param categorical_cols Vector of categorical column names
+#' @return An \code{evo_individual} S3 object: a list with elements
+#'   \code{genes} (topologically sorted), \code{numeric_cols},
+#'   \code{categorical_cols}, and \code{fitness} (initialised to
+#'   \code{NA_real_}).
 #' @export
 create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0)) {
   original_cols <- c(numeric_cols, categorical_cols)
@@ -137,6 +152,8 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #'   been evaluated in a previous generation and are safe for chaining. When
 #'   NULL (default), all existing gene outputs are available. Pass character(0)
 #'   to block all chaining (e.g. during initialization).
+#' @return An \code{evo_individual} with the mutation applied (gene added,
+#'   removed, or modified) and \code{fitness} reset to \code{NA_real_}.
 #' @export
 mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL) {
   if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0) return(ind)
@@ -362,6 +379,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
 #' @param ind1 Parent 1
 #' @param ind2 Parent 2
 #' @param verbose Logical. Whether to print crossover details.
+#' @return An \code{evo_individual} child created by randomly sampling genes
+#'   from both parents with duplicate gene outputs removed.
 #' @export
 crossover <- function(ind1, ind2, verbose = FALSE) {
   genes1 <- ind1$genes
@@ -406,6 +425,8 @@ crossover <- function(ind1, ind2, verbose = FALSE) {
 #' @param ind1 Parent 1
 #' @param ind2 Parent 2
 #' @param verbose Logical. Whether to print crossover details.
+#' @return An \code{evo_individual} child created by taking the union of all
+#'   genes from both parents with duplicate gene outputs removed.
 #' @export
 union_crossover <- function(ind1, ind2, verbose = FALSE) {
   genes1 <- ind1$genes

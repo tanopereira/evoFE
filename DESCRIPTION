@@ -3,7 +3,25 @@ Type: Package
 Title: Evolutionary Feature Engineering
 Version: 0.1.0
 Authors@R: person("Gustavo", "Pereira", role = c("aut", "cre"), email = "tanopereira@gmail.com")
-Description: Automates feature engineering using a genetic algorithm approach to find optimal feature transformations.
+Description: Automates feature engineering using evolutionary algorithms
+    inspired by genetic programming. Starting from raw input features, the
+    package evolves candidate transformation recipes through selection,
+    crossover, and mutation, evaluating fitness via cross-validation or
+    train/validation splits with gradient-boosted tree models ('LightGBM' or
+    'XGBoost'). Built-in transformers include arithmetic, logarithmic, and
+    power operations, interaction terms, target encoding, quantile and
+    log-based binning, principal component analysis, truncated singular value
+    decomposition, Uniform Manifold Approximation and Projection (UMAP)
+    dimensionality reduction, and minimum spanning tree (MST) graph-based
+    clustering. The evolutionary search yields an optimised feature recipe
+    that can be applied to new data for prediction. Methods are described in
+    McInnes et al. (2018) <doi:10.21105/joss.00861>,
+    Ke et al. (2017)
+    <https://papers.nips.cc/paper/6907-lightgbm-a-highly-efficient-gradient-boosting-decision-framework>,
+    Chen and Guestrin (2016) <doi:10.1145/2939672.2939785>,
+    Gagolewski (2021) <doi:10.1016/j.softx.2021.100722>,
+    Gagolewski (2026) <doi:10.32614/CRAN.package.lumbermark>, and
+    Gagolewski (2026) <doi:10.32614/CRAN.package.deadwood>.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Imports: 

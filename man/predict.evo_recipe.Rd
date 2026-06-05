@@ -13,6 +13,11 @@
 
 \item{...}{Additional arguments}
 }
+\value{
+A \code{data.table} containing the engineered feature columns
+  (original plus all gene-derived columns) for \code{newdata}, ready for
+  downstream modelling.
+}
 \description{
 Apply feature engineering recipe to new data
 }

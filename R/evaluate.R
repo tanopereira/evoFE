@@ -6,6 +6,11 @@
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
 #' @param data_hash Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.
+#' @return A list with three elements: \code{train} (the modified training
+#'   \code{data.table} with the new gene column appended), \code{val} (the
+#'   modified validation \code{data.table} or \code{NULL}), and \code{gene}
+#'   (the gene list, with its \code{state} element populated if the transformer
+#'   is stateful).
 #' @export
 apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, data_hash = NULL) {
   t_def <- evo_transformers[[gene$transformer_name]]
@@ -104,6 +109,10 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #' @param val_data Optional validation data.frame or data.table.
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
+#' @return A list with three elements: \code{train} (the transformed training
+#'   \code{data.table} with all gene columns applied), \code{val} (the
+#'   transformed validation \code{data.table} or \code{NULL}), and \code{ind}
+#'   (the updated \code{evo_individual} whose genes now carry fitted states).
 #' @export
 apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = FALSE) {
   dt_train <- if (data.table::is.data.table(train_data)) train_data else data.table::as.data.table(train_data)
@@ -186,6 +195,10 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param verbose Logical indicating if progress should be printed.
 #' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
+#' @return The input \code{evo_individual} with its \code{fitness} field set to
+#'   the computed score (higher is better), \code{importances} set to a named
+#'   numeric vector of feature importances, \code{holdout_fitness} set to
+#'   \code{NULL}, and \code{genes} updated with fitted transformer states.
 #' @export
 evaluate_fitness <- function(ind, data, target_col, task = "classification", 
                              cv_folds = 3, evaluation_strategy = "cv",

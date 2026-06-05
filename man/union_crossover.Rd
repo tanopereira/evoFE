@@ -13,6 +13,10 @@ union_crossover(ind1, ind2, verbose = FALSE)
 
 \item{verbose}{Logical. Whether to print crossover details.}
 }
+\value{
+An \code{evo_individual} child created by taking the union of all
+  genes from both parents with duplicate gene outputs removed.
+}
 \description{
 Union Crossover of two individuals
 }

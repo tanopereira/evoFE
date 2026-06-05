@@ -61,6 +61,7 @@ data(mtcars)
 df <- mtcars
 df$am <- as.integer(df$am)   # target: 0 = automatic, 1 = manual
 
+set.seed(42)
 res <- evolve_features(
   data      = df,
   target_col = "am",
@@ -70,7 +71,6 @@ res <- evolve_features(
   pop_size    = 8,
   cv_folds    = 3,
   early_stopping_rounds = 3,
-  seed        = 42,
   verbose     = TRUE
 )
 ```
@@ -111,8 +111,9 @@ Predict petal length from the iris dataset:
 ```{r regression}
 data(iris)
 
+set.seed(123)
 res_reg <- evolve_features(
-  data      = iris[, 1:5],
+  data       = iris[, c("Sepal.Length", "Sepal.Width", "Petal.Width", "Petal.Length")],
   target_col = "Petal.Length",
   task       = "regression",
   evaluator  = "xgboost",
@@ -120,7 +121,6 @@ res_reg <- evolve_features(
   pop_size    = 8,
   cv_folds    = 3,
   early_stopping_rounds = 3,
-  seed        = 123,
   verbose     = TRUE
 )
 
@@ -145,8 +145,9 @@ Classify iris species (3 classes). Note `task = "multiclass"`:
 iris_mc <- iris
 iris_mc$Species <- as.character(iris_mc$Species)
 
+set.seed(99)
 res_mc <- evolve_features(
-  data      = iris_mc,
+  data       = iris,
   target_col = "Species",
   task       = "multiclass",
   evaluator  = "xgboost",
@@ -154,7 +155,6 @@ res_mc <- evolve_features(
   pop_size    = 8,
   cv_folds    = 3,
   early_stopping_rounds = 3,
-  seed        = 99,
   verbose     = TRUE
 )
 
@@ -368,7 +368,7 @@ recipe_mape <- evolve_features(
 | `evaluator` | `"lightgbm"` | Model backend: `"lightgbm"` or `"xgboost"` |
 | `dynamic_population` | `TRUE` | Expand population during stagnation |
 | `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |
-| `threads` | 8 | Parallelism for model training |
+| `threads` | 2 | Parallelism for model training |
 | `seed` | `NULL` | RNG seed for reproducibility |
 | `metric` | `"default"` | Optimization metric: `"default"`, `"auc"`, `"f1"`, `"mae"`, or a custom function |
 
@@ -380,21 +380,23 @@ recipe_mape <- evolve_features(
   columns (> 20) and diverse transformer options.
 - **Increase `generations`** for deeper search. Works best when combined with
   `dynamic_population = TRUE` so stagnation triggers population expansion.
-- **Use `seed`** for reproducible experiments and benchmarking.
+- **Use `set.seed()`** before calling `evolve_features()` for reproducible experiments and benchmarking.
 - **`crossover_type = "union"`** tends to produce larger recipes (more features).
   `"random"` keeps recipes leaner.
 
 ## Reproducibility
 
-Setting a seed guarantees identical results across runs:
+Calling `set.seed()` before `evolve_features()` guarantees identical results across runs:
 
 ```{r reproducibility}
+set.seed(42)
 r1 <- evolve_features(iris[,1:5], "Petal.Length", task = "regression",
                        generations = 3, pop_size = 5, evaluator = "xgboost",
-                       seed = 42, verbose = FALSE)
+                       verbose = FALSE)
+set.seed(42)
 r2 <- evolve_features(iris[,1:5], "Petal.Length", task = "regression",
                        generations = 3, pop_size = 5, evaluator = "xgboost",
-                       seed = 42, verbose = FALSE)
+                       verbose = FALSE)
 
 identical(r1$best_individual$fitness, r2$best_individual$fitness)
 identical(
@@ -415,6 +417,7 @@ train <- iris[idx, ]
 test  <- iris[-idx, ]
 
 # Evolve on training data only
+set.seed(7)
 recipe <- evolve_features(
   data      = train[, 1:4],               # exclude Species
   target_col = "Petal.Length",
@@ -422,7 +425,6 @@ recipe <- evolve_features(
   evaluator  = "xgboost",
   generations = 5,
   pop_size    = 8,
-  seed        = 7,
   verbose     = FALSE
 )
 

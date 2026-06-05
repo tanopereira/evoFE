@@ -13,6 +13,11 @@ predict_model(object, newdata, ...)
 
 \item{...}{Additional arguments (currently unused)}
 }
+\value{
+For binary classification and regression tasks a numeric vector of
+  predictions.  For multiclass tasks a numeric matrix with one column per
+  class (columns named after class levels).
+}
 \description{
 Predict target values using the fully evolved model
 }

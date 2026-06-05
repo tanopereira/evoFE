@@ -6,6 +6,10 @@
 \usage{
 evo_transformers
 }
+\value{
+A named list of \code{evo_transformer} objects, each defining a
+  feature transformation (e.g. \code{log}, \code{pca}, \code{target_encode}).
+}
 \description{
 An environment containing default transformer definitions available for feature engineering.
 }

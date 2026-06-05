@@ -32,6 +32,10 @@ been evaluated in a previous generation and are safe for chaining. When
 NULL (default), all existing gene outputs are available. Pass character(0)
 to block all chaining (e.g. during initialization).}
 }
+\value{
+An \code{evo_individual} with the mutation applied (gene added,
+  removed, or modified) and \code{fitness} reset to \code{NA_real_}.
+}
 \description{
 Mutate an individual
 }

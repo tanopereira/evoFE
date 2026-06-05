@@ -433,8 +433,9 @@ test_that("genie and categorical binning output factors and can be used for grou
   expect_type(res_grp$train[[gene_grp$output_col]], "double")
 })
 
-test_that("seed parameter produces reproducible results", {
+test_that("set.seed before evolve_features produces reproducible results", {
   run_once <- function(s) {
+    set.seed(s)
     evolve_features(
       data = iris[, 1:5],
       target_col = "Petal.Length",
@@ -444,7 +445,6 @@ test_that("seed parameter produces reproducible results", {
       cv_folds = 2,
       early_stopping_rounds = 1,
       evaluator = "xgboost",
-      seed = s,
       verbose = FALSE
     )
   }
