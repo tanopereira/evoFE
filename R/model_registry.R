@@ -140,9 +140,10 @@ register_evaluator(
         classification = "logloss",
         multiclass     = "mlogloss",
         "rmse"),
-      nthread   = threads,
-      max_depth = 4,
-      eta       = 0.1
+      nthread          = threads,
+      max_depth        = 4,
+      eta              = 0.1,
+      min_child_weight = 20
     )
     if (task == "multiclass") params$num_class <- num_class
 
