@@ -177,7 +177,7 @@ register_evaluator(
 
     xgb_feval <- function(preds, dtrain) {
       labels <- xgboost::getinfo(dtrain, "label")
-      is_logits <- (task == "classification")
+      is_logits <- (task == "multiclass")
       score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = is_logits)
       list(metric = "ts_refinement", value = score)
     }

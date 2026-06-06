@@ -29,7 +29,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
     }
     cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
-    if (exists(cache_key, envir = state_cache)) {
+    if (exists(cache_key, envir = state_cache, inherits = FALSE)) {
       state <- get(cache_key, envir = state_cache)
       gene$state <- state
       has_cached_state <- TRUE
@@ -114,7 +114,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #'   transformed validation \code{data.table} or \code{NULL}), and \code{ind}
 #'   (the updated \code{evo_individual} whose genes now carry fitted states).
 #' @export
-apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = FALSE) {
+apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = TRUE) {
   dt_train <- if (data.table::is.data.table(train_data)) train_data else data.table::as.data.table(train_data)
   dt_val <- if (!is.null(val_data)) {
     if (data.table::is.data.table(val_data)) val_data else data.table::as.data.table(val_data)
@@ -206,7 +206,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
                              state_cache = NULL, threads = 2,
-                             metric = "default", verbose = FALSE, allow_prune = FALSE, ...) {
+                             metric = "default", verbose = FALSE, allow_prune = TRUE, ...) {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
@@ -310,13 +310,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }
     }
     
-    metrics <- numeric(cv_folds)
+    metrics <- rep(NA_real_, cv_folds)
     fold_importances <- list()
     
     for (f in 1:cv_folds) {
       if (use_shared) {
-        train_fold <- shared_folds[[f]]$train
-        val_fold <- shared_folds[[f]]$val
+        train_fold <- data.table::copy(shared_folds[[f]]$train)
+        val_fold <- data.table::copy(shared_folds[[f]]$val)
       } else {
         train_idx <- which(folds != f)
         val_idx <- which(folds == f)
@@ -324,16 +324,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         val_fold <- data.table::copy(dt[val_idx, ])
       }
       
-      # Apply genes
       res <- tryCatch({
-        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
+        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
       }, error = function(e) {
         NULL
       })
       
       if (is.null(res)) {
-        # Lethal mutation: invalid gene dependency graph
-        metrics[f] <- -Inf
+        # This fold failed (e.g. constant column on this split) — skip it.
+        # The individual is only killed if every fold fails (handled below).
         next
       }
       
@@ -376,8 +375,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }
     }
     
-    # Fitness: higher is better
-    ind$fitness <- mean(metrics)
+    # Fitness: average over successful folds only; -Inf only when every fold failed.
+    finite_metrics <- metrics[!is.na(metrics)]
+    ind$fitness <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
     
     # Aggregate importances across folds
     all_feats <- unique(unlist(lapply(fold_importances, names)))
@@ -611,10 +611,13 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p / (1 - p))
     }
     
-    # Laplace smooth the labels based on class counts
+    # Laplace smooth the labels: denominator uses total N, not per-class count
     N1 <- sum(y_true == 1)
     N0 <- sum(y_true == 0)
-    y_smooth <- ifelse(y_true == 1, (N1 + alpha) / (N1 + 2 * alpha), alpha / (N0 + 2 * alpha))
+    n  <- N1 + N0
+    y_smooth <- ifelse(y_true == 1,
+                       (N1 + alpha) / (n + 2 * alpha),
+                       alpha         / (n + 2 * alpha))
     
     obj_fn <- function(temp) {
       probs_T <- 1 / (1 + exp(-z / temp))
@@ -642,16 +645,16 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p)
     }
     
-    # Laplace smooth labels based on class counts
+    # Laplace smooth labels: denominator uses total N, not per-class count
     n <- length(y_true)
     class_counts <- tabulate(y_true + 1, nbins = num_class)
-    N_k <- class_counts[y_true + 1]
     y_smooth <- matrix(0, nrow = n, ncol = num_class)
-    for (c in 1:num_class) {
-      is_true_class <- (y_true == (c - 1))
-      y_smooth[, c] <- ifelse(is_true_class, 
-                              (N_k + alpha) / (N_k + num_class * alpha), 
-                              alpha / (N_k + num_class * alpha))
+    for (k in 1:num_class) {
+      N_k <- class_counts[k]  # scalar count for class k
+      is_true_class <- (y_true == (k - 1))
+      y_smooth[, k] <- ifelse(is_true_class,
+                              (N_k + alpha) / (n + num_class * alpha),
+                              alpha          / (n + num_class * alpha))
     }
     
     obj_fn <- function(temp) {

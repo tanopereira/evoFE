@@ -56,6 +56,8 @@ gene_to_formula <- function(gene) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$base)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, paste(gene$input_cols, collapse = ", "))
+  } else if (!is.null(gene$params$k)) {
+    sprintf("%s_k%d(%s)", gene$transformer_name, gene$params$k, paste(gene$input_cols, collapse = ", "))
   } else {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   }
