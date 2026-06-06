@@ -611,13 +611,12 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p / (1 - p))
     }
     
-    # Laplace smooth the labels: denominator uses total N, not per-class count
+    # Laplace smooth the labels based on class counts
     N1 <- sum(y_true == 1)
     N0 <- sum(y_true == 0)
-    n  <- N1 + N0
     y_smooth <- ifelse(y_true == 1,
-                       (N1 + alpha) / (n + 2 * alpha),
-                       alpha         / (n + 2 * alpha))
+                       (N1 + alpha) / (N1 + 2 * alpha),
+                       alpha         / (N0 + 2 * alpha))
     
     obj_fn <- function(temp) {
       probs_T <- 1 / (1 + exp(-z / temp))
@@ -626,7 +625,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       ll
     }
     
-    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 1000))
+    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
     return(opt$objective)
     
   } else if (task == "multiclass") {
@@ -635,7 +634,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     }
     
     if (!is.matrix(y_pred)) {
-      y_pred <- matrix(y_pred, ncol = num_class, byrow = TRUE)
+      y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
     }
     
     if (is_logits) {
@@ -645,17 +644,18 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p)
     }
     
-    # Laplace smooth labels: denominator uses total N, not per-class count
+    # Laplace smooth labels based on class counts
     n <- length(y_true)
     class_counts <- tabulate(y_true + 1, nbins = num_class)
     y_smooth <- matrix(0, nrow = n, ncol = num_class)
-    for (k in 1:num_class) {
-      N_k <- class_counts[k]  # scalar count for class k
-      is_true_class <- (y_true == (k - 1))
-      y_smooth[, k] <- ifelse(is_true_class,
-                              (N_k + alpha) / (n + num_class * alpha),
-                              alpha          / (n + num_class * alpha))
+    for (c in 1:num_class) {
+      Nc <- class_counts[c]
+      y_smooth[, c] <- ifelse(y_true == (c - 1), 
+                              (Nc + alpha) / (Nc + num_class * alpha), 
+                              alpha / (Nc + num_class * alpha))
     }
+    # Normalize row sums to exactly 1 to ensure a valid probability distribution
+    y_smooth <- y_smooth / rowSums(y_smooth)
     
     obj_fn <- function(temp) {
       z_scaled <- z / temp
@@ -670,7 +670,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       ll
     }
     
-    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 1000))
+    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
     return(opt$objective)
   }
 }
