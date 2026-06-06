@@ -177,8 +177,9 @@ register_evaluator(
 
     xgb_feval <- function(preds, dtrain) {
       labels <- xgboost::getinfo(dtrain, "label")
-      is_logits <- (task == "multiclass")
-      score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = is_logits)
+      # XGBoost custom_metric always receives raw margins (logits),
+      # unlike LightGBM which passes transformed probabilities.
+      score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE)
       list(metric = "ts_refinement", value = score)
     }
 
