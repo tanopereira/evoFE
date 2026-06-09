@@ -944,18 +944,19 @@ test_that("eval-ts-refinement metric and training integration works", {
   expect_true(is.finite(score_imb))
   expect_gt(score_imb, 0)
 
-  # Verify correct denominator (total N) vs old wrong denominator (per-class N_k).
+  # Verify class-count-aware smoothing details.
   # For class 0 (N_k=3), n=6, C=3, alpha=1:
-  #   correct: (3+1)/(6+3) = 4/9  vs  old: (3+1)/(3+3) = 4/6
+  #   true_target: (3+1)/(3+2) = 4/5 = 0.8
+  #   leftover_mass: 1/(3+2) = 1/5 = 0.2
+  #   incorrect classes get: N_j * (leftover_mass / (n - N_k))
   n_mc <- length(y_true_imb); C_mc <- 3L; alpha_mc <- 1
   cc <- tabulate(y_true_imb + 1, nbins = C_mc)
   Nk_0 <- cc[1]  # class 0 has 3 samples
-  expect_equal((Nk_0 + alpha_mc) / (n_mc + C_mc * alpha_mc), 4/9, tolerance = 1e-10)
-  expect_equal((Nk_0 + alpha_mc) / (Nk_0 + C_mc * alpha_mc), 4/6, tolerance = 1e-10)
+  expect_equal((Nk_0 + alpha_mc) / (Nk_0 + 2 * alpha_mc), 4/5, tolerance = 1e-10)
 
-  # Binary imbalanced: smoothed positive label must equal (N1+alpha)/(N+2*alpha), not (N1+alpha)/(N1+2*alpha)
-  N1_t <- 90L; n_t <- 100L; alpha_t <- 1
-  expect_equal((N1_t + alpha_t) / (n_t + 2 * alpha_t), 91/102, tolerance = 1e-10)
+  # Binary imbalanced: smoothed positive label must equal (N1+alpha)/(N1+2*alpha)
+  N1_t <- 90L; alpha_t <- 1
+  expect_equal((N1_t + alpha_t) / (N1_t + 2 * alpha_t), 91/92, tolerance = 1e-10)
 
   set.seed(1)
   y_bin_imb <- c(rep(1L, 90), rep(0L, 10))

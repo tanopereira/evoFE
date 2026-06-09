@@ -611,12 +611,14 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p / (1 - p))
     }
     
-    # Laplace smooth the labels based on class counts
+    # Laplace smooth the labels based on true class count
     N1 <- sum(y_true == 1)
     N0 <- sum(y_true == 0)
+    N_true <- ifelse(y_true == 1, N1, N0)
+    
     y_smooth <- ifelse(y_true == 1,
-                       (N1 + alpha) / (N1 + 2 * alpha),
-                       alpha         / (N0 + 2 * alpha))
+                       (N_true + alpha) / (N_true + 2 * alpha),
+                       alpha            / (N_true + 2 * alpha))
     
     obj_fn <- function(temp) {
       probs_T <- 1 / (1 + exp(-z / temp))
@@ -626,7 +628,13 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     }
     
     opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
-    return(opt$objective)
+    best_temp <- opt$minimum
+    
+    # Return the un-smoothed log-loss (Option B) at the optimal temperature
+    probs_T <- 1 / (1 + exp(-z / best_temp))
+    probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
+    ll_unsmoothed <- -mean(y_true * log(probs_T) + (1 - y_true) * log(1 - probs_T))
+    return(ll_unsmoothed)
     
   } else if (task == "multiclass") {
     if (is.null(num_class)) {
@@ -644,18 +652,20 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       z <- log(p)
     }
     
-    # Laplace smooth labels based on class counts
+    # Laplace smooth labels based on class-count sweep formulation
     n <- length(y_true)
-    class_counts <- tabulate(y_true + 1, nbins = num_class)
-    y_smooth <- matrix(0, nrow = n, ncol = num_class)
-    for (c in 1:num_class) {
-      Nc <- class_counts[c]
-      y_smooth[, c] <- ifelse(y_true == (c - 1), 
-                              (Nc + alpha) / (Nc + num_class * alpha), 
-                              alpha / (Nc + num_class * alpha))
-    }
-    # Normalize row sums to exactly 1 to ensure a valid probability distribution
-    y_smooth <- y_smooth / rowSums(y_smooth)
+    N_vec <- tabulate(y_true + 1, nbins = num_class)
+    N_k_row <- N_vec[y_true + 1]
+    
+    true_target <- (N_k_row + alpha) / (N_k_row + 2 * alpha)
+    leftover_mass <- alpha / (N_k_row + 2 * alpha)
+    
+    denom <- n - N_k_row
+    mass_per_item <- ifelse(denom == 0, 0, leftover_mass / denom)
+    
+    N_mat <- matrix(N_vec, nrow = n, ncol = num_class, byrow = TRUE)
+    y_smooth <- sweep(N_mat, 1, mass_per_item, "*")
+    y_smooth[cbind(1:n, y_true + 1)] <- true_target
     
     obj_fn <- function(temp) {
       z_scaled <- z / temp
@@ -671,7 +681,21 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     }
     
     opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
-    return(opt$objective)
+    best_temp <- opt$minimum
+    
+    # Return the un-smoothed log-loss (Option B) at the optimal temperature
+    z_scaled <- z / best_temp
+    z_max <- apply(z_scaled, 1, max)
+    z_stable <- z_scaled - z_max
+    exp_z <- exp(z_stable)
+    sum_exp_z <- rowSums(exp_z)
+    probs_T <- exp_z / sum_exp_z
+    probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
+    
+    y_hard <- matrix(0, nrow = n, ncol = num_class)
+    y_hard[cbind(1:n, y_true + 1)] <- 1
+    ll_unsmoothed <- -mean(rowSums(y_hard * log(probs_T)))
+    return(ll_unsmoothed)
   }
 }
 

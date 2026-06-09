@@ -186,7 +186,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
   if (exists(cache_key, envir = cache, inherits = FALSE)) {
     cached_ind <- get(cache_key, envir = cache)
     known_fit <- cached_ind$fitness
-    taboo_threshold <- max(0.02, 0.1 * abs(best_fit))
+    taboo_threshold <- max(0.00002, .1 * (1 - abs(best_fit)))
     if (!is.infinite(best_fit) && isTRUE(known_fit < best_fit - taboo_threshold)) {
       return(TRUE)
     }

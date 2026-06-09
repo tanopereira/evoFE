@@ -44,21 +44,23 @@ register_evaluator <- function(name, train_func, predict_func, base_evaluator = 
 register_evaluator(
   "lightgbm",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                         threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
     dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
     params <- list(
-      objective  = switch(task,
+      objective = switch(task,
         classification = "binary",
         multiclass     = "multiclass",
-        "regression"),
-      metric     = switch(task,
+        "regression"
+      ),
+      metric = switch(task,
         classification = "binary_logloss",
         multiclass     = "multi_logloss",
-        "rmse"),
-      num_leaves    = 15,
+        "rmse"
+      ),
+      num_leaves = 15,
       learning_rate = 0.1,
-      verbose       = -1,
-      num_threads   = threads
+      verbose = -1,
+      num_threads = threads
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -110,11 +112,14 @@ register_evaluator(
 
     preds <- if (!is.null(x_val)) stats::predict(model, x_val) else NULL
 
-    imp <- tryCatch({
-      lightgbm::lgb.importance(model, percentage = TRUE)
-    }, error = function(e) {
-      data.frame(Feature = character(), Gain = numeric())
-    })
+    imp <- tryCatch(
+      {
+        lightgbm::lgb.importance(model, percentage = TRUE)
+      },
+      error = function(e) {
+        data.frame(Feature = character(), Gain = numeric())
+      }
+    )
     importances <- if (nrow(imp) > 0) stats::setNames(imp$Gain, imp$Feature) else NULL
 
     rm(dtrain)
@@ -129,21 +134,23 @@ register_evaluator(
 register_evaluator(
   "xgboost",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                         threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
     dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train)
     params <- list(
-      objective   = switch(task,
+      objective = switch(task,
         classification = "binary:logistic",
         multiclass     = "multi:softprob",
-        "reg:squarederror"),
+        "reg:squarederror"
+      ),
       eval_metric = switch(task,
         classification = "logloss",
         multiclass     = "mlogloss",
-        "rmse"),
-      nthread          = threads,
-      max_depth        = 4,
-      eta              = 0.1,
-      min_child_weight = 20
+        "rmse"
+      ),
+      nthread = threads,
+      max_depth = 6,
+      eta = 0.1,
+      min_child_weight = 1
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -225,7 +232,7 @@ register_evaluator(
 register_evaluator(
   "catboost",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                         threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
     if (system.file(package = "catboost") == "") {
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
@@ -233,12 +240,13 @@ register_evaluator(
     df_train <- as.data.frame(x_train)
     df_train[] <- lapply(df_train, as.numeric)
     dtrain <- catboost::catboost.load_pool(data = df_train, label = y_train)
-    
+
     params <- list(
       loss_function = switch(task,
         classification = "Logloss",
         multiclass     = "MultiClass",
-        "RMSE"),
+        "RMSE"
+      ),
       thread_count = threads,
       iterations = nrounds,
       learning_rate = 0.1,
@@ -262,7 +270,7 @@ register_evaluator(
       dval <- catboost::catboost.load_pool(data = df_val)
       pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
       preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
-      
+
       # For multiclass, format shape as probability matrix
       if (task == "multiclass") {
         if (!is.matrix(preds)) {
@@ -272,12 +280,15 @@ register_evaluator(
     }
 
     # Fetch feature importance and map column names
-    importances <- tryCatch({
-      scores <- catboost::catboost.get_feature_importance(model)
-      stats::setNames(as.numeric(scores), colnames(x_train))
-    }, error = function(e) {
-      NULL
-    })
+    importances <- tryCatch(
+      {
+        scores <- catboost::catboost.get_feature_importance(model)
+        stats::setNames(as.numeric(scores), colnames(x_train))
+      },
+      error = function(e) {
+        NULL
+      }
+    )
 
     list(model = model, predictions = preds, importances = importances)
   },
@@ -290,7 +301,7 @@ register_evaluator(
     dval <- catboost::catboost.load_pool(data = df_new)
     pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
     preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
-    
+
     if (task == "multiclass") {
       # In R predict_model, multiclass format checks are handled at the caller or class level,
       # but returning a matrix with the correct dimensions is standard.
