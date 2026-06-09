@@ -42,10 +42,10 @@ applied to new data at prediction time.
 ## Installation
 
 ```r
-# Install from local source
-devtools::install_local("path/to/evoFE")
+# Install the released version from CRAN
+install.packages("evoFE")
 
-# Or install directly from a git repo
+# Or install the development version directly from GitHub
 # devtools::install_github("tanopereira/evoFE")
 ```
 

@@ -85,6 +85,14 @@
 <dd><p>Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.</p></dd>
 
 </dl></div>
+    <div id="value">
+    <h2>Value</h2>
+    <p>A list with three elements: <code>train</code> (the modified training
+  <code>data.table</code> with the new gene column appended), <code>val</code> (the
+  modified validation <code>data.table</code> or <code>NULL</code>), and <code>gene</code>
+  (the gene list, with its <code>state</code> element populated if the transformer
+  is stateful).</p>
+    </div>
 
   </div>
   <div class="col-md-3 hidden-xs hidden-sm" id="pkgdown-sidebar">

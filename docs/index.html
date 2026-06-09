@@ -12,7 +12,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.12.1/css/v4-shims.min.css" integrity="sha256-wZjR52fzng1pJHwx4aV2AO3yyTOXrcDW7jBpJtTwVxw=" crossorigin="anonymous">
 <!-- clipboard.js --><script src="https://cdnjs.cloudflare.com/ajax/libs/clipboard.js/2.0.6/clipboard.min.js" integrity="sha256-inc5kl9MA1hkeYUt+EC3BhlIgyp/2jDIyBLS6k3UxPI=" crossorigin="anonymous"></script><!-- headroom.js --><script src="https://cdnjs.cloudflare.com/ajax/libs/headroom/0.11.0/headroom.min.js" integrity="sha256-AsUX4SJE1+yuDu5+mAVzJbuYNPHj/WroHuZ8Ir/CkE0=" crossorigin="anonymous"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/headroom/0.11.0/jQuery.headroom.min.js" integrity="sha256-ZX/yNShbjqsohH1k95liqY9Gd8uOiE1S4vZc+9KQ1K4=" crossorigin="anonymous"></script><!-- pkgdown --><link href="pkgdown.css" rel="stylesheet">
 <script src="pkgdown.js"></script><meta property="og:title" content="Evolutionary Feature Engineering">
-<meta property="og:description" content="Automates feature engineering using a genetic algorithm approach to find optimal feature transformations.">
+<meta property="og:description" content="Automates feature engineering using evolutionary algorithms inspired by genetic programming. Starting from raw input features, the package evolves candidate transformation recipes through selection, crossover, and mutation, evaluating fitness via cross-validation or train/validation splits with gradient-boosted tree models (LightGBM or XGBoost). Built-in transformers include arithmetic, logarithmic, and power operations, interaction terms, target encoding, quantile and log-based binning, principal component analysis, truncated singular value decomposition, Uniform Manifold Approximation and Projection (UMAP) dimensionality reduction, and minimum spanning tree (MST) graph-based clustering. The evolutionary search yields an optimised feature recipe that can be applied to new data for prediction. Methods are described in McInnes et al. (2018) &lt;doi:10.21105/joss.00861&gt;, Ke et al. (2017) &lt;https://papers.nips.cc/paper/6907-lightgbm-a-highly-efficient-gradient-boosting-decision-framework&gt;, Chen and Guestrin (2016) &lt;doi:10.1145/2939672.2939785&gt;, Gagolewski (2021) &lt;doi:10.1016/j.softx.2021.100722&gt;, Gagolewski (2026) &lt;doi:10.32614/CRAN.package.lumbermark&gt;, and Gagolewski (2026) &lt;doi:10.32614/CRAN.package.deadwood&gt;.">
 <!-- mathjax --><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js" integrity="sha256-nvJJv9wWKEm88qvoQl9ekL2J+k/RWIsaSScxxlsrv8k=" crossorigin="anonymous"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/config/TeX-AMS-MML_HTMLorMML.js" integrity="sha256-84DKXVJXs0/F8OTMzX4UR909+jtl4G7SPypPavF+GfA=" crossorigin="anonymous"></script><!--[if lt IE 9]>
 <script src="https://oss.maxcdn.com/html5shiv/3.7.3/html5shiv.min.js"></script>
 <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
@@ -61,7 +61,7 @@
 <div class="section level1">
 <div class="page-header"><h1 id="evofe-evolutionary-feature-engineering-in-r">evoFE: Evolutionary Feature Engineering in R<a class="anchor" aria-label="anchor" href="#evofe-evolutionary-feature-engineering-in-r"></a>
 </h1></div>
-<p><a href="https://opensource.org/licenses/MIT" class="external-link"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a> <a href="https://github.com/tanopereira/evoFE/actions" class="external-link"><img src="https://github.com/tanopereira/evoFE/actions/workflows/R-CMD-check.yaml/badge.svg" alt="R-CMD-check"></a></p>
+<p><a href="https://CRAN.R-project.org/package=evoFE" class="external-link"><img src="https://www.r-pkg.org/badges/version/evoFE" alt="CRAN status"></a> <a href="https://opensource.org/licenses/MIT" class="external-link"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a> <a href="https://github.com/tanopereira/evoFE/actions" class="external-link"><img src="https://github.com/tanopereira/evoFE/actions/workflows/R-CMD-check.yaml/badge.svg" alt="R-CMD-check"></a></p>
 <p><strong>evoFE</strong> (Evolutionary Feature Engineering) is an R package that uses a genetic algorithm to automatically discover, combine, and optimize feature transformations for tabular datasets. Instead of manually engineering interaction terms, ratios, or binning strategies, <code>evoFE</code> searches the space of possible feature recipes to maximize the predictive performance of LightGBM or XGBoost models.</p>
 <p>The final output is a reusable <strong><code>evo_recipe</code></strong> object that can be easily applied to new data at prediction time.</p>
 <hr>
@@ -85,12 +85,15 @@
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
-<p>You can install the package directly from GitHub:</p>
+<p>You can install the released version of <strong>evoFE</strong> from <a href="https://CRAN.R-project.org/package=evoFE" class="external-link">CRAN</a> with:</p>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"evoFE"</span><span class="op">)</span></span></code></pre></div>
+<p>Alternatively, you can install the development version directly from <a href="https://github.com/tanopereira/evoFE" class="external-link">GitHub</a>:</p>
+<div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># Install devtools if you haven't already</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"devtools"</span><span class="op">)</span></span>
+<span><span class="co"># install.packages("devtools")</span></span>
 <span></span>
-<span><span class="co"># Install evoFE</span></span>
+<span><span class="co"># Install evoFE from GitHub</span></span>
 <span><span class="fu">devtools</span><span class="fu">::</span><span class="fu"><a href="https://devtools.r-lib.org/reference/install-deprecated.html" class="external-link">install_github</a></span><span class="op">(</span><span class="st">"tanopereira/evoFE"</span>, build_vignettes <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></code></pre></div>
 <div class="section level3">
 <h3 id="macos-openmp-configuration-recommended">macOS OpenMP Configuration (Recommended)<a class="anchor" aria-label="anchor" href="#macos-openmp-configuration-recommended"></a>
@@ -99,7 +102,7 @@
 <ol style="list-style-type: decimal">
 <li>
 <p>Install <code>libomp</code> via Homebrew:</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="ex">brew</span> install libomp</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="ex">brew</span> install libomp</span></code></pre></div>
 </li>
 <li>
 <p>Configure your <code>~/.R/Makevars</code> file to use OpenMP:</p>
@@ -110,7 +113,7 @@ LDFLAGS += -L/opt/homebrew/opt/libomp/lib -lomp</code></pre>
 </li>
 <li>
 <p>Reinstall <code>quitefastmst</code>, <code>genieclust</code>, <code>lumbermark</code>, and <code>deadwood</code> from source:</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"quitefastmst"</span>, <span class="st">"genieclust"</span>, <span class="st">"lumbermark"</span>, <span class="st">"deadwood"</span><span class="op">)</span>, type <span class="op">=</span> <span class="st">"source"</span><span class="op">)</span></span></code></pre></div>
 </li>
 </ol>
@@ -121,7 +124,7 @@ LDFLAGS += -L/opt/homebrew/opt/libomp/lib -lomp</code></pre>
 <h2 id="quick-start">Quick Start<a class="anchor" aria-label="anchor" href="#quick-start"></a>
 </h2>
 <p>Here is a quick example using the <code>mtcars</code> dataset for a binary classification task:</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">evoFE</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/data.html" class="external-link">data</a></span><span class="op">(</span><span class="va">mtcars</span><span class="op">)</span></span>
