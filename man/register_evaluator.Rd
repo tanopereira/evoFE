@@ -17,6 +17,8 @@ and any additional parameters, and return a list with \code{model},
 \item{predict_func}{Function to make predictions. Must accept \code{model},
 \code{x_new}, \code{task}, and any additional parameters, and return a
 vector or matrix of predictions.}
+
+\item{base_evaluator}{Optional character name of the base registered model.}
 }
 \description{
 Register a model evaluator

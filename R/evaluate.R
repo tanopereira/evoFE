@@ -109,6 +109,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #' @param val_data Optional validation data.frame or data.table.
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
+#' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
 #' @return A list with three elements: \code{train} (the transformed training
 #'   \code{data.table} with all gene columns applied), \code{val} (the
 #'   transformed validation \code{data.table} or \code{NULL}), and \code{ind}

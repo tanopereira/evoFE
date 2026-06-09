@@ -23,6 +23,8 @@ apply_individual(
 \item{target_col}{Name of the target column.}
 
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
+
+\item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
 }
 \value{
 A list with three elements: \code{train} (the transformed training

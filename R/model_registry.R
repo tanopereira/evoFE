@@ -13,6 +13,7 @@ evo_evaluators <- new.env(parent = emptyenv())
 #' @param predict_func Function to make predictions. Must accept \code{model},
 #'   \code{x_new}, \code{task}, and any additional parameters, and return a
 #'   vector or matrix of predictions.
+#' @param base_evaluator Optional character name of the base registered model.
 #' @importFrom lightgbm lgb.train
 #' @importFrom xgboost xgb.train
 #' @examples
