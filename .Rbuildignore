@@ -5,6 +5,7 @@
 \.DS_Store$
 ^LICENSE\.md$
 ^\.github$
+^catboost_info$
 
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$

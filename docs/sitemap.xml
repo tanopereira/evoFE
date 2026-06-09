@@ -8,6 +8,7 @@
 <url><loc>/index.html</loc></url>
 <url><loc>/reference/apply_gene.html</loc></url>
 <url><loc>/reference/apply_individual.html</loc></url>
+<url><loc>/reference/compute_ts_refinement.html</loc></url>
 <url><loc>/reference/create_gene.html</loc></url>
 <url><loc>/reference/create_individual.html</loc></url>
 <url><loc>/reference/create_transformer.html</loc></url>
@@ -15,6 +16,7 @@
 <url><loc>/reference/evaluate_fitness.html</loc></url>
 <url><loc>/reference/evaluate_holdout_fitness.html</loc></url>
 <url><loc>/reference/evaluate_pop.html</loc></url>
+<url><loc>/reference/evo_evaluators.html</loc></url>
 <url><loc>/reference/evo_transformers.html</loc></url>
 <url><loc>/reference/evolve_features.html</loc></url>
 <url><loc>/reference/gene_to_formula.html</loc></url>
@@ -23,10 +25,18 @@
 <url><loc>/reference/individual_to_recipe_string.html</loc></url>
 <url><loc>/reference/initialize_population.html</loc></url>
 <url><loc>/reference/is_invalid_individual.html</loc></url>
+<url><loc>/reference/make_tunable.html</loc></url>
 <url><loc>/reference/mutate.html</loc></url>
+<url><loc>/reference/plot.evo_recipe.html</loc></url>
 <url><loc>/reference/predict.evo_recipe.html</loc></url>
 <url><loc>/reference/predict_model.html</loc></url>
+<url><loc>/reference/print.evo_recipe.html</loc></url>
+<url><loc>/reference/print.summary_evo_recipe.html</loc></url>
+<url><loc>/reference/register_evaluator.html</loc></url>
+<url><loc>/reference/register_transformer.html</loc></url>
 <url><loc>/reference/stratified_split.html</loc></url>
+<url><loc>/reference/summary.evo_recipe.html</loc></url>
+<url><loc>/reference/supports_color.html</loc></url>
 <url><loc>/reference/train_model.html</loc></url>
 <url><loc>/reference/union_crossover.html</loc></url>
 </urlset>

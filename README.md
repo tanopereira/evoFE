@@ -17,6 +17,9 @@ The final output is a reusable **`evo_recipe`** object that can be easily applie
 * **Stateful Transformers:** Includes PCA, SVD, UMAP, Genie Clustering, Lumbermark Clustering, and Deadwood Anomaly Detection.
 * **Performance Caching:** Features are cached using matrix-hashing to avoid redundant computations (like $K$-NN search or UMAP projections) during cross-validation folds.
 * **Flexible Evaluation:** Supports both Cross-Validation (`cv`) and stratified Train/Validation/Holdout Split (`split`) strategies.
+* **Extensible Custom Registry:** Easily register user-defined transformers with validation using `register_transformer()`.
+* **Alternative & Custom Metrics:** Optimize for standard metrics (LogLoss, AUC, F1, MAE) or pass a custom fitness function.
+* **Rich S3 Interface:** Beautiful S3 methods for `print()`, `summary()`, and `plot()` to inspect and visualize the evolution.
 
 ---
 
@@ -83,9 +86,12 @@ recipe <- evolve_features(
   verbose = TRUE
 )
 
-# View the winning recipe
-cat("Best Recipe: ", individual_to_recipe_string(recipe$best_individual), "\n")
-cat("Best Fitness: ", recipe$best_individual$fitness, "\n")
+# View the winning recipe overview and detailed summary
+print(recipe)
+summary(recipe)
+
+# Plot the evolution fitness curve
+plot(recipe, type = "fitness")
 
 # Engineer features on new data
 engineered_df <- predict(recipe, df[1:5, ])
@@ -102,7 +108,7 @@ predictions <- predict_model(recipe, df[1:5, ])
 | :--- | :--- |
 | **Arithmetic** | `log`, `sqrt`, `reciprocal`, `add`, `subtract`, `multiply`, `divide`, `normalized_difference`, `log_ratio` |
 | **Group-by Aggregations** | `groupby_mean`, `groupby_sd`, `groupby_max`, `groupby_min`, `groupby_ratio`, `groupby_zscore` |
-| **Encoding & Binning** | `target_encode`, `frequency_encode`, `one_hot_encode`, `quantile_binning`, `log_binning`, `quantile_binning_cat`, `log_binning_cat` |
+| **Encoding & Binning** | `target_encode`, `target_encode_multiclass`, `frequency_encode`, `one_hot_encode`, `quantile_binning`, `log_binning`, `quantile_binning_cat`, `log_binning_cat`, `datetime_extract` |
 | **Dimensionality Reduction** | `pca`, `truncated_svd`, `random_projection`, `umap` |
 | **Graph & Clustering** | `genie`, `lumbermark`, `mst_score`, `deadwood` |
 

@@ -21,7 +21,10 @@ evaluate_pop(
   fitness_cache,
   threads,
   verbose,
-  running_best_fitness
+  running_best_fitness,
+  metric = "default",
+  allow_prune = TRUE,
+  ...
 )
 }
 \description{

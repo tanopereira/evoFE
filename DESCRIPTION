@@ -32,14 +32,22 @@ Imports:
     digest,
     uwot,
     quitefastmst,
-    genieclust
+    genieclust,
+    ParamHelpers,
+    lhs,
+    mlrMBO,
+    smoof
 Suggests: 
     RhpcBLASctl,
     testthat,
     knitr,
     rmarkdown,
     lumbermark,
-    deadwood
+    deadwood,
+    mlr,
+    DiceKriging,
+    randomForest,
+    emoa
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 7.3.2

@@ -15,7 +15,10 @@ evaluate_holdout_fitness(
   threads,
   state_cache,
   classes,
-  num_class
+  num_class,
+  metric = "default",
+  verbose = FALSE,
+  ...
 )
 }
 \description{

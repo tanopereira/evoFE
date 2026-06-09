@@ -106,10 +106,10 @@ plateaus or the generation budget is exhausted.</li>
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># Install the released version from CRAN</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/utils/install.packages.html" class="external-link">install.packages</a></span><span class="op">(</span><span class="st">"evoFE"</span><span class="op">)</span></span>
+<code class="sourceCode R"><span><span class="co"># Install from local source</span></span>
+<span><span class="fu">devtools</span><span class="fu">::</span><span class="fu"><a href="https://devtools.r-lib.org/reference/install-deprecated.html" class="external-link">install_local</a></span><span class="op">(</span><span class="st">"path/to/evoFE"</span><span class="op">)</span></span>
 <span></span>
-<span><span class="co"># Or install the development version directly from GitHub</span></span>
+<span><span class="co"># Or install directly from a git repo</span></span>
 <span><span class="co"># devtools::install_github("tanopereira/evoFE")</span></span></code></pre></div>
 </div>
 <div class="section level2">
@@ -143,89 +143,156 @@ using the <code>mtcars</code> dataset.</p>
 <span><span class="co">#&gt;   Original Numeric columns: mpg, cyl, disp, hp, drat, wt, qsec, vs, gear, carb</span></span>
 <span><span class="co">#&gt;   Original Categorical columns:</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [Gen 0] Initialized Population:</span></span>
+<span><span class="co">#&gt; --- Generation 0 (Baseline) ---</span></span>
 <span><span class="co">#&gt;   Individual 1: [Original features only]</span></span>
-<span><span class="co">#&gt;   Individual 2: [mst_score(mpg, gear, cyl, hp, vs, wt), mst_score(gear, drat, wt, hp, cyl)]</span></span>
-<span><span class="co">#&gt;   Individual 3: [genie(gear, carb, disp, hp), subtract(hp, cyl)]</span></span>
-<span><span class="co">#&gt;   Individual 4: [lumbermark(carb, mpg, cyl, wt), log_binning9(carb)]</span></span>
-<span><span class="co">#&gt;   Individual 5: [add(wt, cyl, drat, hp, cyl), log_binning_cat4(cyl)]</span></span>
-<span><span class="co">#&gt;   Individual 6: [log_binning_cat2(qsec), quantile_binning4(carb)]</span></span>
-<span><span class="co">#&gt;   Individual 7: [multiply(cyl, hp, disp), log_binning3(drat)]</span></span>
-<span><span class="co">#&gt;   Individual 8: [quantile_binning_cat4(wt), truncated_svd1(mpg, carb, qsec, hp, drat, cyl), truncated_svd2(mpg, carb, qsec, hp, drat, cyl), truncated_svd3(mpg, carb, qsec, hp, drat, cyl)]</span></span>
+<span><span class="co">#&gt;   Tested Individual 1 -&gt; Fitness: 0.7147</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 1 / 5 ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 1 (New Best!) -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.6836</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.6857</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Gen 1 Best Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Gen 1 Best Recipe: [Original features only]</span></span>
+<span><span class="co">#&gt; [Gen 1] Initialized Population:</span></span>
+<span><span class="co">#&gt;   Individual 1: [Original features only]</span></span>
+<span><span class="co">#&gt;   Individual 2: [subtract(hp, qsec), deadwood(vs, wt, carb, hp, gear)]</span></span>
+<span><span class="co">#&gt;   Individual 3: [normalized_difference(drat, carb), reciprocal(vs)]</span></span>
+<span><span class="co">#&gt;   Individual 4: [log_ratio(cyl, gear), log_binning_cat7(cyl)]</span></span>
+<span><span class="co">#&gt;   Individual 5: [log(wt), normalized_difference(gear, drat)]</span></span>
+<span><span class="co">#&gt;   Individual 6: [pca1(qsec, hp, wt, carb, gear, drat), pca2(qsec, hp, wt, carb, gear, drat), pca3(qsec, hp, wt, carb, gear, drat)]</span></span>
+<span><span class="co">#&gt;   Individual 7: [log_binning6(qsec), truncated_svd1(drat, vs, hp, disp, wt, gear), truncated_svd2(drat, vs, hp, disp, wt, gear), truncated_svd3(drat, vs, hp, disp, wt, gear)]</span></span>
+<span><span class="co">#&gt;   Individual 8: [pca1(hp, cyl, carb, qsec, disp, drat), pca2(hp, cyl, carb, qsec, disp, drat), pca3(hp, cyl, carb, qsec, disp, drat)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 2 / 5 (Current Best Fitness: 0.6862) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.6787</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Gen 2 Best Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Gen 2 Best Recipe: [Original features only]</span></span>
+<span><span class="co">#&gt; --- Generation 1 / 5 (Current Best Fitness: 0.7147) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.7147</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.7147</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.7147</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.7031</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 (New Best!) -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.7103</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 (New Best!) -&gt; Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Gen 1 Best Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Gen 1 Best Recipe: [pca1(hp, cyl, carb, qsec, disp, drat), pca2(hp, cyl, carb, qsec, disp, drat), pca3(hp, cyl, carb, qsec, disp, drat)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 3 / 5 (Current Best Fitness: 0.6862) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 (New Best!) -&gt; Fitness: 0.6896</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 (New Best!) -&gt; Fitness: 0.7051</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.6862 (cached)</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: 0.6875</span></span>
-<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Gen 3 Best Fitness: 0.7051</span></span>
-<span><span class="co">#&gt;   Gen 3 Best Recipe: [umap1(disp, wt), umap2(disp, wt)]</span></span>
+<span><span class="co">#&gt; --- Generation 2 / 5 (Current Best Fitness: 0.7157) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.7147</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.7147</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.7141</span></span>
+<span><span class="co">#&gt;   Gen 2 Best Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Gen 2 Best Recipe: [pca1(hp, cyl, carb, qsec, disp, drat), pca2(hp, cyl, carb, qsec, disp, drat), pca3(hp, cyl, carb, qsec, disp, drat)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 4 / 5 (Current Best Fitness: 0.7051) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.6908</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.6896</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.6862</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.6831</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 (New Best!) -&gt; Fitness: 0.7073</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.6816</span></span>
-<span><span class="co">#&gt;   Gen 4 Best Fitness: 0.7073</span></span>
-<span><span class="co">#&gt;   Gen 4 Best Recipe: [multiply(disp, gear, wt, wt, wt), pca1(carb, vs, hp), pca2(carb, vs, hp), pca3(carb, vs, hp), umap1(disp, wt), umap2(disp, wt)]</span></span>
+<span><span class="co">#&gt; --- Generation 3 / 5 (Current Best Fitness: 0.7157) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.7147</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.7125</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.7141</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.7147 (cached)</span></span>
+<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Gen 3 Best Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Gen 3 Best Recipe: [pca1(hp, cyl, carb, qsec, disp, drat), pca2(hp, cyl, carb, qsec, disp, drat), pca3(hp, cyl, carb, qsec, disp, drat)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 5 / 5 (Current Best Fitness: 0.7073) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.6910</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.6607</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.6819</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 (New Best!) -&gt; Fitness: 0.7179</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.7147</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.6814</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.7073</span></span>
-<span><span class="co">#&gt;   Gen 5 Best Fitness: 0.7179</span></span>
-<span><span class="co">#&gt;   Gen 5 Best Recipe: [multiply(disp, gear, wt, wt, wt), pca1(carb, vs, hp), pca2(carb, vs, hp), umap2(disp, wt)]</span></span>
+<span><span class="co">#&gt; --- Generation 4 / 5 (Current Best Fitness: 0.7157) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 (New Best!) -&gt; Fitness: 0.7160</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.7160</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.7101</span></span>
+<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 11 (New Best!) -&gt; Fitness: 0.7173</span></span>
+<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 13 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 14 -&gt; Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Tested Individual 15 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 16 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 17 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 18 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Gen 4 Best Fitness: 0.7173</span></span>
+<span><span class="co">#&gt;   Gen 4 Best Recipe: [subtract(hp, qsec), deadwood(vs, wt, carb, hp, gear), pca1(qsec, hp, wt, carb, gear, drat), pca2(qsec, hp, wt, carb, gear, drat), pca3(qsec, hp, wt, carb, gear, drat), groupby_min(Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)), groupby_max(Deadwood(vs_wt_car_hp_gea), drat), mst_score(mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec)))]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; Evolution Complete. Best Fitness: 0.7179</span></span>
-<span><span class="co">#&gt; Best recipe: [multiply(disp, gear, wt, wt, wt), pca1(carb, vs, hp), pca2(carb, vs, hp), umap2(disp, wt)]</span></span>
-<span><span class="co">#&gt; Generated columns: ((disp*gear*wt*wt*wt)), PCA1(car_vs_hp), PCA2(car_vs_hp), UMAP2(dis_wt)</span></span>
+<span><span class="co">#&gt; --- Generation 5 / 5 (Current Best Fitness: 0.7173) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.7160</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.7115</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.7128</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.7160 (cached)</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.7157</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: 0.7161</span></span>
+<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: 0.7160</span></span>
+<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: 0.7154</span></span>
+<span><span class="co">#&gt;   Gen 5 Best Fitness: 0.7173</span></span>
+<span><span class="co">#&gt;   Gen 5 Best Recipe: [subtract(hp, qsec), deadwood(vs, wt, carb, hp, gear), pca1(qsec, hp, wt, carb, gear, drat), pca2(qsec, hp, wt, carb, gear, drat), pca3(qsec, hp, wt, carb, gear, drat), groupby_min(Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)), groupby_max(Deadwood(vs_wt_car_hp_gea), drat), mst_score(mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec)))]</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; Evolution Complete. Best Fitness: 0.7173</span></span>
+<span><span class="co">#&gt; Best recipe: [subtract(hp, qsec), deadwood(vs, wt, carb, hp, gear), pca1(qsec, hp, wt, carb, gear, drat), pca2(qsec, hp, wt, carb, gear, drat), pca3(qsec, hp, wt, carb, gear, drat), groupby_min(Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)), groupby_max(Deadwood(vs_wt_car_hp_gea), drat), mst_score(mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec)))]</span></span>
+<span><span class="co">#&gt; Generated columns: ((hp-qsec)), Deadwood(vs_wt_car_hp_gea), PCA1(qse_hp_wt_car_gea_dra), PCA2(qse_hp_wt_car_gea_dra), PCA3(qse_hp_wt_car_gea_dra), min_PCA2(qse_hp_wt_car_gea_dra)_by_Deadwood(vs_wt_car_hp_gea), max_drat_by_Deadwood(vs_wt_car_hp_gea), MSTScore(mpg_gea_wt_qse_dis_PCA_vs_hp_cyl_((h)</span></span>
 <span><span class="co">#&gt; Training final model on full dataset...</span></span></code></pre></div>
 <p>The returned <code>evo_recipe</code> object contains the best
 individual (feature recipe), the fitted model, and the evolution
 history.</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="co"># View the winning recipe</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Best recipe:"</span>, <span class="fu"><a href="../reference/individual_to_recipe_string.html">individual_to_recipe_string</a></span><span class="op">(</span><span class="va">res</span><span class="op">$</span><span class="va">best_individual</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Best recipe: [multiply(disp, gear, wt, wt, wt), pca1(carb, vs, hp), pca2(carb, vs, hp), umap2(disp, wt)]</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Fitness:    "</span>, <span class="va">res</span><span class="op">$</span><span class="va">best_individual</span><span class="op">$</span><span class="va">fitness</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Fitness:     0.7178567</span></span></code></pre></div>
+<code class="sourceCode R"><span><span class="co"># Print high-level overview of the recipe</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">res</span><span class="op">)</span></span>
+<span><span class="co">#&gt; An evoFE Recipe</span></span>
+<span><span class="co">#&gt;   Evaluator:    xgboost</span></span>
+<span><span class="co">#&gt;   Task:         classification</span></span>
+<span><span class="co">#&gt;   Metric:       default</span></span>
+<span><span class="co">#&gt;   Best Fitness: 0.7173</span></span>
+<span><span class="co">#&gt;   Evolved Features: 8</span></span>
+<span><span class="co">#&gt;   Winning Recipe:</span></span>
+<span><span class="co">#&gt;     [1] subtract(hp, qsec) -&gt; ((hp-qsec))</span></span>
+<span><span class="co">#&gt;     [2] deadwood(vs, wt, carb, hp, gear) -&gt; Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;     [3] pca1(qsec, hp, wt, carb, gear, drat) -&gt; PCA1(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;     [4] pca2(qsec, hp, wt, carb, gear, drat) -&gt; PCA2(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;     [5] pca3(qsec, hp, wt, carb, gear, drat) -&gt; PCA3(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;     [6] groupby_min(Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)) -&gt; min_PCA2(qse_hp_wt_car_gea_dra)_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;     [7] groupby_max(Deadwood(vs_wt_car_hp_gea), drat) -&gt; max_drat_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;     [8] mst_score(mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec))) -&gt; MSTScore(mpg_gea_wt_qse_dis_PCA_vs_hp_cyl_((h)</span></span>
+<span></span>
+<span><span class="co"># View a detailed structured summary</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary</a></span><span class="op">(</span><span class="va">res</span><span class="op">)</span></span>
+<span><span class="co">#&gt; === Evolutionary Feature Engineering Summary ===</span></span>
+<span><span class="co">#&gt; ML Evaluator:          xgboost</span></span>
+<span><span class="co">#&gt; Task type:             classification</span></span>
+<span><span class="co">#&gt; Optimization Metric:   default</span></span>
+<span><span class="co">#&gt; Best CV/Split Fitness: 0.717339</span></span>
+<span><span class="co">#&gt; Number of Evolved Features: 8</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; Feature Transformation Details:</span></span>
+<span><span class="co">#&gt;  Transformer</span></span>
+<span><span class="co">#&gt;     subtract</span></span>
+<span><span class="co">#&gt;     deadwood</span></span>
+<span><span class="co">#&gt;          pca</span></span>
+<span><span class="co">#&gt;          pca</span></span>
+<span><span class="co">#&gt;          pca</span></span>
+<span><span class="co">#&gt;  groupby_min</span></span>
+<span><span class="co">#&gt;  groupby_max</span></span>
+<span><span class="co">#&gt;    mst_score</span></span>
+<span><span class="co">#&gt;                                                                            Inputs</span></span>
+<span><span class="co">#&gt;                                                                          hp, qsec</span></span>
+<span><span class="co">#&gt;                                                            vs, wt, carb, hp, gear</span></span>
+<span><span class="co">#&gt;                                                    qsec, hp, wt, carb, gear, drat</span></span>
+<span><span class="co">#&gt;                                                    qsec, hp, wt, carb, gear, drat</span></span>
+<span><span class="co">#&gt;                                                    qsec, hp, wt, carb, gear, drat</span></span>
+<span><span class="co">#&gt;                           Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;                                                  Deadwood(vs_wt_car_hp_gea), drat</span></span>
+<span><span class="co">#&gt;  mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec))</span></span>
+<span><span class="co">#&gt;                                                         Output</span></span>
+<span><span class="co">#&gt;                                                    ((hp-qsec))</span></span>
+<span><span class="co">#&gt;                                     Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;                                    PCA1(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;                                    PCA2(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;                                    PCA3(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;  min_PCA2(qse_hp_wt_car_gea_dra)_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;                         max_drat_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;                 MSTScore(mpg_gea_wt_qse_dis_PCA_vs_hp_cyl_((h)</span></span></code></pre></div>
 <div class="section level3">
 <h3 id="applying-the-recipe-to-new-data">Applying the recipe to new data<a class="anchor" aria-label="anchor" href="#applying-the-recipe-to-new-data"></a>
 </h3>
@@ -234,27 +301,55 @@ data and returns the engineered feature matrix:</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">engineered</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">res</span>, <span class="va">df</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span>, <span class="op">]</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">engineered</span><span class="op">)</span></span>
-<span><span class="co">#&gt;      mpg   cyl  disp    hp  drat    wt  qsec    vs  gear  carb</span></span>
-<span><span class="co">#&gt;    &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt;</span></span>
-<span><span class="co">#&gt; 1:  21.0     6   160   110  3.90 2.620 16.46     0     4     4</span></span>
-<span><span class="co">#&gt; 2:  21.0     6   160   110  3.90 2.875 17.02     0     4     4</span></span>
-<span><span class="co">#&gt; 3:  22.8     4   108    93  3.85 2.320 18.61     1     4     1</span></span>
-<span><span class="co">#&gt; 4:  21.4     6   258   110  3.08 3.215 19.44     1     3     1</span></span>
-<span><span class="co">#&gt; 5:  18.7     8   360   175  3.15 3.440 17.02     0     3     2</span></span>
-<span><span class="co">#&gt;    ((disp*gear*wt*wt*wt)) PCA1(car_vs_hp) PCA2(car_vs_hp) UMAP2(dis_wt)</span></span>
-<span><span class="co">#&gt;                     &lt;num&gt;           &lt;num&gt;           &lt;num&gt;         &lt;num&gt;</span></span>
-<span><span class="co">#&gt; 1:              11510.226      -0.5758895      0.17083974      4.737757</span></span>
-<span><span class="co">#&gt; 2:              15208.750      -0.5758895      0.17083974      4.526803</span></span>
-<span><span class="co">#&gt; 3:               5394.457       1.7331290     -0.02830549      7.232712</span></span>
-<span><span class="co">#&gt; 4:              25720.766       1.5826875     -0.04046764     -6.888471</span></span>
-<span><span class="co">#&gt; 5:              43964.191      -0.4499549      0.95866969     -5.179038</span></span></code></pre></div>
+<span><span class="co">#&gt;      mpg   cyl  disp    hp  drat    wt  qsec    vs  gear  carb ((hp-qsec))</span></span>
+<span><span class="co">#&gt;    &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt; &lt;num&gt;       &lt;num&gt;</span></span>
+<span><span class="co">#&gt; 1:  21.0     6   160   110  3.90 2.620 16.46     0     4     4       93.54</span></span>
+<span><span class="co">#&gt; 2:  21.0     6   160   110  3.90 2.875 17.02     0     4     4       92.98</span></span>
+<span><span class="co">#&gt; 3:  22.8     4   108    93  3.85 2.320 18.61     1     4     1       74.39</span></span>
+<span><span class="co">#&gt; 4:  21.4     6   258   110  3.08 3.215 19.44     1     3     1       90.56</span></span>
+<span><span class="co">#&gt; 5:  18.7     8   360   175  3.15 3.440 17.02     0     3     2      157.98</span></span>
+<span><span class="co">#&gt;    Deadwood(vs_wt_car_hp_gea) PCA1(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;                        &lt;fctr&gt;                       &lt;num&gt;</span></span>
+<span><span class="co">#&gt; 1:                          0                   0.3321325</span></span>
+<span><span class="co">#&gt; 2:                          0                   0.3148183</span></span>
+<span><span class="co">#&gt; 3:                          0                   1.7350342</span></span>
+<span><span class="co">#&gt; 4:                          0                   0.4553966</span></span>
+<span><span class="co">#&gt; 5:                          0                  -0.8244106</span></span>
+<span><span class="co">#&gt;    PCA2(qse_hp_wt_car_gea_dra) PCA3(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;                          &lt;num&gt;                       &lt;num&gt;</span></span>
+<span><span class="co">#&gt; 1:                   1.1946026                  -0.2309977</span></span>
+<span><span class="co">#&gt; 2:                   0.9920645                   0.1044791</span></span>
+<span><span class="co">#&gt; 3:                  -0.1232276                  -0.3980120</span></span>
+<span><span class="co">#&gt; 4:                  -1.9228372                  -0.3054806</span></span>
+<span><span class="co">#&gt; 5:                  -0.8976149                  -0.8669144</span></span>
+<span><span class="co">#&gt;    min_PCA2(qse_hp_wt_car_gea_dra)_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;                                                            &lt;num&gt;</span></span>
+<span><span class="co">#&gt; 1:                                                     -2.439953</span></span>
+<span><span class="co">#&gt; 2:                                                     -2.439953</span></span>
+<span><span class="co">#&gt; 3:                                                     -2.439953</span></span>
+<span><span class="co">#&gt; 4:                                                     -2.439953</span></span>
+<span><span class="co">#&gt; 5:                                                     -2.439953</span></span>
+<span><span class="co">#&gt;    max_drat_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;                                     &lt;num&gt;</span></span>
+<span><span class="co">#&gt; 1:                                   4.93</span></span>
+<span><span class="co">#&gt; 2:                                   4.93</span></span>
+<span><span class="co">#&gt; 3:                                   4.93</span></span>
+<span><span class="co">#&gt; 4:                                   4.93</span></span>
+<span><span class="co">#&gt; 5:                                   4.93</span></span>
+<span><span class="co">#&gt;    MSTScore(mpg_gea_wt_qse_dis_PCA_vs_hp_cyl_((h)</span></span>
+<span><span class="co">#&gt;                                             &lt;num&gt;</span></span>
+<span><span class="co">#&gt; 1:                                       18.87167</span></span>
+<span><span class="co">#&gt; 2:                                       32.78996</span></span>
+<span><span class="co">#&gt; 3:                                       48.32824</span></span>
+<span><span class="co">#&gt; 4:                                       74.43728</span></span>
+<span><span class="co">#&gt; 5:                                       54.92558</span></span></code></pre></div>
 <p><code><a href="../reference/predict_model.html">predict_model()</a></code> goes one step further — it applies the
 transformations <strong>and</strong> runs the trained model to produce
 predictions:</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">preds</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/predict_model.html">predict_model</a></span><span class="op">(</span><span class="va">res</span>, <span class="va">df</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span>, <span class="op">]</span><span class="op">)</span></span>
 <span><span class="va">preds</span></span>
-<span><span class="co">#&gt; [1] 0.96213979 0.96213979 0.91886902 0.03086278 0.05843740</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 0.95863724 0.95863724 0.90907621 0.03203617 0.03203617</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -283,93 +378,90 @@ predictions:</p>
 <span><span class="co">#&gt;   Original Numeric columns: Sepal.Length, Sepal.Width, Petal.Width</span></span>
 <span><span class="co">#&gt;   Original Categorical columns:</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [Gen 0] Initialized Population:</span></span>
+<span><span class="co">#&gt; --- Generation 0 (Baseline) ---</span></span>
 <span><span class="co">#&gt;   Individual 1: [Original features only]</span></span>
-<span><span class="co">#&gt;   Individual 2: [reciprocal(Sepal.Width), genie(Sepal.Width, Sepal.Length)]</span></span>
-<span><span class="co">#&gt;   Individual 3: [log_binning6(Sepal.Length), random_projection(Sepal.Length, Sepal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 4: [normalized_difference(Sepal.Length, Sepal.Length), reciprocal(Sepal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 5: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 6: [quantile_binning10(Petal.Width), truncated_svd1(Sepal.Length, Petal.Width), truncated_svd2(Sepal.Length, Petal.Width), truncated_svd3(Sepal.Length, Petal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 7: [quantile_binning_cat6(Petal.Width), quantile_binning7(Petal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 8: [random_projection(Sepal.Width, Sepal.Length), sqrt(Sepal.Length)]</span></span>
+<span><span class="co">#&gt;   Tested Individual 1 -&gt; Fitness: -0.3333</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 1 / 5 ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 1 (New Best!) -&gt; Fitness: -0.2939</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 (New Best!) -&gt; Fitness: -0.2925</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3072</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.2939</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 (New Best!) -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.2983</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.2939</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.3072</span></span>
-<span><span class="co">#&gt;   Gen 1 Best Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Gen 1 Best Recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width)]</span></span>
+<span><span class="co">#&gt; [Gen 1] Initialized Population:</span></span>
+<span><span class="co">#&gt;   Individual 1: [Original features only]</span></span>
+<span><span class="co">#&gt;   Individual 2: [log_binning_cat10(Sepal.Width), normalized_difference(Petal.Width, Petal.Width)]</span></span>
+<span><span class="co">#&gt;   Individual 3: [log(Petal.Width), log_binning7(Sepal.Length)]</span></span>
+<span><span class="co">#&gt;   Individual 4: [quantile_binning6(Petal.Width), reciprocal(Petal.Width)]</span></span>
+<span><span class="co">#&gt;   Individual 5: [multiply(Sepal.Length, Petal.Width), normalized_difference(Sepal.Length, Petal.Width)]</span></span>
+<span><span class="co">#&gt;   Individual 6: [pca1(Sepal.Width, Sepal.Length), pca2(Sepal.Width, Sepal.Length), pca3(Sepal.Width, Sepal.Length)]</span></span>
+<span><span class="co">#&gt;   Individual 7: [log(Sepal.Width), sqrt(Petal.Width)]</span></span>
+<span><span class="co">#&gt;   Individual 8: [reciprocal(Sepal.Width), truncated_svd1(Sepal.Width, Petal.Width), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 2 / 5 (Current Best Fitness: -0.2701) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.2734</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.2736</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.2925</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.2923</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.3541</span></span>
-<span><span class="co">#&gt;   Gen 2 Best Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Gen 2 Best Recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width)]</span></span>
+<span><span class="co">#&gt; --- Generation 1 / 5 (Current Best Fitness: -0.3333) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.3818</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.3494</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 (New Best!) -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Gen 1 Best Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Gen 1 Best Recipe: [reciprocal(Sepal.Width), truncated_svd1(Sepal.Width, Petal.Width), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 3 / 5 (Current Best Fitness: -0.2701) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.2701 (cached)</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.2734</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.2788</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.2939</span></span>
-<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: -0.2734</span></span>
-<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: -0.2770</span></span>
-<span><span class="co">#&gt;   Gen 3 Best Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Gen 3 Best Recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width)]</span></span>
+<span><span class="co">#&gt; --- Generation 2 / 5 (Current Best Fitness: -0.3215) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.3333</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.3233</span></span>
+<span><span class="co">#&gt;   Gen 2 Best Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Gen 2 Best Recipe: [reciprocal(Sepal.Width), truncated_svd1(Sepal.Width, Petal.Width), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 4 / 5 (Current Best Fitness: -0.2701) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.2736</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.2822</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.2822</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 (New Best!) -&gt; Fitness: -0.2680</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.2847</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.2996</span></span>
-<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: -0.2685</span></span>
-<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: -0.2772</span></span>
-<span><span class="co">#&gt;   Tested Individual 14 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 16 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 17 -&gt; Fitness: -0.2731</span></span>
-<span><span class="co">#&gt;   Tested Individual 18 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Gen 4 Best Fitness: -0.2680</span></span>
-<span><span class="co">#&gt;   Gen 4 Best Recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width), add(((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width))), reciprocal(Sepal.Width), genie(Sepal.Width, Sepal.Length, Petal.Width), log_binning8(rec(Sepal.Width)), divide(((Sepal.Length+Petal.Width+Petal.Width)), Petal.Width)]</span></span>
+<span><span class="co">#&gt; --- Generation 3 / 5 (Current Best Fitness: -0.3215) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3215 (cached)</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 (New Best!) -&gt; Fitness: -0.2951</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.3233</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.3215 (cached)</span></span>
+<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: -0.3304</span></span>
+<span><span class="co">#&gt;   Gen 3 Best Fitness: -0.2951</span></span>
+<span><span class="co">#&gt;   Gen 3 Best Recipe: [log(Petal.Width), log_binning7(Sepal.Length), reciprocal(Sepal.Width), truncated_svd1(Sepal.Width, Petal.Width, Sepal.Length), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 5 / 5 (Current Best Fitness: -0.2680) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.2939</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3183</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.2878</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.3021</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.2760</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.2701</span></span>
-<span><span class="co">#&gt;   Gen 5 Best Fitness: -0.2680</span></span>
-<span><span class="co">#&gt;   Gen 5 Best Recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width), add(((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width))), reciprocal(Sepal.Width), genie(Sepal.Width, Sepal.Length, Petal.Width), log_binning8(rec(Sepal.Width)), divide(((Sepal.Length+Petal.Width+Petal.Width)), Petal.Width)]</span></span>
+<span><span class="co">#&gt; --- Generation 4 / 5 (Current Best Fitness: -0.2951) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: -0.2984</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.3215 (cached)</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.3274</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.3215</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.3084</span></span>
+<span><span class="co">#&gt;   Gen 4 Best Fitness: -0.2951</span></span>
+<span><span class="co">#&gt;   Gen 4 Best Recipe: [log(Petal.Width), log_binning7(Sepal.Length), reciprocal(Sepal.Width), truncated_svd1(Sepal.Width, Petal.Width, Sepal.Length), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; Evolution Complete. Best Fitness: -0.2680</span></span>
-<span><span class="co">#&gt; Best recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width), add(((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width))), reciprocal(Sepal.Width), genie(Sepal.Width, Sepal.Length, Petal.Width), log_binning8(rec(Sepal.Width)), divide(((Sepal.Length+Petal.Width+Petal.Width)), Petal.Width)]</span></span>
-<span><span class="co">#&gt; Generated columns: ((Sepal.Width/Sepal.Length)), ((Sepal.Length+Petal.Width+Petal.Width)), ((((Sepal.Length+Petal.Width+Petal.Width))+((Sepal.Length+Petal.Width+Petal.Width))+((Sepal.Length+Petal.Width+Petal.Width))+((Sepal.Length+Petal.Width+Petal.Width))+((Sepal.Length+Petal.Width+Petal.Width)))), rec(Sepal.Width), Genie2(Sep_Sep_Pet), logbin8(rec(Sepal.Width)), ((((Sepal.Length+Petal.Width+Petal.Width))/Petal.Width))</span></span>
+<span><span class="co">#&gt; --- Generation 5 / 5 (Current Best Fitness: -0.2951) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 (New Best!) -&gt; Fitness: -0.2949</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: -0.3357</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: -0.3042</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: -0.3078</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: -0.3362</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: -0.3301</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: -0.3046</span></span>
+<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: -0.2951</span></span>
+<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: -0.3084</span></span>
+<span><span class="co">#&gt;   Gen 5 Best Fitness: -0.2949</span></span>
+<span><span class="co">#&gt;   Gen 5 Best Recipe: [reciprocal(Sepal.Width), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width), truncated_svd1(Sepal.Width, Petal.Width, Sepal.Length)]</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; Evolution Complete. Best Fitness: -0.2949</span></span>
+<span><span class="co">#&gt; Best recipe: [reciprocal(Sepal.Width), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width), truncated_svd1(Sepal.Width, Petal.Width, Sepal.Length)]</span></span>
+<span><span class="co">#&gt; Generated columns: rec(Sepal.Width), SVD2(Sep_Pet), SVD3(Sep_Pet), SVD1(Sep_Pet_Sep)</span></span>
 <span><span class="co">#&gt; Training final model on full dataset...</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Best recipe:"</span>, <span class="fu"><a href="../reference/individual_to_recipe_string.html">individual_to_recipe_string</a></span><span class="op">(</span><span class="va">res_reg</span><span class="op">$</span><span class="va">best_individual</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Best recipe: [divide(Sepal.Width, Sepal.Length), add(Sepal.Length, Petal.Width, Petal.Width), add(((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width)), ((Sepal.Length+Petal.Width+Petal.Width))), reciprocal(Sepal.Width), genie(Sepal.Width, Sepal.Length, Petal.Width), divide(((Sepal.Length+Petal.Width+Petal.Width)), Petal.Width)]</span></span>
+<span><span class="co">#&gt; Best recipe: [reciprocal(Sepal.Width), truncated_svd2(Sepal.Width, Petal.Width), truncated_svd3(Sepal.Width, Petal.Width), truncated_svd1(Sepal.Width, Petal.Width, Sepal.Length)]</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Fitness (neg RMSE):"</span>, <span class="va">res_reg</span><span class="op">$</span><span class="va">best_individual</span><span class="op">$</span><span class="va">fitness</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Fitness (neg RMSE): -0.2679901</span></span></code></pre></div>
+<span><span class="co">#&gt; Fitness (neg RMSE): -0.2948619</span></span></code></pre></div>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">preds_reg</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/predict_model.html">predict_model</a></span><span class="op">(</span><span class="va">res_reg</span>, <span class="va">iris</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">10</span>, <span class="op">]</span><span class="op">)</span></span>
 <span><span class="co"># Compare predictions to actuals</span></span>
@@ -378,16 +470,16 @@ predictions:</p>
 <span>  predicted <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">preds_reg</span>, <span class="fl">2</span><span class="op">)</span></span>
 <span><span class="op">)</span></span>
 <span><span class="co">#&gt;    actual predicted</span></span>
-<span><span class="co">#&gt; 1     1.4      1.48</span></span>
-<span><span class="co">#&gt; 2     1.4      1.48</span></span>
-<span><span class="co">#&gt; 3     1.3      1.49</span></span>
-<span><span class="co">#&gt; 4     1.5      1.42</span></span>
-<span><span class="co">#&gt; 5     1.4      1.45</span></span>
-<span><span class="co">#&gt; 6     1.7      1.51</span></span>
-<span><span class="co">#&gt; 7     1.4      1.43</span></span>
+<span><span class="co">#&gt; 1     1.4      1.43</span></span>
+<span><span class="co">#&gt; 2     1.4      1.46</span></span>
+<span><span class="co">#&gt; 3     1.3      1.46</span></span>
+<span><span class="co">#&gt; 4     1.5      1.49</span></span>
+<span><span class="co">#&gt; 5     1.4      1.43</span></span>
+<span><span class="co">#&gt; 6     1.7      1.53</span></span>
+<span><span class="co">#&gt; 7     1.4      1.42</span></span>
 <span><span class="co">#&gt; 8     1.5      1.49</span></span>
-<span><span class="co">#&gt; 9     1.4      1.40</span></span>
-<span><span class="co">#&gt; 10    1.5      1.49</span></span></code></pre></div>
+<span><span class="co">#&gt; 9     1.4      1.37</span></span>
+<span><span class="co">#&gt; 10    1.5      1.51</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="multiclass-classification">Multiclass Classification<a class="anchor" aria-label="anchor" href="#multiclass-classification"></a>
@@ -417,97 +509,100 @@ predictions:</p>
 <span><span class="co">#&gt;   Original Numeric columns: Sepal.Length, Sepal.Width, Petal.Length, Petal.Width</span></span>
 <span><span class="co">#&gt;   Original Categorical columns:</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; [Gen 0] Initialized Population:</span></span>
+<span><span class="co">#&gt; --- Generation 0 (Baseline) ---</span></span>
 <span><span class="co">#&gt;   Individual 1: [Original features only]</span></span>
-<span><span class="co">#&gt;   Individual 2: [mst_score(Sepal.Length, Sepal.Width), quantile_binning_cat5(Sepal.Length)]</span></span>
-<span><span class="co">#&gt;   Individual 3: [sqrt(Petal.Width), multiply(Petal.Width, Petal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 4: [add(Sepal.Width, Petal.Width), quantile_binning_cat7(Petal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 5: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 6: [subtract(Petal.Width, Petal.Length), random_projection(Sepal.Width, Sepal.Length)]</span></span>
-<span><span class="co">#&gt;   Individual 7: [mst_score(Sepal.Width, Petal.Length), log(Sepal.Width)]</span></span>
-<span><span class="co">#&gt;   Individual 8: [deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length)]</span></span>
+<span><span class="co">#&gt;   Tested Individual 1 -&gt; Fitness: 0.8382</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 1 / 5 ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 1 (New Best!) -&gt; Fitness: 0.8425</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8391</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8425</span></span>
+<span><span class="co">#&gt; [Gen 1] Initialized Population:</span></span>
+<span><span class="co">#&gt;   Individual 1: [Original features only]</span></span>
+<span><span class="co">#&gt;   Individual 2: [normalized_difference(Sepal.Length, Petal.Length), quantile_binning3(Petal.Length)]</span></span>
+<span><span class="co">#&gt;   Individual 3: [mst_score(Sepal.Length, Petal.Width), log(Petal.Length)]</span></span>
+<span><span class="co">#&gt;   Individual 4: [quantile_binning_cat10(Petal.Length), sqrt(Sepal.Width)]</span></span>
+<span><span class="co">#&gt;   Individual 5: [divide(Petal.Width, Sepal.Width), reciprocal(Petal.Length)]</span></span>
+<span><span class="co">#&gt;   Individual 6: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length)]</span></span>
+<span><span class="co">#&gt;   Individual 7: [sqrt(Sepal.Length), multiply(Sepal.Length, Petal.Length, Petal.Width)]</span></span>
+<span><span class="co">#&gt;   Individual 8: [truncated_svd1(Petal.Width, Petal.Length), truncated_svd2(Petal.Width, Petal.Length), truncated_svd3(Petal.Width, Petal.Length)]</span></span>
+<span><span class="co">#&gt; </span></span>
+<span><span class="co">#&gt; --- Generation 1 / 5 (Current Best Fitness: 0.8382) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8313</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8382</span></span>
 <span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8382</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 (New Best!) -&gt; Fitness: 0.8499</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8460</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8456</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8467</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8351</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 (New Best!) -&gt; Fitness: 0.8499</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8315</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8460</span></span>
 <span><span class="co">#&gt;   Gen 1 Best Fitness: 0.8499</span></span>
-<span><span class="co">#&gt;   Gen 1 Best Recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width)]</span></span>
+<span><span class="co">#&gt;   Gen 1 Best Recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length)]</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; --- Generation 2 / 5 (Current Best Fitness: 0.8499) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8467</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8456</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8431</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8499</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8448</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 (New Best!) -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8456</span></span>
-<span><span class="co">#&gt;   Gen 2 Best Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Gen 2 Best Recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width), deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length)]</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8382 (cached)</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 (New Best!) -&gt; Fitness: 0.8643</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8420</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8433</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8420</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8460</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8425</span></span>
+<span><span class="co">#&gt;   Gen 2 Best Fitness: 0.8643</span></span>
+<span><span class="co">#&gt;   Gen 2 Best Recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length), truncated_svd1(Petal.Width, Petal.Length)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 3 / 5 (Current Best Fitness: 0.8536) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8499</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8499</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8443</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 (New Best!) -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Gen 3 Best Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Gen 3 Best Recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width), deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length), add(Petal.Length, Petal.Length, Petal.Width, Petal.Length)]</span></span>
+<span><span class="co">#&gt; --- Generation 3 / 5 (Current Best Fitness: 0.8643) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8489</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8453</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8460</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8524</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8489</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 (New Best!) -&gt; Fitness: 0.8698</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 (New Best!) -&gt; Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Gen 3 Best Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Gen 3 Best Recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length), truncated_svd1(Petal.Width, Petal.Length), truncated_svd1(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd2(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd3(SVD1(Pet_Pet), Petal.Length, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 4 / 5 (Current Best Fitness: 0.8589) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8499</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8440</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8565</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Gen 4 Best Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Gen 4 Best Recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width), deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length), add(Petal.Length, Petal.Length, Petal.Width, Petal.Length)]</span></span>
+<span><span class="co">#&gt; --- Generation 4 / 5 (Current Best Fitness: 0.8728) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8699</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8698</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8698</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8699</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8674</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8674</span></span>
+<span><span class="co">#&gt;   Gen 4 Best Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Gen 4 Best Recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length), truncated_svd1(Petal.Width, Petal.Length), truncated_svd1(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd2(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd3(SVD1(Pet_Pet), Petal.Length, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; --- Generation 5 / 5 (Current Best Fitness: 0.8589) ---</span></span>
-<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8536</span></span>
-<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8477</span></span>
-<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8565</span></span>
-<span><span class="co">#&gt;   Tested Individual 6 -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8550</span></span>
-<span><span class="co">#&gt;   Tested Individual 9 (New Best!) -&gt; Fitness: 0.8591</span></span>
-<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: 0.8575</span></span>
-<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: 0.8589</span></span>
-<span><span class="co">#&gt;   Gen 5 Best Fitness: 0.8591</span></span>
-<span><span class="co">#&gt;   Gen 5 Best Recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width), deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length), add(Petal.Length, Petal.Length, Petal.Width, Petal.Length), mst_score(((Sepal.Length+Petal.Length+Sepal.Width)), Sepal.Length)]</span></span>
+<span><span class="co">#&gt; --- Generation 5 / 5 (Current Best Fitness: 0.8728) ---</span></span>
+<span><span class="co">#&gt;   Tested Individual 2 -&gt; Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Tested Individual 3 -&gt; Fitness: 0.8699</span></span>
+<span><span class="co">#&gt;   Tested Individual 4 -&gt; Fitness: 0.8665</span></span>
+<span><span class="co">#&gt;   Tested Individual 5 -&gt; Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Tested Individual 6 (New Best!) -&gt; Fitness: 0.8729</span></span>
+<span><span class="co">#&gt;   Tested Individual 7 -&gt; Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Tested Individual 8 -&gt; Fitness: 0.8728</span></span>
+<span><span class="co">#&gt;   Tested Individual 9 -&gt; Fitness: 0.8719</span></span>
+<span><span class="co">#&gt;   Tested Individual 10 -&gt; Fitness: 0.8699</span></span>
+<span><span class="co">#&gt;   Tested Individual 11 -&gt; Fitness: 0.8699</span></span>
+<span><span class="co">#&gt;   Tested Individual 12 -&gt; Fitness: 0.8720</span></span>
+<span><span class="co">#&gt;   Gen 5 Best Fitness: 0.8729</span></span>
+<span><span class="co">#&gt;   Gen 5 Best Recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length), truncated_svd1(Petal.Width, Petal.Length), truncated_svd1(SVD1(Pet_Pet), Petal.Length, Petal.Width, logratio(Sepal.Width_Petal.Length)), truncated_svd2(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd3(SVD1(Pet_Pet), Petal.Length, Petal.Width)]</span></span>
 <span><span class="co">#&gt; </span></span>
-<span><span class="co">#&gt; Evolution Complete. Best Fitness: 0.8591</span></span>
-<span><span class="co">#&gt; Best recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width), deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length), add(Petal.Length, Petal.Length, Petal.Width, Petal.Length), mst_score(((Sepal.Length+Petal.Length+Sepal.Width)), Sepal.Length)]</span></span>
-<span><span class="co">#&gt; Generated columns: ((Sepal.Length+Petal.Length+Sepal.Width)), ((Sepal.Width/Petal.Width)), Deadwood(Pet_Sep), ((Petal.Length*Petal.Width*Petal.Width*Sepal.Length)), ((Petal.Length+Petal.Length+Petal.Width+Petal.Length)), MSTScore(((S_Sep)</span></span>
+<span><span class="co">#&gt; Evolution Complete. Best Fitness: 0.8729</span></span>
+<span><span class="co">#&gt; Best recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length), truncated_svd1(Petal.Width, Petal.Length), truncated_svd1(SVD1(Pet_Pet), Petal.Length, Petal.Width, logratio(Sepal.Width_Petal.Length)), truncated_svd2(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd3(SVD1(Pet_Pet), Petal.Length, Petal.Width)]</span></span>
+<span><span class="co">#&gt; Generated columns: Lumb3(Pet_Sep), logratio(Sepal.Width_Petal.Length), SVD1(Pet_Pet), SVD1(SVD_Pet_Pet_log), SVD2(SVD_Pet_Pet), SVD3(SVD_Pet_Pet)</span></span>
 <span><span class="co">#&gt; Training final model on full dataset...</span></span>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Best recipe:"</span>, <span class="fu"><a href="../reference/individual_to_recipe_string.html">individual_to_recipe_string</a></span><span class="op">(</span><span class="va">res_mc</span><span class="op">$</span><span class="va">best_individual</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Best recipe: [add(Sepal.Length, Petal.Length, Sepal.Width), divide(Sepal.Width, Petal.Width), deadwood(Petal.Length, Sepal.Width), multiply(Petal.Length, Petal.Width, Petal.Width, Sepal.Length), add(Petal.Length, Petal.Length, Petal.Width, Petal.Length), mst_score(((Sepal.Length+Petal.Length+Sepal.Width)), Sepal.Length)]</span></span></code></pre></div>
+<span><span class="co">#&gt; Best recipe: [lumbermark_k3(Petal.Length, Sepal.Length), log_ratio(Sepal.Width, Petal.Length), truncated_svd1(Petal.Width, Petal.Length), truncated_svd1(SVD1(Pet_Pet), Petal.Length, Petal.Width, logratio(Sepal.Width_Petal.Length)), truncated_svd2(SVD1(Pet_Pet), Petal.Length, Petal.Width), truncated_svd3(SVD1(Pet_Pet), Petal.Length, Petal.Width)]</span></span></code></pre></div>
 <p>For multiclass, <code><a href="../reference/predict_model.html">predict_model()</a></code> returns a probability
 matrix — one column per class:</p>
 <div class="sourceCode" id="cb9"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">probs</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/predict_model.html">predict_model</a></span><span class="op">(</span><span class="va">res_mc</span>, <span class="va">iris_mc</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">51</span>, <span class="fl">101</span><span class="op">)</span>, <span class="op">]</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Round.html" class="external-link">round</a></span><span class="op">(</span><span class="va">probs</span>, <span class="fl">3</span><span class="op">)</span></span>
 <span><span class="co">#&gt;      setosa versicolor virginica</span></span>
-<span><span class="co">#&gt; [1,]  0.986      0.008     0.006</span></span>
-<span><span class="co">#&gt; [2,]  0.009      0.973     0.018</span></span>
-<span><span class="co">#&gt; [3,]  0.006      0.007     0.987</span></span></code></pre></div>
+<span><span class="co">#&gt; [1,]  0.987      0.007     0.006</span></span>
+<span><span class="co">#&gt; [2,]  0.263      0.401     0.336</span></span>
+<span><span class="co">#&gt; [3,]  0.006      0.007     0.988</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="transformer-reference">Transformer Reference<a class="anchor" aria-label="anchor" href="#transformer-reference"></a>
 </h2>
-<p>evoFE ships with <strong>30 built-in transformers</strong> that the
+<p>evoFE ships with <strong>32 built-in transformers</strong> that the
 genetic algorithm can select from during evolution. The table below
 groups them by category.</p>
 <div class="section level3">
@@ -624,39 +719,52 @@ groups them by category.</p>
 <tr class="odd">
 <td align="left"><code>target_encode</code></td>
 <td align="center">cat → num</td>
-<td align="left">Supervised mean-target encoding with leave-one-out</td>
+<td align="left">Supervised mean-target encoding with smoothing (for
+binary classification / regression)</td>
 </tr>
 <tr class="even">
+<td align="left"><code>target_encode_multiclass</code></td>
+<td align="center">cat → num</td>
+<td align="left">Supervised mean-target encoding for multiclass
+classification tasks (one component per class-indicator)</td>
+</tr>
+<tr class="odd">
 <td align="left"><code>frequency_encode</code></td>
 <td align="center">cat → num</td>
 <td align="left">Proportion of each category in the data</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td align="left"><code>one_hot_encode</code></td>
 <td align="center">cat → num</td>
 <td align="left">Binary one-hot encoding indicator for a specific
 category (or “other” for rare categories)</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td align="left"><code>quantile_binning</code></td>
 <td align="center">num → num</td>
 <td align="left">Assign quantile rank (1–5)</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td align="left"><code>log_binning</code></td>
 <td align="center">num → num</td>
 <td align="left">Assign log-scale bin index</td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td align="left"><code>quantile_binning_cat</code></td>
 <td align="center">num → cat</td>
 <td align="left">Same as <code>quantile_binning</code>, output as
 factor</td>
 </tr>
-<tr class="odd">
+<tr class="even">
 <td align="left"><code>log_binning_cat</code></td>
 <td align="center">num → cat</td>
 <td align="left">Same as <code>log_binning</code>, output as factor</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>datetime_extract</code></td>
+<td align="center">cat → num</td>
+<td align="left">Extracted datetime components (year, month, day, hour,
+day of week, or weekend indicator) from date/time columns</td>
 </tr>
 </tbody>
 </table>
@@ -745,6 +853,35 @@ gene in the same individual. This prevents fragile dependency chains
 built on unproven transformations.</p>
 </div>
 <div class="section level2">
+<h2 id="custom-transformer-registration">Custom Transformer Registration<a class="anchor" aria-label="anchor" href="#custom-transformer-registration"></a>
+</h2>
+<p><code>evoFE</code> makes it easy to register your own custom
+transformations, extending the genetic algorithm’s vocabulary with
+domain-specific features.</p>
+<p>Use <code><a href="../reference/create_transformer.html">create_transformer()</a></code> to define your transformer, and
+register it with <code><a href="../reference/register_transformer.html">register_transformer()</a></code> to make it
+available during evolution:</p>
+<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">evoFE</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># 1. Define a transformer that adds 5 to a numeric variable</span></span>
+<span><span class="va">add_five_trans</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/create_transformer.html">create_transformer</a></span><span class="op">(</span></span>
+<span>  name <span class="op">=</span> <span class="st">"add_five"</span>,</span>
+<span>  type <span class="op">=</span> <span class="st">"unary"</span>,</span>
+<span>  input_type <span class="op">=</span> <span class="st">"numeric"</span>,</span>
+<span>  apply_func <span class="op">=</span> <span class="kw">function</span><span class="op">(</span><span class="va">data</span>, <span class="va">gene</span>, <span class="va">state</span> <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span> <span class="op">{</span></span>
+<span>    <span class="va">data</span><span class="op">[[</span><span class="va">gene</span><span class="op">$</span><span class="va">input_cols</span><span class="op">[</span><span class="fl">1</span><span class="op">]</span><span class="op">]</span><span class="op">]</span> <span class="op">+</span> <span class="fl">5</span></span>
+<span>  <span class="op">}</span>,</span>
+<span>  name_generator <span class="op">=</span> <span class="kw">function</span><span class="op">(</span><span class="va">gene</span><span class="op">)</span> <span class="fu"><a href="https://rdrr.io/r/base/paste.html" class="external-link">paste0</a></span><span class="op">(</span><span class="st">"add5_"</span>, <span class="va">gene</span><span class="op">$</span><span class="va">input_cols</span><span class="op">[</span><span class="fl">1</span><span class="op">]</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># 2. Register it with the package registry</span></span>
+<span><span class="fu"><a href="../reference/register_transformer.html">register_transformer</a></span><span class="op">(</span><span class="st">"add_five"</span>, <span class="va">add_five_trans</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Now, "add_five" is part of the active transformer pool and will</span></span>
+<span><span class="co"># be automatically selected, mutated, and chained during evolution!</span></span></code></pre></div>
+</div>
+<div class="section level2">
 <h2 id="understanding-the-output">Understanding the Output<a class="anchor" aria-label="anchor" href="#understanding-the-output"></a>
 </h2>
 <p><code><a href="../reference/evolve_features.html">evolve_features()</a></code> returns an <code>evo_recipe</code> S3
@@ -790,16 +927,16 @@ data</td>
 <div class="section level3">
 <h3 id="inspecting-the-recipe">Inspecting the recipe<a class="anchor" aria-label="anchor" href="#inspecting-the-recipe"></a>
 </h3>
-<div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">ind</span> <span class="op">&lt;-</span> <span class="va">res</span><span class="op">$</span><span class="va">best_individual</span></span>
 <span></span>
 <span><span class="co"># Human-readable recipe string</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="../reference/individual_to_recipe_string.html">individual_to_recipe_string</a></span><span class="op">(</span><span class="va">ind</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; [multiply(disp, gear, wt, wt, wt), pca1(carb, vs, hp), pca2(carb, vs, hp), umap2(disp, wt)]</span></span>
+<span><span class="co">#&gt; [subtract(hp, qsec), deadwood(vs, wt, carb, hp, gear), pca1(qsec, hp, wt, carb, gear, drat), pca2(qsec, hp, wt, carb, gear, drat), pca3(qsec, hp, wt, carb, gear, drat), groupby_min(Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)), groupby_max(Deadwood(vs_wt_car_hp_gea), drat), mst_score(mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec)))]</span></span>
 <span></span>
 <span><span class="co"># Number of evolved genes</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Evolved genes:"</span>, <span class="fu"><a href="https://rdrr.io/r/base/length.html" class="external-link">length</a></span><span class="op">(</span><span class="va">ind</span><span class="op">$</span><span class="va">genes</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Evolved genes: 4</span></span>
+<span><span class="co">#&gt; Evolved genes: 8</span></span>
 <span></span>
 <span><span class="co"># Original columns retained</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"Numeric cols: "</span>, <span class="fu"><a href="https://rdrr.io/r/base/paste.html" class="external-link">paste</a></span><span class="op">(</span><span class="va">ind</span><span class="op">$</span><span class="va">numeric_cols</span>, collapse <span class="op">=</span> <span class="st">", "</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
@@ -814,10 +951,14 @@ data</td>
 <span>    <span class="fu"><a href="https://rdrr.io/r/base/paste.html" class="external-link">paste</a></span><span class="op">(</span><span class="va">g</span><span class="op">$</span><span class="va">input_cols</span>, collapse <span class="op">=</span> <span class="st">", "</span><span class="op">)</span>,</span>
 <span>    <span class="va">g</span><span class="op">$</span><span class="va">output_col</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="op">}</span></span>
-<span><span class="co">#&gt;   multiply(disp, gear, wt, wt, wt) -&gt; ((disp*gear*wt*wt*wt))</span></span>
-<span><span class="co">#&gt;   pca(carb, vs, hp) -&gt; PCA1(car_vs_hp)</span></span>
-<span><span class="co">#&gt;   pca(carb, vs, hp) -&gt; PCA2(car_vs_hp)</span></span>
-<span><span class="co">#&gt;   umap(disp, wt) -&gt; UMAP2(dis_wt)</span></span></code></pre></div>
+<span><span class="co">#&gt;   subtract(hp, qsec) -&gt; ((hp-qsec))</span></span>
+<span><span class="co">#&gt;   deadwood(vs, wt, carb, hp, gear) -&gt; Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;   pca(qsec, hp, wt, carb, gear, drat) -&gt; PCA1(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;   pca(qsec, hp, wt, carb, gear, drat) -&gt; PCA2(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;   pca(qsec, hp, wt, carb, gear, drat) -&gt; PCA3(qse_hp_wt_car_gea_dra)</span></span>
+<span><span class="co">#&gt;   groupby_min(Deadwood(vs_wt_car_hp_gea), PCA2(qse_hp_wt_car_gea_dra)) -&gt; min_PCA2(qse_hp_wt_car_gea_dra)_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;   groupby_max(Deadwood(vs_wt_car_hp_gea), drat) -&gt; max_drat_by_Deadwood(vs_wt_car_hp_gea)</span></span>
+<span><span class="co">#&gt;   mst_score(mpg, gear, wt, qsec, disp, PCA1(qse_hp_wt_car_gea_dra), vs, hp, cyl, ((hp-qsec))) -&gt; MSTScore(mpg_gea_wt_qse_dis_PCA_vs_hp_cyl_((h)</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -848,6 +989,50 @@ evolution on the final selected best individual.</li>
 </ul>
 </li>
 </ol>
+</div>
+<div class="section level2">
+<h2 id="alternative-and-custom-metrics">Alternative and Custom Metrics<a class="anchor" aria-label="anchor" href="#alternative-and-custom-metrics"></a>
+</h2>
+<p>By default, <code>evoFE</code> optimizes for LogLoss on
+classification tasks and RMSE on regression tasks. However, you can
+optimize for other metrics by passing the <code>metric</code> parameter
+to <code><a href="../reference/evolve_features.html">evolve_features()</a></code>:</p>
+<ul>
+<li>
+<strong>Binary Classification:</strong> <code>"default"</code>
+(LogLoss), <code>"auc"</code> (Area Under the ROC Curve), or
+<code>"f1"</code> (F1-score at a 0.5 probability threshold).</li>
+<li>
+<strong>Multiclass Classification:</strong> <code>"default"</code>
+(Multiclass LogLoss) or <code>"auc"</code> (One-vs-Rest macro-averaged
+AUC).</li>
+<li>
+<strong>Regression:</strong> <code>"default"</code> (RMSE) or
+<code>"mae"</code> (Mean Absolute Error).</li>
+<li>
+<strong>Custom Metrics:</strong> You can pass any custom function of
+the form <code>function(y_true, y_pred)</code> that returns a numeric
+value. <strong>Note:</strong> Since the genetic algorithm always
+<em>maximizes</em> fitness, ensure your custom metric returns a value
+where higher is better (e.g., negate error metrics).</li>
+</ul>
+<p>For example:</p>
+<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="co"># Evolve features optimizing for Area Under the ROC Curve (AUC)</span></span>
+<span><span class="va">recipe_auc</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/evolve_features.html">evolve_features</a></span><span class="op">(</span></span>
+<span>  data <span class="op">=</span> <span class="va">df</span>, target_col <span class="op">=</span> <span class="st">"am"</span>, task <span class="op">=</span> <span class="st">"classification"</span>,</span>
+<span>  metric <span class="op">=</span> <span class="st">"auc"</span>, generations <span class="op">=</span> <span class="fl">5</span>, pop_size <span class="op">=</span> <span class="fl">8</span></span>
+<span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Evolve features using a custom regression metric (e.g. Mean Absolute Percentage Error, negated)</span></span>
+<span><span class="va">mape_metric</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">y_true</span>, <span class="va">y_pred</span><span class="op">)</span> <span class="op">{</span></span>
+<span>  <span class="op">-</span><span class="fu"><a href="https://rdrr.io/r/base/mean.html" class="external-link">mean</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="op">(</span><span class="va">y_true</span> <span class="op">-</span> <span class="va">y_pred</span><span class="op">)</span> <span class="op">/</span> <span class="va">y_true</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="op">}</span></span>
+<span></span>
+<span><span class="va">recipe_mape</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/evolve_features.html">evolve_features</a></span><span class="op">(</span></span>
+<span>  data <span class="op">=</span> <span class="va">iris</span><span class="op">[</span>, <span class="fl">1</span><span class="op">:</span><span class="fl">5</span><span class="op">]</span>, target_col <span class="op">=</span> <span class="st">"Petal.Length"</span>, task <span class="op">=</span> <span class="st">"regression"</span>,</span>
+<span>  metric <span class="op">=</span> <span class="va">mape_metric</span>, generations <span class="op">=</span> <span class="fl">5</span>, pop_size <span class="op">=</span> <span class="fl">8</span></span>
+<span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="tuning-parameters">Tuning Parameters<a class="anchor" aria-label="anchor" href="#tuning-parameters"></a>
@@ -931,6 +1116,18 @@ strategy is <code>"split"</code>)</td>
 <td align="center">2</td>
 <td align="left">Parallelism for model training</td>
 </tr>
+<tr class="even">
+<td align="left"><code>seed</code></td>
+<td align="center"><code>NULL</code></td>
+<td align="left">RNG seed for reproducibility</td>
+</tr>
+<tr class="odd">
+<td align="left"><code>metric</code></td>
+<td align="center"><code>"default"</code></td>
+<td align="left">Optimization metric: <code>"default"</code>,
+<code>"auc"</code>, <code>"f1"</code>, <code>"mae"</code>, or a custom
+function</td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -967,7 +1164,7 @@ recipes leaner.</li>
 </h2>
 <p>Calling <code><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed()</a></code> before <code><a href="../reference/evolve_features.html">evolve_features()</a></code>
 guarantees identical results across runs:</p>
-<div class="sourceCode" id="cb12"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">42</span><span class="op">)</span></span>
 <span><span class="va">r1</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/evolve_features.html">evolve_features</a></span><span class="op">(</span><span class="va">iris</span><span class="op">[</span>,<span class="fl">1</span><span class="op">:</span><span class="fl">5</span><span class="op">]</span>, <span class="st">"Petal.Length"</span>, task <span class="op">=</span> <span class="st">"regression"</span>,</span>
 <span>                       generations <span class="op">=</span> <span class="fl">3</span>, pop_size <span class="op">=</span> <span class="fl">5</span>, evaluator <span class="op">=</span> <span class="st">"xgboost"</span>,</span>
@@ -989,7 +1186,7 @@ guarantees identical results across runs:</p>
 <h2 id="end-to-end-example-traintest-split">End-to-End Example: Train/Test Split<a class="anchor" aria-label="anchor" href="#end-to-end-example-traintest-split"></a>
 </h2>
 <p>A realistic workflow with hold-out evaluation:</p>
-<div class="sourceCode" id="cb13"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb15"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/data.html" class="external-link">data</a></span><span class="op">(</span><span class="va">iris</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">1</span><span class="op">)</span></span>
 <span><span class="va">idx</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/sample.html" class="external-link">sample</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">nrow</a></span><span class="op">(</span><span class="va">iris</span><span class="op">)</span>, <span class="fl">0.7</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/nrow.html" class="external-link">nrow</a></span><span class="op">(</span><span class="va">iris</span><span class="op">)</span><span class="op">)</span></span>
@@ -1014,14 +1211,14 @@ guarantees identical results across runs:</p>
 <span><span class="co"># Evaluate</span></span>
 <span><span class="va">rmse</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">sqrt</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/mean.html" class="external-link">mean</a></span><span class="op">(</span><span class="op">(</span><span class="va">test</span><span class="op">$</span><span class="va">Petal.Length</span> <span class="op">-</span> <span class="va">test_preds</span><span class="op">)</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sprintf.html" class="external-link">sprintf</a></span><span class="op">(</span><span class="st">"Test RMSE: %.4f\n"</span>, <span class="va">rmse</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Test RMSE: 0.2764</span></span>
+<span><span class="co">#&gt; Test RMSE: 0.3007</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sprintf.html" class="external-link">sprintf</a></span><span class="op">(</span><span class="st">"Recipe:    %s\n"</span>, <span class="fu"><a href="../reference/individual_to_recipe_string.html">individual_to_recipe_string</a></span><span class="op">(</span><span class="va">recipe</span><span class="op">$</span><span class="va">best_individual</span><span class="op">)</span><span class="op">)</span><span class="op">)</span></span>
-<span><span class="co">#&gt; Recipe:    [lumbermark(Sepal.Length, Petal.Width), add(Petal.Width, Sepal.Length), log_ratio(((Petal.Width+Sepal.Length)), Petal.Width)]</span></span></code></pre></div>
+<span><span class="co">#&gt; Recipe:    [multiply(Sepal.Width, Sepal.Length, Sepal.Length), mst_score(Petal.Width, Sepal.Width), add(Petal.Width, Petal.Width), log(((Sepal.Width*Sepal.Length*Sepal.Length))), subtract(log(((Sepal.Width*Sepal.Length*Sepal.Length))), Sepal.Width)]</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="session-info">Session Info<a class="anchor" aria-label="anchor" href="#session-info"></a>
 </h2>
-<div class="sourceCode" id="cb14"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb16"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/sessionInfo.html" class="external-link">sessionInfo</a></span><span class="op">(</span><span class="op">)</span></span>
 <span><span class="co">#&gt; R version 4.6.0 (2026-04-24)</span></span>
 <span><span class="co">#&gt; Platform: aarch64-apple-darwin25.4.0</span></span>
@@ -1044,20 +1241,30 @@ guarantees identical results across runs:</p>
 <span><span class="co">#&gt; [1] evoFE_0.1.0</span></span>
 <span><span class="co">#&gt; </span></span>
 <span><span class="co">#&gt; loaded via a namespace (and not attached):</span></span>
-<span><span class="co">#&gt;  [1] lumbermark_0.9.0    cli_3.6.6           knitr_1.51         </span></span>
-<span><span class="co">#&gt;  [4] rlang_1.2.0         xfun_0.58           otel_0.2.0         </span></span>
-<span><span class="co">#&gt;  [7] quitefastmst_0.9.1  textshaping_1.0.5   jsonlite_2.0.0     </span></span>
-<span><span class="co">#&gt; [10] data.table_1.18.4   htmltools_0.5.9     ragg_1.5.2         </span></span>
-<span><span class="co">#&gt; [13] sass_0.4.10         uwot_0.2.4          rmarkdown_2.31     </span></span>
-<span><span class="co">#&gt; [16] grid_4.6.0          deadwood_0.9.0-3    evaluate_1.0.5     </span></span>
-<span><span class="co">#&gt; [19] jquerylib_0.1.4     fastmap_1.2.0       yaml_2.3.12        </span></span>
-<span><span class="co">#&gt; [22] lifecycle_1.0.5     RhpcBLASctl_0.23-42 compiler_4.6.0     </span></span>
-<span><span class="co">#&gt; [25] codetools_0.2-20    fs_2.1.0            htmlwidgets_1.6.4  </span></span>
-<span><span class="co">#&gt; [28] Rcpp_1.1.1-1.1      lattice_0.22-9      systemfonts_1.3.2  </span></span>
-<span><span class="co">#&gt; [31] digest_0.6.39       xgboost_3.2.1.1     R6_2.6.1           </span></span>
-<span><span class="co">#&gt; [34] Matrix_1.7-5        bslib_0.11.0        tools_4.6.0        </span></span>
-<span><span class="co">#&gt; [37] genieclust_1.3.0    RcppAnnoy_0.0.23    pkgdown_2.2.0      </span></span>
-<span><span class="co">#&gt; [40] cachem_1.1.0        desc_1.4.3</span></span></code></pre></div>
+<span><span class="co">#&gt;  [1] fastmatch_1.1-8     gtable_0.3.6        xfun_0.58          </span></span>
+<span><span class="co">#&gt;  [4] bslib_0.11.0        ggplot2_4.0.3       htmlwidgets_1.6.4  </span></span>
+<span><span class="co">#&gt;  [7] BBmisc_1.13.1       lattice_0.22-9      vctrs_0.7.3        </span></span>
+<span><span class="co">#&gt; [10] tools_4.6.0         generics_0.1.4      parallel_4.6.0     </span></span>
+<span><span class="co">#&gt; [13] tibble_3.3.1        pkgconfig_2.0.3     mlrMBO_1.1.6       </span></span>
+<span><span class="co">#&gt; [16] Matrix_1.7-5        data.table_1.18.4   checkmate_2.3.4    </span></span>
+<span><span class="co">#&gt; [19] RColorBrewer_1.1-3  S7_0.2.2            desc_1.4.3         </span></span>
+<span><span class="co">#&gt; [22] ParamHelpers_1.14.2 lhs_1.3.0           lifecycle_1.0.5    </span></span>
+<span><span class="co">#&gt; [25] compiler_4.6.0      farver_2.1.2        textshaping_1.0.5  </span></span>
+<span><span class="co">#&gt; [28] RhpcBLASctl_0.23-42 codetools_0.2-20    deadwood_0.9.0-3   </span></span>
+<span><span class="co">#&gt; [31] parallelMap_1.5.1   htmltools_0.5.9     lumbermark_0.9.0   </span></span>
+<span><span class="co">#&gt; [34] sass_0.4.10         yaml_2.3.12         pkgdown_2.2.0      </span></span>
+<span><span class="co">#&gt; [37] pillar_1.11.1       jquerylib_0.1.4     mlr_2.19.3         </span></span>
+<span><span class="co">#&gt; [40] uwot_0.2.4          quitefastmst_0.9.1  cachem_1.1.0       </span></span>
+<span><span class="co">#&gt; [43] smoof_1.7.0         tidyselect_1.2.1    digest_0.6.39      </span></span>
+<span><span class="co">#&gt; [46] stringi_1.8.7       dplyr_1.2.1         splines_4.6.0      </span></span>
+<span><span class="co">#&gt; [49] fastmap_1.2.0       grid_4.6.0          cli_3.6.6          </span></span>
+<span><span class="co">#&gt; [52] magrittr_2.0.5      survival_3.8-6      scales_1.4.0       </span></span>
+<span><span class="co">#&gt; [55] backports_1.5.1     xgboost_3.2.1.1     rmarkdown_2.31     </span></span>
+<span><span class="co">#&gt; [58] otel_0.2.0          ragg_1.5.2          genieclust_1.3.0   </span></span>
+<span><span class="co">#&gt; [61] evaluate_1.0.5      knitr_1.51          RcppAnnoy_0.0.23   </span></span>
+<span><span class="co">#&gt; [64] rlang_1.2.0         Rcpp_1.1.1-1.1      glue_1.8.1         </span></span>
+<span><span class="co">#&gt; [67] lightgbm_4.6.0      jsonlite_2.0.0      R6_2.6.1           </span></span>
+<span><span class="co">#&gt; [70] systemfonts_1.3.2   fs_2.1.0</span></span></code></pre></div>
 </div>
   </div>
 

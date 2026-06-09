@@ -23,6 +23,10 @@ create_gene <- function(transformer_name, input_cols) {
     params$Q <- sample(3:10, 1)
   } else if (transformer_name %in% c("log_binning", "log_binning_cat")) {
     params$base <- sample(2:10, 1)
+  } else if (transformer_name == "target_encode_multiclass") {
+    params$comp_idx <- sample(1:5, 1)
+  } else if (transformer_name == "datetime_extract") {
+    params$component <- sample(c("year", "month", "day", "hour", "day_of_week", "weekend"), 1)
   }
   gene <- list(
     transformer_name = transformer_name,
@@ -44,12 +48,16 @@ gene_to_formula <- function(gene) {
   if (gene$transformer_name == "one_hot_encode") {
     comp_str <- if (gene$params$comp_idx == 6) "other" else as.character(gene$params$comp_idx)
     sprintf("ohe_%s(%s)", comp_str, paste(gene$input_cols, collapse = ", "))
+  } else if (!is.null(gene$params$component)) {
+    sprintf("%s_%s(%s)", gene$transformer_name, gene$params$component, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$comp_idx)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$Q)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$base)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, paste(gene$input_cols, collapse = ", "))
+  } else if (!is.null(gene$params$k)) {
+    sprintf("%s_k%d(%s)", gene$transformer_name, gene$params$k, paste(gene$input_cols, collapse = ", "))
   } else {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   }
@@ -174,13 +182,28 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     if (length(cols) == 1) return(rep(cols, size))
     if (length(importances) == 0) return(sample(cols, size, replace = replace))
     
-    # Baseline for missing features: minimum of known, or 0.01
-    baseline <- if (length(importances) > 0) min(importances) else 0.01
+    # Baseline for missing features: minimum of known, or 0.01 (handling NAs/non-finites safely)
+    clean_importances <- importances[!is.na(importances) & is.finite(importances)]
+    baseline <- if (length(clean_importances) > 0) min(clean_importances) else 0.01
     
     weights <- sapply(cols, function(c) {
       val <- if (c %in% names(importances)) importances[[c]] else baseline
+      if (is.na(val) || !is.finite(val)) val <- baseline
       exp(val / temperature)
     })
+    
+    # Ensure weights are completely clean, positive, finite, and non-NA
+    weights[is.na(weights) | !is.finite(weights)] <- 0
+    weights[weights < 0] <- 0
+    
+    # If sampling without replacement, we must have at least 'size' positive weights
+    if (!replace && sum(weights > 0) < size) {
+      weights <- weights + 1e-10
+    }
+    
+    if (sum(weights) == 0) {
+      weights <- rep(1, length(weights))
+    }
     
     sample(cols, size, replace = replace, prob = weights)
   }
@@ -253,7 +276,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     # Add a random gene
     allowed_transformers <- names(evo_transformers)
     if (task == "multiclass") {
-      allowed_transformers <- setdiff(allowed_transformers, "target_encode")
+      allowed_transformers <- setdiff(allowed_transformers, c("target_encode"))
+    } else {
+      allowed_transformers <- setdiff(allowed_transformers, c("target_encode_multiclass"))
     }
     t_name <- sample(allowed_transformers, 1)
     t_def <- evo_transformers[[t_name]]

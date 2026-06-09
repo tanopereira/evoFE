@@ -8,11 +8,13 @@ train_model(
   x_train,
   y_train,
   x_val = NULL,
+  y_val = NULL,
   task = "classification",
   evaluator = "lightgbm",
   threads = 2,
   num_class = NULL,
-  nrounds = 50
+  nrounds = 50,
+  ...
 )
 }
 \arguments{
@@ -21,6 +23,8 @@ train_model(
 \item{y_train}{Numeric vector of training labels.}
 
 \item{x_val}{Optional numeric matrix of validation features.}
+
+\item{y_val}{Optional numeric vector of validation labels.}
 
 \item{task}{Task type: "classification", "multiclass", or "regression".}
 
@@ -31,6 +35,8 @@ train_model(
 \item{num_class}{Number of classes (required for multiclass).}
 
 \item{nrounds}{Number of boosting rounds.}
+
+\item{...}{Additional arguments passed to the evaluator training function.}
 }
 \value{
 A list with elements \code{model}, \code{predictions} (NULL when

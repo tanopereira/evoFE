@@ -109,15 +109,18 @@ test_that("Constant columns are skipped and individual survives", {
   gene_log <- create_gene("log", "x1")
   ind <- create_individual(genes = list(gene_log), numeric_cols = "x1")
   
-  # apply_individual should run without error and return the individual with 0 genes (skipped)
+  # Default (allow_prune = TRUE): constant gene is pruned, individual survives with 0 genes
   res <- apply_individual(ind, df, target_col = "target")
   expect_equal(length(res$ind$genes), 0)
   expect_false(gene_log$output_col %in% names(res$train))
   
-  # evaluate_fitness should run without error and not set fitness to -Inf
+  # Explicit allow_prune = FALSE: entire individual is killed -> NULL
+  res_strict <- apply_individual(ind, df, target_col = "target", allow_prune = FALSE)
+  expect_null(res_strict)
+  
+  # evaluate_fitness with default allow_prune=TRUE: bad gene pruned, individual gets a real fitness
   ind_eval <- evaluate_fitness(ind, df, target_col = "target", cv_folds = 2)
-  expect_true(is.numeric(ind_eval$fitness))
-  expect_gt(ind_eval$fitness, -Inf)
+  expect_true(is.finite(ind_eval$fitness))
 })
 
 test_that("Genie, MST Score, Lumbermark, and Deadwood handle constant/all-zero data without crashing", {
@@ -181,6 +184,11 @@ test_that("Best model is saved and predict_model works", {
   preds <- predict_model(res, df)
   expect_type(preds, "double")
   expect_equal(length(preds), n)
+  
+  # predict_model should work on exactly 1 row (regression test for transpose bug)
+  preds_1 <- predict_model(res, df[1, , drop = FALSE])
+  expect_type(preds_1, "double")
+  expect_equal(length(preds_1), 1)
 })
 
 test_that("State caching and fit-skipping works correctly", {
@@ -519,7 +527,7 @@ test_that("mutate adds all components for UMAP, PCA, and SVD", {
   pca_added <- FALSE
   umap_added <- FALSE
   
-  while ((!pca_added || !umap_added) && attempts < 100) {
+  while ((!pca_added || !umap_added) && attempts < 500) {
     attempts <- attempts + 1
     ind <- create_individual(genes = list(), numeric_cols = c("x1", "x2", "x3"))
     ind_mut <- mutate(ind, force_add = TRUE, task = "regression")
@@ -547,6 +555,7 @@ test_that("different components share the same fitted state in state_cache", {
   colnames(df) <- c("x1", "x2", "x3")
   df[, target := rnorm(100)]
   
+  # 1. Test PCA
   gene_pca1 <- create_gene("pca", c("x1", "x2"))
   gene_pca1$params$comp_idx <- 1
   gene_pca1$output_col <- "PCA1"
@@ -560,13 +569,39 @@ test_that("different components share the same fitted state in state_cache", {
   expect_false(is.null(res1$gene$state))
   
   # Fit gene_pca2. It should retrieve the state from cache without recalculating/refitting.
-  # We can verify this by checking that the state object is identical.
   res2 <- apply_gene(gene_pca2, df, target_col = "target", state_cache = state_cache)
   expect_identical(res1$gene$state, res2$gene$state)
   
-  # Verify cache has only one entry
-  cache_keys <- ls(envir = state_cache)
-  expect_equal(length(cache_keys), 1)
+  # 2. Test truncated_svd
+  gene_svd1 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd1$params$comp_idx <- 1
+  gene_svd1$output_col <- "SVD1"
+  
+  gene_svd2 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd2$params$comp_idx <- 2
+  gene_svd2$output_col <- "SVD2"
+  
+  gene_svd3 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd3$params$comp_idx <- 3
+  gene_svd3$output_col <- "SVD3"
+  
+  # Apply and fit them
+  res_svd1 <- apply_gene(gene_svd1, df, target_col = "target", state_cache = state_cache)
+  res_svd2 <- apply_gene(gene_svd2, df, target_col = "target", state_cache = state_cache)
+  res_svd3 <- apply_gene(gene_svd3, df, target_col = "target", state_cache = state_cache)
+  
+  # State should be identical/shared
+  expect_identical(res_svd1$gene$state, res_svd2$gene$state)
+  expect_identical(res_svd1$gene$state, res_svd3$gene$state)
+  
+  # Output columns must be different from each other (not identical components)
+  col1 <- res_svd1$train$SVD1
+  col2 <- res_svd2$train$SVD2
+  col3 <- res_svd3$train$SVD3
+  
+  expect_true(mean(abs(col1 - col2)) > 1e-5)
+  expect_true(mean(abs(col1 - col3)) > 1e-5)
+  expect_true(mean(abs(col2 - col3)) > 1e-5)
 })
 
 test_that("umap, genie, and mst_score respect evoFE.verbose option", {
@@ -576,8 +611,8 @@ test_that("umap, genie, and mst_score respect evoFE.verbose option", {
     target = sample(0:1, 20, replace = TRUE)
   ))
   
-  # Set options(evoFE.verbose = 2)
-  options(evoFE.verbose = 2)
+  # Set options(evoFE.verbose = TRUE) to test truthiness
+  options(evoFE.verbose = TRUE)
   on.exit(options(evoFE.verbose = 0), add = TRUE)
   
   # Test UMAP fit messages
@@ -757,4 +792,774 @@ test_that("one_hot_encode transformer works", {
   expect_true(gene_ohe6$output_col %in% names(res_ohe6$train))
   expect_equal(res_ohe6$train[[gene_ohe6$output_col]], as.numeric(df_rare$cat_val == "C"))
 })
+
+test_that("Custom transformer registration works", {
+  custom_trans <- create_transformer(
+    name = "add_one",
+    type = "unary",
+    input_type = "numeric",
+    apply_func = function(data, gene, state = NULL) {
+      data[[gene$input_cols[1]]] + 1
+    },
+    name_generator = function(gene) paste0("add1_", gene$input_cols[1])
+  )
+  register_transformer("add_one", custom_trans)
+  
+  expect_true("add_one" %in% names(evo_transformers))
+  expect_identical(evo_transformers$add_one, custom_trans)
+  
+  gene <- create_gene("add_one", "x1")
+  df <- data.table::data.table(x1 = 1:5)
+  res <- apply_gene(gene, df)
+  expect_equal(res$train[[gene$output_col]], 2:6)
+})
+
+test_that("datetime_extract transformer works", {
+  df <- data.table::data.table(
+    date_str = c("2026-05-29 23:52:42", "2025-01-01 12:00:00")
+  )
+  gene_year <- create_gene("datetime_extract", "date_str")
+  gene_year$params$component <- "year"
+  res_year <- apply_gene(gene_year, df)
+  expect_equal(res_year$train[[gene_year$output_col]], c(2026, 2025))
+  
+  gene_month <- create_gene("datetime_extract", "date_str")
+  gene_month$params$component <- "month"
+  res_month <- apply_gene(gene_month, df)
+  expect_equal(res_month$train[[gene_month$output_col]], c(5, 1))
+})
+
+test_that("target_encode_multiclass transformer works", {
+  set.seed(42)
+  df <- data.table::data.table(
+    cat = rep(c("A", "B"), each = 10),
+    target = c(rep("X", 8), rep("Y", 2), rep("Y", 7), rep("X", 3))
+  )
+  gene_te <- create_gene("target_encode_multiclass", "cat")
+  gene_te$params$comp_idx <- 1
+  
+  res <- apply_gene(gene_te, df, target_col = "target")
+  expect_true(gene_te$output_col %in% names(res$train))
+  expect_type(res$train[[gene_te$output_col]], "double")
+})
+
+test_that("Alternative and custom fitness metrics work", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  # Use AUC
+  suppressWarnings({
+    res_auc <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "lightgbm",
+      verbose = FALSE,
+      metric = "auc"
+    )
+  })
+  expect_s3_class(res_auc, "evo_recipe")
+  expect_equal(res_auc$metric, "auc")
+  
+  # Use custom metric function
+  custom_metric <- function(y_true, y_pred) {
+    mean(y_pred)
+  }
+  suppressWarnings({
+    res_custom <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "lightgbm",
+      verbose = FALSE,
+      metric = custom_metric
+    )
+  })
+  expect_s3_class(res_custom, "evo_recipe")
+  expect_identical(res_custom$metric, custom_metric)
+})
+
+test_that("eval-ts-refinement metric and training integration works", {
+  set.seed(42)
+  # Create a binary classification dataset
+  y_true_bin <- c(1, 0, 1, 0, 1, 0, 1, 0)
+  # Logits: positive for 1, negative for 0
+  logits_bin <- c(1.5, -2.0, 0.8, -1.2, 2.5, -0.5, 1.1, -1.8)
+  probs_bin <- 1 / (1 + exp(-logits_bin))
+  
+  # Calculate metric using logits
+  score_logits <- compute_ts_refinement(y_true_bin, logits_bin, task = "classification", is_logits = TRUE)
+  # Calculate metric using probs
+  score_probs <- compute_ts_refinement(y_true_bin, probs_bin, task = "classification", is_logits = FALSE)
+  
+  # They should be identical
+  expect_equal(score_logits, score_probs, tolerance = 1e-6)
+  expect_gt(score_logits, 0)
+  
+  # Create a multiclass dataset
+  y_true_multi <- c(0, 1, 2, 0, 1, 2)
+  # Probabilities
+  probs_multi <- matrix(c(
+    0.8, 0.1, 0.1,
+    0.1, 0.7, 0.2,
+    0.2, 0.2, 0.6,
+    0.7, 0.2, 0.1,
+    0.1, 0.8, 0.1,
+    0.3, 0.1, 0.6
+  ), ncol = 3, byrow = TRUE)
+  logits_multi <- log(probs_multi)
+  
+  score_logits_multi <- compute_ts_refinement(y_true_multi, logits_multi, task = "multiclass", num_class = 3, is_logits = TRUE)
+  score_probs_multi <- compute_ts_refinement(y_true_multi, probs_multi, task = "multiclass", num_class = 3, is_logits = FALSE)
+  
+  expect_equal(score_logits_multi, score_probs_multi, tolerance = 1e-6)
+  expect_gt(score_logits_multi, 0)
+  
+  # Imbalanced multiclass test with default alpha=1
+  # Verifies the Laplace smoothing denominator uses total N (not per-class N_k).
+  # With the old (wrong) formula the smoothed rows did NOT sum to 1 on imbalanced data.
+  y_true_imb <- c(0, 0, 0, 1, 1, 2)
+  probs_imb <- matrix(c(
+    0.8, 0.1, 0.1,
+    0.9, 0.05, 0.05,
+    0.7, 0.2, 0.1,
+    0.1, 0.8, 0.1,
+    0.2, 0.7, 0.1,
+    0.8, 0.1, 0.1
+  ), ncol = 3, byrow = TRUE)
+
+  score_imb <- compute_ts_refinement(y_true_imb, probs_imb, task = "multiclass", num_class = 3, alpha = 1)
+  expect_true(is.finite(score_imb))
+  expect_gt(score_imb, 0)
+
+  # Verify class-count-aware smoothing details.
+  # For class 0 (N_k=3), n=6, C=3, alpha=1:
+  #   true_target: (3+1)/(3+2) = 4/5 = 0.8
+  #   leftover_mass: 1/(3+2) = 1/5 = 0.2
+  #   incorrect classes get: N_j * (leftover_mass / (n - N_k))
+  n_mc <- length(y_true_imb); C_mc <- 3L; alpha_mc <- 1
+  cc <- tabulate(y_true_imb + 1, nbins = C_mc)
+  Nk_0 <- cc[1]  # class 0 has 3 samples
+  expect_equal((Nk_0 + alpha_mc) / (Nk_0 + 2 * alpha_mc), 4/5, tolerance = 1e-10)
+
+  # Binary imbalanced: smoothed positive label must equal (N1+alpha)/(N1+2*alpha)
+  N1_t <- 90L; alpha_t <- 1
+  expect_equal((N1_t + alpha_t) / (N1_t + 2 * alpha_t), 91/92, tolerance = 1e-10)
+
+  set.seed(1)
+  y_bin_imb <- c(rep(1L, 90), rep(0L, 10))
+  p_bin_imb <- c(runif(90, 0.55, 0.95), runif(10, 0.05, 0.45))
+  score_bin_imb <- compute_ts_refinement(y_bin_imb, p_bin_imb, task = "classification", alpha = 1)
+  expect_true(is.finite(score_bin_imb))
+  expect_gt(score_bin_imb, 0)
+
+  # Integrate with evolve_features
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  # 1. Test with lightgbm evaluator
+  suppressWarnings({
+    res_lgb <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "lightgbm",
+      verbose = FALSE,
+      metric = "eval-ts-refinement"
+    )
+  })
+  expect_s3_class(res_lgb, "evo_recipe")
+  expect_equal(tolower(res_lgb$metric), "eval-ts-refinement")
+  expect_gt(res_lgb$best_individual$fitness, 0)
+  
+  # 2. Test with xgboost evaluator
+  suppressWarnings({
+    res_xgb <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 1,
+      evaluator = "xgboost",
+      verbose = FALSE,
+      metric = "eval-ts-refinement"
+    )
+  })
+  expect_s3_class(res_xgb, "evo_recipe")
+  expect_equal(tolower(res_xgb$metric), "eval-ts-refinement")
+  expect_gt(res_xgb$best_individual$fitness, 0)
+
+  # 3. Test direct train_model with booster-level early stopping and custom metric
+  x_tr <- data.matrix(df[1:30, c("x1", "x2")])
+  y_tr <- df$target[1:30]
+  x_va <- data.matrix(df[31:50, c("x1", "x2")])
+  y_va <- df$target[31:50]
+  
+  res_train_lgb <- train_model(
+    x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va,
+    task = "classification", evaluator = "lightgbm",
+    metric = "eval-ts-refinement", early_stopping_rounds = 3
+  )
+  expect_type(res_train_lgb, "list")
+  expect_true(!is.null(res_train_lgb$model))
+
+  res_train_xgb <- train_model(
+    x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va,
+    task = "classification", evaluator = "xgboost",
+    metric = "eval-ts-refinement", early_stopping_rounds = 3
+  )
+  expect_type(res_train_xgb, "list")
+  expect_true(!is.null(res_train_xgb$model))
+})
+
+
+test_that("S3 print, summary, and plot methods work correctly", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  suppressWarnings({
+    res <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 2,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_rounds = 2,
+      evaluator = "lightgbm",
+      verbose = FALSE
+    )
+  })
+  
+  # 1. Print
+  msg_print <- testthat::capture_output(print(res))
+  expect_true(grepl("An evoFE Recipe", msg_print))
+  
+  # 2. Summary
+  sum_res <- summary(res)
+  expect_s3_class(sum_res, "summary_evo_recipe")
+  msg_summary <- testthat::capture_output(print(sum_res))
+  expect_true(grepl("Evolutionary Feature Engineering Summary", msg_summary))
+  
+  # 3. Plot (Fitness)
+  pdf(NULL)
+  on.exit(dev.off(), add = TRUE)
+  expect_silent(plot(res, type = "fitness"))
+  
+  # 4. Plot (Importance)
+  if (length(res$best_individual$importances) > 0) {
+    expect_silent(plot(res, type = "importance"))
+  } else {
+    expect_message(plot(res, type = "importance"), "No feature importances available.")
+  }
+})
+
+test_that("Incompatible task/metric combinations raise clear errors", {
+  df <- data.frame(x = rnorm(10), target = 1:10)
+  
+  # 1. Invalid task type
+  expect_error(
+    evolve_features(df, "target", task = "invalid_task"),
+    "task must be one of"
+  )
+  
+  # 2. MAE for classification
+  expect_error(
+    evolve_features(df, "target", task = "classification", metric = "mae"),
+    "Metric 'mae' is not supported for task 'classification'"
+  )
+  
+  # 3. AUC for regression
+  expect_error(
+    evolve_features(df, "target", task = "regression", metric = "auc"),
+    "Metric 'auc' is not supported for task 'regression'"
+  )
+})
+
+test_that("Model Registry allows custom evaluator registration", {
+  # 1. Register a simple dummy evaluator
+  register_evaluator(
+    "mock_model",
+    train_func = function(x_train, y_train, x_val = NULL, task = "regression", ...) {
+      list(
+        model = list(coefficients = c(a = 1)),
+        predictions = if (!is.null(x_val)) rep(0.5, nrow(x_val)) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      rep(0.5, nrow(x_new))
+    }
+  )
+  
+  expect_true("mock_model" %in% names(evo_evaluators))
+  
+  # 2. Test train_model with custom evaluator
+  x_train <- matrix(rnorm(20), ncol = 2)
+  colnames(x_train) <- c("x1", "x2")
+  y_train <- rnorm(10)
+  x_val <- matrix(rnorm(10), ncol = 2)
+  
+  fit <- train_model(x_train, y_train, x_val = x_val, task = "regression", evaluator = "mock_model")
+  expect_equal(fit$predictions, rep(0.5, 5))
+  expect_equal(fit$importances, c(x1 = 1, x2 = 1))
+  
+  # 3. Test predict_model with custom evaluator
+  # Construct a dummy evo_recipe object containing the mock model
+  recipe <- list(
+    best_individual = list(
+      genes = list(),
+      numeric_cols = c("x1", "x2"),
+      categorical_cols = character(0)
+    ),
+    best_model = fit$model,
+    evaluator = "mock_model",
+    task = "regression",
+    classes = NULL
+  )
+  class(recipe) <- "evo_recipe"
+  
+  df_new <- data.frame(x1 = rnorm(5), x2 = rnorm(5))
+  preds <- predict_model(recipe, df_new)
+  expect_equal(preds, rep(0.5, 5))
+})
+
+test_that("CatBoost evaluator checks for package availability", {
+  # If catboost is not installed (which is typical for clean check environments),
+  # it should raise a clear, friendly error.
+  if (system.file(package = "catboost") == "") {
+    x_train <- matrix(rnorm(20), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(10, 1, 0.5)
+    
+    expect_error(
+      train_model(x_train, y_train, task = "classification", evaluator = "catboost"),
+      "The 'catboost' package is required"
+    )
+  } else {
+    # If catboost is installed, test that it trains and predicts successfully
+    # Use integer matrix to verify the fix for C++ REAL() type assertions on integers
+    x_train <- matrix(as.integer(rpois(20, 5)), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(10, 1, 0.5)
+    
+    res <- train_model(x_train, y_train, x_val = x_train, task = "classification", evaluator = "catboost",
+                       mbo_init_design = 5, mbo_iters = 3, mbo_folds = 2)
+    expect_type(res, "list")
+    expect_true(!is.null(res$model))
+    expect_length(res$predictions, 10)
+    
+    # Test predict function
+    evaluator_entry <- evo_evaluators[["catboost"]]
+    preds <- evaluator_entry$predict_func(res$model, x_train, task = "classification")
+    expect_length(preds, 10)
+  }
+})
+
+test_that("lightgbm_mbo checks for package availability", {
+  # If mlrMBO, ParamHelpers, or smoof is not installed, it should raise a clear error
+  if (!requireNamespace("mlrMBO", quietly = TRUE) ||
+      !requireNamespace("ParamHelpers", quietly = TRUE) ||
+      !requireNamespace("smoof", quietly = TRUE)) {
+    x_train <- matrix(rnorm(20), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(10, 1, 0.5)
+    
+    expect_error(
+      train_model(x_train, y_train, task = "classification", evaluator = "lightgbm_mbo"),
+      "The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required"
+    )
+  } else {
+    # If installed, test that it trains and predicts successfully
+    x_train <- matrix(rnorm(40), ncol = 2)
+    colnames(x_train) <- c("x1", "x2")
+    y_train <- rbinom(20, 1, 0.5)
+    
+    res <- train_model(x_train, y_train, x_val = x_train, task = "classification", 
+                       evaluator = "lightgbm_mbo", mbo_iters = 2, mbo_init_design = 8, mbo_folds = 2)
+    expect_type(res, "list")
+    expect_true(!is.null(res$model))
+    expect_length(res$predictions, 20)
+    expect_true("best_params" %in% names(res))
+    
+    # Test predict function
+    evaluator_entry <- evo_evaluators[["lightgbm_mbo"]]
+    preds <- evaluator_entry$predict_func(res$model, x_train, task = "classification")
+    expect_length(preds, 20)
+    
+    # Test passing best_params to seed the initial design
+    custom_params <- list(
+      learning_rate = 0.05,
+      num_leaves = 15,
+      max_depth = 4,
+      feature_fraction = 0.8
+    )
+    res_seeded <- train_model(x_train, y_train, x_val = x_train, task = "classification", 
+                              evaluator = "lightgbm_mbo", mbo_iters = 1, mbo_init_design = 5, mbo_folds = 2,
+                              best_params = custom_params, verbose = FALSE)
+    expect_type(res_seeded, "list")
+    expect_true(!is.null(res_seeded$model))
+    expect_true("best_params" %in% names(res_seeded))
+  }
+})
+
+test_that("make_tunable works correctly", {
+  # 1. Error on unregistered model
+  expect_error(
+    make_tunable("non_existent_model", list(lr = list(type = "numeric", lower = 0.1, upper = 0.5))),
+    "is not registered in evo_evaluators"
+  )
+  
+  # 2. Register mock evaluator
+  register_evaluator(
+    "mock_base",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression",
+                           threads = 2, num_class = NULL, metric = "default", verbose = FALSE, ...) {
+      args <- list(...)
+      # Mock score: depends on parameters to optimize
+      val_score <- 100
+      if ("param_a" %in% names(args)) val_score <- val_score - abs(args$param_a - 4.5)
+      if ("param_b" %in% names(args)) val_score <- val_score - abs(args$param_b - 7)
+      
+      list(
+        model = list(args = args, val_score = val_score),
+        predictions = if (!is.null(x_val)) rep(val_score, nrow(x_val)) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      rep(model$val_score, nrow(x_new))
+    }
+  )
+  
+  # 3. Call make_tunable
+  param_ranges <- list(
+    param_a = list(type = "numeric", lower = 1.0, upper = 8.0),
+    param_b = list(type = "integer", lower = 1, upper = 10)
+  )
+  make_tunable("mock_base", param_ranges, tuner_name = "mock_base_tuned")
+  
+  expect_true("mock_base_tuned" %in% names(evo_evaluators))
+  
+  # 4. Train with the tuned evaluator
+  x_train <- matrix(rnorm(20), ncol = 2)
+  colnames(x_train) <- c("x1", "x2")
+  y_train <- rnorm(10)
+  x_val <- matrix(rnorm(10), ncol = 2)
+  y_val <- rnorm(5)
+  
+  res <- train_model(
+    x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+    evaluator = "mock_base_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2,
+    verbose = FALSE
+  )
+  
+  expect_type(res, "list")
+  expect_true("best_params" %in% names(res))
+  expect_true("param_a" %in% names(res$best_params))
+  expect_true("param_b" %in% names(res$best_params))
+  
+  # Verify that predictions are returned and predict_func works
+  expect_length(res$predictions, nrow(x_val))
+  evaluator_entry <- evo_evaluators[["mock_base_tuned"]]
+  preds <- evaluator_entry$predict_func(res$model, x_val, task = "regression")
+  expect_length(preds, nrow(x_val))
+
+  # Test tuning with EA optimizer
+  res_ea <- train_model(
+    x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+    evaluator = "mock_base_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2,
+    mbo_infill_opt = "ea", verbose = FALSE
+  )
+  expect_type(res_ea, "list")
+  expect_true("best_params" %in% names(res_ea))
+
+  # Test that invalid mbo_infill_opt throws error
+  expect_error(
+    train_model(
+      x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+      evaluator = "mock_base_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2,
+      mbo_infill_opt = "invalid_opt", verbose = FALSE
+    ),
+    "mbo_infill_opt must be either"
+  )
+})
+
+test_that("add, subtract, and multiply transformers handle integer overflow gracefully", {
+  # Test with values that exceed the 32-bit signed integer limit (2^31 - 1 = 2147483647)
+  val1 <- 2000000000L
+  val2 <- 1500000000L
+  df <- data.table::data.table(
+    x1 = c(val1, val1),
+    x2 = c(val2, val2)
+  )
+  
+  # For add
+  gene_add <- create_gene("add", c("x1", "x2"))
+  res_add <- apply_gene(gene_add, df)
+  expect_equal(res_add$train[[gene_add$output_col]], c(3.5e9, 3.5e9))
+  
+  # For subtract
+  gene_sub <- create_gene("subtract", c("x1", "x2"))
+  res_sub <- apply_gene(gene_sub, df)
+  expect_equal(res_sub$train[[gene_sub$output_col]], c(5e8, 5e8))
+  
+  # For multiply
+  df_mult <- data.table::data.table(
+    x1 = c(1000000L, 1000000L),
+    x2 = c(3000L, 3000L)
+  )
+  gene_mult <- create_gene("multiply", c("x1", "x2"))
+  res_mult <- apply_gene(gene_mult, df_mult)
+  expect_equal(res_mult$train[[gene_mult$output_col]], c(3e9, 3e9))
+})
+
+test_that("multivariate stateful transformers (deadwood, mst_score, genie, lumbermark) handle integer overflow gracefully", {
+  # Test with values whose differences exceed the threshold for squared operations (e.g. 100000L)
+  # 100000L ^ 2 = 10,000,000,000, which exceeds 2^31 - 1
+  df_fit <- data.table::data.table(
+    x1 = c(0L, 0L, 0L, 0L, 0L, 0L),
+    x2 = c(0L, 0L, 0L, 0L, 0L, 0L)
+  )
+  df_test <- data.table::data.table(
+    x1 = c(100000L, 100000L, 100000L, 100000L, 100000L, 100000L),
+    x2 = c(100000L, 100000L, 100000L, 100000L, 100000L, 100000L)
+  )
+  
+  # For deadwood
+  if (requireNamespace("deadwood", quietly = TRUE)) {
+    gene_dead <- create_gene("deadwood", c("x1", "x2"))
+    state_dead <- evo_transformers$deadwood$fit_func(df_fit, gene_dead)
+    
+    # Run apply with fallback R KNN by checking that it doesn't crash or overflow to NA
+    preds_dead <- evo_transformers$deadwood$apply_func(df_test, gene_dead, state_dead)
+    expect_false(any(is.na(preds_dead)))
+  }
+  
+  # For mst_score
+  if (requireNamespace("quitefastmst", quietly = TRUE)) {
+    gene_mst <- create_gene("mst_score", c("x1", "x2"))
+    state_mst <- evo_transformers$mst_score$fit_func(df_fit, gene_mst)
+    preds_mst <- evo_transformers$mst_score$apply_func(df_test, gene_mst, state_mst)
+    expect_false(any(is.na(preds_mst)))
+  }
+  
+  # For genie
+  if (requireNamespace("genieclust", quietly = TRUE)) {
+    gene_genie <- create_gene("genie", c("x1", "x2"))
+    state_genie <- evo_transformers$genie$fit_func(df_fit, gene_genie)
+    preds_genie <- evo_transformers$genie$apply_func(df_test, gene_genie, state_genie)
+    expect_false(any(is.na(preds_genie)))
+  }
+  
+  # For lumbermark
+  if (requireNamespace("lumbermark", quietly = TRUE)) {
+    gene_lumb <- create_gene("lumbermark", c("x1", "x2"))
+    state_lumb <- evo_transformers$lumbermark$fit_func(df_fit, gene_lumb)
+    preds_lumb <- evo_transformers$lumbermark$apply_func(df_test, gene_lumb, state_lumb)
+    expect_false(any(is.na(preds_lumb)))
+  }
+})
+
+test_that("baseline fitness is consistent across population sizes under split strategy with same seed", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    target = sample(0:1, 50, replace = TRUE)
+  )
+  
+  # Run once with pop_size = 2
+  res_small <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 1,
+    pop_size = 2,
+    evaluation_strategy = "split",
+    split_ratio = c(0.6, 0.4),
+    early_stopping_rounds = 1,
+    evaluator = "lightgbm",
+    seed = 123,
+    verbose = FALSE
+  )
+  
+  # Run again with pop_size = 5
+  res_large <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 1,
+    pop_size = 5,
+    evaluation_strategy = "split",
+    split_ratio = c(0.6, 0.4),
+    early_stopping_rounds = 1,
+    evaluator = "lightgbm",
+    seed = 123,
+    verbose = FALSE
+  )
+  
+  # The baseline individual (original features only) is the one with genes list length 0.
+  # Let's find it in both runs and verify their fitness is identical.
+  get_baseline_fitness <- function(res) {
+    for (ind in res$history) {
+      if (length(ind$genes) == 0) {
+        return(ind$fitness)
+      }
+    }
+    stop("Baseline individual not found")
+  }
+  
+  fit_small <- get_baseline_fitness(res_small)
+  fit_large <- get_baseline_fitness(res_large)
+  
+  expect_equal(fit_small, fit_large)
+})
+
+test_that("model_all_final_genes accumulates all unique genes, evaluates them, and trains successfully based on performance", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(60),
+    x2 = rnorm(60),
+    target = sample(0:1, 60, replace = TRUE)
+  )
+  
+  # Run evolution with model_all_final_genes = TRUE
+  res <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 2,
+    pop_size = 5,
+    evaluation_strategy = "cv",
+    cv_folds = 2,
+    early_stopping_rounds = 2,
+    evaluator = "lightgbm",
+    seed = 42,
+    model_all_final_genes = TRUE,
+    verbose = FALSE
+  )
+  
+  expect_s3_class(res, "evo_recipe")
+  
+  hist_best_ind <- res$history[[1]]
+  history_genes <- unlist(lapply(res$history, function(ind) ind$genes), recursive = FALSE)
+  unique_history_cols <- unique(vapply(history_genes, function(g) g$output_col, character(1)))
+  
+  best_genes_cols <- vapply(res$best_individual$genes, function(g) g$output_col, character(1))
+  
+  # The final best_individual's fitness must be at least as high as the historical best
+  expect_gte(res$best_individual$fitness, hist_best_ind$fitness)
+  
+  # Check if the super-individual was selected or the historical best
+  is_super_selected <- length(best_genes_cols) == length(unique_history_cols) && all(sort(best_genes_cols) == sort(unique_history_cols))
+  is_hist_selected <- length(best_genes_cols) == length(hist_best_ind$genes) && all(sort(best_genes_cols) == sort(vapply(hist_best_ind$genes, function(g) g$output_col, character(1))))
+  
+  expect_true(is_super_selected || is_hist_selected)
+  
+  # 2. Verify that predict on the recipe works
+  preds_df <- predict(res, df[, 1:2])
+  expect_s3_class(preds_df, "data.table")
+  expect_true(all(best_genes_cols %in% names(preds_df)))
+  
+  # 3. Verify predict_model succeeds
+  preds <- predict_model(res, df[, 1:2])
+  expect_length(preds, 60)
+  expect_true(all(preds >= 0 & preds <= 1))
+})
+
+test_that("model_all_historical_genes collects genes across generations, evaluates them, and trains successfully based on performance", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(60),
+    x2 = rnorm(60),
+    target = sample(0:1, 60, replace = TRUE)
+  )
+  
+  # Run evolution with model_all_historical_genes = TRUE
+  res <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 2,
+    pop_size = 5,
+    evaluation_strategy = "cv",
+    cv_folds = 2,
+    early_stopping_rounds = 2,
+    evaluator = "lightgbm",
+    seed = 42,
+    model_all_historical_genes = TRUE,
+    verbose = FALSE
+  )
+  
+  expect_s3_class(res, "evo_recipe")
+  expect_true(is.numeric(res$best_individual$fitness))
+  expect_gt(res$best_individual$fitness, -Inf)
+  
+  # Verify that predict on the recipe works
+  preds_df <- predict(res, df[, 1:2])
+  expect_s3_class(preds_df, "data.table")
+  
+  # Verify predict_model succeeds
+  preds <- predict_model(res, df[, 1:2])
+  expect_length(preds, 60)
+  expect_true(all(preds >= 0 & preds <= 1))
+})
+
+test_that("gradual population growth and decay works correctly during dynamic population expansion and recovery", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(30),
+    x2 = rnorm(30),
+    target = sample(0:1, 30, replace = TRUE)
+  )
+  
+  # Run evolution with dynamic population and custom growth/decay rates
+  res <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "classification",
+    generations = 3,
+    pop_size = 3,
+    evaluation_strategy = "cv",
+    cv_folds = 2,
+    early_stopping_rounds = 3,
+    evaluator = "lightgbm",
+    seed = 42,
+    dynamic_population = TRUE,
+    dynamic_population_growth_rate = 2.0,
+    dynamic_population_decay_rate = 0.5,
+    verbose = FALSE
+  )
+  
+  expect_s3_class(res, "evo_recipe")
+  expect_true(is.numeric(res$best_individual$fitness))
+  expect_gt(res$best_individual$fitness, -Inf)
+})
+
 

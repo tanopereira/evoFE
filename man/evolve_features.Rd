@@ -17,10 +17,16 @@ evolve_features(
   early_stopping_rounds = 3,
   evaluator = "lightgbm",
   dynamic_population = TRUE,
+  dynamic_population_growth_rate = 1.5,
+  dynamic_population_decay_rate = 0.7,
   crossover_type = "both",
   threads = 2,
   max_clustering_size = 5000,
-  verbose = TRUE
+  verbose = TRUE,
+  metric = "default",
+  model_all_final_genes = FALSE,
+  model_all_historical_genes = FALSE,
+  ...
 )
 }
 \arguments{
@@ -44,9 +50,13 @@ evolve_features(
 
 \item{early_stopping_rounds}{Stop if fitness doesn't improve for this many generations}
 
-\item{evaluator}{The ML model to use ("lightgbm" or "xgboost")}
+\item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
 
 \item{dynamic_population}{Logical. If TRUE, population expands dynamically during stagnation.}
+
+\item{dynamic_population_growth_rate}{Growth rate multiplier for population expansion during stagnation (default 1.5).}
+
+\item{dynamic_population_decay_rate}{Decay rate multiplier for population contraction back to baseline (default 0.7).}
 
 \item{crossover_type}{Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"}
 
@@ -55,6 +65,14 @@ evolve_features(
 \item{max_clustering_size}{Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)}
 
 \item{verbose}{Logical. If TRUE, prints progress.}
+
+\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
+
+\item{model_all_final_genes}{Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.}
+
+\item{model_all_historical_genes}{Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.}
+
+\item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
 \value{
 An \code{evo_recipe} S3 object: a list with elements
@@ -66,4 +84,25 @@ An \code{evo_recipe} S3 object: a list with elements
 }
 \description{
 Run evolutionary feature engineering
+}
+\examples{
+\donttest{
+# Quick classification example using mtcars
+data(mtcars)
+df <- mtcars
+df$am <- as.integer(df$am)
+
+set.seed(42)
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 2,
+  pop_size = 2,
+  cv_folds = 2,
+  verbose = FALSE
+)
+print(recipe)
+}
 }

@@ -15,6 +15,18 @@
 #' @import data.table
 #' @importFrom uwot umap
 #' @importFrom genieclust genie
+#' @examples
+#' # Define a transformer that adds a constant value of 10 to a variable
+#' add_ten_trans <- create_transformer(
+#'   name = "add_ten",
+#'   type = "unary",
+#'   input_type = "numeric",
+#'   apply_func = function(data, gene, state = NULL) {
+#'     data[[gene$input_cols[1]]] + 10
+#'   },
+#'   name_generator = function(gene) paste0("add10_", gene$input_cols[1])
+#' )
+#' print(add_ten_trans)
 #' @export
 create_transformer <- function(name, type, input_type = "numeric", output_type = "numeric", fit_func = NULL, apply_func, name_generator, allow_replace = FALSE) {
   structure(
@@ -31,15 +43,51 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
     class = "evo_transformer"
   )
 }
-
 #' Built-in feature transformers
 #'
-#' A list of default transformer definitions available for feature engineering.
+#' An environment containing default transformer definitions available for feature engineering.
 #'
 #' @return A named list of \code{evo_transformer} objects, each defining a
 #'   feature transformation (e.g. \code{log}, \code{pca}, \code{target_encode}).
 #' @export
-evo_transformers <- list()
+evo_transformers <- new.env(parent = emptyenv())
+
+#' Register a custom feature transformer
+#'
+#' Adds a user-defined feature transformer to the available pool for feature evolution.
+#'
+#' @param name Unique character string naming the transformer.
+#' @param transformer An object of class \code{evo_transformer} created via \code{create_transformer}.
+#' @examples
+#' # Create a custom transformer
+#' add_ten_trans <- create_transformer(
+#'   name = "add_ten",
+#'   type = "unary",
+#'   input_type = "numeric",
+#'   apply_func = function(data, gene, state = NULL) {
+#'     data[[gene$input_cols[1]]] + 10
+#'   },
+#'   name_generator = function(gene) paste0("add10_", gene$input_cols[1])
+#' )
+#'
+#' # Register it
+#' register_transformer("add_ten", add_ten_trans)
+#'
+#' # Verify it is registered
+#' exists("add_ten", envir = evo_transformers)
+#' @export
+register_transformer <- function(name, transformer) {
+  if (!inherits(transformer, "evo_transformer")) {
+    stop("transformer must be an object of class 'evo_transformer' (created via create_transformer).")
+  }
+  evo_transformers[[name]] <- transformer
+  invisible(transformer)
+}
+
+is_verbose <- function() {
+  val <- getOption("evoFE.verbose", 0)
+  isTRUE(val) || val >= 2
+}
 
 # --- STATELESS UNARY TRANSFORMERS ---
 
@@ -88,7 +136,7 @@ evo_transformers$add <- create_transformer(
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    Reduce(`+`, lapply(input_cols, function(c) data[[c]]))
+    Reduce(`+`, lapply(input_cols, function(c) as.numeric(data[[c]])))
   },
   name_generator = function(gene) paste0("((", paste(gene$input_cols, collapse = "+"), "))"),
   allow_replace = TRUE
@@ -100,7 +148,7 @@ evo_transformers$subtract <- create_transformer(
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    data[[input_cols[1]]] - data[[input_cols[2]]]
+    as.numeric(data[[input_cols[1]]]) - as.numeric(data[[input_cols[2]]])
   },
   name_generator = function(gene) paste0("((", gene$input_cols[1], "-", gene$input_cols[2], "))")
 )
@@ -111,7 +159,7 @@ evo_transformers$multiply <- create_transformer(
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    Reduce(`*`, lapply(input_cols, function(c) data[[c]]))
+    Reduce(`*`, lapply(input_cols, function(c) as.numeric(data[[c]])))
   },
   name_generator = function(gene) paste0("((", paste(gene$input_cols, collapse = "*"), "))"),
   allow_replace = TRUE
@@ -189,6 +237,7 @@ evo_transformers$pca <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     tryCatch({
       pca_model <- stats::prcomp(x, center = TRUE, scale. = TRUE)
       list(model = pca_model, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
@@ -202,6 +251,7 @@ evo_transformers$pca <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     if (is.null(state$preds_cache)) {
       # Fallback in case state didn't initialize it
@@ -235,8 +285,9 @@ evo_transformers$truncated_svd <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     tryCatch({
-      res <- svd(x, nu = 0, nv = comp_idx)
+      res <- svd(x, nu = 0, nv = min(3, ncol(x)))
       list(v = res$v, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
     }, error = function(e) {
       list(v = NULL, valid = FALSE)
@@ -248,6 +299,7 @@ evo_transformers$truncated_svd <- create_transformer(
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     # Calculate full projection (all nv columns)
     if (is.null(state$preds_cache)) {
@@ -416,13 +468,14 @@ evo_transformers$umap <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
     n_neighbors <- 15
     if (nrow(x) < 15) {
       n_neighbors <- max(2, nrow(x) - 1)
     }
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[UMAP Fit] Start on %d rows, %d cols. n_neighbors = %d", nrow(x), ncol(x), n_neighbors))
@@ -454,11 +507,16 @@ evo_transformers$umap <- create_transformer(
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[UMAP Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
-    
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    storage.mode(x) <- "double"
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[UMAP Apply] Start on %d rows, %d cols. Component = %d", nrow(x), ncol(x), comp_idx))
@@ -507,8 +565,9 @@ evo_transformers$mst_score <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[MST Fit] Start on %d rows, %d cols.", nrow(x), ncol(x)))
@@ -590,11 +649,16 @@ evo_transformers$mst_score <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[MST Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
-    
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    storage.mode(x_test) <- "double"
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[MST Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -678,9 +742,10 @@ evo_transformers$genie <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Genie Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
@@ -752,11 +817,16 @@ evo_transformers$genie <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(1, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[Genie Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(1, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
-    
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    storage.mode(x_test) <- "double"
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Genie Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -915,6 +985,7 @@ evo_transformers$quantile_binning <- create_transformer(
     boundaries <- state$boundaries
     if (length(boundaries) <= 1) return(rep(1L, length(x)))
     res <- findInterval(x, boundaries, all.inside = TRUE)
+    res[is.na(res)] <- 0
     as.integer(res)
   },
   name_generator = function(gene) {
@@ -966,6 +1037,7 @@ evo_transformers$quantile_binning_cat <- create_transformer(
     boundaries <- state$boundaries
     if (length(boundaries) <= 1) return(rep(1L, length(x)))
     res <- findInterval(x, boundaries, all.inside = TRUE)
+    res[is.na(res)] <- 0
     as.integer(res)
   },
   name_generator = function(gene) {
@@ -1042,6 +1114,7 @@ evo_transformers$random_projection <- create_transformer(
     if (is.null(state) || is.null(state$w)) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     as.vector(x %*% state$w)
   },
   name_generator = function(gene) {
@@ -1062,9 +1135,10 @@ evo_transformers$lumbermark <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Lumbermark Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
@@ -1136,11 +1210,16 @@ evo_transformers$lumbermark <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(1, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[Lumbermark Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(1, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
-    
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    storage.mode(x_test) <- "double"
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Lumbermark Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -1219,8 +1298,9 @@ evo_transformers$deadwood <- create_transformer(
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
     
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Deadwood Fit] Start on %d rows, %d cols.", nrow(x), ncol(x)))
@@ -1292,11 +1372,16 @@ evo_transformers$deadwood <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
-    if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid) {
+      if (verbose) {
+        message("[Deadwood Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
     x_test <- as.matrix(data[, input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0
-    
-    verbose <- getOption("evoFE.verbose", 0) >= 2
+    storage.mode(x_test) <- "double"
     if (verbose) {
       start_time <- Sys.time()
       message(sprintf("[Deadwood Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
@@ -1422,4 +1507,99 @@ evo_transformers$one_hot_encode <- create_transformer(
     paste0("ohe_", idx_str, "_", gene$input_cols[1])
   }
 )
+
+# --- ADDITIONAL TRANSFORMERS ---
+
+# Datetime Feature Extractor
+evo_transformers$datetime_extract <- create_transformer(
+  name = "datetime_extract",
+  type = "unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    dt_parsed <- tryCatch({
+      if (inherits(x, c("POSIXct", "POSIXlt", "Date"))) {
+        as.POSIXct(x)
+      } else {
+        as.POSIXct(as.character(x), tryFormats = c("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"))
+      }
+    }, error = function(e) {
+      as.POSIXct(rep(NA, length(x)))
+    })
+    comp <- if (!is.null(gene$params$component)) gene$params$component else "month"
+    res <- switch(comp,
+      year = as.integer(format(dt_parsed, "%Y")),
+      month = as.integer(format(dt_parsed, "%m")),
+      day = as.integer(format(dt_parsed, "%d")),
+      hour = as.integer(format(dt_parsed, "%H")),
+      day_of_week = as.integer(format(dt_parsed, "%u")),
+      weekend = as.integer(format(dt_parsed, "%u") %in% c("6", "7")),
+      rep(0L, length(x))
+    )
+    res[is.na(res)] <- 0L
+    as.numeric(res)
+  },
+  name_generator = function(gene) {
+    comp <- if (!is.null(gene$params$component)) gene$params$component else "month"
+    paste0(comp, "_", gene$input_cols[1])
+  }
+)
+
+# Multiclass Target Encoding
+evo_transformers$target_encode_multiclass <- create_transformer(
+  name = "target_encode_multiclass",
+  type = "supervised_unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    y <- data[[target_col]]
+    
+    classes <- sort(unique(y))
+    mappings <- list()
+    global_means <- list()
+    smoothing <- 10
+    
+    for (k in seq_along(classes)) {
+      y_bin <- as.numeric(y == classes[k])
+      global_mean <- mean(y_bin, na.rm = TRUE)
+      global_means[[k]] <- global_mean
+      
+      dt <- data.table::data.table(x = x, y = y_bin)
+      stats <- dt[, .(mean = mean(y, na.rm = TRUE), n = .N), by = x]
+      stats[, smoothed := (n * mean + smoothing * global_mean) / (n + smoothing)]
+      
+      mapping <- stats[, .(x, smoothed)]
+      data.table::setkey(mapping, x)
+      mappings[[k]] <- mapping
+    }
+    
+    list(mappings = mappings, global_means = global_means, classes = classes)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    
+    if (is.null(state) || is.null(state$mappings) || comp_idx > length(state$mappings)) {
+      return(rep(0, length(x)))
+    }
+    
+    dt <- data.table::data.table(x = x)
+    mapping <- state$mappings[[comp_idx]]
+    global_mean <- state$global_means[[comp_idx]]
+    
+    res <- mapping[dt, on = "x"]$smoothed
+    res[is.na(res)] <- global_mean
+    res
+  },
+  name_generator = function(gene) {
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    paste0("te_mc_", comp_idx, "_", gene$input_cols[1])
+  }
+)
+
 
