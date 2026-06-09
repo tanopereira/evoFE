@@ -9,7 +9,8 @@ apply_individual(
   train_data,
   val_data = NULL,
   target_col = NULL,
-  state_cache = NULL
+  state_cache = NULL,
+  allow_prune = TRUE
 )
 }
 \arguments{

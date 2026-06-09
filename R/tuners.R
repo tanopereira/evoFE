@@ -39,7 +39,6 @@ register_evaluator(
     
     if (!use_split) {
       # CV mode: create internal folds for MBO objective evaluation
-      set.seed(42)
       n_samples <- nrow(x_train)
       folds <- sample(rep(1:mbo_folds, length.out = n_samples))
     }

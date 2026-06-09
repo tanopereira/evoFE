@@ -232,6 +232,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' df <- mtcars
 #' df$am <- as.integer(df$am)
 #'
+#' set.seed(42)
 #' recipe <- evolve_features(
 #'   data = df,
 #'   target_col = "am",
@@ -240,7 +241,6 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #'   generations = 2,
 #'   pop_size = 2,
 #'   cv_folds = 2,
-#'   seed = 42,
 #'   verbose = FALSE
 #' )
 #' print(recipe)
@@ -256,10 +256,10 @@ evolve_features <- function(data, target_col, task = "classification",
                             dynamic_population_decay_rate = 0.7,
                             crossover_type = "both",
                             threads = 2, max_clustering_size = 5000,
-                            seed = NULL, verbose = TRUE, metric = "default",
+                            verbose = TRUE, metric = "default",
                             model_all_final_genes = FALSE,
                             model_all_historical_genes = FALSE, ...) {
-  if (!is.null(seed)) set.seed(seed)
+
 
   # Temporarily configure max clustering size and threads options
   old_max_size <- getOption("evoFE.max_clustering_size")

@@ -121,7 +121,6 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
 
     if (!use_split) {
-      set.seed(42)
       folds <- sample(rep(1:mbo_folds, length.out = nrow(x_train)))
     }
     

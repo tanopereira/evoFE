@@ -52,7 +52,8 @@
 <span>  <span class="va">numeric_cols</span>,</span>
 <span>  <span class="va">categorical_cols</span>,</span>
 <span>  initial_genes <span class="op">=</span> <span class="fl">2</span>,</span>
-<span>  task <span class="op">=</span> <span class="st">"classification"</span></span>
+<span>  task <span class="op">=</span> <span class="st">"classification"</span>,</span>
+<span>  importances <span class="op">=</span> <span class="cn">NULL</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -80,6 +81,12 @@
 <dd><p>Task type ("classification", "regression", or "multiclass").</p></dd>
 
 </dl></div>
+    <div id="value">
+    <h2>Value</h2>
+    <p>A list of <code>evo_individual</code> objects of length <code>pop_size</code>.
+  The first individual is a baseline with no genes; the remaining individuals
+  each carry <code>initial_genes</code> randomly generated genes.</p>
+    </div>
 
   </div>
   <div class="col-md-3 hidden-xs hidden-sm" id="pkgdown-sidebar">

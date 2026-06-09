@@ -22,7 +22,6 @@ evolve_features(
   crossover_type = "both",
   threads = 2,
   max_clustering_size = 5000,
-  seed = NULL,
   verbose = TRUE,
   metric = "default",
   model_all_final_genes = FALSE,
@@ -93,6 +92,7 @@ data(mtcars)
 df <- mtcars
 df$am <- as.integer(df$am)
 
+set.seed(42)
 recipe <- evolve_features(
   data = df,
   target_col = "am",
@@ -101,7 +101,6 @@ recipe <- evolve_features(
   generations = 2,
   pop_size = 2,
   cv_folds = 2,
-  seed = 42,
   verbose = FALSE
 )
 print(recipe)

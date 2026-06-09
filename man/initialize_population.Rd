@@ -9,7 +9,8 @@ initialize_population(
   numeric_cols,
   categorical_cols,
   initial_genes = 2,
-  task = "classification"
+  task = "classification",
+  importances = NULL
 )
 }
 \arguments{

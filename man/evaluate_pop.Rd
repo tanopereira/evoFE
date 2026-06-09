@@ -23,6 +23,7 @@ evaluate_pop(
   verbose,
   running_best_fitness,
   metric = "default",
+  allow_prune = TRUE,
   ...
 )
 }

@@ -52,7 +52,8 @@
 <span>  <span class="va">train_data</span>,</span>
 <span>  val_data <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  target_col <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  state_cache <span class="op">=</span> <span class="cn">NULL</span></span>
+<span>  state_cache <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  allow_prune <span class="op">=</span> <span class="cn">TRUE</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
 
@@ -80,6 +81,13 @@
 <dd><p>Optional environment to cache full-dataset fitted states of stateful transformers.</p></dd>
 
 </dl></div>
+    <div id="value">
+    <h2>Value</h2>
+    <p>A list with three elements: <code>train</code> (the transformed training
+  <code>data.table</code> with all gene columns applied), <code>val</code> (the
+  transformed validation <code>data.table</code> or <code>NULL</code>), and <code>ind</code>
+  (the updated <code>evo_individual</code> whose genes now carry fitted states).</p>
+    </div>
 
   </div>
   <div class="col-md-3 hidden-xs hidden-sm" id="pkgdown-sidebar">

@@ -21,6 +21,7 @@ evaluate_fitness(
   threads = 2,
   metric = "default",
   verbose = FALSE,
+  allow_prune = TRUE,
   ...
 )
 }
@@ -56,6 +57,8 @@ evaluate_fitness(
 \item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
 
 \item{verbose}{Logical indicating if progress should be printed.}
+
+\item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
