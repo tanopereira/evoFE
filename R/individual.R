@@ -182,8 +182,17 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     if (length(cols) == 1) return(rep(cols, size))
     if (length(importances) == 0) return(sample(cols, size, replace = replace))
     
+    # Normalize importances so they sum to 1 to ensure scale invariance across models
+    if (length(importances) > 0) {
+      importances[!is.finite(importances) | importances < 0] <- 0
+      imp_sum <- sum(importances, na.rm = TRUE)
+      if (imp_sum > 0) {
+        importances <- importances / imp_sum
+      }
+    }
+    
     # Baseline for missing features: minimum of known, or 0.01 (handling NAs/non-finites safely)
-    clean_importances <- importances[!is.na(importances) & is.finite(importances)]
+    clean_importances <- importances[!is.na(importances) & is.finite(importances) & importances > 0]
     baseline <- if (length(clean_importances) > 0) min(clean_importances) else 0.01
     
     weights <- sapply(cols, function(c) {
