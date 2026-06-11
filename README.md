@@ -1,5 +1,6 @@
 # evoFE: Evolutionary Feature Engineering in R
 
+[![CRAN status](https://www.r-pkg.org/badges/version/evoFE)](https://CRAN.R-project.org/package=evoFE)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![R-CMD-check](https://github.com/tanopereira/evoFE/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/tanopereira/evoFE/actions)
 
@@ -24,13 +25,19 @@ The final output is a reusable **`evo_recipe`** object that can be easily applie
 
 ## Installation
 
-You can install the package directly from GitHub:
+You can install the released version of **evoFE** from [CRAN](https://CRAN.R-project.org/package=evoFE) with:
+
+```R
+install.packages("evoFE")
+```
+
+Alternatively, you can install the development version directly from [GitHub](https://github.com/tanopereira/evoFE):
 
 ```R
 # Install devtools if you haven't already
-install.packages("devtools")
+# install.packages("devtools")
 
-# Install evoFE
+# Install evoFE from GitHub
 devtools::install_github("tanopereira/evoFE", build_vignettes = TRUE)
 ```
 

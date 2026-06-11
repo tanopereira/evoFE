@@ -23,6 +23,8 @@ initialize_population(
 \item{initial_genes}{Number of initial genes per individual.}
 
 \item{task}{Task type ("classification", "regression", or "multiclass").}
+
+\item{importances}{Optional numeric vector of feature importances.}
 }
 \value{
 A list of \code{evo_individual} objects of length \code{pop_size}.
