@@ -1615,4 +1615,68 @@ test_that("genie_centroid_dist and lumbermark_centroid_dist work", {
   expect_true(is.numeric(res_lumb_dist$train[[gene_lumb_dist$output_col]]))
 })
 
+test_that("lm evaluator works for regression, classification, and multiclass", {
+  set.seed(42)
+  n <- 30
+  x <- matrix(rnorm(n * 2), ncol = 2)
+  colnames(x) <- c("x1", "x2")
+  
+  # 1. Regression
+  y_reg <- rnorm(n)
+  res_reg <- evo_evaluators$lm$train_func(x, y_reg, x_val = x, task = "regression")
+  expect_false(is.null(res_reg$model))
+  expect_type(res_reg$predictions, "double")
+  expect_equal(length(res_reg$predictions), n)
+  expect_type(res_reg$importances, "double")
+  expect_equal(names(res_reg$importances), c("x1", "x2"))
+  
+  preds_reg <- evo_evaluators$lm$predict_func(res_reg$model, x, task = "regression")
+  expect_equal(preds_reg, res_reg$predictions)
+  
+  # 2. Binary Classification
+  y_bin <- sample(0:1, n, replace = TRUE)
+  res_bin <- evo_evaluators$lm$train_func(x, y_bin, x_val = x, task = "classification")
+  expect_false(is.null(res_bin$model))
+  expect_type(res_bin$predictions, "double")
+  expect_equal(length(res_bin$predictions), n)
+  expect_true(all(res_bin$predictions >= 0 & res_bin$predictions <= 1))
+  
+  preds_bin <- evo_evaluators$lm$predict_func(res_bin$model, x, task = "classification")
+  expect_equal(preds_bin, res_bin$predictions)
+  
+  # 3. Multiclass
+  y_multi <- sample(0:2, n, replace = TRUE)
+  res_multi <- evo_evaluators$lm$train_func(x, y_multi, x_val = x, task = "multiclass", num_class = 3)
+  expect_false(is.null(res_multi$model))
+  expect_true(is.matrix(res_multi$predictions))
+  expect_equal(dim(res_multi$predictions), c(n, 3))
+  expect_true(all(res_multi$predictions >= 0 & res_multi$predictions <= 1))
+  expect_equal(as.vector(rowSums(res_multi$predictions)), rep(1, n), tolerance = 1e-5)
+  
+  preds_multi <- evo_evaluators$lm$predict_func(res_multi$model, x, task = "multiclass")
+  expect_equal(preds_multi, res_multi$predictions)
+  
+  # 4. Full feature evolution loop with lm
+  df_dummy <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    target = sample(0:1, 40, replace = TRUE)
+  )
+  suppressWarnings({
+    res_evolve <- evolve_features(
+      data = df_dummy,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_generations = 1,
+      evaluator = "lm",
+      verbose = FALSE
+    )
+  })
+  expect_s3_class(res_evolve, "evo_recipe")
+  expect_true(is.numeric(res_evolve$best_individual$fitness))
+})
+
 

@@ -334,3 +334,110 @@ register_evaluator(
     preds
   }
 )
+
+# 4. LM/GLM Evaluator
+register_evaluator(
+  "lm",
+  train_func = function(x_train, y_train, x_val = NULL, task = "regression",
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+    df_train <- as.data.frame(x_train)
+    all_feats <- colnames(x_train)
+    
+    if (task == "regression") {
+      df_train$target_y <- y_train
+      model <- suppressWarnings(stats::lm(target_y ~ ., data = df_train))
+      
+      preds <- NULL
+      if (!is.null(x_val)) {
+        preds <- suppressWarnings(stats::predict(model, as.data.frame(x_val)))
+      }
+      
+      coefs <- summary(model)$coefficients
+      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+      importances_all <- stats::setNames(rep(0, length(all_feats)), all_feats)
+      if (nrow(coefs) > 0) {
+        val_col <- if (ncol(coefs) >= 3) coefs[, 3] else coefs[, 1]
+        valid_names <- intersect(rownames(coefs), all_feats)
+        importances_all[valid_names] <- abs(val_col[valid_names])
+      }
+      importances_all[is.na(importances_all)] <- 0
+      importances <- importances_all
+      
+    } else if (task == "classification") {
+      df_train$target_y <- y_train
+      model <- suppressWarnings(stats::glm(target_y ~ ., data = df_train, family = stats::binomial(link = "logit")))
+      
+      preds <- NULL
+      if (!is.null(x_val)) {
+        preds <- suppressWarnings(stats::predict(model, as.data.frame(x_val), type = "response"))
+      }
+      
+      coefs <- summary(model)$coefficients
+      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+      importances_all <- stats::setNames(rep(0, length(all_feats)), all_feats)
+      if (nrow(coefs) > 0) {
+        val_col <- if (ncol(coefs) >= 3) coefs[, 3] else coefs[, 1]
+        valid_names <- intersect(rownames(coefs), all_feats)
+        importances_all[valid_names] <- abs(val_col[valid_names])
+      }
+      importances_all[is.na(importances_all)] <- 0
+      importances <- importances_all
+      
+    } else if (task == "multiclass") {
+      classes <- if (is.factor(y_train)) levels(y_train) else unique(y_train)
+      models <- lapply(classes, function(cl) {
+        y_bin <- as.numeric(y_train == cl)
+        df_train_cl <- df_train
+        df_train_cl$target_y <- y_bin
+        suppressWarnings(stats::glm(target_y ~ ., data = df_train_cl, family = stats::binomial(link = "logit")))
+      })
+      names(models) <- as.character(classes)
+      model <- models
+      
+      preds <- NULL
+      if (!is.null(x_val)) {
+        df_val <- as.data.frame(x_val)
+        preds_list <- lapply(models, function(mod) {
+          suppressWarnings(stats::predict(mod, df_val, type = "response"))
+        })
+        preds <- do.call(cbind, preds_list)
+        row_sums <- rowSums(preds)
+        row_sums[row_sums == 0] <- 1
+        preds <- preds / row_sums
+      }
+      
+      importances_all <- stats::setNames(rep(0, length(all_feats)), all_feats)
+      for (mod in models) {
+        coefs <- summary(mod)$coefficients
+        coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+        if (nrow(coefs) > 0) {
+          val_col <- if (ncol(coefs) >= 3) coefs[, 3] else coefs[, 1]
+          valid_names <- intersect(rownames(coefs), all_feats)
+          importances_all[valid_names] <- importances_all[valid_names] + abs(val_col[valid_names])
+        }
+      }
+      importances_all <- importances_all / max(1, length(models))
+      importances_all[is.na(importances_all)] <- 0
+      importances <- importances_all
+    }
+    
+    list(model = model, predictions = preds, importances = importances)
+  },
+  predict_func = function(model, x_new, task, ...) {
+    df_new <- as.data.frame(x_new)
+    if (task == "regression") {
+      suppressWarnings(stats::predict(model, df_new))
+    } else if (task == "classification") {
+      suppressWarnings(stats::predict(model, df_new, type = "response"))
+    } else if (task == "multiclass") {
+      preds_list <- lapply(model, function(mod) {
+        suppressWarnings(stats::predict(mod, df_new, type = "response"))
+      })
+      preds <- do.call(cbind, preds_list)
+      row_sums <- rowSums(preds)
+      row_sums[row_sums == 0] <- 1
+      preds <- preds / row_sums
+      preds
+    }
+  }
+)
