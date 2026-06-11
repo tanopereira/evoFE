@@ -78,7 +78,23 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
   }
   base_evaluator <- evo_evaluators[[base_model_name]]
   
-  # 2. Convert user parameter ranges list into a ParamHelpers ParamSet
+  # 2. Separate tunable and fixed parameters
+  tunable_defs <- list()
+  fixed_params <- list()
+  
+  for (pname in names(param_ranges)) {
+    def <- param_ranges[[pname]]
+    if (isFALSE(def$tunable)) {
+      if (!"value" %in% names(def)) {
+        stop(sprintf("Parameter '%s' is marked as not tunable (tunable=FALSE) but has no 'value'.", pname))
+      }
+      fixed_params[[pname]] <- def$value
+    } else {
+      tunable_defs[[pname]] <- def
+    }
+  }
+
+  # 3. Convert tunable parameter ranges list into a ParamHelpers ParamSet
   make_param <- function(name, def) {
     if (def$type == "numeric") {
       ParamHelpers::makeNumericParam(name, lower = def$lower, upper = def$upper)
@@ -92,9 +108,9 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
   }
   
   ps <- do.call(ParamHelpers::makeParamSet, 
-                lapply(names(param_ranges), function(n) make_param(n, param_ranges[[n]])))
+                lapply(names(tunable_defs), function(n) make_param(n, tunable_defs[[n]])))
   
-  # 3. Create a dynamic training function wrapper
+  # 4. Create a dynamic training function wrapper
   tuned_train_func <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                                task = "classification", threads = 2, num_class = NULL,
                                metric = "default", mbo_iters = 5, mbo_init_design = 8,
@@ -126,8 +142,9 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     
     # Define optimization objective function
     fn <- function(x) {
-      # Merge tuned parameters (x) with static parameters (...)
-      trial_params <- utils::modifyList(list(...), x)
+      # Extract parameters from the MBO proposal and merge with fixed_params and extra args
+      trial_params <- utils::modifyList(list(...), fixed_params)
+      trial_params <- utils::modifyList(trial_params, x)
       
       if (use_split) {
         # Train on split and compute target validation metric
@@ -227,7 +244,8 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
     
     # 5. Train final model with the optimal parameters on the full dataset
-    final_params <- utils::modifyList(list(...), best_hyperparams)
+    final_params <- utils::modifyList(list(...), fixed_params)
+    final_params <- utils::modifyList(final_params, best_hyperparams)
     final_res <- do.call(base_evaluator$train_func, c(
       list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task, 
            threads = threads, num_class = num_class, metric = metric, verbose = verbose),
