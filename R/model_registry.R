@@ -60,7 +60,8 @@ register_evaluator(
       num_leaves = 15,
       learning_rate = 0.1,
       verbose = -1,
-      num_threads = threads
+      num_threads = threads,
+      seed = 42
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -110,7 +111,15 @@ register_evaluator(
       )
     })
 
-    preds <- if (!is.null(x_val)) stats::predict(model, x_val) else NULL
+    preds <- if (!is.null(x_val)) {
+      if (!is.null(model$best_iter) && model$best_iter > 0) {
+        stats::predict(model, x_val, num_iteration = model$best_iter)
+      } else {
+        stats::predict(model, x_val)
+      }
+    } else {
+      NULL
+    }
 
     imp <- tryCatch(
       {
@@ -126,7 +135,11 @@ register_evaluator(
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
-    stats::predict(model, x_new)
+    if (!is.null(model$best_iter) && model$best_iter > 0) {
+      stats::predict(model, x_new, num_iteration = model$best_iter)
+    } else {
+      stats::predict(model, x_new)
+    }
   }
 )
 
@@ -150,7 +163,8 @@ register_evaluator(
       nthread = threads,
       max_depth = 6,
       eta = 0.1,
-      min_child_weight = 1
+      min_child_weight = 1,
+      seed = 42
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -206,7 +220,11 @@ register_evaluator(
 
     preds <- if (!is.null(x_val)) {
       dval <- xgboost::xgb.DMatrix(data = x_val)
-      p <- stats::predict(model, dval)
+      p <- if (!is.null(model$best_iteration) && model$best_iteration >= 1) {
+        stats::predict(model, dval, iterationrange = c(1, model$best_iteration + 1))
+      } else {
+        stats::predict(model, dval)
+      }
       rm(dval)
       p
     } else {
@@ -222,7 +240,11 @@ register_evaluator(
   },
   predict_func = function(model, x_new, task, ...) {
     dmatrix <- xgboost::xgb.DMatrix(data = x_new)
-    preds <- stats::predict(model, dmatrix)
+    preds <- if (!is.null(model$best_iteration) && model$best_iteration >= 1) {
+      stats::predict(model, dmatrix, iterationrange = c(1, model$best_iteration + 1))
+    } else {
+      stats::predict(model, dmatrix)
+    }
     rm(dmatrix)
     preds
   }
@@ -251,7 +273,8 @@ register_evaluator(
       iterations = nrounds,
       learning_rate = 0.1,
       logging_level = "Silent",
-      allow_writing_files = FALSE
+      allow_writing_files = FALSE,
+      random_seed = 42
     )
 
     extra_params <- list(...)
