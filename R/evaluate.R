@@ -272,8 +272,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     preds <- res_model$predictions
     
     # Store importances (single fold)
-    if (!is.null(res_model$importances)) {
-      ind$importances <- res_model$importances
+    if (!is.null(res_model$importances) && length(res_model$importances) > 0) {
+      imp <- res_model$importances
+      imp_sum <- sum(imp, na.rm = TRUE)
+      if (imp_sum > 0) {
+        imp <- imp / imp_sum
+        threshold <- getOption("evoFE.importance_threshold", 0.001)
+        imp[imp < threshold] <- 0
+      }
+      ind$importances <- imp
     } else {
       ind$importances <- numeric(0)
     }
@@ -389,6 +396,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         })
         mean(vals)
       })
+      
+      imp_sum <- sum(avg_imp, na.rm = TRUE)
+      if (imp_sum > 0) {
+        avg_imp <- avg_imp / imp_sum
+        threshold <- getOption("evoFE.importance_threshold", 0.001)
+        avg_imp[avg_imp < threshold] <- 0
+      }
       ind$importances <- avg_imp
     } else {
       ind$importances <- numeric(0)
