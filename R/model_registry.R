@@ -362,6 +362,10 @@ register_evaluator(
     all_feats <- colnames(x_train)
     nfolds <- min(5, nrow(x_mat))
     
+    # Precompute standard deviations to make importances scale-invariant
+    sd_x <- apply(x_mat, 2, stats::sd, na.rm = TRUE)
+    sd_x[is.na(sd_x) | sd_x == 0] <- 1
+    
     if (task == "regression") {
       model <- glmnet::cv.glmnet(x_mat, y_train, family = "gaussian", alpha = 0.5, nfolds = nfolds)
       
@@ -373,6 +377,7 @@ register_evaluator(
       coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
       importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+      importances <- importances * sd_x[names(importances)]
       
     } else if (task == "classification") {
       model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "binomial", alpha = 0.5, nfolds = nfolds)
@@ -385,6 +390,7 @@ register_evaluator(
       coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
       importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+      importances <- importances * sd_x[names(importances)]
       
     } else if (task == "multiclass") {
       model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "multinomial", alpha = 0.5, nfolds = nfolds)
@@ -402,6 +408,7 @@ register_evaluator(
       })
       importances <- rowMeans(imp_matrix)
       importances <- stats::setNames(importances, rownames(imp_matrix))
+      importances <- importances * sd_x[names(importances)]
     }
     
     # Ensure missing names map to 0
