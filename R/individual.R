@@ -180,7 +180,7 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #' @return An \code{evo_individual} with the mutation applied (gene added,
 #'   removed, or modified) and \code{fitness} reset to \code{NA_real_}.
 #' @export
-mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL) {
+mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL) {
   if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0) return(ind)
   
   # Categorize existing gene outputs by type, restricted to tested genes
@@ -306,13 +306,18 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
   
   if (mut_type == 3) {
     # Add a random gene
-    allowed_transformers <- names(evo_transformers)
-    if (task == "multiclass") {
-      allowed_transformers <- setdiff(allowed_transformers, c("target_encode"))
+    if (is.null(allowed_transformers)) {
+      allowed_t <- names(evo_transformers)
     } else {
-      allowed_transformers <- setdiff(allowed_transformers, c("target_encode_multiclass"))
+      allowed_t <- allowed_transformers
     }
-    t_name <- sample(allowed_transformers, 1)
+    if (task == "multiclass") {
+      allowed_t <- setdiff(allowed_t, c("target_encode"))
+    } else {
+      allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
+    }
+    if (length(allowed_t) == 0) allowed_t <- names(evo_transformers)
+    t_name <- sample(allowed_t, 1)
     t_def <- evo_transformers[[t_name]]
     
     avail_num <- c(ind$numeric_cols, gene_num)

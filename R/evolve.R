@@ -258,8 +258,27 @@ evolve_features <- function(data, target_col, task = "classification",
                             threads = 2, max_clustering_size = 5000,
                             verbose = TRUE, metric = "default",
                             model_all_final_genes = FALSE,
-                            model_all_historical_genes = FALSE, ...) {
+                            model_all_historical_genes = FALSE,
+                            allowed_transformers = "all", ...) {
 
+
+  # Parse allowed_transformers
+  all_trans <- names(evo_transformers)
+  if (is.null(allowed_transformers)) allowed_transformers <- "all"
+  if (length(allowed_transformers) == 1) {
+    if (allowed_transformers == "all") {
+      allowed_transformers <- all_trans
+    } else if (allowed_transformers == "basic") {
+      allowed_transformers <- intersect(all_trans, c("add", "subtract", "multiply", "divide", "log", "sqrt", "reciprocal", "normalized_difference", "frequency_encode", "one_hot_encode", "target_encode", "target_encode_multiclass", "groupby_mean", "groupby_min", "groupby_max", "pca"))
+    } else if (allowed_transformers == "clustering") {
+      allowed_transformers <- intersect(all_trans, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
+    }
+  }
+  allowed_transformers <- intersect(allowed_transformers, all_trans)
+  if (length(allowed_transformers) == 0) {
+    warning("No valid transformers found in 'allowed_transformers'. Falling back to 'all'.")
+    allowed_transformers <- all_trans
+  }
 
   # Temporarily configure max clustering size and threads options
   old_max_size <- getOption("evoFE.max_clustering_size")
@@ -446,7 +465,7 @@ evolve_features <- function(data, target_col, task = "classification",
   assign(cache_key, baseline_ind, envir = fitness_cache)
 
   # 2. Initialize population for Generation 1 using baseline importances
-  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances)
+  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
   pop[[1]] <- baseline_ind
 
   if (verbose) {
@@ -579,7 +598,7 @@ evolve_features <- function(data, target_col, task = "classification",
         # Expansion slots: High exploration (no crossover, extremely high temperature)
         p_idx <- sample(seq_along(survivors), 1)
         p <- survivors[[p_idx]]
-        child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs)
+        child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
       } else if (stats::runif(1) < 0.7) {
         # Crossover
         p1_idx <- sample(seq_along(survivors), 1)
@@ -602,19 +621,19 @@ evolve_features <- function(data, target_col, task = "classification",
         }
 
         if (stats::runif(1) < 0.2) {
-          child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs)
+          child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
         }
       } else {
         # Mutate
         p_idx <- sample(seq_along(survivors), 1)
         p <- survivors[[p_idx]]
-        child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs)
+        child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
       }
 
       # Validation Check: Duplicate in next_gen OR already known to be worse than best
       attempts <- 0
       while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
-        child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs)
+        child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
         attempts <- attempts + 1
       }
 
