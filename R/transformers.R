@@ -1609,3 +1609,280 @@ evo_transformers$target_encode_multiclass <- create_transformer(
 )
 
 
+# Genie Centroid Distance
+evo_transformers$genie_centroid_dist <- create_transformer(
+  name = "genie_centroid_dist",
+  type = "multivariate",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    if (length(input_cols) < 2) {
+      return(list(centroids = NULL, valid = FALSE))
+    }
+    x <- as.matrix(data[, input_cols, with = FALSE])
+    x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
+    k <- if (!is.null(gene$params$k)) gene$params$k else 2
+    gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
+    
+    verbose <- is_verbose()
+    if (verbose) {
+      start_time <- Sys.time()
+      message(sprintf("[Genie Centroid Dist Fit] Start on %d rows, %d cols. k = %d, gini_threshold = %.2f", nrow(x), ncol(x), k, gini_threshold))
+    }
+    
+    tryCatch({
+      t0 <- Sys.time()
+      dt_x <- data.table::as.data.table(x)
+      cols <- names(dt_x)
+      dt_x[, first_id := .I[1], by = cols]
+      first_ids <- dt_x$first_id
+      unique_ids <- unique(first_ids)
+      x_unique <- x[unique_ids, , drop = FALSE]
+      if (verbose) {
+        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      
+      if (ncol(x) < 2 || nrow(x_unique) <= 5 || nrow(x_unique) < k) {
+        return(list(centroids = NULL, valid = FALSE))
+      }
+      
+      if (!requireNamespace("genieclust", quietly = TRUE)) {
+        stop("genieclust package is not available")
+      }
+      
+      t0 <- Sys.time()
+      # Handle max_clustering_size
+      max_size <- getOption("evoFE.max_clustering_size", 5000)
+      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
+      if (max_size > 0 && nrow(x_unique) > max_size) {
+        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
+        on.exit({
+          if (!is.null(old_seed)) {
+            assign(".Random.seed", old_seed, envir = .GlobalEnv)
+          } else {
+            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
+          }
+        }, add = TRUE)
+        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
+        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
+        if (verbose) {
+          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+        }
+      } else {
+        x_sampled <- x_unique
+      }
+      
+      if (nrow(x_sampled) <= 5 || nrow(x_sampled) < k) {
+        return(list(centroids = NULL, valid = FALSE))
+      }
+      
+      t0 <- Sys.time()
+      clust_sampled <- genieclust::genie(x_sampled, k = k, gini_threshold = gini_threshold)
+      if (verbose) {
+        message(sprintf("  genieclust::genie: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      
+      # Compute centroids
+      centroids <- lapply(1:k, function(j) {
+        pts <- x_sampled[clust_sampled == j, , drop = FALSE]
+        if (nrow(pts) == 0) {
+          colMeans(x_sampled)
+        } else {
+          colMeans(pts)
+        }
+      })
+      
+      if (verbose) {
+        elapsed <- difftime(Sys.time(), start_time, units = "secs")
+        message(sprintf("[Genie Centroid Dist Fit] Completed in %.3f seconds", as.numeric(elapsed)))
+      }
+      list(centroids = centroids, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+    }, error = function(e) {
+      if (verbose) {
+        message(sprintf("[Genie Centroid Dist Fit] Failed: %s", conditionMessage(e)))
+      }
+      list(centroids = NULL, valid = FALSE)
+    })
+  },
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid || is.null(state$centroids)) {
+      if (verbose) {
+        message("[Genie Centroid Dist Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
+    x_test <- as.matrix(data[, input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0
+    storage.mode(x_test) <- "double"
+    
+    if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
+    
+    if (is.null(state$preds_cache)) {
+      centroid <- state$centroids[[comp_idx]]
+      dists <- sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
+    } else {
+      x_key <- digest::digest(x_test, algo = "xxhash64")
+      if (exists(x_key, envir = state$preds_cache)) {
+        preds <- get(x_key, envir = state$preds_cache)
+      } else {
+        preds <- lapply(state$centroids, function(centroid) {
+          sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
+        })
+        assign(x_key, preds, envir = state$preds_cache)
+      }
+      dists <- preds[[comp_idx]]
+    }
+    
+    dists
+  },
+  name_generator = function(gene) {
+    k <- if (!is.null(gene$params$k)) gene$params$k else 2
+    gt <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
+    gt_str <- format(gt, nsmall = 2, digits = 2)
+    gt_str <- gsub("\\.", "", gt_str)
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    paste0("GenieCentroidDist", comp_idx, "_k", k, "_t", gt_str, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
+  }
+)
+
+# Lumbermark Centroid Distance
+evo_transformers$lumbermark_centroid_dist <- create_transformer(
+  name = "lumbermark_centroid_dist",
+  type = "multivariate",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    if (length(input_cols) < 2) {
+      return(list(centroids = NULL, valid = FALSE))
+    }
+    x <- as.matrix(data[, input_cols, with = FALSE])
+    x[is.na(x)] <- 0
+    storage.mode(x) <- "double"
+    k <- if (!is.null(gene$params$k)) gene$params$k else 2
+    
+    verbose <- is_verbose()
+    if (verbose) {
+      start_time <- Sys.time()
+      message(sprintf("[Lumbermark Centroid Dist Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
+    }
+    
+    tryCatch({
+      t0 <- Sys.time()
+      dt_x <- data.table::as.data.table(x)
+      cols <- names(dt_x)
+      dt_x[, first_id := .I[1], by = cols]
+      first_ids <- dt_x$first_id
+      unique_ids <- unique(first_ids)
+      x_unique <- x[unique_ids, , drop = FALSE]
+      if (verbose) {
+        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      
+      if (ncol(x) < 2 || nrow(x_unique) <= 5 || nrow(x_unique) < 2 * k) {
+        return(list(centroids = NULL, valid = FALSE))
+      }
+      
+      if (!requireNamespace("lumbermark", quietly = TRUE)) {
+        stop("lumbermark package is not available")
+      }
+      
+      t0 <- Sys.time()
+      # Handle max_clustering_size
+      max_size <- getOption("evoFE.max_clustering_size", 5000)
+      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
+      if (max_size > 0 && nrow(x_unique) > max_size) {
+        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
+        on.exit({
+          if (!is.null(old_seed)) {
+            assign(".Random.seed", old_seed, envir = .GlobalEnv)
+          } else {
+            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
+          }
+        }, add = TRUE)
+        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
+        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
+        if (verbose) {
+          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+        }
+      } else {
+        x_sampled <- x_unique
+      }
+      
+      if (nrow(x_sampled) <= 5 || nrow(x_sampled) < 2 * k) {
+        return(list(centroids = NULL, valid = FALSE))
+      }
+      
+      t0 <- Sys.time()
+      clust_sampled <- lumbermark::lumbermark(x_sampled, k = k, min_cluster_size = 2)
+      if (verbose) {
+        message(sprintf("  lumbermark::lumbermark: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      
+      # Compute centroids
+      centroids <- lapply(1:k, function(j) {
+        pts <- x_sampled[clust_sampled == j, , drop = FALSE]
+        if (nrow(pts) == 0) {
+          colMeans(x_sampled)
+        } else {
+          colMeans(pts)
+        }
+      })
+      
+      if (verbose) {
+        elapsed <- difftime(Sys.time(), start_time, units = "secs")
+        message(sprintf("[Lumbermark Centroid Dist Fit] Completed in %.3f seconds", as.numeric(elapsed)))
+      }
+      list(centroids = centroids, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+    }, error = function(e) {
+      if (verbose) {
+        message(sprintf("[Lumbermark Centroid Dist Fit] Failed: %s", conditionMessage(e)))
+      }
+      list(centroids = NULL, valid = FALSE)
+    })
+  },
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    verbose <- is_verbose()
+    if (is.null(state) || !state$valid || is.null(state$centroids)) {
+      if (verbose) {
+        message("[Lumbermark Centroid Dist Apply] Skipped because fitted state is invalid or NULL.")
+      }
+      return(rep(0, nrow(data)))
+    }
+    x_test <- as.matrix(data[, input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0
+    storage.mode(x_test) <- "double"
+    
+    if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
+    
+    if (is.null(state$preds_cache)) {
+      centroid <- state$centroids[[comp_idx]]
+      dists <- sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
+    } else {
+      x_key <- digest::digest(x_test, algo = "xxhash64")
+      if (exists(x_key, envir = state$preds_cache)) {
+        preds <- get(x_key, envir = state$preds_cache)
+      } else {
+        preds <- lapply(state$centroids, function(centroid) {
+          sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
+        })
+        assign(x_key, preds, envir = state$preds_cache)
+      }
+      dists <- preds[[comp_idx]]
+    }
+    
+    dists
+  },
+  name_generator = function(gene) {
+    k <- if (!is.null(gene$params$k)) gene$params$k else 2
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    paste0("LumbCentroidDist", comp_idx, "_k", k, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
+  }
+)
+
+

@@ -1568,3 +1568,51 @@ test_that("gradual population growth and decay works correctly during dynamic po
 })
 
 
+test_that("genie_centroid_dist and lumbermark_centroid_dist work", {
+  set.seed(42)
+  n <- 30
+  df <- data.table::as.data.table(data.frame(
+    x1 = stats::rnorm(n),
+    x2 = stats::rnorm(n),
+    target = sample(0:1, n, replace = TRUE)
+  ))
+  
+  # 1. Test genie_centroid_dist
+  gene_genie_dist <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  expect_true(gene_genie_dist$params$k >= 2 && gene_genie_dist$params$k <= 5)
+  expect_true(gene_genie_dist$params$comp_idx >= 1 && gene_genie_dist$params$comp_idx <= gene_genie_dist$params$k)
+  expect_true(gene_genie_dist$params$gini_threshold >= 0.1 && gene_genie_dist$params$gini_threshold <= 0.9)
+  
+  res_genie_dist <- apply_gene(gene_genie_dist, df, target_col = "target")
+  expect_true(gene_genie_dist$output_col %in% names(res_genie_dist$train))
+  expect_true(is.numeric(res_genie_dist$train[[gene_genie_dist$output_col]]))
+  
+  # Test state caching/sharing
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  gene_genie_dist1 <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  gene_genie_dist1$params$k <- 3
+  gene_genie_dist1$params$comp_idx <- 1
+  gene_genie_dist1$output_col <- "GenieDist1"
+  
+  gene_genie_dist2 <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  gene_genie_dist2$params$k <- 3
+  gene_genie_dist2$params$comp_idx <- 2
+  gene_genie_dist2$output_col <- "GenieDist2"
+  
+  res1 <- apply_gene(gene_genie_dist1, df, target_col = "target", state_cache = state_cache)
+  res2 <- apply_gene(gene_genie_dist2, df, target_col = "target", state_cache = state_cache)
+  
+  expect_identical(res1$gene$state, res2$gene$state)
+  expect_true(mean(abs(res1$train$GenieDist1 - res2$train$GenieDist2)) > 1e-5)
+  
+  # 2. Test lumbermark_centroid_dist
+  gene_lumb_dist <- create_gene("lumbermark_centroid_dist", c("x1", "x2"))
+  expect_true(gene_lumb_dist$params$k >= 2 && gene_lumb_dist$params$k <= 5)
+  expect_true(gene_lumb_dist$params$comp_idx >= 1 && gene_lumb_dist$params$comp_idx <= gene_lumb_dist$params$k)
+  
+  res_lumb_dist <- apply_gene(gene_lumb_dist, df, target_col = "target")
+  expect_true(gene_lumb_dist$output_col %in% names(res_lumb_dist$train))
+  expect_true(is.numeric(res_lumb_dist$train[[gene_lumb_dist$output_col]]))
+})
+
+

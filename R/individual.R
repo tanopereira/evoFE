@@ -12,6 +12,12 @@ create_gene <- function(transformer_name, input_cols) {
   if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
     C <- max(2L, as.integer(round(log2(length(input_cols)))))
     params$comp_idx <- sample(1:C, 1)
+  } else if (transformer_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+    params$k <- sample(2:5, 1)
+    params$comp_idx <- sample(1:params$k, 1)
+    if (transformer_name == "genie_centroid_dist") {
+      params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
+    }
   } else if (transformer_name == "one_hot_encode") {
     params$comp_idx <- sample(1:6, 1)
   } else if (transformer_name == "genie") {
@@ -51,7 +57,13 @@ gene_to_formula <- function(gene) {
   } else if (!is.null(gene$params$component)) {
     sprintf("%s_%s(%s)", gene$transformer_name, gene$params$component, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$comp_idx)) {
-    sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, paste(gene$input_cols, collapse = ", "))
+    if (gene$transformer_name == "genie_centroid_dist") {
+      sprintf("genie_cdist%d_k%d_t%.2f(%s)", gene$params$comp_idx, gene$params$k, gene$params$gini_threshold, paste(gene$input_cols, collapse = ", "))
+    } else if (gene$transformer_name == "lumbermark_centroid_dist") {
+      sprintf("lumb_cdist%d_k%d(%s)", gene$params$comp_idx, gene$params$k, paste(gene$input_cols, collapse = ", "))
+    } else {
+      sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, paste(gene$input_cols, collapse = ", "))
+    }
   } else if (!is.null(gene$params$Q)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$base)) {
@@ -75,7 +87,7 @@ gene_to_formula <- function(gene) {
 #'   component index is omitted so that all components share one cache key.
 #' @export
 gene_to_state_formula <- function(gene) {
-  if (gene$transformer_name %in% c("pca", "truncated_svd", "umap")) {
+  if (gene$transformer_name %in% c("pca", "truncated_svd", "umap", "genie_centroid_dist", "lumbermark_centroid_dist")) {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   } else {
     gene_to_formula(gene)
@@ -345,11 +357,22 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     # If the transformer is multi-component, add all components
     new_genes_to_add <- list()
-    if (t_name %in% c("pca", "truncated_svd", "umap")) {
-      C <- max(2L, as.integer(round(log2(length(cols)))))
+    if (t_name %in% c("pca", "truncated_svd", "umap", "genie_centroid_dist", "lumbermark_centroid_dist")) {
+      C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+        sample(2:5, 1)
+      } else {
+        max(2L, as.integer(round(log2(length(cols)))))
+      }
+      
+      gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
+      
       for (comp in 1:C) {
         g <- create_gene(t_name, cols)
         g$params$comp_idx <- comp
+        if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+          g$params$k <- C
+          if (!is.null(gini_threshold)) g$params$gini_threshold <- gini_threshold
+        }
         g$output_col <- t_def$name_generator(g)
         new_genes_to_add <- c(new_genes_to_add, list(g))
       }
