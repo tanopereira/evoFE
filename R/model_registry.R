@@ -3,6 +3,33 @@
 #' @export
 evo_evaluators <- new.env(parent = emptyenv())
 
+# Internal helper to unify SHAP values across models
+.extract_shap_importances <- function(sh, num_feats, feature_names) {
+  if (length(dim(sh)) == 3) {
+    # 3D Array: [N, num_classes, num_feats + 1] (CatBoost/XGBoost Multiclass)
+    sh_feats <- sh[, , 1:num_feats, drop = FALSE]
+    sh_sum <- apply(abs(sh_feats), c(1, 3), sum)
+    imp <- colMeans(sh_sum)
+  } else if (length(dim(sh)) == 2) {
+    if (ncol(sh) == num_feats + 1) {
+      # 2D Matrix: [N, num_feats + 1] (Regression/Binary)
+      sh_feats <- sh[, 1:num_feats, drop = FALSE]
+      imp <- colMeans(abs(sh_feats))
+    } else {
+      # 2D Matrix: [N, (num_feats + 1) * num_classes] (LightGBM Multiclass)
+      num_classes <- ncol(sh) / (num_feats + 1)
+      imp <- numeric(num_feats)
+      for (c in seq_len(num_classes)) {
+        cols <- (c - 1) * (num_feats + 1) + seq_len(num_feats)
+        sh_feats <- sh[, cols, drop = FALSE]
+        imp <- imp + colMeans(abs(sh_feats))
+      }
+    }
+  } else {
+    imp <- numeric(num_feats)
+  }
+  stats::setNames(as.numeric(imp), feature_names)
+}
 #' Register a model evaluator
 #'
 #' @param name Name of the evaluator.
@@ -122,15 +149,15 @@ register_evaluator(
       NULL
     }
 
-    imp <- tryCatch(
+    importances <- tryCatch(
       {
-        lightgbm::lgb.importance(model, percentage = TRUE)
+        sh <- stats::predict(model, as.matrix(x_train), type = "contrib")
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {
-        data.frame(Feature = character(), Gain = numeric())
+        NULL
       }
     )
-    importances <- if (nrow(imp) > 0) stats::setNames(imp$Gain, imp$Feature) else NULL
 
     rm(dtrain)
     list(model = model, predictions = preds, importances = importances)
@@ -232,8 +259,15 @@ register_evaluator(
       NULL
     }
 
-    imp <- xgboost::xgb.importance(model = model)
-    importances <- if (nrow(imp) > 0) stats::setNames(imp$Gain, imp$Feature) else NULL
+    importances <- tryCatch(
+      {
+        sh <- stats::predict(model, dtrain, predcontrib = TRUE)
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
+      },
+      error = function(e) {
+        NULL
+      }
+    )
 
     rm(dtrain)
     if (!is.null(dval_metric)) rm(dval_metric)
@@ -320,8 +354,8 @@ register_evaluator(
     # Fetch feature importance and map column names
     importances <- tryCatch(
       {
-        scores <- catboost::catboost.get_feature_importance(model)
-        stats::setNames(as.numeric(scores), colnames(x_train))
+        sh <- catboost::catboost.get_feature_importance(model, pool = dtrain, type = "ShapValues")
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {
         NULL
