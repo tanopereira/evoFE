@@ -14,7 +14,7 @@ evolve_features(
   evaluation_strategy = "cv",
   split_ratio = c(0.6, 0.2, 0.2),
   split_ids = NULL,
-  early_stopping_rounds = 3,
+  early_stopping_generations = 3,
   evaluator = "lightgbm",
   dynamic_population = TRUE,
   dynamic_population_growth_rate = 1.5,
@@ -48,7 +48,7 @@ evolve_features(
 
 \item{split_ids}{An optional character vector of split assignments (e.g. "train", "val", "holdout").}
 
-\item{early_stopping_rounds}{Stop if fitness doesn't improve for this many generations}
+\item{early_stopping_generations}{Stop if fitness doesn't improve for this many generations}
 
 \item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
 

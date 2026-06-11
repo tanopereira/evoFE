@@ -70,7 +70,7 @@ res <- evolve_features(
   generations = 5,
   pop_size    = 8,
   cv_folds    = 3,
-  early_stopping_rounds = 3,
+  early_stopping_generations = 3,
   verbose     = TRUE
 )
 ```
@@ -120,7 +120,7 @@ res_reg <- evolve_features(
   generations = 5,
   pop_size    = 8,
   cv_folds    = 3,
-  early_stopping_rounds = 3,
+  early_stopping_generations = 3,
   verbose     = TRUE
 )
 
@@ -154,7 +154,7 @@ res_mc <- evolve_features(
   generations = 5,
   pop_size    = 8,
   cv_folds    = 3,
-  early_stopping_rounds = 3,
+  early_stopping_generations = 3,
   verbose     = TRUE
 )
 
@@ -364,7 +364,7 @@ recipe_mape <- evolve_features(
 | `cv_folds` | 3 | Cross-validation folds for fitness evaluation (only used if strategy is `"cv"`) |
 | `split_ratio` | `c(0.6, 0.2, 0.2)` | Proportions for Train/Val/Holdout split (only used if strategy is `"split"`) |
 | `split_ids` | `NULL` | Optional user-defined vector of split assignments (`"train"`, `"val"`, `"holdout"`) |
-| `early_stopping_rounds` | 3 | Stop if no improvement for *n* generations |
+| `early_stopping_generations` | 3 | Stop if no improvement for *n* generations |
 | `evaluator` | `"lightgbm"` | Model backend: `"lightgbm"` or `"xgboost"` |
 | `dynamic_population` | `TRUE` | Expand population during stagnation |
 | `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |

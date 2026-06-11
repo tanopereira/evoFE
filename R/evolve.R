@@ -206,7 +206,7 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param evaluation_strategy "cv" or "split". Strategy to evaluate candidate recipes.
 #' @param split_ratio A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
 #' @param split_ids An optional character vector of split assignments (e.g. "train", "val", "holdout").
-#' @param early_stopping_rounds Stop if fitness doesn't improve for this many generations
+#' @param early_stopping_generations Stop if fitness doesn't improve for this many generations
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
 #' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
 #' @param dynamic_population_growth_rate Growth rate multiplier for population expansion during stagnation (default 1.5).
@@ -250,7 +250,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             generations = 10, pop_size = 10, cv_folds = 3,
                             evaluation_strategy = "cv", split_ratio = c(0.6, 0.2, 0.2),
                             split_ids = NULL,
-                            early_stopping_rounds = 3, evaluator = "lightgbm",
+                            early_stopping_generations = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE,
                             dynamic_population_growth_rate = 1.5,
                             dynamic_population_decay_rate = 0.7,
@@ -508,8 +508,8 @@ evolve_features <- function(data, target_col, task = "classification",
       generations_without_improvement <- generations_without_improvement + 1
     }
 
-    if (!is.null(early_stopping_rounds) && generations_without_improvement >= early_stopping_rounds) {
-      message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_rounds))
+    if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
+      message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_generations))
       fitness_history <- fitness_history[1:g]
       break
     }

@@ -38,7 +38,7 @@ test_that("Full feature evolution loop runs on dummy data", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -172,7 +172,7 @@ test_that("Best model is saved and predict_model works", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -365,7 +365,7 @@ test_that("Prediction with stateful features does not crash and preserves states
     generations = 2,
     pop_size = 2,
     cv_folds = 2,
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "xgboost",
     verbose = FALSE
   )
@@ -385,7 +385,7 @@ test_that("Multiclass classification task runs and predicts correctly", {
     generations = 2,
     pop_size = 2,
     cv_folds = 2,
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "xgboost",
     verbose = FALSE
   )
@@ -443,7 +443,7 @@ test_that("set.seed before evolve_features produces reproducible results", {
       generations = 2,
       pop_size = 3,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "xgboost",
       verbose = FALSE
     )
@@ -700,7 +700,7 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
       pop_size = 2,
       evaluation_strategy = "split",
       split_ratio = c(0.6, 0.2, 0.2),
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -721,7 +721,7 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
       pop_size = 2,
       evaluation_strategy = "split",
       split_ratio = c(0.7, 0.3),
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -744,7 +744,7 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
       pop_size = 2,
       evaluation_strategy = "split",
       split_ids = manual_ids,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -860,7 +860,7 @@ test_that("Alternative and custom fitness metrics work", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE,
       metric = "auc"
@@ -881,7 +881,7 @@ test_that("Alternative and custom fitness metrics work", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE,
       metric = custom_metric
@@ -981,7 +981,7 @@ test_that("eval-ts-refinement metric and training integration works", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE,
       metric = "eval-ts-refinement"
@@ -1000,7 +1000,7 @@ test_that("eval-ts-refinement metric and training integration works", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "xgboost",
       verbose = FALSE,
       metric = "eval-ts-refinement"
@@ -1050,7 +1050,7 @@ test_that("S3 print, summary, and plot methods work correctly", {
       generations = 2,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 2,
+      early_stopping_generations = 2,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -1403,7 +1403,7 @@ test_that("baseline fitness is consistent across population sizes under split st
     pop_size = 2,
     evaluation_strategy = "split",
     split_ratio = c(0.6, 0.4),
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "lightgbm",
     seed = 123,
     verbose = FALSE
@@ -1418,7 +1418,7 @@ test_that("baseline fitness is consistent across population sizes under split st
     pop_size = 5,
     evaluation_strategy = "split",
     split_ratio = c(0.6, 0.4),
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "lightgbm",
     seed = 123,
     verbose = FALSE
@@ -1458,7 +1458,7 @@ test_that("model_all_final_genes accumulates all unique genes, evaluates them, a
     pop_size = 5,
     evaluation_strategy = "cv",
     cv_folds = 2,
-    early_stopping_rounds = 2,
+    early_stopping_generations = 2,
     evaluator = "lightgbm",
     seed = 42,
     model_all_final_genes = TRUE,
@@ -1510,7 +1510,7 @@ test_that("model_all_historical_genes collects genes across generations, evaluat
     pop_size = 5,
     evaluation_strategy = "cv",
     cv_folds = 2,
-    early_stopping_rounds = 2,
+    early_stopping_generations = 2,
     evaluator = "lightgbm",
     seed = 42,
     model_all_historical_genes = TRUE,
@@ -1548,7 +1548,7 @@ test_that("gradual population growth and decay works correctly during dynamic po
     pop_size = 3,
     evaluation_strategy = "cv",
     cv_folds = 2,
-    early_stopping_rounds = 3,
+    early_stopping_generations = 3,
     evaluator = "lightgbm",
     seed = 42,
     dynamic_population = TRUE,
