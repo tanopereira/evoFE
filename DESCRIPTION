@@ -38,6 +38,7 @@ Imports:
     mlrMBO,
     smoof
 Suggests: 
+    glmnet,
     RhpcBLASctl,
     testthat,
     knitr,

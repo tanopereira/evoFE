@@ -349,109 +349,78 @@ register_evaluator(
   }
 )
 
-# 4. LM/GLM Evaluator
+## 4. LM/GLM Evaluator (Penalized)
 register_evaluator(
   "lm",
   train_func = function(x_train, y_train, x_val = NULL, task = "regression",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
-    df_train <- as.data.frame(x_train)
+    if (!requireNamespace("glmnet", quietly = TRUE)) {
+      stop("The 'glmnet' package is required for the penalized lm evaluator.")
+    }
+    
+    x_mat <- as.matrix(x_train)
     all_feats <- colnames(x_train)
+    nfolds <- min(5, nrow(x_mat))
     
     if (task == "regression") {
-      df_train$target_y <- y_train
-      model <- suppressWarnings(stats::lm(target_y ~ ., data = df_train))
+      model <- glmnet::cv.glmnet(x_mat, y_train, family = "gaussian", alpha = 0.5, nfolds = nfolds)
       
       preds <- NULL
       if (!is.null(x_val)) {
-        preds <- suppressWarnings(stats::predict(model, as.data.frame(x_val)))
+        preds <- as.numeric(stats::predict(model, newx = as.matrix(x_val), s = "lambda.min"))
       }
       
-      coefs <- summary(model)$coefficients
+      coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-      importances_all <- stats::setNames(rep(0, length(all_feats)), all_feats)
-      if (nrow(coefs) > 0) {
-        val_col <- if (ncol(coefs) >= 3) coefs[, 3] else coefs[, 1]
-        valid_names <- intersect(rownames(coefs), all_feats)
-        importances_all[valid_names] <- abs(val_col[valid_names])
-      }
-      importances_all[is.na(importances_all)] <- 0
-      importances <- importances_all
+      importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
       
     } else if (task == "classification") {
-      df_train$target_y <- y_train
-      model <- suppressWarnings(stats::glm(target_y ~ ., data = df_train, family = stats::binomial(link = "logit")))
+      model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "binomial", alpha = 0.5, nfolds = nfolds)
       
       preds <- NULL
       if (!is.null(x_val)) {
-        preds <- suppressWarnings(stats::predict(model, as.data.frame(x_val), type = "response"))
+        preds <- as.numeric(stats::predict(model, newx = as.matrix(x_val), s = "lambda.min", type = "response"))
       }
       
-      coefs <- summary(model)$coefficients
+      coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-      importances_all <- stats::setNames(rep(0, length(all_feats)), all_feats)
-      if (nrow(coefs) > 0) {
-        val_col <- if (ncol(coefs) >= 3) coefs[, 3] else coefs[, 1]
-        valid_names <- intersect(rownames(coefs), all_feats)
-        importances_all[valid_names] <- abs(val_col[valid_names])
-      }
-      importances_all[is.na(importances_all)] <- 0
-      importances <- importances_all
+      importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
       
     } else if (task == "multiclass") {
-      classes <- if (is.factor(y_train)) levels(y_train) else sort(unique(y_train))
-      models <- lapply(classes, function(cl) {
-        y_bin <- as.numeric(y_train == cl)
-        df_train_cl <- df_train
-        df_train_cl$target_y <- y_bin
-        suppressWarnings(stats::glm(target_y ~ ., data = df_train_cl, family = stats::binomial(link = "logit")))
-      })
-      names(models) <- as.character(classes)
-      model <- models
+      model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "multinomial", alpha = 0.5, nfolds = nfolds)
       
       preds <- NULL
       if (!is.null(x_val)) {
-        df_val <- as.data.frame(x_val)
-        preds_list <- lapply(models, function(mod) {
-          suppressWarnings(stats::predict(mod, df_val, type = "response"))
-        })
-        preds <- do.call(cbind, preds_list)
-        row_sums <- rowSums(preds)
-        row_sums[row_sums == 0] <- 1
-        preds <- preds / row_sums
+        p_array <- stats::predict(model, newx = as.matrix(x_val), s = "lambda.min", type = "response")
+        preds <- p_array[, , 1]
       }
       
-      importances_all <- stats::setNames(rep(0, length(all_feats)), all_feats)
-      for (mod in models) {
-        coefs <- summary(mod)$coefficients
-        coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-        if (nrow(coefs) > 0) {
-          val_col <- if (ncol(coefs) >= 3) coefs[, 3] else coefs[, 1]
-          valid_names <- intersect(rownames(coefs), all_feats)
-          importances_all[valid_names] <- importances_all[valid_names] + abs(val_col[valid_names])
-        }
-      }
-      importances_all <- importances_all / max(1, length(models))
-      importances_all[is.na(importances_all)] <- 0
-      importances <- importances_all
+      coefs_list <- stats::coef(model, s = "lambda.min")
+      imp_matrix <- sapply(coefs_list, function(c_mat) {
+        c_mat <- as.matrix(c_mat)
+        abs(c_mat[rownames(c_mat) != "(Intercept)", , drop = FALSE])
+      })
+      importances <- rowMeans(imp_matrix)
+      importances <- stats::setNames(importances, rownames(imp_matrix))
+    }
+    
+    # Ensure missing names map to 0
+    missing <- setdiff(all_feats, names(importances))
+    if (length(missing) > 0) {
+      importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
     }
     
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
-    df_new <- as.data.frame(x_new)
+    x_mat <- as.matrix(x_new)
     if (task == "regression") {
-      suppressWarnings(stats::predict(model, df_new))
+      as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min"))
     } else if (task == "classification") {
-      suppressWarnings(stats::predict(model, df_new, type = "response"))
+      as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min", type = "response"))
     } else if (task == "multiclass") {
-      preds_list <- lapply(model, function(mod) {
-        suppressWarnings(stats::predict(mod, df_new, type = "response"))
-      })
-      preds <- do.call(cbind, preds_list)
-      row_sums <- rowSums(preds)
-      row_sums[row_sums == 0] <- 1
-      preds <- preds / row_sums
-      preds
+      p_array <- stats::predict(model, newx = x_mat, s = "lambda.min", type = "response")
+      p_array[, , 1]
     }
   }
 )
