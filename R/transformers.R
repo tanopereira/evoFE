@@ -89,6 +89,20 @@ is_verbose <- function() {
   isTRUE(val) || val >= 2
 }
 
+# Produce a short, stable column name for a gene: "{prefix}_{6-char hash}".
+# The hash covers transformer name + input columns + params, so identical
+# genes always get identical names (deduplication) and different genes
+# almost certainly get different names (collision probability ~1/16M).
+# Full human-readable details are available via gene_to_formula().
+.gene_col_name <- function(gene, prefix) {
+  h <- substr(
+    digest::digest(list(gene$transformer_name, gene$input_cols, gene$params),
+                   algo = "xxhash32"),
+    1, 6
+  )
+  paste0(prefix, "_", h)
+}
+
 # --- STATELESS UNARY TRANSFORMERS ---
 
 evo_transformers$log <- create_transformer(
@@ -101,7 +115,7 @@ evo_transformers$log <- create_transformer(
     # Use log1p of absolute value to handle zero and negative numbers
     log1p(abs(x))
   },
-  name_generator = function(gene) paste0("log(", gene$input_cols[1], ")")
+  name_generator = function(gene) .gene_col_name(gene, "log")
 )
 
 evo_transformers$sqrt <- create_transformer(
@@ -113,7 +127,7 @@ evo_transformers$sqrt <- create_transformer(
     x <- data[[input_cols[1]]]
     sqrt(abs(x))
   },
-  name_generator = function(gene) paste0("sqrt(", gene$input_cols[1], ")")
+  name_generator = function(gene) .gene_col_name(gene, "sqrt")
 )
 
 evo_transformers$reciprocal <- create_transformer(
@@ -125,7 +139,7 @@ evo_transformers$reciprocal <- create_transformer(
     x <- data[[input_cols[1]]]
     ifelse(x == 0, 0, 1 / x)
   },
-  name_generator = function(gene) paste0("rec(", gene$input_cols[1], ")")
+  name_generator = function(gene) .gene_col_name(gene, "rec")
 )
 
 # --- STATELESS BINARY TRANSFORMERS ---
@@ -138,7 +152,7 @@ evo_transformers$add <- create_transformer(
     input_cols <- gene$input_cols
     Reduce(`+`, lapply(input_cols, function(c) as.numeric(data[[c]])))
   },
-  name_generator = function(gene) paste0("((", paste(gene$input_cols, collapse = "+"), "))"),
+  name_generator = function(gene) .gene_col_name(gene, "add"),
   allow_replace = TRUE
 )
 
@@ -150,7 +164,7 @@ evo_transformers$subtract <- create_transformer(
     input_cols <- gene$input_cols
     as.numeric(data[[input_cols[1]]]) - as.numeric(data[[input_cols[2]]])
   },
-  name_generator = function(gene) paste0("((", gene$input_cols[1], "-", gene$input_cols[2], "))")
+  name_generator = function(gene) .gene_col_name(gene, "sub")
 )
 
 evo_transformers$multiply <- create_transformer(
@@ -161,7 +175,7 @@ evo_transformers$multiply <- create_transformer(
     input_cols <- gene$input_cols
     Reduce(`*`, lapply(input_cols, function(c) as.numeric(data[[c]])))
   },
-  name_generator = function(gene) paste0("((", paste(gene$input_cols, collapse = "*"), "))"),
+  name_generator = function(gene) .gene_col_name(gene, "mul"),
   allow_replace = TRUE
 )
 
@@ -175,7 +189,7 @@ evo_transformers$divide <- create_transformer(
     y <- data[[input_cols[2]]]
     ifelse(y == 0, 0, x / y)
   },
-  name_generator = function(gene) paste0("((", gene$input_cols[1], "/", gene$input_cols[2], "))")
+  name_generator = function(gene) .gene_col_name(gene, "div")
 )
 
 # --- STATEFUL SUPERVISED TRANSFORMERS ---
@@ -223,7 +237,7 @@ evo_transformers$target_encode <- create_transformer(
     res[is.na(res)] <- state$global_mean
     res
   },
-  name_generator = function(gene) paste0("te_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "te")
 )
 
 # --- STATEFUL MULTIVARIATE TRANSFORMERS ---
@@ -269,10 +283,7 @@ evo_transformers$pca <- create_transformer(
     if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
     preds[, comp_idx]
   },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("PCA", comp_idx, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "pca")
 )
 
 # Truncated SVD
@@ -318,10 +329,7 @@ evo_transformers$truncated_svd <- create_transformer(
     if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
     as.vector(preds[, comp_idx])
   },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("SVD", comp_idx, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "svd")
 )
 
 
@@ -350,7 +358,7 @@ evo_transformers$frequency_encode <- create_transformer(
     res[is.na(res)] <- state$default_val
     res
   },
-  name_generator = function(gene) paste0("freq_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "freq")
 )
 
 # --- STATEFUL MIXED TRANSFORMERS ---
@@ -376,7 +384,7 @@ evo_transformers$groupby_mean <- create_transformer(
     res[is.na(res)] <- state$default_val
     res
   },
-  name_generator = function(gene) paste0("mean_", gene$input_cols[2], "_by_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "gbm")
 )
 
 evo_transformers$groupby_sd <- create_transformer(
@@ -403,7 +411,7 @@ evo_transformers$groupby_sd <- create_transformer(
     res[is.na(res)] <- state$default_val
     res
   },
-  name_generator = function(gene) paste0("sd_", gene$input_cols[2], "_by_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "gbsd")
 )
 
 evo_transformers$groupby_max <- create_transformer(
@@ -429,7 +437,7 @@ evo_transformers$groupby_max <- create_transformer(
     res[is.na(res)] <- state$default_val
     res
   },
-  name_generator = function(gene) paste0("max_", gene$input_cols[2], "_by_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "gbmx")
 )
 
 evo_transformers$groupby_min <- create_transformer(
@@ -455,7 +463,7 @@ evo_transformers$groupby_min <- create_transformer(
     res[is.na(res)] <- state$default_val
     res
   },
-  name_generator = function(gene) paste0("min_", gene$input_cols[2], "_by_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "gbmn")
 )
 
 # --- STATEFUL MULTIVARIATE TRANSFORMERS (ADDITIONAL) ---
@@ -549,10 +557,7 @@ evo_transformers$umap <- create_transformer(
     }
     preds[, comp_idx]
   },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("UMAP", comp_idx, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "ump")
 )
 
 # MST-based Anomaly Score
@@ -726,9 +731,7 @@ evo_transformers$mst_score <- create_transformer(
     }
     preds
   },
-  name_generator = function(gene) {
-    paste0("MSTScore(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "mst")
 )
 
 # Genie Clustering
@@ -895,13 +898,7 @@ evo_transformers$genie <- create_transformer(
     }
     preds
   },
-  name_generator = function(gene) {
-    k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    gt <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
-    gt_str <- format(gt, nsmall = 2, digits = 2)
-    gt_str <- gsub("\\.", "", gt_str)
-    paste0("Genie", k, "_t", gt_str, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "gnie")
 )
 
 # Group-by Ratio
@@ -929,7 +926,7 @@ evo_transformers$groupby_ratio <- create_transformer(
     res[!is.finite(res)] <- 0
     res
   },
-  name_generator = function(gene) paste0("ratio_", gene$input_cols[2], "_by_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "gbr")
 )
 
 # Group-by Z-Score
@@ -965,7 +962,7 @@ evo_transformers$groupby_zscore <- create_transformer(
     res[!is.finite(res)] <- 0
     res
   },
-  name_generator = function(gene) paste0("zscore_", gene$input_cols[2], "_by_", gene$input_cols[1])
+  name_generator = function(gene) .gene_col_name(gene, "gbz")
 )
 
 # Quantile Binning
@@ -994,10 +991,7 @@ evo_transformers$quantile_binning <- create_transformer(
     res[is.na(res)] <- 0
     as.integer(res)
   },
-  name_generator = function(gene) {
-    Q <- if (!is.null(gene$params$Q)) gene$params$Q else 5
-    paste0("qbin", Q, "(", gene$input_cols[1], ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "qb")
 )
 
 # Log Binning
@@ -1013,10 +1007,7 @@ evo_transformers$log_binning <- create_transformer(
     res[!is.finite(res)] <- 0
     as.integer(res)
   },
-  name_generator = function(gene) {
-    base <- if (!is.null(gene$params$base)) gene$params$base else 2
-    paste0("logbin", base, "(", gene$input_cols[1], ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "lb")
 )
 
 # Quantile Binning (Categorical)
@@ -1046,10 +1037,7 @@ evo_transformers$quantile_binning_cat <- create_transformer(
     res[is.na(res)] <- 0
     as.integer(res)
   },
-  name_generator = function(gene) {
-    Q <- if (!is.null(gene$params$Q)) gene$params$Q else 5
-    paste0("qbin_cat", Q, "(", gene$input_cols[1], ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "qbc")
 )
 
 # Log Binning (Categorical)
@@ -1066,10 +1054,7 @@ evo_transformers$log_binning_cat <- create_transformer(
     res[!is.finite(res)] <- 0
     as.integer(res)
   },
-  name_generator = function(gene) {
-    base <- if (!is.null(gene$params$base)) gene$params$base else 2
-    paste0("logbin_cat", base, "(", gene$input_cols[1], ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "lbc")
 )
 
 # Normalized Difference
@@ -1085,7 +1070,7 @@ evo_transformers$normalized_difference <- create_transformer(
     res[!is.finite(res)] <- 0
     res
   },
-  name_generator = function(gene) paste0("normdiff(", gene$input_cols[1], "_", gene$input_cols[2], ")")
+  name_generator = function(gene) .gene_col_name(gene, "nd")
 )
 
 # Log Ratio
@@ -1099,7 +1084,7 @@ evo_transformers$log_ratio <- create_transformer(
     b <- data[[input_cols[2]]]
     log1p(abs(a)) - log1p(abs(b))
   },
-  name_generator = function(gene) paste0("logratio(", gene$input_cols[1], "_", gene$input_cols[2], ")")
+  name_generator = function(gene) .gene_col_name(gene, "lr")
 )
 
 # Random Projection
@@ -1123,9 +1108,7 @@ evo_transformers$random_projection <- create_transformer(
     storage.mode(x) <- "double"
     as.vector(x %*% state$w)
   },
-  name_generator = function(gene) {
-    paste0("RP(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "rp")
 )
 
 # Lumbermark Clustering
@@ -1285,10 +1268,7 @@ evo_transformers$lumbermark <- create_transformer(
     }
     preds
   },
-  name_generator = function(gene) {
-    k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    paste0("Lumb", k, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "lmb")
 )
 
 # Deadwood Anomaly Detection
@@ -1447,9 +1427,7 @@ evo_transformers$deadwood <- create_transformer(
     }
     preds
   },
-  name_generator = function(gene) {
-    paste0("Deadwood(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "dwd")
 )
 
 # One-Hot Encoding
@@ -1507,11 +1485,7 @@ evo_transformers$one_hot_encode <- create_transformer(
       }
     }
   },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    idx_str <- if (comp_idx == 6) "other" else as.character(comp_idx)
-    paste0("ohe_", idx_str, "_", gene$input_cols[1])
-  }
+  name_generator = function(gene) .gene_col_name(gene, "ohe")
 )
 
 # --- ADDITIONAL TRANSFORMERS ---
@@ -1547,10 +1521,7 @@ evo_transformers$datetime_extract <- create_transformer(
     res[is.na(res)] <- 0L
     as.numeric(res)
   },
-  name_generator = function(gene) {
-    comp <- if (!is.null(gene$params$component)) gene$params$component else "month"
-    paste0(comp, "_", gene$input_cols[1])
-  }
+  name_generator = function(gene) .gene_col_name(gene, "dt")
 )
 
 # Multiclass Target Encoding
@@ -1602,10 +1573,7 @@ evo_transformers$target_encode_multiclass <- create_transformer(
     res[is.na(res)] <- global_mean
     res
   },
-  name_generator = function(gene) {
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("te_mc_", comp_idx, "_", gene$input_cols[1])
-  }
+  name_generator = function(gene) .gene_col_name(gene, "temc")
 )
 
 
@@ -1722,8 +1690,10 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
     
     if (is.null(state$preds_cache)) {
-      centroid <- state$centroids[[comp_idx]]
-      dists <- sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
+      preds <- lapply(state$centroids, function(centroid) {
+        sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
+      })
+      dists <- preds[[comp_idx]]
     } else {
       x_key <- digest::digest(x_test, algo = "xxhash64")
       if (exists(x_key, envir = state$preds_cache)) {
@@ -1739,14 +1709,7 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     
     dists
   },
-  name_generator = function(gene) {
-    k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    gt <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
-    gt_str <- format(gt, nsmall = 2, digits = 2)
-    gt_str <- gsub("\\.", "", gt_str)
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("GenieCentroidDist", comp_idx, "_k", k, "_t", gt_str, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "gncd")
 )
 
 # Lumbermark Centroid Distance
@@ -1878,11 +1841,7 @@ evo_transformers$lumbermark_centroid_dist <- create_transformer(
     
     dists
   },
-  name_generator = function(gene) {
-    k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    paste0("LumbCentroidDist", comp_idx, "_k", k, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
-  }
+  name_generator = function(gene) .gene_col_name(gene, "lmcd")
 )
 
 

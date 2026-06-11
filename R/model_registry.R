@@ -279,13 +279,27 @@ register_evaluator(
     )
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
+    y_val            <- extra_params$y_val
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
+                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
     }
 
-    model <- suppressWarnings(catboost::catboost.train(dtrain, params = params))
+    # Build validation pool for early stopping when possible
+    dval_es <- NULL
+    if (!is.null(x_val) && !is.null(y_val) && !is.null(early_stopping_rounds) && early_stopping_rounds > 0) {
+      df_val_es <- as.data.frame(x_val)
+      df_val_es[] <- lapply(df_val_es, as.numeric)
+      dval_es <- catboost::catboost.load_pool(data = df_val_es, label = y_val)
+      params$od_type <- "Iter"
+      params$od_wait <- early_stopping_rounds
+    }
+
+    model <- suppressWarnings(catboost::catboost.train(dtrain, test_pool = dval_es, params = params))
 
     preds <- NULL
     if (!is.null(x_val)) {
@@ -384,7 +398,7 @@ register_evaluator(
       importances <- importances_all
       
     } else if (task == "multiclass") {
-      classes <- if (is.factor(y_train)) levels(y_train) else unique(y_train)
+      classes <- if (is.factor(y_train)) levels(y_train) else sort(unique(y_train))
       models <- lapply(classes, function(cl) {
         y_bin <- as.numeric(y_train == cl)
         df_train_cl <- df_train
