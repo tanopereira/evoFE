@@ -9,10 +9,9 @@
 create_gene <- function(transformer_name, input_cols) {
   transformer <- evo_transformers[[transformer_name]]
   params <- list()
-  if (transformer_name %in% c("pca", "truncated_svd")) {
-    params$comp_idx <- sample(1:3, 1)
-  } else if (transformer_name == "umap") {
-    params$comp_idx <- sample(1:2, 1)
+  if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
+    C <- max(2L, as.integer(round(log2(length(input_cols)))))
+    params$comp_idx <- sample(1:C, 1)
   } else if (transformer_name == "one_hot_encode") {
     params$comp_idx <- sample(1:6, 1)
   } else if (transformer_name == "genie") {
@@ -341,15 +340,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     # If the transformer is multi-component, add all components
     new_genes_to_add <- list()
-    if (t_name %in% c("pca", "truncated_svd")) {
-      for (comp in 1:3) {
-        g <- create_gene(t_name, cols)
-        g$params$comp_idx <- comp
-        g$output_col <- t_def$name_generator(g)
-        new_genes_to_add <- c(new_genes_to_add, list(g))
-      }
-    } else if (t_name == "umap") {
-      for (comp in 1:2) {
+    if (t_name %in% c("pca", "truncated_svd", "umap")) {
+      C <- max(2L, as.integer(round(log2(length(cols)))))
+      for (comp in 1:C) {
         g <- create_gene(t_name, cols)
         g$params$comp_idx <- comp
         g$output_col <- t_def$name_generator(g)

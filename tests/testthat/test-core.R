@@ -535,12 +535,16 @@ test_that("mutate adds all components for UMAP, PCA, and SVD", {
     if (length(genes) > 0) {
       t_name <- genes[[1]]$transformer_name
       if (t_name == "pca") {
-        expect_equal(length(genes), 3)
-        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:3)
+        cols_in <- genes[[1]]$input_cols
+        C <- max(2L, as.integer(round(log2(length(cols_in)))))
+        expect_equal(length(genes), C)
+        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:C)
         pca_added <- TRUE
       } else if (t_name == "umap") {
-        expect_equal(length(genes), 2)
-        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:2)
+        cols_in <- genes[[1]]$input_cols
+        C <- max(2L, as.integer(round(log2(length(cols_in)))))
+        expect_equal(length(genes), C)
+        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:C)
         umap_added <- TRUE
       }
     }
@@ -551,8 +555,8 @@ test_that("mutate adds all components for UMAP, PCA, and SVD", {
 
 test_that("different components share the same fitted state in state_cache", {
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  df <- data.table::as.data.table(matrix(rnorm(100 * 3), ncol = 3))
-  colnames(df) <- c("x1", "x2", "x3")
+  df <- data.table::as.data.table(matrix(rnorm(100 * 6), ncol = 6))
+  colnames(df) <- c("x1", "x2", "x3", "x4", "x5", "x6")
   df[, target := rnorm(100)]
   
   # 1. Test PCA
@@ -573,15 +577,15 @@ test_that("different components share the same fitted state in state_cache", {
   expect_identical(res1$gene$state, res2$gene$state)
   
   # 2. Test truncated_svd
-  gene_svd1 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd1 <- create_gene("truncated_svd", c("x1", "x2", "x3", "x4", "x5", "x6"))
   gene_svd1$params$comp_idx <- 1
   gene_svd1$output_col <- "SVD1"
   
-  gene_svd2 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd2 <- create_gene("truncated_svd", c("x1", "x2", "x3", "x4", "x5", "x6"))
   gene_svd2$params$comp_idx <- 2
   gene_svd2$output_col <- "SVD2"
   
-  gene_svd3 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd3 <- create_gene("truncated_svd", c("x1", "x2", "x3", "x4", "x5", "x6"))
   gene_svd3$params$comp_idx <- 3
   gene_svd3$output_col <- "SVD3"
   

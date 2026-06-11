@@ -1,18 +1,7 @@
-library(mlrMBO)
-library(ParamHelpers)
-library(smoof)
+source("R/make_tunable.R")
+# mock evo_evaluators environment just to pass the initial check
+evo_evaluators <- new.env()
+evo_evaluators$xgboost <- list(train_func=function(...) list())
 
-ps <- makeParamSet(
-  makeNumericParam("x", lower = 0, upper = 10),
-  makeNumericParam("y", lower = 0, upper = 10, tunable = FALSE, default = 5)
-)
-
-fn <- function(x) {
-  print(x)
-  (x$x - 2)^2 + (x$y - 5)^2
-}
-
-obj <- makeSingleObjectiveFunction(name = "test", fn = fn, par.set = ps, has.simple.signature = FALSE)
-
-des <- generateDesign(n = 5, par.set = ps)
-print(des)
+make_tunable("xgboost",list(eta=list(type="numeric",lower=.1,upper=1),nrounds=list(type="integer",value=500,tunable=F),max_depth=list(type="integer",lower=0,upper=20),grow_policy=list(type="discrete",values=c("depthwise","lossguide")),subsample=list(type="numeric",lower=.1,upper=1),colsample_bytree=list(type="numeric",lower=.1,upper=1),max_delta_step=list(type="numeric",lower=1,upper=10),min_child_weight=list(type="integer",lower=1,upper=50)))
+message("Success!")

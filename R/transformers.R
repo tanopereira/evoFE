@@ -287,7 +287,8 @@ evo_transformers$truncated_svd <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     tryCatch({
-      res <- svd(x, nu = 0, nv = min(3, ncol(x)))
+      C <- max(2L, as.integer(round(log2(ncol(x)))))
+      res <- svd(x, nu = 0, nv = min(C, ncol(x)))
       list(v = res$v, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
     }, error = function(e) {
       list(v = NULL, valid = FALSE)
@@ -483,7 +484,8 @@ evo_transformers$umap <- create_transformer(
     
     tryCatch({
       threads <- getOption("evoFE.threads", 1)
-      model <- uwot::umap(x, n_neighbors = n_neighbors, n_components = 2, 
+      C <- max(2L, as.integer(round(log2(ncol(x)))))
+      model <- uwot::umap(x, n_neighbors = n_neighbors, n_components = C, 
                           ret_model = TRUE, n_threads = threads, verbose = FALSE, init = "random")
       if (verbose) {
         elapsed <- difftime(Sys.time(), start_time, units = "secs")
