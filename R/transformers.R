@@ -103,6 +103,81 @@ is_verbose <- function() {
   paste0(prefix, "_", h)
 }
 
+# --- CLUSTERING SCAFFOLD HELPERS ---
+
+# Deduplicate rows and optionally downsample to max_clustering_size.
+# Returns the processed matrix, or NULL if there are too few rows.
+# `min_rows` is checked *after* deduplication AND after downsampling.
+.cluster_prep_x <- function(x, min_rows = 6, verbose = FALSE, tag = "Fit") {
+  t0 <- Sys.time()
+  dt_x <- data.table::as.data.table(x)
+  cols <- names(dt_x)
+  dt_x[, first_id := .I[1], by = cols]
+  x_unique <- x[unique(dt_x$first_id), , drop = FALSE]
+  if (verbose)
+    message(sprintf("  [%s] Dedup: %d unique / %d rows. %.3f s",
+                    tag, nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+
+  if (nrow(x_unique) < min_rows) return(NULL)
+
+  max_size <- getOption("evoFE.max_clustering_size", 5000)
+  if (!is.numeric(max_size) || is.null(max_size)) max_size <- 0
+  if (max_size > 0 && nrow(x_unique) > max_size) {
+    # Preserve the caller's RNG state
+    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv))
+      get(".Random.seed", envir = .GlobalEnv) else NULL
+    on.exit({
+      if (!is.null(old_seed)) assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      else if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
+    }, add = TRUE)
+    x_unique <- x_unique[sample(seq_len(nrow(x_unique)), max_size), , drop = FALSE]
+    if (verbose)
+      message(sprintf("  [%s] Downsampled to %d rows. %.3f s",
+                      tag, nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+  }
+
+  if (nrow(x_unique) < min_rows) return(NULL)
+  x_unique
+}
+
+# Cache-aware KNN apply for clustering transformers.
+# `get_preds(nearest_indices, state)` maps neighbour indices → prediction vector.
+# When x_test is identical to the training set, indices are the identity permutation.
+.cluster_knn_apply <- function(x_test, state, get_preds, verbose = FALSE, tag = "Apply") {
+  if (is.null(state) || !isTRUE(state$valid))
+    return(rep(0, nrow(x_test)))
+
+  x_train <- state$x_train
+
+  compute <- function() {
+    if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
+      get_preds(seq_len(nrow(x_train)), state)
+    } else {
+      t0 <- Sys.time()
+      idx <- tryCatch(
+        quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1],
+        error = function(e)
+          apply(x_test, 1, function(row) which.min(colSums((t(x_train) - row)^2)))
+      )
+      if (verbose)
+        message(sprintf("  [%s] KNN: %d test -> %d train rows. %.3f s",
+                        tag, nrow(x_test), nrow(x_train),
+                        as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      get_preds(idx, state)
+    }
+  }
+
+  if (is.null(state$preds_cache)) return(compute())
+
+  key <- digest::digest(x_test, algo = "xxhash64")
+  if (exists(key, envir = state$preds_cache))
+    return(get(key, envir = state$preds_cache))
+
+  preds <- compute()
+  assign(key, preds, envir = state$preds_cache)
+  preds
+}
+
 # --- STATELESS UNARY TRANSFORMERS ---
 
 evo_transformers$log <- create_transformer(
@@ -566,170 +641,31 @@ evo_transformers$mst_score <- create_transformer(
   type = "multivariate",
   input_type = "numeric",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    if (length(input_cols) < 2) {
-      return(list(x_train = NULL, scores = NULL, valid = FALSE))
-    }
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    storage.mode(x) <- "double"
-    
+    if (length(gene$input_cols) < 2) return(list(x_train = NULL, scores = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
     verbose <- is_verbose()
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[MST Fit] Start on %d rows, %d cols.", nrow(x), ncol(x)))
-    }
-    
     tryCatch({
+      if (!requireNamespace("quitefastmst", quietly = TRUE)) stop("quitefastmst package is not available")
+      x_s <- .cluster_prep_x(x, min_rows = 6, verbose = verbose, tag = "MST Fit")
+      if (is.null(x_s)) return(list(x_train = NULL, scores = NULL, valid = FALSE))
       t0 <- Sys.time()
-      dt_x <- data.table::as.data.table(x)
-      cols <- names(dt_x)
-      dt_x[, first_id := .I[1], by = cols]
-      first_ids <- dt_x$first_id
-      unique_ids <- unique(first_ids)
-      x_unique <- x[unique_ids, , drop = FALSE]
-      if (verbose) {
-        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (ncol(x) < 2 || nrow(x_unique) <= 5) {
-        return(list(x_train = NULL, scores = NULL, valid = FALSE))
-      }
-      
-      if (!requireNamespace("quitefastmst", quietly = TRUE)) {
-        stop("quitefastmst package is not available")
-      }
-      
-      t0 <- Sys.time()
-      # Handle max_clustering_size
-      max_size <- getOption("evoFE.max_clustering_size", 5000)
-      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
-      if (max_size > 0 && nrow(x_unique) > max_size) {
-        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-        on.exit({
-          if (!is.null(old_seed)) {
-            assign(".Random.seed", old_seed, envir = .GlobalEnv)
-          } else {
-            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
-          }
-        }, add = TRUE)
-        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
-        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
-        if (verbose) {
-          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-        }
-      } else {
-        x_sampled <- x_unique
-      }
-      
-      if (nrow(x_sampled) <= 5) {
-        return(list(x_train = NULL, scores = NULL, valid = FALSE))
-      }
-      
-      t0 <- Sys.time()
-      res_mst <- quitefastmst::mst_euclid(x_sampled)
-      if (verbose) {
-        message(sprintf("  quitefastmst::mst_euclid: computed MST on %d rows. Elapsed: %.3f s", nrow(x_sampled), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      t0 <- Sys.time()
+      res_mst <- quitefastmst::mst_euclid(x_s)
+      if (verbose) message(sprintf("  [MST Fit] mst_euclid on %d rows. %.3f s", nrow(x_s), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
       dt_edges <- data.table::data.table(
         node = c(res_mst$mst.index[, 1], res_mst$mst.index[, 2]),
         dist = c(res_mst$mst.dist, res_mst$mst.dist)
       )
-      scores_sampled <- dt_edges[, .(score = max(dist)), by = node][order(node)]$score
-      if (verbose) {
-        message(sprintf("  Score aggregation: computed max distance for each node. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[MST Fit] Completed in %.3f seconds", as.numeric(elapsed)))
-      }
-      list(x_train = x_sampled, scores = as.numeric(scores_sampled), valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
-    }, error = function(e) {
-      if (verbose) {
-        message(sprintf("[MST Fit] Failed: %s", conditionMessage(e)))
-      }
-      list(x_train = NULL, scores = NULL, valid = FALSE)
-    })
+      scores <- dt_edges[, .(score = max(dist)), by = node][order(node)]$score
+      list(x_train = x_s, scores = as.numeric(scores), valid = TRUE,
+           preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+    }, error = function(e) list(x_train = NULL, scores = NULL, valid = FALSE))
   },
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    verbose <- is_verbose()
-    if (is.null(state) || !state$valid) {
-      if (verbose) {
-        message("[MST Apply] Skipped because fitted state is invalid or NULL.")
-      }
-      return(rep(0, nrow(data)))
-    }
-    x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0
-    storage.mode(x_test) <- "double"
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[MST Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
-    }
-    
-    if (is.null(state$preds_cache)) {
-      # Fallback
-      x_train <- state$x_train
-      train_scores <- state$scores
-      if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-        preds <- train_scores
-      } else {
-        nearest_indices <- tryCatch({
-          quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-        }, error = function(e) {
-          apply(x_test, 1, function(row) {
-            dists <- colSums((t(x_train) - row)^2)
-            which.min(dists)
-          })
-        })
-        preds <- train_scores[nearest_indices]
-      }
-    } else {
-      x_key <- digest::digest(x_test, algo = "xxhash64")
-      if (exists(x_key, envir = state$preds_cache)) {
-        preds <- get(x_key, envir = state$preds_cache)
-        if (verbose) {
-          message("  Retrieve MST projection from cache.")
-        }
-      } else {
-        x_train <- state$x_train
-        train_scores <- state$scores
-        if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-          preds <- train_scores
-        } else {
-          nearest_indices <- tryCatch({
-            t0 <- Sys.time()
-            res <- quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-            if (verbose) {
-              message(sprintf("  quitefastmst::knn_euclid: projected %d test rows on %d train rows. Elapsed: %.3f s", nrow(x_test), nrow(x_train), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-            }
-            res
-          }, error = function(e) {
-            t0 <- Sys.time()
-            res <- apply(x_test, 1, function(row) {
-              dists <- colSums((t(x_train) - row)^2)
-              which.min(dists)
-            })
-            if (verbose) {
-              message(sprintf("  R fallback KNN (Euclidean distance): projected %d test rows. Elapsed: %.3f s", nrow(x_test), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-            }
-            res
-          })
-          preds <- train_scores[nearest_indices]
-        }
-        assign(x_key, preds, envir = state$preds_cache)
-      }
-    }
-    
-    if (verbose) {
-      elapsed <- difftime(Sys.time(), start_time, units = "secs")
-      message(sprintf("[MST Apply] Completed in %.3f seconds", as.numeric(elapsed)))
-    }
-    preds
+    x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    .cluster_knn_apply(x_test, state, function(idx, s) s$scores[idx],
+                       verbose = is_verbose(), tag = "MST Apply")
   },
   name_generator = function(gene) .gene_col_name(gene, "mst")
 )
@@ -741,162 +677,29 @@ evo_transformers$genie <- create_transformer(
   input_type = "numeric",
   output_type = "categorical",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    if (length(input_cols) < 2) {
-      return(list(x_train = NULL, labels = NULL, valid = FALSE))
-    }
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    storage.mode(x) <- "double"
+    if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
-    
     verbose <- is_verbose()
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Genie Fit] Start on %d rows, %d cols. k = %d, gini_threshold = %.2f", nrow(x), ncol(x), k, gini_threshold))
-    }
-    
     tryCatch({
+      if (!requireNamespace("genieclust", quietly = TRUE)) stop("genieclust package is not available")
+      x_s <- .cluster_prep_x(x, min_rows = max(6L, k), verbose = verbose, tag = "Genie Fit")
+      if (is.null(x_s)) return(list(x_train = NULL, labels = NULL, valid = FALSE))
       t0 <- Sys.time()
-      dt_x <- data.table::as.data.table(x)
-      cols <- names(dt_x)
-      dt_x[, first_id := .I[1], by = cols]
-      first_ids <- dt_x$first_id
-      unique_ids <- unique(first_ids)
-      x_unique <- x[unique_ids, , drop = FALSE]
-      if (verbose) {
-        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (ncol(x) < 2 || nrow(x_unique) <= 5 || nrow(x_unique) < k) {
-        return(list(x_train = NULL, labels = NULL, valid = FALSE))
-      }
-      
-      if (!requireNamespace("genieclust", quietly = TRUE)) {
-        stop("genieclust package is not available")
-      }
-      
-      t0 <- Sys.time()
-      # Handle max_clustering_size
-      max_size <- getOption("evoFE.max_clustering_size", 5000)
-      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
-      if (max_size > 0 && nrow(x_unique) > max_size) {
-        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-        on.exit({
-          if (!is.null(old_seed)) {
-            assign(".Random.seed", old_seed, envir = .GlobalEnv)
-          } else {
-            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
-          }
-        }, add = TRUE)
-        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
-        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
-        if (verbose) {
-          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-        }
-      } else {
-        x_sampled <- x_unique
-      }
-      
-      if (nrow(x_sampled) <= 5 || nrow(x_sampled) < k) {
-        return(list(x_train = NULL, labels = NULL, valid = FALSE))
-      }
-      
-      t0 <- Sys.time()
-      clust_sampled <- genieclust::genie(x_sampled, k = k, gini_threshold = gini_threshold)
-      if (verbose) {
-        message(sprintf("  genieclust::genie: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[Genie Fit] Completed in %.3f seconds", as.numeric(elapsed)))
-      }
-      list(x_train = x_sampled, labels = as.integer(clust_sampled), valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
-    }, error = function(e) {
-      if (verbose) {
-        message(sprintf("[Genie Fit] Failed: %s", conditionMessage(e)))
-      }
-      list(x_train = NULL, labels = NULL, valid = FALSE)
-    })
+      labels <- genieclust::genie(x_s, k = k, gini_threshold = gini_threshold)
+      if (verbose) message(sprintf("  [Genie Fit] genie on %d rows. %.3f s", nrow(x_s), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      list(x_train = x_s, labels = as.integer(labels), valid = TRUE,
+           preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+    }, error = function(e) list(x_train = NULL, labels = NULL, valid = FALSE))
   },
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    verbose <- is_verbose()
-    if (is.null(state) || !state$valid) {
-      if (verbose) {
-        message("[Genie Apply] Skipped because fitted state is invalid or NULL.")
-      }
-      return(rep(1, nrow(data)))
-    }
-    x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0
-    storage.mode(x_test) <- "double"
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Genie Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
-    }
-    
-    if (is.null(state$preds_cache)) {
-      # Fallback
-      x_train <- state$x_train
-      train_labels <- state$labels
-      if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-        preds <- train_labels
-      } else {
-        nearest_indices <- tryCatch({
-          quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-        }, error = function(e) {
-          apply(x_test, 1, function(row) {
-            dists <- colSums((t(x_train) - row)^2)
-            which.min(dists)
-          })
-        })
-        preds <- train_labels[nearest_indices]
-      }
-    } else {
-      x_key <- digest::digest(x_test, algo = "xxhash64")
-      if (exists(x_key, envir = state$preds_cache)) {
-        preds <- get(x_key, envir = state$preds_cache)
-        if (verbose) {
-          message("  Retrieve Genie projection from cache.")
-        }
-      } else {
-        x_train <- state$x_train
-        train_labels <- state$labels
-        if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-          preds <- train_labels
-        } else {
-          nearest_indices <- tryCatch({
-            t0 <- Sys.time()
-            res <- quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-            if (verbose) {
-              message(sprintf("  quitefastmst::knn_euclid: projected %d test rows on %d train rows. Elapsed: %.3f s", nrow(x_test), nrow(x_train), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-            }
-            res
-          }, error = function(e) {
-            t0 <- Sys.time()
-            res <- apply(x_test, 1, function(row) {
-              dists <- colSums((t(x_train) - row)^2)
-              which.min(dists)
-            })
-            if (verbose) {
-              message(sprintf("  R fallback KNN (Euclidean distance): projected %d test rows. Elapsed: %.3f s", nrow(x_test), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-            }
-            res
-          })
-          preds <- train_labels[nearest_indices]
-        }
-        assign(x_key, preds, envir = state$preds_cache)
-      }
-    }
-    
-    if (verbose) {
-      elapsed <- difftime(Sys.time(), start_time, units = "secs")
-      message(sprintf("[Genie Apply] Completed in %.3f seconds", as.numeric(elapsed)))
-    }
-    preds
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(1L, nrow(data)))
+    x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    .cluster_knn_apply(x_test, state, function(idx, s) s$labels[idx],
+                       verbose = is_verbose(), tag = "Genie Apply")
   },
   name_generator = function(gene) .gene_col_name(gene, "gnie")
 )
@@ -1118,155 +921,28 @@ evo_transformers$lumbermark <- create_transformer(
   input_type = "numeric",
   output_type = "categorical",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    if (length(input_cols) < 2) {
-      return(list(x_train = NULL, labels = NULL, valid = FALSE))
-    }
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    storage.mode(x) <- "double"
+    if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    
     verbose <- is_verbose()
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Lumbermark Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
-    }
-    
     tryCatch({
+      if (!requireNamespace("lumbermark", quietly = TRUE)) stop("lumbermark package is not available")
+      x_s <- .cluster_prep_x(x, min_rows = max(6L, 2L * k), verbose = verbose, tag = "Lumbermark Fit")
+      if (is.null(x_s)) return(list(x_train = NULL, labels = NULL, valid = FALSE))
       t0 <- Sys.time()
-      dt_x <- data.table::as.data.table(x)
-      cols <- names(dt_x)
-      dt_x[, first_id := .I[1], by = cols]
-      first_ids <- dt_x$first_id
-      unique_ids <- unique(first_ids)
-      x_unique <- x[unique_ids, , drop = FALSE]
-      if (verbose) {
-        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (ncol(x) < 2 || nrow(x_unique) <= 5 || nrow(x_unique) < 2 * k) {
-        return(list(x_train = NULL, labels = NULL, valid = FALSE))
-      }
-      
-      t0 <- Sys.time()
-      # Handle max_clustering_size
-      max_size <- getOption("evoFE.max_clustering_size", 5000)
-      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
-      if (max_size > 0 && nrow(x_unique) > max_size) {
-        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-        on.exit({
-          if (!is.null(old_seed)) {
-            assign(".Random.seed", old_seed, envir = .GlobalEnv)
-          } else {
-            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
-          }
-        }, add = TRUE)
-        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
-        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
-        if (verbose) {
-          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-        }
-      } else {
-        x_sampled <- x_unique
-      }
-      
-      if (nrow(x_sampled) <= 5 || nrow(x_sampled) < 2 * k) {
-        return(list(x_train = NULL, labels = NULL, valid = FALSE))
-      }
-      
-      if (!requireNamespace("lumbermark", quietly = TRUE)) {
-        stop("lumbermark package is not available")
-      }
-      
-      t0 <- Sys.time()
-      clust_sampled <- lumbermark::lumbermark(x_sampled, k = k, min_cluster_size = 2)
-      if (verbose) {
-        message(sprintf("  lumbermark::lumbermark: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[Lumbermark Fit] Completed in %.3f seconds", as.numeric(elapsed)))
-      }
-      list(x_train = x_sampled, labels = as.integer(clust_sampled), valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
-    }, error = function(e) {
-      if (verbose) {
-        message(sprintf("[Lumbermark Fit] Failed: %s", conditionMessage(e)))
-      }
-      list(x_train = NULL, labels = NULL, valid = FALSE)
-    })
+      labels <- lumbermark::lumbermark(x_s, k = k, min_cluster_size = 2)
+      if (verbose) message(sprintf("  [Lumbermark Fit] lumbermark on %d rows. %.3f s", nrow(x_s), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      list(x_train = x_s, labels = as.integer(labels), valid = TRUE,
+           preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+    }, error = function(e) list(x_train = NULL, labels = NULL, valid = FALSE))
   },
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    verbose <- is_verbose()
-    if (is.null(state) || !state$valid) {
-      if (verbose) {
-        message("[Lumbermark Apply] Skipped because fitted state is invalid or NULL.")
-      }
-      return(rep(1, nrow(data)))
-    }
-    x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0
-    storage.mode(x_test) <- "double"
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Lumbermark Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
-    }
-    
-    if (is.null(state$preds_cache)) {
-      x_train <- state$x_train
-      train_labels <- state$labels
-      if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-        preds <- train_labels
-      } else {
-        nearest_indices <- tryCatch({
-          quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-        }, error = function(e) {
-          apply(x_test, 1, function(row) {
-            dists <- colSums((t(x_train) - row)^2)
-            which.min(dists)
-          })
-        })
-        preds <- train_labels[nearest_indices]
-      }
-    } else {
-      x_key <- digest::digest(x_test, algo = "xxhash64")
-      if (exists(x_key, envir = state$preds_cache)) {
-        preds <- get(x_key, envir = state$preds_cache)
-        if (verbose) {
-          message("  Retrieve Lumbermark projection from cache.")
-        }
-      } else {
-        x_train <- state$x_train
-        train_labels <- state$labels
-        if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-          preds <- train_labels
-        } else {
-          nearest_indices <- tryCatch({
-            t0 <- Sys.time()
-            res <- quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-            if (verbose) {
-              message(sprintf("  quitefastmst::knn_euclid: projected %d test rows on %d train rows. Elapsed: %.3f s", nrow(x_test), nrow(x_train), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-            }
-            res
-          }, error = function(e) {
-            apply(x_test, 1, function(row) {
-              dists <- colSums((t(x_train) - row)^2)
-              which.min(dists)
-            })
-          })
-          preds <- train_labels[nearest_indices]
-        }
-        assign(x_key, preds, envir = state$preds_cache)
-      }
-    }
-    
-    if (verbose) {
-      elapsed <- difftime(Sys.time(), start_time, units = "secs")
-      message(sprintf("[Lumbermark Apply] Completed in %.3f seconds", as.numeric(elapsed)))
-    }
-    preds
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(1L, nrow(data)))
+    x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    .cluster_knn_apply(x_test, state, function(idx, s) s$labels[idx],
+                       verbose = is_verbose(), tag = "Lumbermark Apply")
   },
   name_generator = function(gene) .gene_col_name(gene, "lmb")
 )
@@ -1278,154 +954,26 @@ evo_transformers$deadwood <- create_transformer(
   input_type = "numeric",
   output_type = "categorical",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    if (length(input_cols) < 2) {
-      return(list(x_train = NULL, labels = NULL, valid = FALSE))
-    }
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    storage.mode(x) <- "double"
-    
+    if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
     verbose <- is_verbose()
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Deadwood Fit] Start on %d rows, %d cols.", nrow(x), ncol(x)))
-    }
-    
     tryCatch({
+      if (!requireNamespace("deadwood", quietly = TRUE)) stop("deadwood package is not available")
+      x_s <- .cluster_prep_x(x, min_rows = 6, verbose = verbose, tag = "Deadwood Fit")
+      if (is.null(x_s)) return(list(x_train = NULL, labels = NULL, valid = FALSE))
       t0 <- Sys.time()
-      dt_x <- data.table::as.data.table(x)
-      cols <- names(dt_x)
-      dt_x[, first_id := .I[1], by = cols]
-      first_ids <- dt_x$first_id
-      unique_ids <- unique(first_ids)
-      x_unique <- x[unique_ids, , drop = FALSE]
-      if (verbose) {
-        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (ncol(x) < 2 || nrow(x_unique) <= 5) {
-        return(list(x_train = NULL, labels = NULL, valid = FALSE))
-      }
-      
-      t0 <- Sys.time()
-      # Handle max_clustering_size
-      max_size <- getOption("evoFE.max_clustering_size", 5000)
-      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
-      if (max_size > 0 && nrow(x_unique) > max_size) {
-        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-        on.exit({
-          if (!is.null(old_seed)) {
-            assign(".Random.seed", old_seed, envir = .GlobalEnv)
-          } else {
-            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
-          }
-        }, add = TRUE)
-        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
-        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
-        if (verbose) {
-          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-        }
-      } else {
-        x_sampled <- x_unique
-      }
-      
-      if (nrow(x_sampled) <= 5) {
-        return(list(x_train = NULL, labels = NULL, valid = FALSE))
-      }
-      
-      if (!requireNamespace("deadwood", quietly = TRUE)) {
-        stop("deadwood package is not available")
-      }
-      
-      t0 <- Sys.time()
-      outliers_sampled <- deadwood::deadwood(x_sampled)
-      if (verbose) {
-        message(sprintf("  deadwood::deadwood: computed outliers. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[Deadwood Fit] Completed in %.3f seconds", as.numeric(elapsed)))
-      }
-      list(x_train = x_sampled, labels = as.numeric(outliers_sampled), valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
-    }, error = function(e) {
-      if (verbose) {
-        message(sprintf("[Deadwood Fit] Failed: %s", conditionMessage(e)))
-      }
-      list(x_train = NULL, labels = NULL, valid = FALSE)
-    })
+      outliers <- deadwood::deadwood(x_s)
+      if (verbose) message(sprintf("  [Deadwood Fit] deadwood on %d rows. %.3f s", nrow(x_s), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      list(x_train = x_s, labels = as.numeric(outliers), valid = TRUE,
+           preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+    }, error = function(e) list(x_train = NULL, labels = NULL, valid = FALSE))
   },
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    verbose <- is_verbose()
-    if (is.null(state) || !state$valid) {
-      if (verbose) {
-        message("[Deadwood Apply] Skipped because fitted state is invalid or NULL.")
-      }
-      return(rep(0, nrow(data)))
-    }
-    x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0
-    storage.mode(x_test) <- "double"
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Deadwood Apply] Start on %d test rows against %d train rows.", nrow(x_test), nrow(state$x_train)))
-    }
-    
-    if (is.null(state$preds_cache)) {
-      x_train <- state$x_train
-      train_labels <- state$labels
-      if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-        preds <- train_labels
-      } else {
-        nearest_indices <- tryCatch({
-          quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-        }, error = function(e) {
-          apply(x_test, 1, function(row) {
-            dists <- colSums((t(x_train) - row)^2)
-            which.min(dists)
-          })
-        })
-        preds <- train_labels[nearest_indices]
-      }
-    } else {
-      x_key <- digest::digest(x_test, algo = "xxhash64")
-      if (exists(x_key, envir = state$preds_cache)) {
-        preds <- get(x_key, envir = state$preds_cache)
-        if (verbose) {
-          message("  Retrieve Deadwood projection from cache.")
-        }
-      } else {
-        x_train <- state$x_train
-        train_labels <- state$labels
-        if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
-          preds <- train_labels
-        } else {
-          nearest_indices <- tryCatch({
-            t0 <- Sys.time()
-            res <- quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1]
-            if (verbose) {
-              message(sprintf("  quitefastmst::knn_euclid: projected %d test rows on %d train rows. Elapsed: %.3f s", nrow(x_test), nrow(x_train), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-            }
-            res
-          }, error = function(e) {
-            apply(x_test, 1, function(row) {
-              dists <- colSums((t(x_train) - row)^2)
-              which.min(dists)
-            })
-          })
-          preds <- train_labels[nearest_indices]
-        }
-        assign(x_key, preds, envir = state$preds_cache)
-      }
-    }
-    
-    if (verbose) {
-      elapsed <- difftime(Sys.time(), start_time, units = "secs")
-      message(sprintf("[Deadwood Apply] Completed in %.3f seconds", as.numeric(elapsed)))
-    }
-    preds
+    x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    .cluster_knn_apply(x_test, state, function(idx, s) s$labels[idx],
+                       verbose = is_verbose(), tag = "Deadwood Apply")
   },
   name_generator = function(gene) .gene_col_name(gene, "dwd")
 )
@@ -1583,265 +1131,79 @@ evo_transformers$genie_centroid_dist <- create_transformer(
   type = "multivariate",
   input_type = "numeric",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    if (length(input_cols) < 2) {
-      return(list(centroids = NULL, valid = FALSE))
-    }
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    storage.mode(x) <- "double"
+    if (length(gene$input_cols) < 2) return(list(centroids = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
-    
     verbose <- is_verbose()
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Genie Centroid Dist Fit] Start on %d rows, %d cols. k = %d, gini_threshold = %.2f", nrow(x), ncol(x), k, gini_threshold))
-    }
-    
     tryCatch({
+      if (!requireNamespace("genieclust", quietly = TRUE)) stop("genieclust package is not available")
+      x_s <- .cluster_prep_x(x, min_rows = max(6L, k), verbose = verbose, tag = "GenieCDist Fit")
+      if (is.null(x_s)) return(list(centroids = NULL, valid = FALSE))
       t0 <- Sys.time()
-      dt_x <- data.table::as.data.table(x)
-      cols <- names(dt_x)
-      dt_x[, first_id := .I[1], by = cols]
-      first_ids <- dt_x$first_id
-      unique_ids <- unique(first_ids)
-      x_unique <- x[unique_ids, , drop = FALSE]
-      if (verbose) {
-        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (ncol(x) < 2 || nrow(x_unique) <= 5 || nrow(x_unique) < k) {
-        return(list(centroids = NULL, valid = FALSE))
-      }
-      
-      if (!requireNamespace("genieclust", quietly = TRUE)) {
-        stop("genieclust package is not available")
-      }
-      
-      t0 <- Sys.time()
-      # Handle max_clustering_size
-      max_size <- getOption("evoFE.max_clustering_size", 5000)
-      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
-      if (max_size > 0 && nrow(x_unique) > max_size) {
-        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-        on.exit({
-          if (!is.null(old_seed)) {
-            assign(".Random.seed", old_seed, envir = .GlobalEnv)
-          } else {
-            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
-          }
-        }, add = TRUE)
-        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
-        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
-        if (verbose) {
-          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-        }
-      } else {
-        x_sampled <- x_unique
-      }
-      
-      if (nrow(x_sampled) <= 5 || nrow(x_sampled) < k) {
-        return(list(centroids = NULL, valid = FALSE))
-      }
-      
-      t0 <- Sys.time()
-      clust_sampled <- genieclust::genie(x_sampled, k = k, gini_threshold = gini_threshold)
-      if (verbose) {
-        message(sprintf("  genieclust::genie: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      # Compute centroids
-      centroids <- lapply(1:k, function(j) {
-        pts <- x_sampled[clust_sampled == j, , drop = FALSE]
-        if (nrow(pts) == 0) {
-          colMeans(x_sampled)
-        } else {
-          colMeans(pts)
-        }
+      labels <- genieclust::genie(x_s, k = k, gini_threshold = gini_threshold)
+      if (verbose) message(sprintf("  [GenieCDist Fit] genie on %d rows. %.3f s", nrow(x_s), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      centroids <- lapply(seq_len(k), function(j) {
+        pts <- x_s[labels == j, , drop = FALSE]
+        colMeans(if (nrow(pts) == 0) x_s else pts)
       })
-      
-      if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[Genie Centroid Dist Fit] Completed in %.3f seconds", as.numeric(elapsed)))
-      }
       list(centroids = centroids, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
-    }, error = function(e) {
-      if (verbose) {
-        message(sprintf("[Genie Centroid Dist Fit] Failed: %s", conditionMessage(e)))
-      }
-      list(centroids = NULL, valid = FALSE)
-    })
+    }, error = function(e) list(centroids = NULL, valid = FALSE))
   },
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    verbose <- is_verbose()
-    if (is.null(state) || !state$valid || is.null(state$centroids)) {
-      if (verbose) {
-        message("[Genie Centroid Dist Apply] Skipped because fitted state is invalid or NULL.")
-      }
+    if (is.null(state) || !isTRUE(state$valid) || is.null(state$centroids))
       return(rep(0, nrow(data)))
-    }
-    x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0
-    storage.mode(x_test) <- "double"
-    
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
-    
-    if (is.null(state$preds_cache)) {
-      preds <- lapply(state$centroids, function(centroid) {
-        sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
-      })
-      dists <- preds[[comp_idx]]
-    } else {
-      x_key <- digest::digest(x_test, algo = "xxhash64")
-      if (exists(x_key, envir = state$preds_cache)) {
-        preds <- get(x_key, envir = state$preds_cache)
-      } else {
-        preds <- lapply(state$centroids, function(centroid) {
-          sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
-        })
-        assign(x_key, preds, envir = state$preds_cache)
-      }
-      dists <- preds[[comp_idx]]
-    }
-    
-    dists
+    x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    compute_dists <- function() lapply(state$centroids, function(c) sqrt(rowSums(sweep(x_test, 2, c, "-")^2)))
+    if (is.null(state$preds_cache)) return(compute_dists()[[comp_idx]])
+    key <- digest::digest(x_test, algo = "xxhash64")
+    if (!exists(key, envir = state$preds_cache)) assign(key, compute_dists(), envir = state$preds_cache)
+    get(key, envir = state$preds_cache)[[comp_idx]]
   },
   name_generator = function(gene) .gene_col_name(gene, "gncd")
 )
 
 # Lumbermark Centroid Distance
-evo_transformers$lumbermark_centroid_dist <- create_transformer(
+ evo_transformers$lumbermark_centroid_dist <- create_transformer(
   name = "lumbermark_centroid_dist",
   type = "multivariate",
   input_type = "numeric",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    if (length(input_cols) < 2) {
-      return(list(centroids = NULL, valid = FALSE))
-    }
-    x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
-    storage.mode(x) <- "double"
+    if (length(gene$input_cols) < 2) return(list(centroids = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    
     verbose <- is_verbose()
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[Lumbermark Centroid Dist Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
-    }
-    
     tryCatch({
+      if (!requireNamespace("lumbermark", quietly = TRUE)) stop("lumbermark package is not available")
+      x_s <- .cluster_prep_x(x, min_rows = max(6L, 2L * k), verbose = verbose, tag = "LumbCDist Fit")
+      if (is.null(x_s)) return(list(centroids = NULL, valid = FALSE))
       t0 <- Sys.time()
-      dt_x <- data.table::as.data.table(x)
-      cols <- names(dt_x)
-      dt_x[, first_id := .I[1], by = cols]
-      first_ids <- dt_x$first_id
-      unique_ids <- unique(first_ids)
-      x_unique <- x[unique_ids, , drop = FALSE]
-      if (verbose) {
-        message(sprintf("  Deduplication: %d unique rows out of %d. Elapsed: %.3f s", nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      if (ncol(x) < 2 || nrow(x_unique) <= 5 || nrow(x_unique) < 2 * k) {
-        return(list(centroids = NULL, valid = FALSE))
-      }
-      
-      if (!requireNamespace("lumbermark", quietly = TRUE)) {
-        stop("lumbermark package is not available")
-      }
-      
-      t0 <- Sys.time()
-      # Handle max_clustering_size
-      max_size <- getOption("evoFE.max_clustering_size", 5000)
-      if (is.null(max_size) || !is.numeric(max_size)) max_size <- 0
-      if (max_size > 0 && nrow(x_unique) > max_size) {
-        old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-        on.exit({
-          if (!is.null(old_seed)) {
-            assign(".Random.seed", old_seed, envir = .GlobalEnv)
-          } else {
-            if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
-          }
-        }, add = TRUE)
-        sampled_rows <- sample(seq_len(nrow(x_unique)), max_size)
-        x_sampled <- x_unique[sampled_rows, , drop = FALSE]
-        if (verbose) {
-          message(sprintf("  Downsampling: sampled %d rows from %d. Elapsed: %.3f s", nrow(x_sampled), nrow(x_unique), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-        }
-      } else {
-        x_sampled <- x_unique
-      }
-      
-      if (nrow(x_sampled) <= 5 || nrow(x_sampled) < 2 * k) {
-        return(list(centroids = NULL, valid = FALSE))
-      }
-      
-      t0 <- Sys.time()
-      clust_sampled <- lumbermark::lumbermark(x_sampled, k = k, min_cluster_size = 2)
-      if (verbose) {
-        message(sprintf("  lumbermark::lumbermark: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
-      }
-      
-      # Compute centroids
-      centroids <- lapply(1:k, function(j) {
-        pts <- x_sampled[clust_sampled == j, , drop = FALSE]
-        if (nrow(pts) == 0) {
-          colMeans(x_sampled)
-        } else {
-          colMeans(pts)
-        }
+      labels <- lumbermark::lumbermark(x_s, k = k, min_cluster_size = 2)
+      if (verbose) message(sprintf("  [LumbCDist Fit] lumbermark on %d rows. %.3f s", nrow(x_s), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      centroids <- lapply(seq_len(k), function(j) {
+        pts <- x_s[labels == j, , drop = FALSE]
+        colMeans(if (nrow(pts) == 0) x_s else pts)
       })
-      
-      if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[Lumbermark Centroid Dist Fit] Completed in %.3f seconds", as.numeric(elapsed)))
-      }
       list(centroids = centroids, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
-    }, error = function(e) {
-      if (verbose) {
-        message(sprintf("[Lumbermark Centroid Dist Fit] Failed: %s", conditionMessage(e)))
-      }
-      list(centroids = NULL, valid = FALSE)
-    })
+    }, error = function(e) list(centroids = NULL, valid = FALSE))
   },
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
-    verbose <- is_verbose()
-    if (is.null(state) || !state$valid || is.null(state$centroids)) {
-      if (verbose) {
-        message("[Lumbermark Centroid Dist Apply] Skipped because fitted state is invalid or NULL.")
-      }
+    if (is.null(state) || !isTRUE(state$valid) || is.null(state$centroids))
       return(rep(0, nrow(data)))
-    }
-    x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0
-    storage.mode(x_test) <- "double"
-    
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
-    
-    if (is.null(state$preds_cache)) {
-      centroid <- state$centroids[[comp_idx]]
-      dists <- sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
-    } else {
-      x_key <- digest::digest(x_test, algo = "xxhash64")
-      if (exists(x_key, envir = state$preds_cache)) {
-        preds <- get(x_key, envir = state$preds_cache)
-      } else {
-        preds <- lapply(state$centroids, function(centroid) {
-          sqrt(rowSums(sweep(x_test, 2, centroid, "-")^2))
-        })
-        assign(x_key, preds, envir = state$preds_cache)
-      }
-      dists <- preds[[comp_idx]]
-    }
-    
-    dists
+    x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    compute_dists <- function() lapply(state$centroids, function(c) sqrt(rowSums(sweep(x_test, 2, c, "-")^2)))
+    if (is.null(state$preds_cache)) return(compute_dists()[[comp_idx]])
+    key <- digest::digest(x_test, algo = "xxhash64")
+    if (!exists(key, envir = state$preds_cache)) assign(key, compute_dists(), envir = state$preds_cache)
+    get(key, envir = state$preds_cache)[[comp_idx]]
   },
   name_generator = function(gene) .gene_col_name(gene, "lmcd")
 )
-
-
