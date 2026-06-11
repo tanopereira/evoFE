@@ -16,6 +16,7 @@ create_gene <- function(transformer_name, input_cols) {
     params$comp_idx <- sample(1:6, 1)
   } else if (transformer_name == "genie") {
     params$k <- sample(2:5, 1)
+    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
   } else if (transformer_name == "lumbermark") {
     params$k <- sample(2:5, 1)
   } else if (transformer_name %in% c("quantile_binning", "quantile_binning_cat")) {
@@ -56,7 +57,11 @@ gene_to_formula <- function(gene) {
   } else if (!is.null(gene$params$base)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, paste(gene$input_cols, collapse = ", "))
   } else if (!is.null(gene$params$k)) {
-    sprintf("%s_k%d(%s)", gene$transformer_name, gene$params$k, paste(gene$input_cols, collapse = ", "))
+    if (gene$transformer_name == "genie" && !is.null(gene$params$gini_threshold)) {
+      sprintf("genie_k%d_t%.2f(%s)", gene$params$k, gene$params$gini_threshold, paste(gene$input_cols, collapse = ", "))
+    } else {
+      sprintf("%s_k%d(%s)", gene$transformer_name, gene$params$k, paste(gene$input_cols, collapse = ", "))
+    }
   } else {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   }

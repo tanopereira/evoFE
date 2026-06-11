@@ -74,6 +74,7 @@ test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", 
   # Test Genie
   gene_genie <- create_gene("genie", c("x1", "x2"))
   expect_true(gene_genie$params$k >= 2 && gene_genie$params$k <= 5)
+  expect_true(gene_genie$params$gini_threshold >= 0.1 && gene_genie$params$gini_threshold <= 0.9)
   res_genie <- apply_gene(gene_genie, df, target_col = "target")
   expect_true(gene_genie$output_col %in% names(res_genie$train))
   expect_true(is.factor(res_genie$train[[gene_genie$output_col]]))

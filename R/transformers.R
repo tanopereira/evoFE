@@ -746,11 +746,12 @@ evo_transformers$genie <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
+    gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
     
     verbose <- is_verbose()
     if (verbose) {
       start_time <- Sys.time()
-      message(sprintf("[Genie Fit] Start on %d rows, %d cols. k = %d", nrow(x), ncol(x), k))
+      message(sprintf("[Genie Fit] Start on %d rows, %d cols. k = %d, gini_threshold = %.2f", nrow(x), ncol(x), k, gini_threshold))
     }
     
     tryCatch({
@@ -800,7 +801,7 @@ evo_transformers$genie <- create_transformer(
       }
       
       t0 <- Sys.time()
-      clust_sampled <- genieclust::genie(x_sampled, k = k)
+      clust_sampled <- genieclust::genie(x_sampled, k = k, gini_threshold = gini_threshold)
       if (verbose) {
         message(sprintf("  genieclust::genie: computed clusters. Elapsed: %.3f s", as.numeric(difftime(Sys.time(), t0, units = "secs"))))
       }
@@ -896,7 +897,10 @@ evo_transformers$genie <- create_transformer(
   },
   name_generator = function(gene) {
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
-    paste0("Genie", k, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
+    gt <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
+    gt_str <- format(gt, nsmall = 2, digits = 2)
+    gt_str <- gsub("\\.", "", gt_str)
+    paste0("Genie", k, "_t", gt_str, "(", paste(substr(gene$input_cols, 1, 3), collapse = "_"), ")")
   }
 )
 
