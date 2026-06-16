@@ -151,6 +151,8 @@ is_verbose <- function() {
 
   compute <- function() {
     if (nrow(x_test) == nrow(x_train) && all(x_test == x_train)) {
+      if (verbose)
+        message(sprintf("  [%s] KNN (Fast Path): using cached training predictions. 0.000 s", tag))
       get_preds(seq_len(nrow(x_train)), state)
     } else {
       t0 <- Sys.time()

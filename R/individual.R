@@ -280,6 +280,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         new_col <- weighted_sample(unused, 1)
         old_formula <- gene_to_formula(gene_to_mod)
         gene_to_mod$input_cols <- c(gene_to_mod$input_cols, new_col)
+        gene_to_mod$state <- NULL
         
         t_def <- evo_transformers[[gene_to_mod$transformer_name]]
         gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)

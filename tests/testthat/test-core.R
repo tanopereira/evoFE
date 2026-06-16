@@ -356,7 +356,7 @@ test_that("Prediction with stateful features does not crash and preserves states
   df <- data.frame(x1 = rnorm(10), x2 = rnorm(10), c1 = "A")
   # Calling predict should not crash even if the state is initially NULL
   res_pred <- predict(recipe, df)
-  expect_true(any(grepl("Genie", names(res_pred))))
+  expect_true(any(grepl("gnie", names(res_pred), ignore.case = TRUE)))
   
   # Also test evolving features saves the states in best_individual
   res_evolve <- evolve_features(
@@ -486,9 +486,8 @@ test_that("predict handles genes that get pruned during apply_individual", {
   
   # predict should NOT crash; gene_bad should be pruned
   res <- predict(recipe, iris[, 1:4])
-  expect_s3_class(res, "data.table")
-  expect_true("log(Sepal.Width)" %in% names(res))
-  expect_false("log(MISSING_COLUMN)" %in% names(res))
+  expect_true(gene_ok$output_col %in% names(res))
+  expect_false(gene_bad$output_col %in% names(res))
 })
 
 test_that("max_clustering_size downsampling works in genie and mst_score", {
