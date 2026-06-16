@@ -312,6 +312,7 @@ register_evaluator(
       learning_rate = 0.1,
       logging_level = "Silent",
       allow_writing_files = FALSE,
+      train_dir = tempdir(),
       random_seed = 42
     )
 
@@ -325,6 +326,10 @@ register_evaluator(
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
     }
+
+    # Force no file writing to working directory (required for CRAN compliance)
+    params$allow_writing_files <- FALSE
+    params$train_dir <- tempdir()
 
     # Build validation pool for early stopping when possible
     dval_es <- NULL

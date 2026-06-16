@@ -2,6 +2,7 @@
 
 ## Bug Fixes
 
+* Fixed CatBoost evaluator writing to disk by enforcing `allow_writing_files = FALSE` and redirecting any diagnostic files to `tempdir()`.
 * Fixed genotype corruption issue by treating failing or constant features as lethal mutations during training.
 * Fixed `-Inf` fitness error by passing `allow_prune` to `evaluate_fitness` for pooled features.
 * Fixed `NA` handling in quantile binning.

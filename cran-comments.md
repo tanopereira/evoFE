@@ -15,6 +15,7 @@
 This is an update to the CRAN-published version 0.1.0. Key changes include:
 
 ### Bug Fixes
+- Fixed CatBoost evaluator writing to disk by enforcing `allow_writing_files = FALSE` and redirecting any diagnostic output to `tempdir()`.
 - Fixed genotype corruption, `-Inf` fitness errors, and `NA` handling in quantile binning.
 - Fixed `is_logits` flag in XGBoost custom metric evaluation.
 - Fixed Laplace smoothing in TS-refinement formulation.
