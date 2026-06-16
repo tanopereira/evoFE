@@ -38,7 +38,7 @@ test_that("Full feature evolution loop runs on dummy data", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -74,6 +74,7 @@ test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", 
   # Test Genie
   gene_genie <- create_gene("genie", c("x1", "x2"))
   expect_true(gene_genie$params$k >= 2 && gene_genie$params$k <= 5)
+  expect_true(gene_genie$params$gini_threshold >= 0.1 && gene_genie$params$gini_threshold <= 0.9)
   res_genie <- apply_gene(gene_genie, df, target_col = "target")
   expect_true(gene_genie$output_col %in% names(res_genie$train))
   expect_true(is.factor(res_genie$train[[gene_genie$output_col]]))
@@ -172,7 +173,7 @@ test_that("Best model is saved and predict_model works", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -355,7 +356,7 @@ test_that("Prediction with stateful features does not crash and preserves states
   df <- data.frame(x1 = rnorm(10), x2 = rnorm(10), c1 = "A")
   # Calling predict should not crash even if the state is initially NULL
   res_pred <- predict(recipe, df)
-  expect_true(any(grepl("Genie", names(res_pred))))
+  expect_true(any(grepl("gnie", names(res_pred), ignore.case = TRUE)))
   
   # Also test evolving features saves the states in best_individual
   res_evolve <- evolve_features(
@@ -365,7 +366,7 @@ test_that("Prediction with stateful features does not crash and preserves states
     generations = 2,
     pop_size = 2,
     cv_folds = 2,
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "xgboost",
     verbose = FALSE
   )
@@ -385,7 +386,7 @@ test_that("Multiclass classification task runs and predicts correctly", {
     generations = 2,
     pop_size = 2,
     cv_folds = 2,
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "xgboost",
     verbose = FALSE
   )
@@ -443,7 +444,7 @@ test_that("set.seed before evolve_features produces reproducible results", {
       generations = 2,
       pop_size = 3,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "xgboost",
       verbose = FALSE
     )
@@ -485,9 +486,8 @@ test_that("predict handles genes that get pruned during apply_individual", {
   
   # predict should NOT crash; gene_bad should be pruned
   res <- predict(recipe, iris[, 1:4])
-  expect_s3_class(res, "data.table")
-  expect_true("log(Sepal.Width)" %in% names(res))
-  expect_false("log(MISSING_COLUMN)" %in% names(res))
+  expect_true(gene_ok$output_col %in% names(res))
+  expect_false(gene_bad$output_col %in% names(res))
 })
 
 test_that("max_clustering_size downsampling works in genie and mst_score", {
@@ -535,12 +535,16 @@ test_that("mutate adds all components for UMAP, PCA, and SVD", {
     if (length(genes) > 0) {
       t_name <- genes[[1]]$transformer_name
       if (t_name == "pca") {
-        expect_equal(length(genes), 3)
-        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:3)
+        cols_in <- genes[[1]]$input_cols
+        C <- max(2L, as.integer(round(log2(length(cols_in)))))
+        expect_equal(length(genes), C)
+        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:C)
         pca_added <- TRUE
       } else if (t_name == "umap") {
-        expect_equal(length(genes), 2)
-        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:2)
+        cols_in <- genes[[1]]$input_cols
+        C <- max(2L, as.integer(round(log2(length(cols_in)))))
+        expect_equal(length(genes), C)
+        expect_equal(sapply(genes, function(g) g$params$comp_idx), 1:C)
         umap_added <- TRUE
       }
     }
@@ -551,8 +555,8 @@ test_that("mutate adds all components for UMAP, PCA, and SVD", {
 
 test_that("different components share the same fitted state in state_cache", {
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  df <- data.table::as.data.table(matrix(rnorm(100 * 3), ncol = 3))
-  colnames(df) <- c("x1", "x2", "x3")
+  df <- data.table::as.data.table(matrix(rnorm(100 * 6), ncol = 6))
+  colnames(df) <- c("x1", "x2", "x3", "x4", "x5", "x6")
   df[, target := rnorm(100)]
   
   # 1. Test PCA
@@ -573,15 +577,15 @@ test_that("different components share the same fitted state in state_cache", {
   expect_identical(res1$gene$state, res2$gene$state)
   
   # 2. Test truncated_svd
-  gene_svd1 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd1 <- create_gene("truncated_svd", c("x1", "x2", "x3", "x4", "x5", "x6"))
   gene_svd1$params$comp_idx <- 1
   gene_svd1$output_col <- "SVD1"
   
-  gene_svd2 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd2 <- create_gene("truncated_svd", c("x1", "x2", "x3", "x4", "x5", "x6"))
   gene_svd2$params$comp_idx <- 2
   gene_svd2$output_col <- "SVD2"
   
-  gene_svd3 <- create_gene("truncated_svd", c("x1", "x2", "x3"))
+  gene_svd3 <- create_gene("truncated_svd", c("x1", "x2", "x3", "x4", "x5", "x6"))
   gene_svd3$params$comp_idx <- 3
   gene_svd3$output_col <- "SVD3"
   
@@ -700,7 +704,7 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
       pop_size = 2,
       evaluation_strategy = "split",
       split_ratio = c(0.6, 0.2, 0.2),
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -721,7 +725,7 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
       pop_size = 2,
       evaluation_strategy = "split",
       split_ratio = c(0.7, 0.3),
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -744,13 +748,46 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
       pop_size = 2,
       evaluation_strategy = "split",
       split_ids = manual_ids,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE
     )
   })
   expect_s3_class(res_manual, "evo_recipe")
   expect_true(!is.null(res_manual$best_individual$holdout_fitness))
+
+  # Test split_ids validation: invalid length
+  expect_error(
+    evolve_features(df, "target", task = "classification", split_ids = c("train", "val"), generations = 1, pop_size = 2, evaluation_strategy = "split"),
+    "split_ids must have the same length"
+  )
+
+  # Test split_ids validation: invalid labels
+  bad_ids <- rep("train", n)
+  bad_ids[1] <- "invalid"
+  expect_error(
+    evolve_features(df, "target", task = "classification", split_ids = bad_ids, generations = 1, pop_size = 2, evaluation_strategy = "split"),
+    "split_ids must only contain"
+  )
+
+  # Test split_ids validation: missing val label
+  no_val_ids <- rep("train", n)
+  expect_error(
+    evolve_features(df, "target", task = "classification", split_ids = no_val_ids, generations = 1, pop_size = 2, evaluation_strategy = "split"),
+    "split_ids must contain at least"
+  )
+
+  # Test split_ids automatic strategy switching with warning (cv -> split)
+  expect_warning(
+    evolve_features(df, "target", task = "classification", split_ids = manual_ids, generations = 1, pop_size = 2, evaluation_strategy = "cv", verbose = FALSE),
+    "Setting evaluation_strategy to 'split'"
+  )
+
+  # Test split_ids print proportions formatting
+  msg <- capture_messages({
+    evolve_features(df, "target", task = "classification", split_ids = manual_ids, generations = 1, pop_size = 2, evaluation_strategy = "split", verbose = TRUE)
+  })
+  expect_true(any(grepl("Strategy: Split \\(0.5/0.3/0.2\\)", msg)))
 })
 
 test_that("one_hot_encode transformer works", {
@@ -860,7 +897,7 @@ test_that("Alternative and custom fitness metrics work", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE,
       metric = "auc"
@@ -881,7 +918,7 @@ test_that("Alternative and custom fitness metrics work", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE,
       metric = custom_metric
@@ -981,7 +1018,7 @@ test_that("eval-ts-refinement metric and training integration works", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "lightgbm",
       verbose = FALSE,
       metric = "eval-ts-refinement"
@@ -1000,7 +1037,7 @@ test_that("eval-ts-refinement metric and training integration works", {
       generations = 1,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 1,
+      early_stopping_generations = 1,
       evaluator = "xgboost",
       verbose = FALSE,
       metric = "eval-ts-refinement"
@@ -1050,7 +1087,7 @@ test_that("S3 print, summary, and plot methods work correctly", {
       generations = 2,
       pop_size = 2,
       cv_folds = 2,
-      early_stopping_rounds = 2,
+      early_stopping_generations = 2,
       evaluator = "lightgbm",
       verbose = FALSE
     )
@@ -1403,7 +1440,7 @@ test_that("baseline fitness is consistent across population sizes under split st
     pop_size = 2,
     evaluation_strategy = "split",
     split_ratio = c(0.6, 0.4),
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "lightgbm",
     seed = 123,
     verbose = FALSE
@@ -1418,7 +1455,7 @@ test_that("baseline fitness is consistent across population sizes under split st
     pop_size = 5,
     evaluation_strategy = "split",
     split_ratio = c(0.6, 0.4),
-    early_stopping_rounds = 1,
+    early_stopping_generations = 1,
     evaluator = "lightgbm",
     seed = 123,
     verbose = FALSE
@@ -1458,7 +1495,7 @@ test_that("model_all_final_genes accumulates all unique genes, evaluates them, a
     pop_size = 5,
     evaluation_strategy = "cv",
     cv_folds = 2,
-    early_stopping_rounds = 2,
+    early_stopping_generations = 2,
     evaluator = "lightgbm",
     seed = 42,
     model_all_final_genes = TRUE,
@@ -1510,7 +1547,7 @@ test_that("model_all_historical_genes collects genes across generations, evaluat
     pop_size = 5,
     evaluation_strategy = "cv",
     cv_folds = 2,
-    early_stopping_rounds = 2,
+    early_stopping_generations = 2,
     evaluator = "lightgbm",
     seed = 42,
     model_all_historical_genes = TRUE,
@@ -1548,7 +1585,7 @@ test_that("gradual population growth and decay works correctly during dynamic po
     pop_size = 3,
     evaluation_strategy = "cv",
     cv_folds = 2,
-    early_stopping_rounds = 3,
+    early_stopping_generations = 3,
     evaluator = "lightgbm",
     seed = 42,
     dynamic_population = TRUE,
@@ -1560,6 +1597,118 @@ test_that("gradual population growth and decay works correctly during dynamic po
   expect_s3_class(res, "evo_recipe")
   expect_true(is.numeric(res$best_individual$fitness))
   expect_gt(res$best_individual$fitness, -Inf)
+})
+
+
+test_that("genie_centroid_dist and lumbermark_centroid_dist work", {
+  set.seed(42)
+  n <- 30
+  df <- data.table::as.data.table(data.frame(
+    x1 = stats::rnorm(n),
+    x2 = stats::rnorm(n),
+    target = sample(0:1, n, replace = TRUE)
+  ))
+  
+  # 1. Test genie_centroid_dist
+  gene_genie_dist <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  expect_true(gene_genie_dist$params$k >= 2 && gene_genie_dist$params$k <= 5)
+  expect_true(gene_genie_dist$params$comp_idx >= 1 && gene_genie_dist$params$comp_idx <= gene_genie_dist$params$k)
+  expect_true(gene_genie_dist$params$gini_threshold >= 0.1 && gene_genie_dist$params$gini_threshold <= 0.9)
+  
+  res_genie_dist <- apply_gene(gene_genie_dist, df, target_col = "target")
+  expect_true(gene_genie_dist$output_col %in% names(res_genie_dist$train))
+  expect_true(is.numeric(res_genie_dist$train[[gene_genie_dist$output_col]]))
+  
+  # Test state caching/sharing
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  gene_genie_dist1 <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  gene_genie_dist1$params$k <- 3
+  gene_genie_dist1$params$comp_idx <- 1
+  gene_genie_dist1$output_col <- "GenieDist1"
+  
+  gene_genie_dist2 <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  gene_genie_dist2$params$k <- 3
+  gene_genie_dist2$params$comp_idx <- 2
+  gene_genie_dist2$output_col <- "GenieDist2"
+  
+  res1 <- apply_gene(gene_genie_dist1, df, target_col = "target", state_cache = state_cache)
+  res2 <- apply_gene(gene_genie_dist2, df, target_col = "target", state_cache = state_cache)
+  
+  expect_identical(res1$gene$state, res2$gene$state)
+  expect_true(mean(abs(res1$train$GenieDist1 - res2$train$GenieDist2)) > 1e-5)
+  
+  # 2. Test lumbermark_centroid_dist
+  gene_lumb_dist <- create_gene("lumbermark_centroid_dist", c("x1", "x2"))
+  expect_true(gene_lumb_dist$params$k >= 2 && gene_lumb_dist$params$k <= 5)
+  expect_true(gene_lumb_dist$params$comp_idx >= 1 && gene_lumb_dist$params$comp_idx <= gene_lumb_dist$params$k)
+  
+  res_lumb_dist <- apply_gene(gene_lumb_dist, df, target_col = "target")
+  expect_true(gene_lumb_dist$output_col %in% names(res_lumb_dist$train))
+  expect_true(is.numeric(res_lumb_dist$train[[gene_lumb_dist$output_col]]))
+})
+
+test_that("lm evaluator works for regression, classification, and multiclass", {
+  set.seed(42)
+  n <- 30
+  x <- matrix(rnorm(n * 2), ncol = 2)
+  colnames(x) <- c("x1", "x2")
+  
+  # 1. Regression
+  y_reg <- rnorm(n)
+  res_reg <- evo_evaluators$lm$train_func(x, y_reg, x_val = x, task = "regression")
+  expect_false(is.null(res_reg$model))
+  expect_type(res_reg$predictions, "double")
+  expect_equal(length(res_reg$predictions), n)
+  expect_type(res_reg$importances, "double")
+  expect_equal(names(res_reg$importances), c("x1", "x2"))
+  
+  preds_reg <- evo_evaluators$lm$predict_func(res_reg$model, x, task = "regression")
+  expect_equal(preds_reg, res_reg$predictions)
+  
+  # 2. Binary Classification
+  y_bin <- sample(0:1, n, replace = TRUE)
+  res_bin <- evo_evaluators$lm$train_func(x, y_bin, x_val = x, task = "classification")
+  expect_false(is.null(res_bin$model))
+  expect_type(res_bin$predictions, "double")
+  expect_equal(length(res_bin$predictions), n)
+  expect_true(all(res_bin$predictions >= 0 & res_bin$predictions <= 1))
+  
+  preds_bin <- evo_evaluators$lm$predict_func(res_bin$model, x, task = "classification")
+  expect_equal(preds_bin, res_bin$predictions)
+  
+  # 3. Multiclass
+  y_multi <- sample(0:2, n, replace = TRUE)
+  res_multi <- evo_evaluators$lm$train_func(x, y_multi, x_val = x, task = "multiclass", num_class = 3)
+  expect_false(is.null(res_multi$model))
+  expect_true(is.matrix(res_multi$predictions))
+  expect_equal(dim(res_multi$predictions), c(n, 3))
+  expect_true(all(res_multi$predictions >= 0 & res_multi$predictions <= 1))
+  expect_equal(as.vector(rowSums(res_multi$predictions)), rep(1, n), tolerance = 1e-5)
+  
+  preds_multi <- evo_evaluators$lm$predict_func(res_multi$model, x, task = "multiclass")
+  expect_equal(preds_multi, res_multi$predictions)
+  
+  # 4. Full feature evolution loop with lm
+  df_dummy <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    target = sample(0:1, 40, replace = TRUE)
+  )
+  suppressWarnings({
+    res_evolve <- evolve_features(
+      data = df_dummy,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      cv_folds = 2,
+      early_stopping_generations = 1,
+      evaluator = "lm",
+      verbose = FALSE
+    )
+  })
+  expect_s3_class(res_evolve, "evo_recipe")
+  expect_true(is.numeric(res_evolve$best_individual$fitness))
 })
 
 

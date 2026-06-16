@@ -9,14 +9,20 @@
 create_gene <- function(transformer_name, input_cols) {
   transformer <- evo_transformers[[transformer_name]]
   params <- list()
-  if (transformer_name %in% c("pca", "truncated_svd")) {
-    params$comp_idx <- sample(1:3, 1)
-  } else if (transformer_name == "umap") {
-    params$comp_idx <- sample(1:2, 1)
+  if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
+    C <- max(2L, as.integer(round(log2(length(input_cols)))))
+    params$comp_idx <- sample(1:C, 1)
+  } else if (transformer_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+    params$k <- sample(2:5, 1)
+    params$comp_idx <- sample(1:params$k, 1)
+    if (transformer_name == "genie_centroid_dist") {
+      params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
+    }
   } else if (transformer_name == "one_hot_encode") {
     params$comp_idx <- sample(1:6, 1)
   } else if (transformer_name == "genie") {
     params$k <- sample(2:5, 1)
+    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
   } else if (transformer_name == "lumbermark") {
     params$k <- sample(2:5, 1)
   } else if (transformer_name %in% c("quantile_binning", "quantile_binning_cat")) {
@@ -41,25 +47,44 @@ create_gene <- function(transformer_name, input_cols) {
 #' Convert a gene to a formula string
 #'
 #' @param gene A gene list
+#' @param truncate Logical. If TRUE (default), long list of input columns is
+#'   truncated for display.
 #' @return A character string representing the gene as a human-readable
 #'   formula, e.g. \code{"log(col1)"} or \code{"pca2(col1, col2)"}.
 #' @export
-gene_to_formula <- function(gene) {
+gene_to_formula <- function(gene, truncate = TRUE) {
+  cols <- gene$input_cols
+  if (truncate && length(cols) > 3) {
+    cols_str <- paste0(paste(cols[1:3], collapse = ", "), ", ... + ", length(cols) - 3, " more")
+  } else {
+    cols_str <- paste(cols, collapse = ", ")
+  }
+  
   if (gene$transformer_name == "one_hot_encode") {
     comp_str <- if (gene$params$comp_idx == 6) "other" else as.character(gene$params$comp_idx)
-    sprintf("ohe_%s(%s)", comp_str, paste(gene$input_cols, collapse = ", "))
+    sprintf("ohe_%s(%s)", comp_str, cols_str)
   } else if (!is.null(gene$params$component)) {
-    sprintf("%s_%s(%s)", gene$transformer_name, gene$params$component, paste(gene$input_cols, collapse = ", "))
+    sprintf("%s_%s(%s)", gene$transformer_name, gene$params$component, cols_str)
   } else if (!is.null(gene$params$comp_idx)) {
-    sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, paste(gene$input_cols, collapse = ", "))
+    if (gene$transformer_name == "genie_centroid_dist") {
+      sprintf("genie_cdist%d_k%d_t%.2f(%s)", gene$params$comp_idx, gene$params$k, gene$params$gini_threshold, cols_str)
+    } else if (gene$transformer_name == "lumbermark_centroid_dist") {
+      sprintf("lumb_cdist%d_k%d(%s)", gene$params$comp_idx, gene$params$k, cols_str)
+    } else {
+      sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, cols_str)
+    }
   } else if (!is.null(gene$params$Q)) {
-    sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, paste(gene$input_cols, collapse = ", "))
+    sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, cols_str)
   } else if (!is.null(gene$params$base)) {
-    sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, paste(gene$input_cols, collapse = ", "))
+    sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, cols_str)
   } else if (!is.null(gene$params$k)) {
-    sprintf("%s_k%d(%s)", gene$transformer_name, gene$params$k, paste(gene$input_cols, collapse = ", "))
+    if (gene$transformer_name == "genie" && !is.null(gene$params$gini_threshold)) {
+      sprintf("genie_k%d_t%.2f(%s)", gene$params$k, gene$params$gini_threshold, cols_str)
+    } else {
+      sprintf("%s_k%d(%s)", gene$transformer_name, gene$params$k, cols_str)
+    }
   } else {
-    sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
+    sprintf("%s(%s)", gene$transformer_name, cols_str)
   }
 }
 
@@ -71,10 +96,10 @@ gene_to_formula <- function(gene) {
 #'   component index is omitted so that all components share one cache key.
 #' @export
 gene_to_state_formula <- function(gene) {
-  if (gene$transformer_name %in% c("pca", "truncated_svd", "umap")) {
+  if (gene$transformer_name %in% c("pca", "truncated_svd", "umap", "genie_centroid_dist", "lumbermark_centroid_dist")) {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   } else {
-    gene_to_formula(gene)
+    gene_to_formula(gene, truncate = FALSE)
   }
 }
 
@@ -123,10 +148,10 @@ topological_sort_genes <- function(genes, original_cols) {
 #' @param genes List of genes
 #' @param numeric_cols Vector of numeric column names
 #' @param categorical_cols Vector of categorical column names
-#' @return An \code{evo_individual} S3 object: a list with elements
-#'   \code{genes} (topologically sorted), \code{numeric_cols},
-#'   \code{categorical_cols}, and \code{fitness} (initialised to
-#'   \code{NA_real_}).
+#' @return An \code{evo_individual} S3 object:
+#'   a list with elements \code{genes} (topologically sorted),
+#'   \code{numeric_cols}, \code{categorical_cols}, and \code{fitness}
+#'   (initialised to \code{NA_real_}).
 #' @export
 create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0)) {
   original_cols <- c(numeric_cols, categorical_cols)
@@ -154,10 +179,13 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #'   been evaluated in a previous generation and are safe for chaining. When
 #'   NULL (default), all existing gene outputs are available. Pass character(0)
 #'   to block all chaining (e.g. during initialization).
-#' @return An \code{evo_individual} with the mutation applied (gene added,
-#'   removed, or modified) and \code{fitness} reset to \code{NA_real_}.
+#' @param allowed_transformers A character vector of allowed transformer names,
+#'   or NULL/"all" to allow all.
+#' @return An \code{evo_individual} with the mutation applied
+#'   (gene added, removed, or modified) and \code{fitness} reset
+#'   to \code{NA_real_}.
 #' @export
-mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL) {
+mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL) {
   if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0) return(ind)
   
   # Categorize existing gene outputs by type, restricted to tested genes
@@ -182,8 +210,17 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     if (length(cols) == 1) return(rep(cols, size))
     if (length(importances) == 0) return(sample(cols, size, replace = replace))
     
+    # Normalize importances so they sum to 1 to ensure scale invariance across models
+    if (length(importances) > 0) {
+      importances[!is.finite(importances) | importances < 0] <- 0
+      imp_sum <- sum(importances, na.rm = TRUE)
+      if (imp_sum > 0) {
+        importances <- importances / imp_sum
+      }
+    }
+    
     # Baseline for missing features: minimum of known, or 0.01 (handling NAs/non-finites safely)
-    clean_importances <- importances[!is.na(importances) & is.finite(importances)]
+    clean_importances <- importances[!is.na(importances) & is.finite(importances) & importances > 0]
     baseline <- if (length(clean_importances) > 0) min(clean_importances) else 0.01
     
     weights <- sapply(cols, function(c) {
@@ -248,6 +285,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         new_col <- weighted_sample(unused, 1)
         old_formula <- gene_to_formula(gene_to_mod)
         gene_to_mod$input_cols <- c(gene_to_mod$input_cols, new_col)
+        gene_to_mod$state <- NULL
         
         t_def <- evo_transformers[[gene_to_mod$transformer_name]]
         gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
@@ -274,13 +312,18 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
   
   if (mut_type == 3) {
     # Add a random gene
-    allowed_transformers <- names(evo_transformers)
-    if (task == "multiclass") {
-      allowed_transformers <- setdiff(allowed_transformers, c("target_encode"))
+    if (is.null(allowed_transformers)) {
+      allowed_t <- names(evo_transformers)
     } else {
-      allowed_transformers <- setdiff(allowed_transformers, c("target_encode_multiclass"))
+      allowed_t <- allowed_transformers
     }
-    t_name <- sample(allowed_transformers, 1)
+    if (task == "multiclass") {
+      allowed_t <- setdiff(allowed_t, c("target_encode"))
+    } else {
+      allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
+    }
+    if (length(allowed_t) == 0) allowed_t <- names(evo_transformers)
+    t_name <- sample(allowed_t, 1)
     t_def <- evo_transformers[[t_name]]
     
     avail_num <- c(ind$numeric_cols, gene_num)
@@ -332,17 +375,22 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     # If the transformer is multi-component, add all components
     new_genes_to_add <- list()
-    if (t_name %in% c("pca", "truncated_svd")) {
-      for (comp in 1:3) {
-        g <- create_gene(t_name, cols)
-        g$params$comp_idx <- comp
-        g$output_col <- t_def$name_generator(g)
-        new_genes_to_add <- c(new_genes_to_add, list(g))
+    if (t_name %in% c("pca", "truncated_svd", "umap", "genie_centroid_dist", "lumbermark_centroid_dist")) {
+      C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+        sample(2:5, 1)
+      } else {
+        max(2L, as.integer(round(log2(length(cols)))))
       }
-    } else if (t_name == "umap") {
-      for (comp in 1:2) {
+      
+      gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
+      
+      for (comp in 1:C) {
         g <- create_gene(t_name, cols)
         g$params$comp_idx <- comp
+        if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+          g$params$k <- C
+          if (!is.null(gini_threshold)) g$params$gini_threshold <- gini_threshold
+        }
         g$output_col <- t_def$name_generator(g)
         new_genes_to_add <- c(new_genes_to_add, list(g))
       }

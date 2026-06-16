@@ -10,7 +10,8 @@ initialize_population(
   categorical_cols,
   initial_genes = 2,
   task = "classification",
-  importances = NULL
+  importances = NULL,
+  allowed_transformers = NULL
 )
 }
 \arguments{
@@ -25,11 +26,14 @@ initialize_population(
 \item{task}{Task type ("classification", "regression", or "multiclass").}
 
 \item{importances}{Optional numeric vector of feature importances.}
+
+\item{allowed_transformers}{A character vector of allowed transformer names,
+or NULL/"all" to allow all.}
 }
 \value{
 A list of \code{evo_individual} objects of length \code{pop_size}.
-  The first individual is a baseline with no genes; the remaining individuals
-  each carry \code{initial_genes} randomly generated genes.
+  The first individual is a baseline with no genes; the remaining
+  individuals each carry \code{initial_genes} randomly generated genes.
 }
 \description{
 Initialize a population

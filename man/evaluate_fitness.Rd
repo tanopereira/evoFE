@@ -38,7 +38,7 @@ evaluate_fitness(
 
 \item{evaluation_strategy}{Character string, either "cv" (cross-validation) or "split" (train/validation split).}
 
-\item{split_ids}{Optional vector of pre-defined split assignments (e.g. "train", "val", "holdout").}
+\item{split_ids}{Optional vector of pre-defined split assignments (e.g. \code{c("train", "train", "val", "holdout", "train")}). Must have the same length as the number of rows in \code{data} and contain only "train", "val", or "holdout" labels.}
 
 \item{shared_splits}{Optional list of shared data.table splits for in-place caching.}
 

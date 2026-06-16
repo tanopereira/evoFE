@@ -3,6 +3,33 @@
 #' @export
 evo_evaluators <- new.env(parent = emptyenv())
 
+# Internal helper to unify SHAP values across models
+.extract_shap_importances <- function(sh, num_feats, feature_names) {
+  if (length(dim(sh)) == 3) {
+    # 3D Array: [N, num_classes, num_feats + 1] (CatBoost/XGBoost Multiclass)
+    sh_feats <- sh[, , 1:num_feats, drop = FALSE]
+    sh_sum <- apply(abs(sh_feats), c(1, 3), sum)
+    imp <- colMeans(sh_sum)
+  } else if (length(dim(sh)) == 2) {
+    if (ncol(sh) == num_feats + 1) {
+      # 2D Matrix: [N, num_feats + 1] (Regression/Binary)
+      sh_feats <- sh[, 1:num_feats, drop = FALSE]
+      imp <- colMeans(abs(sh_feats))
+    } else {
+      # 2D Matrix: [N, (num_feats + 1) * num_classes] (LightGBM Multiclass)
+      num_classes <- ncol(sh) / (num_feats + 1)
+      imp <- numeric(num_feats)
+      for (c in seq_len(num_classes)) {
+        cols <- (c - 1) * (num_feats + 1) + seq_len(num_feats)
+        sh_feats <- sh[, cols, drop = FALSE]
+        imp <- imp + colMeans(abs(sh_feats))
+      }
+    }
+  } else {
+    imp <- numeric(num_feats)
+  }
+  stats::setNames(as.numeric(imp), feature_names)
+}
 #' Register a model evaluator
 #'
 #' @param name Name of the evaluator.
@@ -20,11 +47,14 @@ evo_evaluators <- new.env(parent = emptyenv())
 #' # Register a simple mock evaluator
 #' register_evaluator(
 #'   "mock_eval",
-#'   train_func = function(x_train, y_train, x_val = NULL, task = "regression", ...) {
+#'   train_func = function(x_train, y_train, x_val = NULL,
+#'                         task = "regression", ...) {
 #'     list(
 #'       model = list(weights = colMeans(x_train)),
 #'       predictions = if (!is.null(x_val)) rowMeans(x_val) else NULL,
-#'       importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+#'       importances = stats::setNames(
+#'         rep(1, ncol(x_train)), colnames(x_train)
+#'       )
 #'     )
 #'   },
 #'   predict_func = function(model, x_new, task, ...) {
@@ -61,7 +91,8 @@ register_evaluator(
       num_leaves = 15,
       learning_rate = 0.1,
       verbose = -1,
-      num_threads = threads
+      num_threads = threads,
+      seed = 42
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -111,23 +142,35 @@ register_evaluator(
       )
     })
 
-    preds <- if (!is.null(x_val)) stats::predict(model, x_val) else NULL
+    preds <- if (!is.null(x_val)) {
+      if (!is.null(model$best_iter) && model$best_iter > 0) {
+        stats::predict(model, x_val, num_iteration = model$best_iter)
+      } else {
+        stats::predict(model, x_val)
+      }
+    } else {
+      NULL
+    }
 
-    imp <- tryCatch(
+    importances <- tryCatch(
       {
-        lightgbm::lgb.importance(model, percentage = TRUE)
+        sh <- stats::predict(model, as.matrix(x_train), type = "contrib")
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {
-        data.frame(Feature = character(), Gain = numeric())
+        NULL
       }
     )
-    importances <- if (nrow(imp) > 0) stats::setNames(imp$Gain, imp$Feature) else NULL
 
     rm(dtrain)
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
-    stats::predict(model, x_new)
+    if (!is.null(model$best_iter) && model$best_iter > 0) {
+      stats::predict(model, x_new, num_iteration = model$best_iter)
+    } else {
+      stats::predict(model, x_new)
+    }
   }
 )
 
@@ -151,7 +194,8 @@ register_evaluator(
       nthread = threads,
       max_depth = 6,
       eta = 0.1,
-      min_child_weight = 1
+      min_child_weight = 1,
+      seed = 42
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -207,15 +251,26 @@ register_evaluator(
 
     preds <- if (!is.null(x_val)) {
       dval <- xgboost::xgb.DMatrix(data = x_val)
-      p <- stats::predict(model, dval)
+      p <- if (!is.null(model$best_iteration) && model$best_iteration >= 1) {
+        stats::predict(model, dval, iterationrange = c(1, model$best_iteration + 1))
+      } else {
+        stats::predict(model, dval)
+      }
       rm(dval)
       p
     } else {
       NULL
     }
 
-    imp <- xgboost::xgb.importance(model = model)
-    importances <- if (nrow(imp) > 0) stats::setNames(imp$Gain, imp$Feature) else NULL
+    importances <- tryCatch(
+      {
+        sh <- stats::predict(model, dtrain, predcontrib = TRUE)
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
+      },
+      error = function(e) {
+        NULL
+      }
+    )
 
     rm(dtrain)
     if (!is.null(dval_metric)) rm(dval_metric)
@@ -223,7 +278,11 @@ register_evaluator(
   },
   predict_func = function(model, x_new, task, ...) {
     dmatrix <- xgboost::xgb.DMatrix(data = x_new)
-    preds <- stats::predict(model, dmatrix)
+    preds <- if (!is.null(model$best_iteration) && model$best_iteration >= 1) {
+      stats::predict(model, dmatrix, iterationrange = c(1, model$best_iteration + 1))
+    } else {
+      stats::predict(model, dmatrix)
+    }
     rm(dmatrix)
     preds
   }
@@ -252,17 +311,32 @@ register_evaluator(
       iterations = nrounds,
       learning_rate = 0.1,
       logging_level = "Silent",
-      allow_writing_files = FALSE
+      allow_writing_files = FALSE,
+      random_seed = 42
     )
 
     extra_params <- list(...)
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt")
+    y_val            <- extra_params$y_val
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
+                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
     }
 
-    model <- suppressWarnings(catboost::catboost.train(dtrain, params = params))
+    # Build validation pool for early stopping when possible
+    dval_es <- NULL
+    if (!is.null(x_val) && !is.null(y_val) && !is.null(early_stopping_rounds) && early_stopping_rounds > 0) {
+      df_val_es <- as.data.frame(x_val)
+      df_val_es[] <- lapply(df_val_es, as.numeric)
+      dval_es <- catboost::catboost.load_pool(data = df_val_es, label = y_val)
+      params$od_type <- "Iter"
+      params$od_wait <- early_stopping_rounds
+    }
+
+    model <- suppressWarnings(catboost::catboost.train(dtrain, test_pool = dval_es, params = params))
 
     preds <- NULL
     if (!is.null(x_val)) {
@@ -283,8 +357,8 @@ register_evaluator(
     # Fetch feature importance and map column names
     importances <- tryCatch(
       {
-        scores <- catboost::catboost.get_feature_importance(model)
-        stats::setNames(as.numeric(scores), colnames(x_train))
+        sh <- catboost::catboost.get_feature_importance(model, pool = dtrain, type = "ShapValues")
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {
         NULL
@@ -309,5 +383,88 @@ register_evaluator(
       # The predict_model function checks and reshapes as well.
     }
     preds
+  }
+)
+
+## 4. LM/GLM Evaluator (Penalized)
+register_evaluator(
+  "lm",
+  train_func = function(x_train, y_train, x_val = NULL, task = "regression",
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+    if (!requireNamespace("glmnet", quietly = TRUE)) {
+      stop("The 'glmnet' package is required for the penalized lm evaluator.")
+    }
+    
+    x_mat <- as.matrix(x_train)
+    all_feats <- colnames(x_train)
+    nfolds <- min(5, nrow(x_mat))
+    
+    # Precompute standard deviations to make importances scale-invariant
+    sd_x <- apply(x_mat, 2, stats::sd, na.rm = TRUE)
+    sd_x[is.na(sd_x) | sd_x == 0] <- 1
+    
+    if (task == "regression") {
+      model <- glmnet::cv.glmnet(x_mat, y_train, family = "gaussian", alpha = 0.5, nfolds = nfolds)
+      
+      preds <- NULL
+      if (!is.null(x_val)) {
+        preds <- as.numeric(stats::predict(model, newx = as.matrix(x_val), s = "lambda.min"))
+      }
+      
+      coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
+      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+      importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+      importances <- importances * sd_x[names(importances)]
+      
+    } else if (task == "classification") {
+      model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "binomial", alpha = 0.5, nfolds = nfolds)
+      
+      preds <- NULL
+      if (!is.null(x_val)) {
+        preds <- as.numeric(stats::predict(model, newx = as.matrix(x_val), s = "lambda.min", type = "response"))
+      }
+      
+      coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
+      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+      importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+      importances <- importances * sd_x[names(importances)]
+      
+    } else if (task == "multiclass") {
+      model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "multinomial", alpha = 0.5, nfolds = nfolds)
+      
+      preds <- NULL
+      if (!is.null(x_val)) {
+        p_array <- stats::predict(model, newx = as.matrix(x_val), s = "lambda.min", type = "response")
+        preds <- p_array[, , 1]
+      }
+      
+      coefs_list <- stats::coef(model, s = "lambda.min")
+      imp_matrix <- sapply(coefs_list, function(c_mat) {
+        c_mat <- as.matrix(c_mat)
+        abs(c_mat[rownames(c_mat) != "(Intercept)", , drop = FALSE])
+      })
+      importances <- rowMeans(imp_matrix)
+      importances <- stats::setNames(importances, rownames(imp_matrix))
+      importances <- importances * sd_x[names(importances)]
+    }
+    
+    # Ensure missing names map to 0
+    missing <- setdiff(all_feats, names(importances))
+    if (length(missing) > 0) {
+      importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
+    }
+    
+    list(model = model, predictions = preds, importances = importances)
+  },
+  predict_func = function(model, x_new, task, ...) {
+    x_mat <- as.matrix(x_new)
+    if (task == "regression") {
+      as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min"))
+    } else if (task == "classification") {
+      as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min", type = "response"))
+    } else if (task == "multiclass") {
+      p_array <- stats::predict(model, newx = x_mat, s = "lambda.min", type = "response")
+      p_array[, , 1]
+    }
   }
 )

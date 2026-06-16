@@ -184,7 +184,7 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param task "classification" or "regression".
 #' @param cv_folds Number of cross-validation folds.
 #' @param evaluation_strategy Character string, either "cv" (cross-validation) or "split" (train/validation split).
-#' @param split_ids Optional vector of pre-defined split assignments (e.g. "train", "val", "holdout").
+#' @param split_ids Optional vector of pre-defined split assignments (e.g. \code{c("train", "train", "val", "holdout", "train")}). Must have the same length as the number of rows in \code{data} and contain only "train", "val", or "holdout" labels.
 #' @param shared_splits Optional list of shared data.table splits for in-place caching.
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
 #' @param fold_ids Optional vector of pre-defined fold assignments.
@@ -272,8 +272,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     preds <- res_model$predictions
     
     # Store importances (single fold)
-    if (!is.null(res_model$importances)) {
-      ind$importances <- res_model$importances
+    if (!is.null(res_model$importances) && length(res_model$importances) > 0) {
+      imp <- res_model$importances
+      imp_sum <- sum(imp, na.rm = TRUE)
+      if (imp_sum > 0) {
+        imp <- imp / imp_sum
+        threshold <- getOption("evoFE.importance_threshold", 0.001)
+        imp[imp < threshold] <- 0
+      }
+      ind$importances <- imp
     } else {
       ind$importances <- numeric(0)
     }
@@ -389,6 +396,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         })
         mean(vals)
       })
+      
+      imp_sum <- sum(avg_imp, na.rm = TRUE)
+      if (imp_sum > 0) {
+        avg_imp <- avg_imp / imp_sum
+        threshold <- getOption("evoFE.importance_threshold", 0.001)
+        avg_imp[avg_imp < threshold] <- 0
+      }
       ind$importances <- avg_imp
     } else {
       ind$importances <- numeric(0)
@@ -611,6 +625,9 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
       z <- log(p / (1 - p))
     }
+    # Clamp infinite values and impute NA/NaN
+    z[is.na(z) | is.nan(z)] <- 0
+    z <- pmax(pmin(z, 35), -35)
     
     # Laplace smooth the labels based on true class count
     N1 <- sum(y_true == 1)
@@ -652,6 +669,9 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
       z <- log(p)
     }
+    # Clamp infinite values and impute NA/NaN
+    z[is.na(z) | is.nan(z)] <- 0
+    z <- pmax(pmin(z, 35), -35)
     
     # Laplace smooth labels based on class-count sweep formulation
     n <- length(y_true)

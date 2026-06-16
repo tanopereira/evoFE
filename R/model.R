@@ -14,9 +14,9 @@
 #' @param num_class Number of classes (required for multiclass).
 #' @param nrounds Number of boosting rounds.
 #' @param ... Additional arguments passed to the evaluator training function.
-#' @return A list with elements \code{model}, \code{predictions} (NULL when
-#'   \code{x_val} is NULL), and \code{importances} (named numeric vector or
-#'   NULL).
+#' @return A list with elements \code{model},
+#'   \code{predictions} (NULL when \code{x_val} is NULL),
+#'   and \code{importances} (named numeric vector or NULL).
 #' @keywords internal
 train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                         task = "classification", evaluator = "lightgbm",

@@ -14,7 +14,7 @@ evolve_features(
   evaluation_strategy = "cv",
   split_ratio = c(0.6, 0.2, 0.2),
   split_ids = NULL,
-  early_stopping_rounds = 3,
+  early_stopping_generations = 3,
   evaluator = "lightgbm",
   dynamic_population = TRUE,
   dynamic_population_growth_rate = 1.5,
@@ -26,6 +26,7 @@ evolve_features(
   metric = "default",
   model_all_final_genes = FALSE,
   model_all_historical_genes = FALSE,
+  allowed_transformers = "all",
   ...
 )
 }
@@ -44,38 +45,61 @@ evolve_features(
 
 \item{evaluation_strategy}{"cv" or "split". Strategy to evaluate candidate recipes.}
 
-\item{split_ratio}{A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).}
+\item{split_ratio}{A numeric vector of length 2 or 3 defining
+train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).}
 
-\item{split_ids}{An optional character vector of split assignments (e.g. "train", "val", "holdout").}
+\item{split_ids}{An optional character vector of split assignments (e.g.
+\code{c("train", "train", "val", "holdout", "train")}). Must have the same
+length as the number of rows in \code{data} and contain only "train", "val",
+or "holdout" labels (with at least "train" and "val" present). When
+provided, \code{evaluation_strategy} is automatically set to "split" and the
+actual split proportions are computed from the vector.}
 
-\item{early_stopping_rounds}{Stop if fitness doesn't improve for this many generations}
+\item{early_stopping_generations}{Stop if fitness doesn't improve for this
+many generations}
 
-\item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
+\item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a
+custom registered evaluator name).}
 
-\item{dynamic_population}{Logical. If TRUE, population expands dynamically during stagnation.}
+\item{dynamic_population}{Logical. If TRUE, population expands dynamically
+during stagnation.}
 
-\item{dynamic_population_growth_rate}{Growth rate multiplier for population expansion during stagnation (default 1.5).}
+\item{dynamic_population_growth_rate}{Growth rate multiplier for population
+expansion during stagnation (default 1.5).}
 
-\item{dynamic_population_decay_rate}{Decay rate multiplier for population contraction back to baseline (default 0.7).}
+\item{dynamic_population_decay_rate}{Decay rate multiplier for population
+contraction back to baseline (default 0.7).}
 
-\item{crossover_type}{Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"}
+\item{crossover_type}{Crossover type: "both" (default, 50\% random / 50\%
+union), "random", or "union"}
 
 \item{threads}{Number of threads to use for parallel execution (default 2)}
 
-\item{max_clustering_size}{Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)}
+\item{max_clustering_size}{Maximum unique training rows to cluster (default
+5000, 0/NULL for unlimited)}
 
 \item{verbose}{Logical. If TRUE, prints progress.}
 
-\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
+\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a
+custom function).}
 
-\item{model_all_final_genes}{Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.}
+\item{model_all_final_genes}{Logical. If TRUE, the final model is trained using
+the union of all unique genes evolved in the final population, rather than
+only the best individual's genes.}
 
-\item{model_all_historical_genes}{Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.}
+\item{model_all_historical_genes}{Logical. If TRUE, the final model is trained
+using the union of all unique genes evolved across all generations, rather
+than only the best individual's genes.}
 
-\item{...}{Additional arguments passed to the underlying evaluator training functions.}
+\item{allowed_transformers}{Character vector of allowed transformer names,
+or "all" / "basic" / "clustering".}
+
+\item{...}{Additional arguments passed to the underlying evaluator training
+functions.}
 }
 \value{
-An \code{evo_recipe} S3 object: a list with elements
+An \code{evo_recipe} S3 object:
+  a list with elements
   \code{best_individual} (the top-scoring \code{evo_individual}),
   \code{history} (list of all evaluated individuals across generations),
   \code{task}, \code{best_model} (the trained model object),

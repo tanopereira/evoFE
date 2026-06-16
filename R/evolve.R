@@ -204,22 +204,44 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param pop_size Population size
 #' @param cv_folds Number of cross-validation folds
 #' @param evaluation_strategy "cv" or "split". Strategy to evaluate candidate recipes.
-#' @param split_ratio A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
-#' @param split_ids An optional character vector of split assignments (e.g. "train", "val", "holdout").
-#' @param early_stopping_rounds Stop if fitness doesn't improve for this many generations
-#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
-#' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
-#' @param dynamic_population_growth_rate Growth rate multiplier for population expansion during stagnation (default 1.5).
-#' @param dynamic_population_decay_rate Decay rate multiplier for population contraction back to baseline (default 0.7).
-#' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
+#' @param split_ratio A numeric vector of length 2 or 3 defining
+#'   train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
+#' @param split_ids An optional character vector of split assignments (e.g.
+#'   \code{c("train", "train", "val", "holdout", "train")}). Must have the same
+#'   length as the number of rows in \code{data} and contain only "train", "val",
+#'   or "holdout" labels (with at least "train" and "val" present). When
+#'   provided, \code{evaluation_strategy} is automatically set to "split" and the
+#'   actual split proportions are computed from the vector.
+#' @param early_stopping_generations Stop if fitness doesn't improve for this
+#'   many generations
+#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
+#'   custom registered evaluator name).
+#' @param dynamic_population Logical. If TRUE, population expands dynamically
+#'   during stagnation.
+#' @param dynamic_population_growth_rate Growth rate multiplier for population
+#'   expansion during stagnation (default 1.5).
+#' @param dynamic_population_decay_rate Decay rate multiplier for population
+#'   contraction back to baseline (default 0.7).
+#' @param crossover_type Crossover type: "both" (default, 50\% random / 50\%
+#'   union), "random", or "union"
 #' @param threads Number of threads to use for parallel execution (default 2)
-#' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
+#' @param max_clustering_size Maximum unique training rows to cluster (default
+#'   5000, 0/NULL for unlimited)
 #' @param verbose Logical. If TRUE, prints progress.
-#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
-#' @param model_all_final_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.
-#' @param model_all_historical_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.
-#' @param ... Additional arguments passed to the underlying evaluator training functions.
-#' @return An \code{evo_recipe} S3 object: a list with elements
+#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a
+#'   custom function).
+#' @param model_all_final_genes Logical. If TRUE, the final model is trained using
+#'   the union of all unique genes evolved in the final population, rather than
+#'   only the best individual's genes.
+#' @param model_all_historical_genes Logical. If TRUE, the final model is trained
+#'   using the union of all unique genes evolved across all generations, rather
+#'   than only the best individual's genes.
+#' @param allowed_transformers Character vector of allowed transformer names,
+#'   or "all" / "basic" / "clustering".
+#' @param ... Additional arguments passed to the underlying evaluator training
+#'   functions.
+#' @return An \code{evo_recipe} S3 object:
+#'   a list with elements
 #'   \code{best_individual} (the top-scoring \code{evo_individual}),
 #'   \code{history} (list of all evaluated individuals across generations),
 #'   \code{task}, \code{best_model} (the trained model object),
@@ -250,7 +272,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             generations = 10, pop_size = 10, cv_folds = 3,
                             evaluation_strategy = "cv", split_ratio = c(0.6, 0.2, 0.2),
                             split_ids = NULL,
-                            early_stopping_rounds = 3, evaluator = "lightgbm",
+                            early_stopping_generations = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE,
                             dynamic_population_growth_rate = 1.5,
                             dynamic_population_decay_rate = 0.7,
@@ -258,8 +280,27 @@ evolve_features <- function(data, target_col, task = "classification",
                             threads = 2, max_clustering_size = 5000,
                             verbose = TRUE, metric = "default",
                             model_all_final_genes = FALSE,
-                            model_all_historical_genes = FALSE, ...) {
+                            model_all_historical_genes = FALSE,
+                            allowed_transformers = "all", ...) {
 
+
+  # Parse allowed_transformers
+  all_trans <- names(evo_transformers)
+  if (is.null(allowed_transformers)) allowed_transformers <- "all"
+  if (length(allowed_transformers) == 1) {
+    if (allowed_transformers == "all") {
+      allowed_transformers <- all_trans
+    } else if (allowed_transformers == "basic") {
+      allowed_transformers <- intersect(all_trans, c("add", "subtract", "multiply", "divide", "log", "sqrt", "reciprocal", "normalized_difference", "frequency_encode", "one_hot_encode", "target_encode", "target_encode_multiclass", "groupby_mean", "groupby_min", "groupby_max", "pca"))
+    } else if (allowed_transformers == "clustering") {
+      allowed_transformers <- intersect(all_trans, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
+    }
+  }
+  allowed_transformers <- intersect(allowed_transformers, all_trans)
+  if (length(allowed_transformers) == 0) {
+    warning("No valid transformers found in 'allowed_transformers'. Falling back to 'all'.")
+    allowed_transformers <- all_trans
+  }
 
   # Temporarily configure max clustering size and threads options
   old_max_size <- getOption("evoFE.max_clustering_size")
@@ -341,6 +382,23 @@ evolve_features <- function(data, target_col, task = "classification",
     stop(sprintf("Target column '%s' not found in the dataset.", target_col))
   }
 
+  if (!is.null(split_ids)) {
+    if (length(split_ids) != nrow(data)) {
+      stop(sprintf("split_ids must have the same length as the number of rows in data (expected %d, got %d).", nrow(data), length(split_ids)))
+    }
+    invalid_ids <- setdiff(unique(split_ids), c("train", "val", "holdout"))
+    if (length(invalid_ids) > 0) {
+      stop(sprintf("split_ids must only contain 'train', 'val', or 'holdout' labels. Found invalid labels: %s", paste(invalid_ids, collapse = ", ")))
+    }
+    if (!all(c("train", "val") %in% split_ids)) {
+      stop("split_ids must contain at least 'train' and 'val' labels.")
+    }
+    if (evaluation_strategy == "cv") {
+      warning("split_ids was provided but evaluation_strategy is 'cv'. Setting evaluation_strategy to 'split'.")
+      evaluation_strategy <- "split"
+    }
+  }
+
   original_cols <- setdiff(names(data), target_col)
   numeric_cols <- names(data)[sapply(data, is.numeric)]
   numeric_cols <- setdiff(numeric_cols, target_col)
@@ -361,10 +419,21 @@ evolve_features <- function(data, target_col, task = "classification",
     if (evaluation_strategy == "cv") {
       message(sprintf("  Generations: %d, Population Size: %d, CV Folds: %d", generations, pop_size, cv_folds))
     } else {
-      message(sprintf(
-        "  Generations: %d, Population Size: %d, Strategy: Split (%s)",
-        generations, pop_size, paste(split_ratio, collapse = "/")
-      ))
+      if (!is.null(split_ids)) {
+        counts <- table(split_ids)
+        lbls <- intersect(c("train", "val", "holdout"), names(counts))
+        ratios <- round(as.numeric(counts[lbls]) / sum(counts), 3)
+        ratio_str <- paste(ratios, collapse = "/")
+        message(sprintf(
+          "  Generations: %d, Population Size: %d, Strategy: Split (%s)",
+          generations, pop_size, ratio_str
+        ))
+      } else {
+        message(sprintf(
+          "  Generations: %d, Population Size: %d, Strategy: Split (%s)",
+          generations, pop_size, paste(split_ratio, collapse = "/")
+        ))
+      }
     }
     message(sprintf("  Original Numeric columns: %s", truncate_cols(numeric_cols)))
     message(sprintf("  Original Categorical columns: %s", truncate_cols(categorical_cols)))
@@ -446,7 +515,7 @@ evolve_features <- function(data, target_col, task = "classification",
   assign(cache_key, baseline_ind, envir = fitness_cache)
 
   # 2. Initialize population for Generation 1 using baseline importances
-  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances)
+  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
   pop[[1]] <- baseline_ind
 
   if (verbose) {
@@ -508,8 +577,8 @@ evolve_features <- function(data, target_col, task = "classification",
       generations_without_improvement <- generations_without_improvement + 1
     }
 
-    if (!is.null(early_stopping_rounds) && generations_without_improvement >= early_stopping_rounds) {
-      message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_rounds))
+    if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
+      message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_generations))
       fitness_history <- fitness_history[1:g]
       break
     }
@@ -579,7 +648,7 @@ evolve_features <- function(data, target_col, task = "classification",
         # Expansion slots: High exploration (no crossover, extremely high temperature)
         p_idx <- sample(seq_along(survivors), 1)
         p <- survivors[[p_idx]]
-        child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs)
+        child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
       } else if (stats::runif(1) < 0.7) {
         # Crossover
         p1_idx <- sample(seq_along(survivors), 1)
@@ -602,19 +671,19 @@ evolve_features <- function(data, target_col, task = "classification",
         }
 
         if (stats::runif(1) < 0.2) {
-          child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs)
+          child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
         }
       } else {
         # Mutate
         p_idx <- sample(seq_along(survivors), 1)
         p <- survivors[[p_idx]]
-        child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs)
+        child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
       }
 
       # Validation Check: Duplicate in next_gen OR already known to be worse than best
       attempts <- 0
       while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
-        child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs)
+        child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
         attempts <- attempts + 1
       }
 

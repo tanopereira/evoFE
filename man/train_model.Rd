@@ -39,9 +39,9 @@ train_model(
 \item{...}{Additional arguments passed to the evaluator training function.}
 }
 \value{
-A list with elements \code{model}, \code{predictions} (NULL when
-  \code{x_val} is NULL), and \code{importances} (named numeric vector or
-  NULL).
+A list with elements \code{model},
+  \code{predictions} (NULL when \code{x_val} is NULL),
+  and \code{importances} (named numeric vector or NULL).
 }
 \description{
 Internal helper that encapsulates LightGBM / XGBoost parameter construction
