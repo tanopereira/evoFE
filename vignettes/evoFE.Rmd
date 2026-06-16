@@ -369,7 +369,6 @@ recipe_mape <- evolve_features(
 | `dynamic_population` | `TRUE` | Expand population during stagnation |
 | `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |
 | `threads` | 2 | Parallelism for model training |
-| `seed` | `NULL` | RNG seed for reproducibility |
 | `metric` | `"default"` | Optimization metric: `"default"`, `"auc"`, `"f1"`, `"mae"`, or a custom function |
 
 ### Practical advice

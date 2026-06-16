@@ -74,6 +74,7 @@ df <- mtcars
 df$am <- as.integer(df$am) # target: 0 = automatic, 1 = manual
 
 # Evolve features
+set.seed(42)
 recipe <- evolve_features(
   data = df,
   target_col = "am",
@@ -82,7 +83,6 @@ recipe <- evolve_features(
   generations = 5,
   pop_size = 8,
   cv_folds = 3,
-  seed = 42,
   verbose = TRUE
 )
 
