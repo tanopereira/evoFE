@@ -110,7 +110,7 @@ predictions <- predict_model(recipe, df[1:5, ])
 | **Group-by Aggregations** | `groupby_mean`, `groupby_sd`, `groupby_max`, `groupby_min`, `groupby_ratio`, `groupby_zscore` |
 | **Encoding & Binning** | `target_encode`, `target_encode_multiclass`, `frequency_encode`, `one_hot_encode`, `quantile_binning`, `log_binning`, `quantile_binning_cat`, `log_binning_cat`, `datetime_extract` |
 | **Dimensionality Reduction** | `pca`, `truncated_svd`, `random_projection`, `umap` |
-| **Graph & Clustering** | `genie`, `lumbermark`, `mst_score`, `deadwood` |
+| **Graph & Clustering** | `genie`, `genie_centroid_dist`, `lumbermark`, `lumbermark_centroid_dist`, `mst_score`, `deadwood` |
 
 ---
 
