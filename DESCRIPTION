@@ -16,8 +16,7 @@ Description: Automates feature engineering using evolutionary algorithms
     clustering. The evolutionary search yields an optimised feature recipe
     that can be applied to new data for prediction. Methods are described in
     McInnes et al. (2018) <doi:10.21105/joss.00861>,
-    Ke et al. (2017)
-    <https://papers.nips.cc/paper/6907-lightgbm-a-highly-efficient-gradient-boosting-decision-framework>,
+    Ke et al. (2017) <doi:10.48550/arXiv.1711.08789>,
     Chen and Guestrin (2016) <doi:10.1145/2939672.2939785>,
     Gagolewski (2021) <doi:10.1016/j.softx.2021.100722>,
     Gagolewski (2026) <doi:10.32614/CRAN.package.lumbermark>, and

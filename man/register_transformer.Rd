@@ -9,7 +9,8 @@ register_transformer(name, transformer)
 \arguments{
 \item{name}{Unique character string naming the transformer.}
 
-\item{transformer}{An object of class \code{evo_transformer} created via \code{create_transformer}.}
+\item{transformer}{An object of class \code{evo_transformer} created
+via \code{create_transformer}.}
 }
 \description{
 Adds a user-defined feature transformer to the available pool for feature evolution.

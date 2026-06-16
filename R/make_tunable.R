@@ -12,13 +12,16 @@
 #' Random Forest surrogate model if numerical singularities are encountered (which is common on small
 #' datasets).
 #'
-#' @param base_model_name Character. Name of the registered base evaluator (e.g., \code{"xgboost"}, \code{"lightgbm"}).
+#' @param base_model_name Character. Name of the registered base evaluator
+#'   (e.g., \code{"xgboost"}, \code{"lightgbm"}).
 #' @param param_ranges List. A nested list defining the parameter names, types, and bounds/values.
 #'   Each parameter definition must be a list containing:
 #'   \describe{
 #'     \item{\code{type}}{Character: \code{"numeric"}, \code{"integer"}, or \code{"discrete"}.}
-#'     \item{\code{lower}}{Numeric/Integer: Lower bound of the search space (required for \code{"numeric"} and \code{"integer"}).}
-#'     \item{\code{upper}}{Numeric/Integer: Upper bound of the search space (required for \code{"numeric"} and \code{"integer"}).}
+#'     \item{\code{lower}}{Numeric/Integer: Lower bound of the search space
+#'       (required for \code{"numeric"} and \code{"integer"}).}
+#'     \item{\code{upper}}{Numeric/Integer: Upper bound of the search space
+#'       (required for \code{"numeric"} and \code{"integer"}).}
 #'     \item{\code{values}}{Vector: Set of valid values (required for \code{"discrete"}).}
 #'   }
 #' @param tuner_name Character. The name under which to register the tuned evaluator. Defaults to
@@ -37,12 +40,17 @@
 #' # 1. Register a simple mock evaluator
 #' register_evaluator(
 #'   "mock_base",
-#'   train_func = function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", ...) {
+#'   train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+#'                         task = "regression", ...) {
 #'     args <- list(...)
 #'     val_score <- 100 - abs(args$param_a - 4.5)
 #'     list(
 #'       model = list(args = args, val_score = val_score),
-#'       predictions = if (!is.null(x_val)) rep(val_score, nrow(x_val)) else NULL
+#'       predictions = if (!is.null(x_val)) {
+#'         rep(val_score, nrow(x_val))
+#'       } else {
+#'         NULL
+#'       }
 #'     )
 #'   },
 #'   predict_func = function(model, x_new, task, ...) {
@@ -64,8 +72,9 @@
 #' y_val <- rnorm(5)
 #'
 #' fit <- train_model(
-#'   x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
-#'   evaluator = "mock_tuned", mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2
+#'   x_train, y_train, x_val = x_val, y_val = y_val,
+#'   task = "regression", evaluator = "mock_tuned",
+#'   mbo_iters = 3, mbo_init_design = 5, mbo_folds = 2
 #' )
 #' print(fit$best_params)
 #' }

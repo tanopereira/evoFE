@@ -3,9 +3,9 @@
 #' @param object An evo_recipe object
 #' @param newdata A data.frame or data.table
 #' @param ... Additional arguments
-#' @return A \code{data.table} containing the engineered feature columns
-#'   (original plus all gene-derived columns) for \code{newdata}, ready for
-#'   downstream modelling.
+#' @return A \code{data.table} containing the engineered feature
+#'   columns (original plus all gene-derived columns) for
+#'   \code{newdata}, ready for downstream modelling.
 #' @examples
 #' \donttest{
 #' data(mtcars)

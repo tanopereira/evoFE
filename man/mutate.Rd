@@ -11,7 +11,8 @@ mutate(
   importances = numeric(0),
   temperature = 1,
   task = "classification",
-  tested_gene_outputs = NULL
+  tested_gene_outputs = NULL,
+  allowed_transformers = NULL
 )
 }
 \arguments{
@@ -31,10 +32,14 @@ mutate(
 been evaluated in a previous generation and are safe for chaining. When
 NULL (default), all existing gene outputs are available. Pass character(0)
 to block all chaining (e.g. during initialization).}
+
+\item{allowed_transformers}{A character vector of allowed transformer names,
+or NULL/"all" to allow all.}
 }
 \value{
-An \code{evo_individual} with the mutation applied (gene added,
-  removed, or modified) and \code{fitness} reset to \code{NA_real_}.
+An \code{evo_individual} with the mutation applied
+  (gene added, removed, or modified) and \code{fitness} reset
+  to \code{NA_real_}.
 }
 \description{
 Mutate an individual

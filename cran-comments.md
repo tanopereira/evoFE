@@ -8,16 +8,25 @@
 
 ## R CMD check results
 
-0 errors | 0 warnings | 2 notes
+0 errors | 0 warnings | 0 notes
 
-* This is a resubmission. In response to CRAN reviewer feedback, the following issues have been resolved:
-  - DESCRIPTION: Expanded the Description text to provide more details about the package's functionality and implemented methods.
-  - DESCRIPTION: Added references for methods used by the package (McInnes et al. 2018 for UMAP, Ke et al. 2017 for LightGBM, Chen & Guestrin 2016 for XGBoost, Gagolewski 2021 for genieclust, Gagolewski 2026 for lumbermark and deadwood) in the correct format (`<doi:...>`, `<https:...>`).
-  - Spelling: Added `inst/WORDLIST` to whitelist proper names and technical acronyms (Gagolewski, Guestrin, Ke, McInnes, UMAP, et, al) to resolve the spelling note.
-  - Documentation: Added detailed `\value` tags to all 17 exported functions' `.Rd` files to explain function results and their structure.
-  - Reproducibility: Removed all `set.seed()` calls inside the functions (`evolve_features` and transformers) to avoid altering the user's workspace seed. Updated tests and vignettes to demonstrate how to set seed reproducibility externally.
-  - Vignette CPU time: The CPU time note has been resolved by reducing the default thread count to 2.
+## Changes since 0.1.0
 
-* Remaining notes:
-  - The standard `New submission` note from `CRAN incoming feasibility`.
-  - HTML Tidy note (local HTML Tidy too old, not a package issue).
+This is an update to the CRAN-published version 0.1.0. Key changes include:
+
+### Bug Fixes
+- Fixed genotype corruption, `-Inf` fitness errors, and `NA` handling in quantile binning.
+- Fixed `is_logits` flag in XGBoost custom metric evaluation.
+- Fixed Laplace smoothing in TS-refinement formulation.
+- Clamped infinite values and imputed `NA`/`NaN` in TS-refinement log-likelihood calculations.
+
+### Enhancements
+- Added input validation for `split_ids` with automatic strategy switching.
+- Optimised clustering deduplication using `duplicated()`.
+- Set XGBoost default `min_child_weight=20` to match LightGBM defaults.
+- Removed `seed` parameter and `set.seed()` calls inside package functions.
+
+### Documentation
+- Reformatted Rd documentation for 80-character line width compliance.
+- Added detailed `\value` tags to all exported functions.
+- Converted arXiv reference to DOI format.

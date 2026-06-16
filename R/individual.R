@@ -47,6 +47,8 @@ create_gene <- function(transformer_name, input_cols) {
 #' Convert a gene to a formula string
 #'
 #' @param gene A gene list
+#' @param truncate Logical. If TRUE (default), long list of input columns is
+#'   truncated for display.
 #' @return A character string representing the gene as a human-readable
 #'   formula, e.g. \code{"log(col1)"} or \code{"pca2(col1, col2)"}.
 #' @export
@@ -146,10 +148,10 @@ topological_sort_genes <- function(genes, original_cols) {
 #' @param genes List of genes
 #' @param numeric_cols Vector of numeric column names
 #' @param categorical_cols Vector of categorical column names
-#' @return An \code{evo_individual} S3 object: a list with elements
-#'   \code{genes} (topologically sorted), \code{numeric_cols},
-#'   \code{categorical_cols}, and \code{fitness} (initialised to
-#'   \code{NA_real_}).
+#' @return An \code{evo_individual} S3 object:
+#'   a list with elements \code{genes} (topologically sorted),
+#'   \code{numeric_cols}, \code{categorical_cols}, and \code{fitness}
+#'   (initialised to \code{NA_real_}).
 #' @export
 create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0)) {
   original_cols <- c(numeric_cols, categorical_cols)
@@ -177,8 +179,11 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #'   been evaluated in a previous generation and are safe for chaining. When
 #'   NULL (default), all existing gene outputs are available. Pass character(0)
 #'   to block all chaining (e.g. during initialization).
-#' @return An \code{evo_individual} with the mutation applied (gene added,
-#'   removed, or modified) and \code{fitness} reset to \code{NA_real_}.
+#' @param allowed_transformers A character vector of allowed transformer names,
+#'   or NULL/"all" to allow all.
+#' @return An \code{evo_individual} with the mutation applied
+#'   (gene added, removed, or modified) and \code{fitness} reset
+#'   to \code{NA_real_}.
 #' @export
 mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL) {
   if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0) return(ind)

@@ -204,22 +204,44 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 #' @param pop_size Population size
 #' @param cv_folds Number of cross-validation folds
 #' @param evaluation_strategy "cv" or "split". Strategy to evaluate candidate recipes.
-#' @param split_ratio A numeric vector of length 2 or 3 defining train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
-#' @param split_ids An optional character vector of split assignments (e.g. "train", "val", "holdout").
-#' @param early_stopping_generations Stop if fitness doesn't improve for this many generations
-#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
-#' @param dynamic_population Logical. If TRUE, population expands dynamically during stagnation.
-#' @param dynamic_population_growth_rate Growth rate multiplier for population expansion during stagnation (default 1.5).
-#' @param dynamic_population_decay_rate Decay rate multiplier for population contraction back to baseline (default 0.7).
-#' @param crossover_type Crossover type: "both" (default, 50\% random / 50\% union), "random", or "union"
+#' @param split_ratio A numeric vector of length 2 or 3 defining
+#'   train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
+#' @param split_ids An optional character vector of split assignments (e.g.
+#'   \code{c("train", "train", "val", "holdout", "train")}). Must have the same
+#'   length as the number of rows in \code{data} and contain only "train", "val",
+#'   or "holdout" labels (with at least "train" and "val" present). When
+#'   provided, \code{evaluation_strategy} is automatically set to "split" and the
+#'   actual split proportions are computed from the vector.
+#' @param early_stopping_generations Stop if fitness doesn't improve for this
+#'   many generations
+#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
+#'   custom registered evaluator name).
+#' @param dynamic_population Logical. If TRUE, population expands dynamically
+#'   during stagnation.
+#' @param dynamic_population_growth_rate Growth rate multiplier for population
+#'   expansion during stagnation (default 1.5).
+#' @param dynamic_population_decay_rate Decay rate multiplier for population
+#'   contraction back to baseline (default 0.7).
+#' @param crossover_type Crossover type: "both" (default, 50\% random / 50\%
+#'   union), "random", or "union"
 #' @param threads Number of threads to use for parallel execution (default 2)
-#' @param max_clustering_size Maximum unique training rows to cluster (default 5000, 0/NULL for unlimited)
+#' @param max_clustering_size Maximum unique training rows to cluster (default
+#'   5000, 0/NULL for unlimited)
 #' @param verbose Logical. If TRUE, prints progress.
-#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
-#' @param model_all_final_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved in the final population, rather than only the best individual's genes.
-#' @param model_all_historical_genes Logical. If TRUE, the final model is trained using the union of all unique genes evolved across all generations, rather than only the best individual's genes.
-#' @param ... Additional arguments passed to the underlying evaluator training functions.
-#' @return An \code{evo_recipe} S3 object: a list with elements
+#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a
+#'   custom function).
+#' @param model_all_final_genes Logical. If TRUE, the final model is trained using
+#'   the union of all unique genes evolved in the final population, rather than
+#'   only the best individual's genes.
+#' @param model_all_historical_genes Logical. If TRUE, the final model is trained
+#'   using the union of all unique genes evolved across all generations, rather
+#'   than only the best individual's genes.
+#' @param allowed_transformers Character vector of allowed transformer names,
+#'   or "all" / "basic" / "clustering".
+#' @param ... Additional arguments passed to the underlying evaluator training
+#'   functions.
+#' @return An \code{evo_recipe} S3 object:
+#'   a list with elements
 #'   \code{best_individual} (the top-scoring \code{evo_individual}),
 #'   \code{history} (list of all evaluated individuals across generations),
 #'   \code{task}, \code{best_model} (the trained model object),
@@ -360,6 +382,23 @@ evolve_features <- function(data, target_col, task = "classification",
     stop(sprintf("Target column '%s' not found in the dataset.", target_col))
   }
 
+  if (!is.null(split_ids)) {
+    if (length(split_ids) != nrow(data)) {
+      stop(sprintf("split_ids must have the same length as the number of rows in data (expected %d, got %d).", nrow(data), length(split_ids)))
+    }
+    invalid_ids <- setdiff(unique(split_ids), c("train", "val", "holdout"))
+    if (length(invalid_ids) > 0) {
+      stop(sprintf("split_ids must only contain 'train', 'val', or 'holdout' labels. Found invalid labels: %s", paste(invalid_ids, collapse = ", ")))
+    }
+    if (!all(c("train", "val") %in% split_ids)) {
+      stop("split_ids must contain at least 'train' and 'val' labels.")
+    }
+    if (evaluation_strategy == "cv") {
+      warning("split_ids was provided but evaluation_strategy is 'cv'. Setting evaluation_strategy to 'split'.")
+      evaluation_strategy <- "split"
+    }
+  }
+
   original_cols <- setdiff(names(data), target_col)
   numeric_cols <- names(data)[sapply(data, is.numeric)]
   numeric_cols <- setdiff(numeric_cols, target_col)
@@ -380,10 +419,21 @@ evolve_features <- function(data, target_col, task = "classification",
     if (evaluation_strategy == "cv") {
       message(sprintf("  Generations: %d, Population Size: %d, CV Folds: %d", generations, pop_size, cv_folds))
     } else {
-      message(sprintf(
-        "  Generations: %d, Population Size: %d, Strategy: Split (%s)",
-        generations, pop_size, paste(split_ratio, collapse = "/")
-      ))
+      if (!is.null(split_ids)) {
+        counts <- table(split_ids)
+        lbls <- intersect(c("train", "val", "holdout"), names(counts))
+        ratios <- round(as.numeric(counts[lbls]) / sum(counts), 3)
+        ratio_str <- paste(ratios, collapse = "/")
+        message(sprintf(
+          "  Generations: %d, Population Size: %d, Strategy: Split (%s)",
+          generations, pop_size, ratio_str
+        ))
+      } else {
+        message(sprintf(
+          "  Generations: %d, Population Size: %d, Strategy: Split (%s)",
+          generations, pop_size, paste(split_ratio, collapse = "/")
+        ))
+      }
     }
     message(sprintf("  Original Numeric columns: %s", truncate_cols(numeric_cols)))
     message(sprintf("  Original Categorical columns: %s", truncate_cols(categorical_cols)))

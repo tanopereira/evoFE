@@ -8,7 +8,8 @@
 #' @param apply_func function(data, input_cols, state = NULL) returning new column vector
 #' @param name_generator function(input_cols) returning output column name
 #' @param allow_replace Logical. Whether column sampling allows replacement.
-#' @return An \code{evo_transformer} S3 object: a list with elements
+#' @return An \code{evo_transformer} S3 object:
+#'   a list with elements
 #'   \code{name}, \code{type}, \code{input_type}, \code{output_type},
 #'   \code{fit_func}, \code{apply_func}, \code{name_generator}, and
 #'   \code{allow_replace}.
@@ -57,7 +58,8 @@ evo_transformers <- new.env(parent = emptyenv())
 #' Adds a user-defined feature transformer to the available pool for feature evolution.
 #'
 #' @param name Unique character string naming the transformer.
-#' @param transformer An object of class \code{evo_transformer} created via \code{create_transformer}.
+#' @param transformer An object of class \code{evo_transformer} created
+#'   via \code{create_transformer}.
 #' @examples
 #' # Create a custom transformer
 #' add_ten_trans <- create_transformer(
@@ -111,9 +113,8 @@ is_verbose <- function() {
 .cluster_prep_x <- function(x, min_rows = 6, verbose = FALSE, tag = "Fit") {
   t0 <- Sys.time()
   dt_x <- data.table::as.data.table(x)
-  cols <- names(dt_x)
-  dt_x[, first_id := .I[1], by = cols]
-  x_unique <- x[unique(dt_x$first_id), , drop = FALSE]
+  unique_idx <- which(!duplicated(dt_x))
+  x_unique <- x[unique_idx, , drop = FALSE]
   if (verbose)
     message(sprintf("  [%s] Dedup: %d unique / %d rows. %.3f s",
                     tag, nrow(x_unique), nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))

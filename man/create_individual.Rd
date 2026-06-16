@@ -18,10 +18,10 @@ create_individual(
 \item{categorical_cols}{Vector of categorical column names}
 }
 \value{
-An \code{evo_individual} S3 object: a list with elements
-  \code{genes} (topologically sorted), \code{numeric_cols},
-  \code{categorical_cols}, and \code{fitness} (initialised to
-  \code{NA_real_}).
+An \code{evo_individual} S3 object:
+  a list with elements \code{genes} (topologically sorted),
+  \code{numeric_cols}, \code{categorical_cols}, and \code{fitness}
+  (initialised to \code{NA_real_}).
 }
 \description{
 Create an individual

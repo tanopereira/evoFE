@@ -4,10 +4,13 @@
 \alias{gene_to_formula}
 \title{Convert a gene to a formula string}
 \usage{
-gene_to_formula(gene)
+gene_to_formula(gene, truncate = TRUE)
 }
 \arguments{
 \item{gene}{A gene list}
+
+\item{truncate}{Logical. If TRUE (default), long list of input columns is
+truncated for display.}
 }
 \value{
 A character string representing the gene as a human-readable

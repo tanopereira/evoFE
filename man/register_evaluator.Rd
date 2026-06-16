@@ -27,11 +27,14 @@ Register a model evaluator
 # Register a simple mock evaluator
 register_evaluator(
   "mock_eval",
-  train_func = function(x_train, y_train, x_val = NULL, task = "regression", ...) {
+  train_func = function(x_train, y_train, x_val = NULL,
+                        task = "regression", ...) {
     list(
       model = list(weights = colMeans(x_train)),
       predictions = if (!is.null(x_val)) rowMeans(x_val) else NULL,
-      importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+      importances = stats::setNames(
+        rep(1, ncol(x_train)), colnames(x_train)
+      )
     )
   },
   predict_func = function(model, x_new, task, ...) {

@@ -755,6 +755,39 @@ test_that("evolve_features and evaluate_fitness support evaluation_strategy = 's
   })
   expect_s3_class(res_manual, "evo_recipe")
   expect_true(!is.null(res_manual$best_individual$holdout_fitness))
+
+  # Test split_ids validation: invalid length
+  expect_error(
+    evolve_features(df, "target", task = "classification", split_ids = c("train", "val"), generations = 1, pop_size = 2, evaluation_strategy = "split"),
+    "split_ids must have the same length"
+  )
+
+  # Test split_ids validation: invalid labels
+  bad_ids <- rep("train", n)
+  bad_ids[1] <- "invalid"
+  expect_error(
+    evolve_features(df, "target", task = "classification", split_ids = bad_ids, generations = 1, pop_size = 2, evaluation_strategy = "split"),
+    "split_ids must only contain"
+  )
+
+  # Test split_ids validation: missing val label
+  no_val_ids <- rep("train", n)
+  expect_error(
+    evolve_features(df, "target", task = "classification", split_ids = no_val_ids, generations = 1, pop_size = 2, evaluation_strategy = "split"),
+    "split_ids must contain at least"
+  )
+
+  # Test split_ids automatic strategy switching with warning (cv -> split)
+  expect_warning(
+    evolve_features(df, "target", task = "classification", split_ids = manual_ids, generations = 1, pop_size = 2, evaluation_strategy = "cv", verbose = FALSE),
+    "Setting evaluation_strategy to 'split'"
+  )
+
+  # Test split_ids print proportions formatting
+  msg <- capture_messages({
+    evolve_features(df, "target", task = "classification", split_ids = manual_ids, generations = 1, pop_size = 2, evaluation_strategy = "split", verbose = TRUE)
+  })
+  expect_true(any(grepl("Strategy: Split \\(0.5/0.3/0.2\\)", msg)))
 })
 
 test_that("one_hot_encode transformer works", {

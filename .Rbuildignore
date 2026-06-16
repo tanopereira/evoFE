@@ -9,4 +9,9 @@
 
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$
-^catboost_info$
+^\.agents$
+^ORIGINAL_REQUEST\.md$
+^PROJECT\.md$
+^TEST_INFRA\.md$
+^test_[^/]*\.R$
+^\.Rd2pdf[^/]*$

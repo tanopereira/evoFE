@@ -6,9 +6,11 @@
 #' @param initial_genes Number of initial genes per individual.
 #' @param task Task type ("classification", "regression", or "multiclass").
 #' @param importances Optional numeric vector of feature importances.
+#' @param allowed_transformers A character vector of allowed transformer names,
+#'   or NULL/"all" to allow all.
 #' @return A list of \code{evo_individual} objects of length \code{pop_size}.
-#'   The first individual is a baseline with no genes; the remaining individuals
-#'   each carry \code{initial_genes} randomly generated genes.
+#'   The first individual is a baseline with no genes; the remaining
+#'   individuals each carry \code{initial_genes} randomly generated genes.
 #' @export
 initialize_population <- function(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL) {
   pop <- list()
