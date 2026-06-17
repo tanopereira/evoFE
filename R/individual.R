@@ -256,8 +256,18 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
   }
   
   if (mut_type == 1) {
-    # Remove a random gene
-    idx <- sample(seq_along(ind$genes), 1)
+    # Importance-guided gene removal: preferentially remove low-importance genes
+    if (length(importances) > 0 && length(ind$genes) > 1) {
+      gene_imps <- sapply(ind$genes, function(g) {
+        if (g$output_col %in% names(importances)) importances[[g$output_col]] else 0
+      })
+      # Invert: low importance → high removal probability
+      removal_weights <- 1 / (gene_imps + 1e-8)
+      removal_weights[!is.finite(removal_weights)] <- 1
+      idx <- sample(seq_along(ind$genes), 1, prob = removal_weights)
+    } else {
+      idx <- sample(seq_along(ind$genes), 1)
+    }
     removed <- ind$genes[[idx]]
     ind$genes <- ind$genes[-idx]
     ind$fitness <- NA_real_
@@ -265,48 +275,144 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       message(sprintf("    [Mutation] Removed gene: %s (%s)", removed$output_col, gene_to_formula(removed)))
     }
   } else if (mut_type == 2) {
-    # Modify an existing multivariate gene
-    multi_idx <- which(sapply(ind$genes, function(g) evo_transformers[[g$transformer_name]]$type == "multivariate"))
-    if (length(multi_idx) > 0) {
-      idx <- if (length(multi_idx) == 1) multi_idx else sample(multi_idx, 1)
-      gene_to_mod <- ind$genes[[idx]]
+    # Enriched Modify mutation: pick a random gene, then apply one of 4 sub-operations
+    idx <- sample(seq_along(ind$genes), 1)
+    gene_to_mod <- ind$genes[[idx]]
+    t_name <- gene_to_mod$transformer_name
+    t_def <- evo_transformers[[t_name]]
+    is_multi <- t_def$type == "multivariate"
+    old_formula <- gene_to_formula(gene_to_mod)
+    
+    gene_num_ex <- setdiff(gene_num, gene_to_mod$output_col)
+    avail_num <- c(ind$numeric_cols, gene_num_ex)
+    avail_cat <- c(ind$categorical_cols, gene_cat)
+    avail_for_type <- if (t_def$input_type == "numeric") avail_num
+                      else if (t_def$input_type == "categorical") avail_cat
+                      else c(avail_cat, avail_num)
+    unused <- setdiff(avail_for_type, gene_to_mod$input_cols)
+    
+    max_cols <- if (t_name %in% c("add", "multiply")) {
+      min(5, length(avail_for_type))
+    } else if (is_multi) {
+      max(2, floor((1 - exp(-1)) * length(avail_for_type)))
+    } else {
+      length(gene_to_mod$input_cols) # non-multivariate genes have fixed arity
+    }
+    
+    # Determine which sub-operations are applicable
+    can_add_col <- is_multi && length(unused) > 0 && length(gene_to_mod$input_cols) < max_cols
+    can_remove_col <- is_multi && length(gene_to_mod$input_cols) > 2
+    can_swap_col <- length(gene_to_mod$input_cols) > 0 && length(unused) > 0
+    can_mutate_params <- length(gene_to_mod$params) > 0
+    
+    applicable_ops <- c()
+    if (can_add_col) applicable_ops <- c(applicable_ops, "add_col")
+    if (can_remove_col) applicable_ops <- c(applicable_ops, "remove_col")
+    if (can_swap_col) applicable_ops <- c(applicable_ops, "swap_col")
+    if (can_mutate_params) applicable_ops <- c(applicable_ops, "mutate_params")
+    
+    mod_success <- FALSE
+    if (length(applicable_ops) > 0) {
+      sub_op <- sample(applicable_ops, 1)
       
-      gene_num_ex <- setdiff(gene_num, gene_to_mod$output_col)
-      avail_num <- c(ind$numeric_cols, gene_num_ex)
-      unused <- setdiff(avail_num, gene_to_mod$input_cols)
-      
-      t_name <- gene_to_mod$transformer_name
-      max_cols <- if (t_name %in% c("add", "multiply")) {
-        min(5, length(avail_num))
-      } else {
-        max(2, floor((1 - exp(-1)) * length(avail_num)))
-      }
-      if (length(unused) > 0 && length(gene_to_mod$input_cols) < max_cols) {
+      if (sub_op == "add_col") {
+        # Add an unused column to a multivariate gene
         new_col <- weighted_sample(unused, 1)
-        old_formula <- gene_to_formula(gene_to_mod)
         gene_to_mod$input_cols <- c(gene_to_mod$input_cols, new_col)
         gene_to_mod$state <- NULL
-        
-        t_def <- evo_transformers[[gene_to_mod$transformer_name]]
         gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
-        
-        # Check if modified gene conflicts with existing output names
-        existing_out <- sapply(ind$genes[-idx], function(g) g$output_col)
-        if (!(gene_to_mod$output_col %in% existing_out)) {
-          ind$genes[[idx]] <- gene_to_mod
-          ind$fitness <- NA_real_
-          if (verbose) {
-            message(sprintf("    [Mutation] Modified gene: added '%s' to %s -> %s", 
-                            new_col, old_formula, gene_to_formula(gene_to_mod)))
-          }
-        } else {
-          mut_type <- 3 # Conflict, fallback to add
+        mod_success <- TRUE
+        if (verbose) {
+          message(sprintf("    [Mutation] Modify (add_col): added '%s' to %s -> %s", 
+                          new_col, old_formula, gene_to_formula(gene_to_mod)))
         }
+        
+      } else if (sub_op == "remove_col") {
+        # Remove one column from a multivariate gene (importance-guided)
+        col_imps <- sapply(gene_to_mod$input_cols, function(c) {
+          if (c %in% names(importances)) importances[[c]] else 0
+        })
+        removal_weights <- 1 / (col_imps + 1e-8)
+        removal_weights[!is.finite(removal_weights)] <- 1
+        drop_idx <- sample(seq_along(gene_to_mod$input_cols), 1, prob = removal_weights)
+        dropped_col <- gene_to_mod$input_cols[drop_idx]
+        gene_to_mod$input_cols <- gene_to_mod$input_cols[-drop_idx]
+        gene_to_mod$state <- NULL
+        gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
+        mod_success <- TRUE
+        if (verbose) {
+          message(sprintf("    [Mutation] Modify (remove_col): removed '%s' from %s -> %s", 
+                          dropped_col, old_formula, gene_to_formula(gene_to_mod)))
+        }
+        
+      } else if (sub_op == "swap_col") {
+        # Swap one input column for a different unused column
+        swap_idx <- sample(seq_along(gene_to_mod$input_cols), 1)
+        old_col <- gene_to_mod$input_cols[swap_idx]
+        new_col <- weighted_sample(unused, 1)
+        gene_to_mod$input_cols[swap_idx] <- new_col
+        gene_to_mod$state <- NULL
+        gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
+        mod_success <- TRUE
+        if (verbose) {
+          message(sprintf("    [Mutation] Modify (swap_col): swapped '%s' for '%s' in %s -> %s", 
+                          old_col, new_col, old_formula, gene_to_formula(gene_to_mod)))
+        }
+        
+      } else if (sub_op == "mutate_params") {
+        # Mutate one parameter of the gene
+        param_name <- sample(names(gene_to_mod$params), 1)
+        old_val <- gene_to_mod$params[[param_name]]
+        
+        new_val <- if (param_name == "k") {
+          # k for clustering: sample from 2:5, excluding current value if possible
+          candidates <- setdiff(2:5, old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "gini_threshold") {
+          round(stats::runif(1, 0.1, 0.9), 2)
+        } else if (param_name == "Q") {
+          candidates <- setdiff(3:10, old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "base") {
+          candidates <- setdiff(2:10, old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "comp_idx") {
+          # For multi-component transformers, don't mutate comp_idx in isolation
+          # as components are managed together during Add mutation
+          old_val # no-op
+        } else if (param_name == "component") {
+          components <- c("year", "month", "day", "hour", "day_of_week", "weekend")
+          candidates <- setdiff(components, old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else {
+          old_val
+        }
+        
+        if (!identical(new_val, old_val)) {
+          gene_to_mod$params[[param_name]] <- new_val
+          gene_to_mod$state <- NULL
+          gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
+          mod_success <- TRUE
+          if (verbose) {
+            message(sprintf("    [Mutation] Modify (mutate_params): changed %s from %s to %s in %s -> %s", 
+                            param_name, as.character(old_val), as.character(new_val),
+                            old_formula, gene_to_formula(gene_to_mod)))
+          }
+        }
+      }
+    }
+    
+    if (mod_success) {
+      # Check if modified gene conflicts with existing output names
+      existing_out <- if (length(ind$genes) > 1) sapply(ind$genes[-idx], function(g) g$output_col) else character(0)
+      if (!(gene_to_mod$output_col %in% existing_out)) {
+        ind$genes[[idx]] <- gene_to_mod
+        ind$fitness <- NA_real_
       } else {
-        mut_type <- 3 # No unused columns or limit reached, fallback to add
+        mut_type <- 3 # Conflict, fallback to add
       }
     } else {
-      mut_type <- 3 # No multivariate genes, fallback to add
+      mut_type <- 3 # No applicable sub-operation, fallback to add
     }
   }
   

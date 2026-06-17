@@ -195,6 +195,18 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
   return(FALSE)
 }
 
+#' Tournament selection
+#' @keywords internal
+tournament_select <- function(pop, k = 3) {
+  k <- min(k, length(pop))
+  candidates <- sample(seq_along(pop), k)
+  fitnesses <- sapply(candidates, function(i) {
+    f <- pop[[i]]$fitness
+    if (is.na(f)) -Inf else f
+  })
+  pop[[candidates[which.max(fitnesses)]]]
+}
+
 #' Run evolutionary feature engineering
 #'
 #' @param data A data.frame or data.table
@@ -620,7 +632,14 @@ evolve_features <- function(data, target_col, task = "classification",
     } else {
       global_importances_vec <- numeric(0)
     }
-    temperature <- 0.1
+    # Adaptive mutation rate and temperature: increase exploration during stagnation
+    stagnation_ratio <- if (!is.null(early_stopping_generations) && early_stopping_generations > 0) {
+      min(1, generations_without_improvement / early_stopping_generations)
+    } else {
+      0
+    }
+    adaptive_mutation_rate <- 0.3 + 0.4 * stagnation_ratio
+    temperature <- 0.1 + 0.9 * stagnation_ratio
 
     # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
     target_pop_size <- pop_size
@@ -648,15 +667,12 @@ evolve_features <- function(data, target_col, task = "classification",
 
       if (is_expansion) {
         # Expansion slots: High exploration (no crossover, extremely high temperature)
-        p_idx <- sample(seq_along(survivors), 1)
-        p <- survivors[[p_idx]]
+        p <- tournament_select(pop, k = 3)
         child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
-      } else if (stats::runif(1) < 0.7) {
+      } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
         # Crossover
-        p1_idx <- sample(seq_along(survivors), 1)
-        p2_idx <- sample(seq_along(survivors), 1)
-        p1 <- survivors[[p1_idx]]
-        p2 <- survivors[[p2_idx]]
+        p1 <- tournament_select(pop, k = 3)
+        p2 <- tournament_select(pop, k = 3)
 
         # Determine whether to use union or random crossover
         use_union <- FALSE
@@ -677,8 +693,7 @@ evolve_features <- function(data, target_col, task = "classification",
         }
       } else {
         # Mutate
-        p_idx <- sample(seq_along(survivors), 1)
-        p <- survivors[[p_idx]]
+        p <- tournament_select(pop, k = 3)
         child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
       }
 
