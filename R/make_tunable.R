@@ -12,6 +12,15 @@
 #' Random Forest surrogate model if numerical singularities are encountered (which is common on small
 #' datasets).
 #'
+#' Evaluators registered via \code{make_tunable} accept several control parameters passed via \code{...}:
+#' \describe{
+#'   \item{\code{mbo_iters}}{Integer: Number of Bayesian Optimization iterations (default 5).}
+#'   \item{\code{mbo_init_design}}{Integer: Number of initial layout designs generated (default 8).}
+#'   \item{\code{mbo_folds}}{Integer: Number of internal CV folds used for evaluation when no validation split is provided (default 3).}
+#'   \item{\code{mbo_infill_opt}}{Character: Strategy for infill optimization to find the next candidate parameter set. Supported values are \code{"focussearch"} (default) and \code{"ea"} (Evolutionary Algorithm, which requires package \code{emoa}).}
+#'   \item{\code{best_params}}{List: Optional list of initial parameters to seed the MBO search.}
+#' }
+#'
 #' @param base_model_name Character. Name of the registered base evaluator
 #'   (e.g., \code{"xgboost"}, \code{"lightgbm"}).
 #' @param param_ranges List. A nested list defining the parameter names, types, and bounds/values.
