@@ -284,6 +284,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             allowed_transformers = "all", ...) {
 
 
+
   # Parse allowed_transformers
   all_trans <- names(evo_transformers)
   if (is.null(allowed_transformers)) allowed_transformers <- "all"
@@ -416,6 +417,7 @@ evolve_features <- function(data, target_col, task = "classification",
     message("Starting Evolutionary Feature Engineering...")
     message(sprintf("  Task: %s", task))
     message(sprintf("  Evaluator: %s", evaluator))
+
     if (evaluation_strategy == "cv") {
       message(sprintf("  Generations: %d, Population Size: %d, CV Folds: %d", generations, pop_size, cv_folds))
     } else {

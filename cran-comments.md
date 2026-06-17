@@ -22,6 +22,9 @@ This is an update to the CRAN-published version 0.1.0. Key changes include:
 - Clamped infinite values and imputed `NA`/`NaN` in TS-refinement log-likelihood calculations.
 
 ### Enhancements
+- Vectorized fallback KNN search (3.8x speedup) and UMAP downsampling (7x fit speedup) with prediction caching (1310x cache hit speedup).
+- Reduced peak memory footprint in CV loops by ~50% by eliminating redundant `data.table` deep copies.
+- Hardened stateful transformers against edge cases (vector option inputs and NA distance matrices).
 - Added input validation for `split_ids` with automatic strategy switching.
 - Optimised clustering deduplication using `duplicated()`.
 - Set XGBoost default `min_child_weight=20` to match LightGBM defaults.

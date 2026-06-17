@@ -13,6 +13,9 @@
 
 ## Enhancements & Refactoring
 
+* Optimized stateful clustering transformers: vectorized the fallback KNN distance search (3.8x speedup), integrated UMAP downsampling (7x speedup on fitting), and enabled UMAP prediction caching (1310x speedup on cache hits).
+* Reduced memory footprint in cross-validation loops by removing redundant `data.table::copy()` calls.
+* Hardened `.cluster_prep_x()` and `.cluster_knn_apply()` to safely handle edge-case configurations like vector-valued option inputs and NA distance matrices.
 * Improved TS-refinement evaluation metric and taboo threshold calculations.
 * Set XGBoost default `min_child_weight=20` to match LightGBM `min_data_in_leaf` and prevent overconfident predictions.
 * Removed `seed` parameter and `set.seed()` calls inside package code for CRAN compliance.

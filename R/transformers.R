@@ -122,6 +122,7 @@ is_verbose <- function() {
   if (nrow(x_unique) < min_rows) return(NULL)
 
   max_size <- getOption("evoFE.max_clustering_size", 5000)
+  if (length(max_size) > 1) max_size <- max_size[1]
   if (!is.numeric(max_size) || is.null(max_size)) max_size <- 0
   if (max_size > 0 && nrow(x_unique) > max_size) {
     # Preserve the caller's RNG state
@@ -159,8 +160,29 @@ is_verbose <- function() {
       t0 <- Sys.time()
       idx <- tryCatch(
         quitefastmst::knn_euclid(x_train, k = 1L, Y = x_test)$nn.index[, 1],
-        error = function(e)
-          apply(x_test, 1, function(row) which.min(colSums((t(x_train) - row)^2)))
+        error = function(e) {
+          x_train_mat <- as.matrix(x_train)
+          x_test_mat <- as.matrix(x_test)
+          if (!is.numeric(x_train_mat)) storage.mode(x_train_mat) <- "numeric"
+          if (!is.numeric(x_test_mat)) storage.mode(x_test_mat) <- "numeric"
+
+          if (nrow(x_test_mat) == 0L) {
+            return(integer(0))
+          }
+
+          train_norms_sq <- rowSums(x_train_mat^2)
+          D_approx <- sweep(-2 * tcrossprod(x_test_mat, x_train_mat), 2, train_norms_sq, "+")
+
+          if (nrow(x_test_mat) == 1L) {
+            res <- which.min(as.vector(D_approx))
+            if (length(res) == 0L) NA_integer_ else res
+          } else {
+            apply(D_approx, 1, function(x) {
+              res <- which.min(x)
+              if (length(res) == 0L) NA_integer_ else res
+            })
+          }
+        }
       )
       if (verbose)
         message(sprintf("  [%s] KNN: %d test -> %d train rows. %.3f s",
@@ -557,21 +579,26 @@ evo_transformers$umap <- create_transformer(
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
     
-    n_neighbors <- 15
-    if (nrow(x) < 15) {
-      n_neighbors <- max(2, nrow(x) - 1)
+    verbose <- is_verbose()
+    x_s <- .cluster_prep_x(x, min_rows = 15, verbose = verbose, tag = "UMAP Fit")
+    if (is.null(x_s)) {
+      x_s <- x
     }
     
-    verbose <- is_verbose()
+    n_neighbors <- 15
+    if (nrow(x_s) < 15) {
+      n_neighbors <- max(2, nrow(x_s) - 1)
+    }
+    
     if (verbose) {
       start_time <- Sys.time()
-      message(sprintf("[UMAP Fit] Start on %d rows, %d cols. n_neighbors = %d", nrow(x), ncol(x), n_neighbors))
+      message(sprintf("[UMAP Fit] Start on %d rows, %d cols. n_neighbors = %d", nrow(x_s), ncol(x_s), n_neighbors))
     }
     
     tryCatch({
       threads <- getOption("evoFE.threads", 1)
-      C <- max(2L, as.integer(round(log2(ncol(x)))))
-      model <- uwot::umap(x, n_neighbors = n_neighbors, n_components = C, 
+      C <- max(2L, as.integer(round(log2(ncol(x_s)))))
+      model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
                           ret_model = TRUE, n_threads = threads, verbose = FALSE, init = "random")
       if (verbose) {
         elapsed <- difftime(Sys.time(), start_time, units = "secs")
@@ -580,7 +607,7 @@ evo_transformers$umap <- create_transformer(
       
       preds_cache <- new.env(hash = TRUE, parent = emptyenv())
       if (!is.null(model$embedding)) {
-        x_hash <- digest::digest(x, algo = "xxhash64")
+        x_hash <- digest::digest(x_s, algo = "xxhash64")
         assign(x_hash, model$embedding, envir = preds_cache)
       }
       

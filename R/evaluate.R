@@ -328,8 +328,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       } else {
         train_idx <- which(folds != f)
         val_idx <- which(folds == f)
-        train_fold <- data.table::copy(dt[train_idx, ])
-        val_fold <- data.table::copy(dt[val_idx, ])
+        train_fold <- dt[train_idx, ]
+        val_fold <- dt[val_idx, ]
       }
       
       res <- tryCatch({
