@@ -590,31 +590,28 @@ evo_transformers$umap <- create_transformer(
       n_neighbors <- max(2, nrow(x_s) - 1)
     }
     
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[UMAP Fit] Start on %d rows, %d cols. n_neighbors = %d", nrow(x_s), ncol(x_s), n_neighbors))
-    }
-    
+    t0 <- Sys.time()
     tryCatch({
       threads <- getOption("evoFE.threads", 1)
       C <- max(2L, as.integer(round(log2(ncol(x_s)))))
       model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
                           ret_model = TRUE, n_threads = threads, verbose = FALSE, init = "random")
       if (verbose) {
-        elapsed <- difftime(Sys.time(), start_time, units = "secs")
-        message(sprintf("[UMAP Fit] Completed in %.3f seconds", as.numeric(elapsed)))
+        message(sprintf("  [UMAP Fit] umap on %d rows. %d neighbors. %.3f s",
+                        nrow(x_s), n_neighbors, as.numeric(difftime(Sys.time(), t0, units = "secs"))))
       }
       
       preds_cache <- new.env(hash = TRUE, parent = emptyenv())
-      if (!is.null(model$embedding)) {
-        x_hash <- digest::digest(x_s, algo = "xxhash64")
-        assign(x_hash, model$embedding, envir = preds_cache)
-      }
-      
-      list(model = model, valid = TRUE, preds_cache = preds_cache)
+      list(
+        model = model,
+        valid = TRUE,
+        x_train = x_s,
+        training_embedding = model$embedding,
+        preds_cache = preds_cache
+      )
     }, error = function(e) {
       if (verbose) {
-        message(sprintf("[UMAP Fit] Failed: %s", conditionMessage(e)))
+        message(sprintf("  [UMAP Fit] Failed: %s", conditionMessage(e)))
       }
       list(model = NULL, valid = FALSE)
     })
@@ -623,43 +620,47 @@ evo_transformers$umap <- create_transformer(
     input_cols <- gene$input_cols
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     verbose <- is_verbose()
-    if (is.null(state) || !state$valid) {
+    if (is.null(state) || !state$valid || is.null(state$x_train)) {
       if (verbose) {
-        message("[UMAP Apply] Skipped because fitted state is invalid or NULL.")
+        message("  [UMAP Apply] Skipped because fitted state is invalid or NULL.")
       }
       return(rep(0, nrow(data)))
     }
     x <- as.matrix(data[, input_cols, with = FALSE])
     x[is.na(x)] <- 0
     storage.mode(x) <- "double"
-    if (verbose) {
-      start_time <- Sys.time()
-      message(sprintf("[UMAP Apply] Start on %d rows, %d cols. Component = %d", nrow(x), ncol(x), comp_idx))
+    
+    compute <- function() {
+      if (nrow(x) == nrow(state$x_train) && all(x == state$x_train)) {
+        if (verbose) {
+          message("  [UMAP Apply] (Fast Path): using cached training predictions. 0.000 s")
+        }
+        state$training_embedding
+      } else {
+        t0 <- Sys.time()
+        threads <- getOption("evoFE.threads", 1)
+        preds <- uwot::umap_transform(x, model = state$model, n_threads = threads, verbose = FALSE)
+        if (verbose) {
+          message(sprintf("  [UMAP Apply] Transform: %d test rows. %.3f s",
+                          nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+        }
+        preds
+      }
     }
     
     if (is.null(state$preds_cache)) {
-      threads <- getOption("evoFE.threads", 1)
-      preds <- uwot::umap_transform(x, model = state$model, n_threads = threads, verbose = FALSE)
+      preds <- compute()
     } else {
       x_key <- digest::digest(x, algo = "xxhash64")
       if (exists(x_key, envir = state$preds_cache)) {
         preds <- get(x_key, envir = state$preds_cache)
-        if (verbose) {
-          message("  Retrieve UMAP projection from cache.")
-        }
       } else {
-        threads <- getOption("evoFE.threads", 1)
-        preds <- uwot::umap_transform(x, model = state$model, n_threads = threads, verbose = FALSE)
+        preds <- compute()
         assign(x_key, preds, envir = state$preds_cache)
       }
     }
     
     if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
-    
-    if (verbose) {
-      elapsed <- difftime(Sys.time(), start_time, units = "secs")
-      message(sprintf("[UMAP Apply] Completed in %.3f seconds", as.numeric(elapsed)))
-    }
     preds[, comp_idx]
   },
   name_generator = function(gene) .gene_col_name(gene, "ump")

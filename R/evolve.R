@@ -532,13 +532,6 @@ evolve_features <- function(data, target_col, task = "classification",
   pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
   pop[[1]] <- baseline_ind
 
-  if (verbose) {
-    message("\n[Gen 1] Initialized Population:")
-    for (i in seq_along(pop)) {
-      message(sprintf("  Individual %d: %s", i, individual_to_recipe_string(pop[[i]])))
-    }
-  }
-
   global_best_fitness <- baseline_ind$fitness
   running_best_fitness <- baseline_ind$fitness
   generations_without_improvement <- 0
@@ -553,6 +546,11 @@ evolve_features <- function(data, target_col, task = "classification",
         message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
       } else {
         message(sprintf("\n--- Generation %d / %d ---", g, generations))
+      }
+      # Print all individuals in the population for this generation
+      for (i in seq_along(pop)) {
+        fit_str <- if (is.na(pop[[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop[[i]]$fitness)
+        message(sprintf("  Individual %d (%s): %s", i, fit_str, individual_to_recipe_string(pop[[i]])))
       }
     }
 
