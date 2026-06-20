@@ -4,7 +4,13 @@
 \alias{register_evaluator}
 \title{Register a model evaluator}
 \usage{
-register_evaluator(name, train_func, predict_func, base_evaluator = NULL)
+register_evaluator(
+  name,
+  train_func,
+  predict_func,
+  base_evaluator = NULL,
+  cleanup_func = NULL
+)
 }
 \arguments{
 \item{name}{Name of the evaluator.}
@@ -19,6 +25,8 @@ and any additional parameters, and return a list with \code{model},
 vector or matrix of predictions.}
 
 \item{base_evaluator}{Optional character name of the base registered model.}
+
+\item{cleanup_func}{Optional function to clean up model resources/states after evaluation.}
 }
 \description{
 Register a model evaluator

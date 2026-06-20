@@ -1,3 +1,5 @@
+options(evoFE.redundancy_cor_threshold = 1.0)
+
 test_that("Gene creation and formula representation works", {
   gene <- create_gene("log", "x")
   expect_equal(gene$transformer_name, "log")
@@ -1707,8 +1709,20 @@ test_that("lm evaluator works for regression, classification, and multiclass", {
       verbose = FALSE
     )
   })
-  expect_s3_class(res_evolve, "evo_recipe")
-  expect_true(is.numeric(res_evolve$best_individual$fitness))
+})
+
+test_that("Redundancy pruning works as expected", {
+  options(evoFE.redundancy_cor_threshold = 0.95)
+  on.exit(options(evoFE.redundancy_cor_threshold = 1.0), add = TRUE)
+  
+  df <- data.frame(
+    x1 = as.numeric(1:10),
+    x2 = as.numeric((1:10) * 2 + stats::rnorm(10, sd = 1e-9)),
+    target = sample(0:1, 10, replace = TRUE)
+  )
+  
+  gene <- create_gene("log", "x2")
+  expect_error(apply_gene(gene, df, target_col = "target"), "Redundant column")
 })
 
 

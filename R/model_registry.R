@@ -41,6 +41,7 @@ evo_evaluators <- new.env(parent = emptyenv())
 #'   \code{x_new}, \code{task}, and any additional parameters, and return a
 #'   vector or matrix of predictions.
 #' @param base_evaluator Optional character name of the base registered model.
+#' @param cleanup_func Optional function to clean up model resources/states after evaluation.
 #' @importFrom lightgbm lgb.train
 #' @importFrom xgboost xgb.train
 #' @examples

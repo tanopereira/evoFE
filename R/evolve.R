@@ -250,11 +250,11 @@ tournament_select <- function(pop, k = 3) {
 #'   using the union of all unique genes evolved across all generations, rather
 #'   than only the best individual's genes.
 #' @param allowed_transformers Character vector of allowed transformer names,
-#'   or \\code{"all"} / \\code{"basic"} / \\code{"robust"} / \\code{"clustering"}.
+#'   or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.
 #' @param complexity_penalty Non-negative numeric penalty subtracted from each
-#'   individual's raw fitness as \\code{complexity_penalty * n_genes}.  A small
-#'   value (e.g. \\code{0.001}) encourages parsimonious recipes and reduces
-#'   overfitting on small datasets.  Default \\code{0} disables the penalty.
+#'   individual's raw fitness as \code{complexity_penalty * n_genes}.  A small
+#'   value (e.g. \code{0.001}) encourages parsimonious recipes and reduces
+#'   overfitting on small datasets.  Default \code{0} disables the penalty.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @return An \code{evo_recipe} S3 object:
