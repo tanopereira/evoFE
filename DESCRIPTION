@@ -45,6 +45,7 @@ Suggests:
     lumbermark,
     deadwood,
     mlr,
+    keras3,
     DiceKriging,
     randomForest,
     emoa

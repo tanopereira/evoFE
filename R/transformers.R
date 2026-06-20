@@ -46,10 +46,91 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 }
 #' Built-in feature transformers
 #'
-#' An environment containing default transformer definitions available for feature engineering.
+#' An environment containing all built-in transformer definitions available
+#' for the evolutionary feature-engineering search.  Every entry is an
+#' \code{evo_transformer} object produced by \code{\link{create_transformer}}.
 #'
-#' @return A named list of \code{evo_transformer} objects, each defining a
-#'   feature transformation (e.g. \code{log}, \code{pca}, \code{target_encode}).
+#' \strong{Arithmetic (numeric → numeric)}
+#' \describe{
+#'   \item{\code{log}}{Safe natural logarithm: \code{log1p(|x|)}.}
+#'   \item{\code{sqrt}}{Safe square root: \code{sqrt(|x|)}.}
+#'   \item{\code{reciprocal}}{Reciprocal: \code{1/x} (0 where \code{x == 0}).}
+#'   \item{\code{power}}{Signed exponentiation: \code{sign(x) * |x|^p} where
+#'     \code{p} is sampled from \{0.5, 1/3, 2, 3\}.}
+#'   \item{\code{add}}{Element-wise sum of 2+ numeric columns.}
+#'   \item{\code{subtract}}{Element-wise difference of two numeric columns.}
+#'   \item{\code{multiply}}{Element-wise product of 2+ numeric columns.}
+#'   \item{\code{divide}}{Element-wise ratio (0 where denominator is 0).}
+#'   \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + ε)}.}
+#'   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
+#' }
+#'
+#' \strong{Rank / distribution (numeric → numeric, stateful)}
+#' \describe{
+#'   \item{\code{rank_transform}}{ECDF-based percentile rank mapped to
+#'     \eqn{[0, 1]}.  Fit on training data; robust to outliers.}
+#' }
+#'
+#' \strong{Group-by aggregations (mixed cat × num → numeric, stateful)}
+#' \describe{
+#'   \item{\code{groupby_mean}}{Per-group mean.}
+#'   \item{\code{groupby_sd}}{Per-group standard deviation.}
+#'   \item{\code{groupby_max}}{Per-group maximum.}
+#'   \item{\code{groupby_min}}{Per-group minimum.}
+#'   \item{\code{groupby_ratio}}{\code{value / group_mean}.}
+#'   \item{\code{groupby_zscore}}{\code{(value - group_mean) / group_sd}.}
+#'   \item{\code{groupby_median}}{Per-group median (robust to outliers).}
+#'   \item{\code{groupby_quantile}}{Per-group Q1 or Q3 (\code{q} sampled from
+#'     \{0.25, 0.75\}).}
+#' }
+#'
+#' \strong{Supervised categorical encodings (categorical → numeric, stateful)}
+#' \describe{
+#'   \item{\code{target_encode}}{Smoothed mean-target encoding for binary /
+#'     regression tasks.}
+#'   \item{\code{target_encode_multiclass}}{Class-wise smoothed target encoding
+#'     for multiclass tasks.}
+#'   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
+#'     classification: \code{ln(P(event|cat) / P(non-event|cat))} with Laplace
+#'     smoothing.  Falls back to 0 for non-binary targets.}
+#' }
+#'
+#' \strong{Unsupervised categorical / binning (stateful)}
+#' \describe{
+#'   \item{\code{frequency_encode}}{Count of each category level in training data.}
+#'   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
+#'     an "other" bucket (\code{comp_idx} 1–6).}
+#'   \item{\code{quantile_binning}}{Assigns quantile-based bin index (numeric output).}
+#'   \item{\code{quantile_binning_cat}}{Same, with categorical output.}
+#'   \item{\code{log_binning}}{Log-scale bin index (numeric output).}
+#'   \item{\code{log_binning_cat}}{Same, with categorical output.}
+#'   \item{\code{datetime_extract}}{Extracts year, month, day, hour, day-of-week,
+#'     or weekend indicator from date/datetime columns.}
+#' }
+#'
+#' \strong{Dimensionality reduction (numeric → numeric, stateful)}
+#' \describe{
+#'   \item{\code{pca}}{Selected principal component from \code{prcomp}.}
+#'   \item{\code{truncated_svd}}{Selected component from truncated SVD.}
+#'   \item{\code{random_projection}}{Random unit-vector linear combination.}
+#'   \item{\code{umap}}{UMAP projection component (requires \pkg{uwot}).}
+#' }
+#'
+#' \strong{Manifold / graph learning (numeric → numeric or categorical, stateful)}
+#' \describe{
+#'   \item{\code{genie}}{Genie hierarchical cluster label (requires
+#'     \pkg{genieclust}).}
+#'   \item{\code{genie_centroid_dist}}{Distance to each Genie cluster centroid.}
+#'   \item{\code{lumbermark}}{Lumbermark hierarchical cluster label (requires
+#'     \pkg{lumbermark}).}
+#'   \item{\code{lumbermark_centroid_dist}}{Distance to each Lumbermark cluster
+#'     centroid.}
+#'   \item{\code{mst_score}}{MST-based anomaly score (requires
+#'     \pkg{quitefastmst}).}
+#'   \item{\code{deadwood}}{Deadwood outlier indicator (requires \pkg{deadwood}).}
+#' }
+#'
+#' @seealso \code{\link{create_transformer}}, \code{\link{register_transformer}}
 #' @export
 evo_transformers <- new.env(parent = emptyenv())
 
@@ -1237,4 +1318,157 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     get(key, envir = state$preds_cache)[[comp_idx]]
   },
   name_generator = function(gene) .gene_col_name(gene, "lmcd")
+)
+
+# --- NEW TRANSFORMERS ---
+
+# Power Transform
+evo_transformers$power <- create_transformer(
+  name = "power",
+  type = "unary",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    x <- data[[gene$input_cols[1]]]
+    p <- if (!is.null(gene$params$p)) gene$params$p else 2
+    # Use signed power to handle negatives: sign(x) * |x|^p
+    res <- sign(x) * abs(x)^p
+    res[!is.finite(res)] <- 0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "pow")
+)
+
+# Rank Transform (ECDF-based percentile rank)
+evo_transformers$rank_transform <- create_transformer(
+  name = "rank_transform",
+  type = "unary",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    x <- data[[gene$input_cols[1]]]
+    x_clean <- x[!is.na(x) & is.finite(x)]
+    if (length(x_clean) == 0) return(list(ecdf_fn = NULL))
+    list(ecdf_fn = stats::ecdf(x_clean))
+  },
+  apply_func = function(data, gene, state = NULL) {
+    x <- data[[gene$input_cols[1]]]
+    if (is.null(state) || is.null(state$ecdf_fn)) {
+      # Fallback: within-batch rank scaled to [0, 1]
+      r <- rank(x, ties.method = "average", na.last = "keep")
+      r[is.na(r)] <- 0.5 * length(x)
+      return(r / length(x))
+    }
+    res <- state$ecdf_fn(x)
+    res[is.na(res)] <- 0.5
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rnk")
+)
+
+# Weight of Evidence Encoding (binary classification only)
+evo_transformers$woe_encode <- create_transformer(
+  name = "woe_encode",
+  type = "supervised_unary",
+  input_type = "categorical",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    y <- data[[target_col]]
+
+    # WOE is only defined for binary targets
+    y_vals <- sort(unique(y[!is.na(y)]))
+    if (length(y_vals) != 2) {
+      return(list(mapping = NULL, global_woe = 0))
+    }
+
+    # Event = second (higher) level
+    y_bin <- as.numeric(y == y_vals[2])
+    total_events    <- sum(y_bin, na.rm = TRUE)
+    total_nonevents <- sum(1 - y_bin, na.rm = TRUE)
+
+    if (total_events == 0 || total_nonevents == 0) {
+      return(list(mapping = NULL, global_woe = 0))
+    }
+
+    dt    <- data.table::data.table(x = x, y = y_bin)
+    stats <- dt[, .(n_events = sum(y, na.rm = TRUE), n = .N), by = x]
+    stats[, n_nonevents := n - n_events]
+
+    # Laplace smoothing to avoid log(0)
+    eps <- 0.5
+    stats[, dist_events    := (n_events    + eps) / (total_events    + 2 * eps)]
+    stats[, dist_nonevents := (n_nonevents + eps) / (total_nonevents + 2 * eps)]
+    stats[, woe := log(dist_events / dist_nonevents)]
+    stats[!is.finite(woe), woe := 0]
+
+    mapping <- stats[, .(x, woe)]
+    data.table::setkey(mapping, x)
+    list(mapping = mapping, global_woe = 0)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    if (is.null(state) || is.null(state$mapping)) {
+      return(rep(0, length(x)))
+    }
+    dt  <- data.table::data.table(x = x)
+    res <- state$mapping[dt, on = "x"]$woe
+    res[is.na(res)] <- state$global_woe
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "woe")
+)
+
+# Group-by Median
+evo_transformers$groupby_median <- create_transformer(
+  name = "groupby_median",
+  type = "mixed_binary",
+  input_type = "mixed",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    cat_col <- input_cols[1]
+    num_col <- input_cols[2]
+    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    mapping <- dt[, .(val = stats::median(n, na.rm = TRUE)), by = c]
+    data.table::setkey(mapping, c)
+    global_med <- stats::median(dt$n, na.rm = TRUE)
+    if (is.na(global_med)) global_med <- 0
+    list(mapping = mapping, default_val = global_med)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    dt  <- data.table::data.table(c = x)
+    res <- state$mapping[dt, on = "c"]$val
+    res[is.na(res)] <- state$default_val
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "gbmed")
+)
+
+# Group-by Quantile (Q1 or Q3)
+evo_transformers$groupby_quantile <- create_transformer(
+  name = "groupby_quantile",
+  type = "mixed_binary",
+  input_type = "mixed",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    cat_col <- input_cols[1]
+    num_col <- input_cols[2]
+    q <- if (!is.null(gene$params$q)) gene$params$q else 0.25
+    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    mapping <- dt[, .(val = stats::quantile(n, probs = q, na.rm = TRUE, names = FALSE)), by = c]
+    data.table::setkey(mapping, c)
+    global_q <- stats::quantile(dt$n, probs = q, na.rm = TRUE, names = FALSE)
+    if (is.na(global_q)) global_q <- 0
+    list(mapping = mapping, default_val = global_q)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    dt  <- data.table::data.table(c = x)
+    res <- state$mapping[dt, on = "c"]$val
+    res[is.na(res)] <- state$default_val
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "gbq")
 )

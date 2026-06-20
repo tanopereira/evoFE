@@ -33,6 +33,10 @@ create_gene <- function(transformer_name, input_cols) {
     params$comp_idx <- sample(1:5, 1)
   } else if (transformer_name == "datetime_extract") {
     params$component <- sample(c("year", "month", "day", "hour", "day_of_week", "weekend"), 1)
+  } else if (transformer_name == "power") {
+    params$p <- sample(c(0.5, 1/3, 2, 3), 1)
+  } else if (transformer_name == "groupby_quantile") {
+    params$q <- sample(c(0.25, 0.75), 1)
   }
   gene <- list(
     transformer_name = transformer_name,
@@ -77,6 +81,10 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, cols_str)
   } else if (!is.null(gene$params$base)) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, cols_str)
+  } else if (!is.null(gene$params$p)) {
+    sprintf("pow%.4g(%s)", gene$params$p, cols_str)
+  } else if (!is.null(gene$params$q)) {
+    sprintf("%s_q%.2f(%s)", gene$transformer_name, gene$params$q, cols_str)
   } else if (!is.null(gene$params$k)) {
     if (gene$transformer_name == "genie" && !is.null(gene$params$gini_threshold)) {
       sprintf("genie_k%d_t%.2f(%s)", gene$params$k, gene$params$gini_threshold, cols_str)

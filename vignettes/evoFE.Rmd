@@ -171,7 +171,7 @@ round(probs, 3)
 
 ## Transformer Reference
 
-evoFE ships with **34 built-in transformers** that the genetic algorithm can
+evoFE ships with **39 built-in transformers** that the genetic algorithm can
 select from during evolution. The table below groups them by category.
 
 ### Arithmetic (numeric → numeric)
@@ -181,12 +181,19 @@ select from during evolution. The table below groups them by category.
 | `log` | unary | Natural logarithm (safe: `log(abs(x) + 1)`) |
 | `sqrt` | unary | Square root (safe: `sqrt(abs(x))`) |
 | `reciprocal` | unary | `1 / (x + ε)` |
+| `power` | unary | Signed exponentiation: `sign(x) * \|x\|^p`, `p` ∈ {0.5, 1/3, 2, 3} |
 | `add` | multi | Element-wise sum of 2+ columns |
 | `subtract` | binary | `x₁ − x₂` |
 | `multiply` | multi | Element-wise product of 2+ columns |
 | `divide` | binary | `x₁ / (x₂ + ε)` |
 | `normalized_difference` | binary | `(x₁ − x₂) / (x₁ + x₂ + ε)` |
 | `log_ratio` | binary | `log((x₁ + ε) / (x₂ + ε))` |
+
+### Rank / distribution (numeric → numeric)
+
+| Transformer | Description |
+|:---|:---|
+| `rank_transform` | ECDF-based percentile rank mapped to \[0, 1\]; fit on training data, robust to outliers |
 
 ### Group-by aggregations (mixed → numeric)
 
@@ -197,6 +204,8 @@ These combine a **categorical** grouping column with a **numeric** value column.
 | `groupby_mean` | Mean of value within each group |
 | `groupby_sd` | Standard deviation within each group |
 | `groupby_max` / `groupby_min` | Max / min within each group |
+| `groupby_median` | Median within each group (robust to outliers) |
+| `groupby_quantile` | Q1 or Q3 within each group (`q` ∈ {0.25, 0.75}) |
 | `groupby_ratio` | `value / group_mean` |
 | `groupby_zscore` | `(value − group_mean) / group_sd` |
 
@@ -206,6 +215,7 @@ These combine a **categorical** grouping column with a **numeric** value column.
 |:---|:---:|:---|
 | `target_encode` | cat → num | Supervised mean-target encoding with smoothing (for binary classification / regression) |
 | `target_encode_multiclass` | cat → num | Supervised mean-target encoding for multiclass classification tasks (one component per class-indicator) |
+| `woe_encode` | cat → num | Weight of Evidence: `ln(P(event\|cat) / P(non-event\|cat))` with Laplace smoothing; binary classification only |
 | `frequency_encode` | cat → num | Proportion of each category in the data |
 | `one_hot_encode` | cat → num | Binary one-hot encoding indicator for a specific category (or "other" for rare categories) |
 | `quantile_binning` | num → num | Assign quantile rank (1–5) |
@@ -372,6 +382,8 @@ recipe_mape <- evolve_features(
 | `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |
 | `threads` | 2 | Parallelism for model training |
 | `metric` | `"default"` | Optimization metric: `"default"`, `"auc"`, `"f1"`, `"mae"`, or a custom function |
+| `allowed_transformers` | `"all"` | Transformer pool: `"all"`, `"basic"`, `"robust"`, `"clustering"`, or a character vector of names |
+| `complexity_penalty` | `0` | Per-gene fitness penalty — subtracts `penalty × n_genes` from raw fitness to favour shorter recipes |
 
 ### Practical advice
 
@@ -384,6 +396,86 @@ recipe_mape <- evolve_features(
 - **Use `set.seed()`** before calling `evolve_features()` for reproducible experiments and benchmarking.
 - **`crossover_type = "union"`** tends to produce larger recipes (more features).
   `"random"` keeps recipes leaner.
+- **Use `complexity_penalty`** on small datasets (e.g. `0.001`) to discourage
+  long recipes and reduce overfitting.
+- **Use `allowed_transformers = "robust"`** when you want the search restricted
+  to statistically stable, outlier-resistant transformers without the heavier
+  clustering or manifold-learning ops.
+
+## Advanced Options
+
+### Transformer Presets
+
+The `allowed_transformers` parameter controls which transformers the genetic
+algorithm can select. Beside a custom character vector of transformer names,
+four named presets are available:
+
+| Preset | Transformers | When to use |
+|:---|:---:|:---|
+| `"all"` | 39 | Default — full search space |
+| `"basic"` | 18 | Fast runs; arithmetic + key encodings only |
+| `"robust"` | 24 | Outlier-resistant ops (rank, power, groupby median/quantile, WOE…) without heavy clustering |
+| `"clustering"` | 10 | Manifold & graph features only (UMAP, Genie, MST…) |
+
+```r
+# Restrict to the robust preset
+recipe <- evolve_features(
+  data = df, target_col = "y", task = "classification",
+  allowed_transformers = "robust"
+)
+```
+
+### Complexity Penalty
+
+By default, a recipe with 10 genes that scores 0.821 beats a 1-gene recipe
+that scores 0.820 — even though the longer recipe is more likely to overfit.
+The `complexity_penalty` parameter adds a parsimony pressure:
+
+$$\text{adjusted fitness} = \text{raw fitness} - \alpha \times n_{\text{genes}}$$
+
+A value of `0.001` is a good starting point for most datasets:
+
+```r
+recipe <- evolve_features(
+  data = df, target_col = "y", task = "classification",
+  complexity_penalty = 0.001   # subtract 0.001 per gene
+)
+```
+
+Set to `0` (default) to disable. Has no effect on the baseline individual
+(0 genes) or individuals whose raw fitness is already `-Inf`.
+
+### Redundancy Pruning
+
+During evolution, evoFE automatically rejects any new feature whose absolute
+Pearson correlation with an existing feature exceeds a threshold (default
+`0.95`). This prevents the search from wasting evaluations on near-duplicate
+columns.
+
+The threshold is tunable via an option:
+
+```r
+# Tighten to 0.90 — reject anything correlated above 90%
+options(evoFE.redundancy_cor_threshold = 0.90)
+
+# Disable entirely
+options(evoFE.redundancy_cor_threshold = 1.0)
+```
+
+### Convergence Plot
+
+`plot(recipe)` (or `plot(recipe, type = "fitness")`) produces a
+generation-by-generation fitness curve with:
+
+- A **shaded region** showing improvement over the generation-1 baseline
+- A **dashed reference line** at the generation-1 fitness
+- A **gold marker** on the best generation
+- A subtitle reporting total generations, best fitness, and total gain
+
+```r
+plot(recipe, type = "fitness")
+plot(recipe, type = "importance")  # top feature importances
+```
 
 ## Reproducibility
 

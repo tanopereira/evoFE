@@ -24,6 +24,7 @@ evaluate_pop(
   running_best_fitness,
   metric = "default",
   allow_prune = TRUE,
+  complexity_penalty = 0,
   ...
 )
 }

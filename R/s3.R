@@ -156,19 +156,55 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
   type <- match.arg(type, c("fitness", "importance"))
   
   if (type == "fitness") {
-    if (is.null(x$fitness_history)) {
+    if (is.null(x$fitness_history) || length(x$fitness_history) == 0) {
       stop("No fitness history available in this recipe.")
     }
-    y_vals <- x$fitness_history
-    x_vals <- seq_along(y_vals)
-    
+    y_vals  <- x$fitness_history
+    x_vals  <- seq_along(y_vals)
+    best_g  <- which.max(y_vals)
+    baseline <- y_vals[1]
+    total_gain <- y_vals[best_g] - baseline
+    subtitle <- sprintf("Generations: %d  |  Best: %.4f  |  Gain vs Gen 1: %+.4f",
+                        length(y_vals), y_vals[best_g], total_gain)
+
+    y_range <- range(y_vals, na.rm = TRUE)
+    y_pad   <- max(0.002, diff(y_range) * 0.12)
+    ylim    <- c(y_range[1] - y_pad, y_range[2] + y_pad)
+
     graphics::plot(
-      x_vals, y_vals, type = "b", pch = 19, col = "#1f77b4",
+      x_vals, y_vals,
+      type = "n",
       xlab = "Generation", ylab = "Best Fitness",
-      main = "Evolutionary Feature Engineering Fitness Curve",
+      main = "Evolutionary Feature Engineering \u2014 Fitness Curve",
+      sub  = subtitle,
+      ylim = ylim,
+      xaxt = "n",
       ...
     )
-    graphics::grid()
+    # Integer x-axis ticks
+    graphics::axis(1, at = x_vals, labels = x_vals)
+    graphics::grid(nx = NA, ny = NULL, lty = 2, col = "#cccccc")
+
+    # Shaded improvement polygon (between baseline and curve)
+    poly_x <- c(x_vals, rev(x_vals))
+    poly_y <- c(y_vals, rep(baseline, length(x_vals)))
+    graphics::polygon(poly_x, poly_y, col = "#cce5ff", border = NA)
+
+    # Baseline dashed line
+    graphics::abline(h = baseline, lty = 2, col = "#888888", lwd = 1.2)
+
+    # Fitness line
+    graphics::lines(x_vals, y_vals, col = "#1a6fcc", lwd = 2)
+    graphics::points(x_vals, y_vals, pch = 19, col = "#1a6fcc", cex = 0.9)
+
+    # Highlight best generation
+    graphics::points(best_g, y_vals[best_g], pch = 18, col = "#e6a817", cex = 1.8)
+    graphics::text(
+      best_g, y_vals[best_g],
+      labels = sprintf(" Gen %d\n %.4f", best_g, y_vals[best_g]),
+      pos = if (best_g > length(y_vals) / 2) 2 else 4,
+      col = "#7a4400", cex = 0.78
+    )
   } else if (type == "importance") {
     imp <- x$best_individual$importances
     if (is.null(imp) || length(imp) == 0) {

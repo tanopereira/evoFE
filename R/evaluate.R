@@ -71,7 +71,36 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     if (!is.null(target_col) && length(unique(new_col_train[!is.na(new_col_train)])) <= 1) {
       stop("Constant column generated")
     }
-    
+
+    # Reject columns that are near-perfect duplicates of existing features.
+    # Guard with !is.null(target_col): during inference (holdout/predict) we
+    # must apply every gene that was accepted at training time — correlation on
+    # a different data split must never prune a gene the model depends on.
+    cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.95)
+    if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
+      existing_num_cols <- names(train_data)[sapply(names(train_data), function(cn) {
+        is.numeric(train_data[[cn]]) && cn != gene$output_col
+      })]
+      if (length(existing_num_cols) > 0) {
+        new_fin <- new_col_train[is.finite(new_col_train)]
+        if (length(new_fin) > 2 && stats::sd(new_fin) > 0) {
+          for (ecol in existing_num_cols) {
+            ev <- train_data[[ecol]]
+            ev <- ev[is.finite(ev)]
+            n_ov <- min(length(new_fin), length(ev))
+            if (n_ov > 2) {
+              r <- tryCatch(
+                abs(stats::cor(new_fin[seq_len(n_ov)], ev[seq_len(n_ov)],
+                               use = "complete.obs")),
+                error = function(e) 0
+              )
+              if (!is.na(r) && r >= cor_threshold) stop("Redundant column")
+            }
+          }
+        }
+      }
+    }
+
     if (out_type == "categorical") {
       new_col_train <- as.factor(new_col_train)
     }
@@ -195,6 +224,9 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param verbose Logical indicating if progress should be printed.
 #' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
+#' @param complexity_penalty Non-negative numeric. Subtracted from raw fitness as
+#'   \code{complexity_penalty * n_genes}, penalising longer recipes to favour
+#'   parsimony.  Default \code{0} disables the penalty.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
 #'   the computed score (higher is better), \code{importances} set to a named
@@ -207,7 +239,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              evaluator = "lightgbm", fold_ids = NULL, 
                              shared_folds = NULL, shared_full = NULL, 
                              state_cache = NULL, threads = 2,
-                             metric = "default", verbose = FALSE, allow_prune = TRUE, ...) {
+                             metric = "default", verbose = FALSE, allow_prune = TRUE,
+                             complexity_penalty = 0, ...) {
   if (!is.na(ind$fitness)) return(ind)
   
   num_class <- NULL
@@ -296,7 +329,12 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       ind$fitness <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
     }
-    
+
+    # Complexity penalty: discourage long recipes (parsimony pressure)
+    if (complexity_penalty > 0 && is.finite(ind$fitness)) {
+      ind$fitness <- ind$fitness - complexity_penalty * length(res$ind$genes)
+    }
+
     ind$holdout_fitness <- NULL
     
     # Propagate the updated genes (with state)
@@ -381,11 +419,21 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       } else {
         metrics[f] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
       }
+      
+      # Clean up the model if the evaluator provides a cleanup function (e.g. to prevent TF memory leaks)
+      if (!is.null(evo_evaluators[[evaluator]]$cleanup_func)) {
+        evo_evaluators[[evaluator]]$cleanup_func(res_model$model)
+      }
     }
     
     # Fitness: average over successful folds only; -Inf only when every fold failed.
     finite_metrics <- metrics[!is.na(metrics)]
     ind$fitness <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
+
+    # Complexity penalty: discourage long recipes (parsimony pressure)
+    if (complexity_penalty > 0 && is.finite(ind$fitness)) {
+      ind$fitness <- ind$fitness - complexity_penalty * length(ind$genes)
+    }
     
     # Aggregate importances across folds
     all_feats <- unique(unlist(lapply(fold_importances, names)))

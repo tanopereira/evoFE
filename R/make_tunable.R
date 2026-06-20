@@ -215,8 +215,17 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     if (!mbo_infill_opt %in% c("focussearch", "ea")) {
       stop("mbo_infill_opt must be either 'focussearch' or 'ea'.")
     }
-    if (mbo_infill_opt == "ea" && !requireNamespace("emoa", quietly = TRUE)) {
-      stop("The package 'emoa' is required to use the 'ea' infill optimizer. Please install it.")
+    
+    if (mbo_infill_opt == "ea") {
+      all_int <- all(vapply(tunable_defs, function(d) d$type == "integer", logical(1)))
+      if (all_int) {
+        if (verbose) {
+          message("[MBO] All tunable parameters are integers. Falling back to 'focussearch' optimizer to avoid 'emoa' crossover crash on purely integer spaces.")
+        }
+        mbo_infill_opt <- "focussearch"
+      } else if (!requireNamespace("emoa", quietly = TRUE)) {
+        stop("The package 'emoa' is required to use the 'ea' infill optimizer. Please install it.")
+      }
     }
     control <- mlrMBO::makeMBOControl()
     control <- mlrMBO::setMBOControlTermination(control, iters = mbo_iters)
@@ -239,7 +248,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     
     # Run optimization (fall back to Random Forest surrogate on Kriging errors)
     mbo_res <- tryCatch({
-      mlrMBO::mbo(obj_fun, design = design, control = control, show.info = verbose)
+      suppressWarnings(mlrMBO::mbo(obj_fun, design = design, control = control, show.info = verbose))
     }, error = function(e) {
       if (!requireNamespace("mlr", quietly = TRUE) || !requireNamespace("randomForest", quietly = TRUE)) {
         stop(sprintf("[MBO] Kriging surrogate failed, and fallback Random Forest surrogate is unavailable because suggested packages 'mlr' and/or 'randomForest' are not installed. Original Kriging error: %s", conditionMessage(e)))

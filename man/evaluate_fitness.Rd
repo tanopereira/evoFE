@@ -22,6 +22,7 @@ evaluate_fitness(
   metric = "default",
   verbose = FALSE,
   allow_prune = TRUE,
+  complexity_penalty = 0,
   ...
 )
 }
@@ -59,6 +60,10 @@ evaluate_fitness(
 \item{verbose}{Logical indicating if progress should be printed.}
 
 \item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
+
+\item{complexity_penalty}{Non-negative numeric. Subtracted from raw fitness as
+\code{complexity_penalty * n_genes}, penalising longer recipes to favour
+parsimony.  Default \code{0} disables the penalty.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }

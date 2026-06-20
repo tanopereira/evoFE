@@ -113,7 +113,8 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          split_ids, shared_splits, evaluator,
                          fold_ids, shared_folds, shared_full, state_cache,
                          fitness_cache, threads, verbose, running_best_fitness,
-                         metric = "default", allow_prune = TRUE, ...) {
+                         metric = "default", allow_prune = TRUE,
+                         complexity_penalty = 0, ...) {
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) next
 
@@ -132,7 +133,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         shared_folds = shared_folds,
         shared_full = shared_full, state_cache = state_cache,
         threads = threads, metric = metric, verbose = verbose,
-        allow_prune = allow_prune, ...
+        allow_prune = allow_prune, complexity_penalty = complexity_penalty, ...
       )
       assign(cache_key, pop[[i]], envir = fitness_cache)
     }
@@ -249,7 +250,11 @@ tournament_select <- function(pop, k = 3) {
 #'   using the union of all unique genes evolved across all generations, rather
 #'   than only the best individual's genes.
 #' @param allowed_transformers Character vector of allowed transformer names,
-#'   or "all" / "basic" / "clustering".
+#'   or \\code{"all"} / \\code{"basic"} / \\code{"robust"} / \\code{"clustering"}.
+#' @param complexity_penalty Non-negative numeric penalty subtracted from each
+#'   individual's raw fitness as \\code{complexity_penalty * n_genes}.  A small
+#'   value (e.g. \\code{0.001}) encourages parsimonious recipes and reduces
+#'   overfitting on small datasets.  Default \\code{0} disables the penalty.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @return An \code{evo_recipe} S3 object:
@@ -293,7 +298,8 @@ evolve_features <- function(data, target_col, task = "classification",
                             verbose = TRUE, metric = "default",
                             model_all_final_genes = FALSE,
                             model_all_historical_genes = FALSE,
-                            allowed_transformers = "all", ...) {
+                            allowed_transformers = "all",
+                            complexity_penalty = 0, ...) {
 
 
 
@@ -304,9 +310,27 @@ evolve_features <- function(data, target_col, task = "classification",
     if (allowed_transformers == "all") {
       allowed_transformers <- all_trans
     } else if (allowed_transformers == "basic") {
-      allowed_transformers <- intersect(all_trans, c("add", "subtract", "multiply", "divide", "log", "sqrt", "reciprocal", "normalized_difference", "frequency_encode", "one_hot_encode", "target_encode", "target_encode_multiclass", "groupby_mean", "groupby_min", "groupby_max", "pca"))
+      allowed_transformers <- intersect(all_trans, c(
+        "add", "subtract", "multiply", "divide",
+        "log", "sqrt", "reciprocal", "power",
+        "normalized_difference", "frequency_encode",
+        "one_hot_encode", "target_encode", "target_encode_multiclass",
+        "rank_transform", "groupby_mean", "groupby_min", "groupby_max",
+        "pca"
+      ))
     } else if (allowed_transformers == "clustering") {
       allowed_transformers <- intersect(all_trans, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
+    } else if (allowed_transformers == "robust") {
+      allowed_transformers <- intersect(all_trans, c(
+        "log", "sqrt", "reciprocal", "power", "rank_transform",
+        "add", "subtract", "multiply", "divide",
+        "normalized_difference", "log_ratio",
+        "target_encode", "woe_encode", "frequency_encode",
+        "groupby_mean", "groupby_median", "groupby_sd",
+        "groupby_zscore", "groupby_ratio", "groupby_quantile",
+        "groupby_min", "groupby_max",
+        "quantile_binning", "pca"
+      ))
     }
   }
   allowed_transformers <- intersect(allowed_transformers, all_trans)
@@ -517,7 +541,8 @@ evolve_features <- function(data, target_col, task = "classification",
     evaluator = evaluator, fold_ids = fold_ids,
     shared_folds = shared_folds,
     shared_full = shared_full, state_cache = state_cache,
-    threads = threads, metric = metric, verbose = verbose, ...
+    threads = threads, metric = metric, verbose = verbose,
+    complexity_penalty = complexity_penalty, ...
   )
   if (verbose) {
     message(sprintf("  Tested Individual 1 -> Fitness: %.4f", baseline_ind$fitness))
@@ -559,7 +584,7 @@ evolve_features <- function(data, target_col, task = "classification",
       split_ids_val, shared_splits, evaluator,
       fold_ids, shared_folds, shared_full, state_cache,
       fitness_cache, threads, verbose, running_best_fitness,
-      metric = metric, ...
+      metric = metric, complexity_penalty = complexity_penalty, ...
     )
     pop <- eval_res$pop
     running_best_fitness <- eval_res$running_best_fitness
@@ -712,7 +737,7 @@ evolve_features <- function(data, target_col, task = "classification",
     split_ids_val, shared_splits, evaluator,
     fold_ids, shared_folds, shared_full, state_cache,
     fitness_cache, threads, verbose, running_best_fitness,
-    metric = metric, ...
+    metric = metric, complexity_penalty = complexity_penalty, ...
   )
   pop <- eval_res$pop
   fitness_vals <- sapply(pop, function(ind) ind$fitness)
@@ -755,7 +780,8 @@ evolve_features <- function(data, target_col, task = "classification",
       evaluator = evaluator, fold_ids = fold_ids,
       shared_folds = shared_folds,
       shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE, ...
+      threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
+      complexity_penalty = complexity_penalty, ...
     )
 
     if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
@@ -816,7 +842,8 @@ evolve_features <- function(data, target_col, task = "classification",
         evaluator = evaluator, fold_ids = fold_ids,
         shared_folds = shared_folds,
         shared_full = shared_full, state_cache = state_cache,
-        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE, ...
+        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
+        complexity_penalty = complexity_penalty, ...
       )
 
       if (is.null(super_ind_hist$best_params) && !is.null(best_ind$best_params)) {

@@ -6,10 +6,92 @@
 \usage{
 evo_transformers
 }
-\value{
-A named list of \code{evo_transformer} objects, each defining a
-  feature transformation (e.g. \code{log}, \code{pca}, \code{target_encode}).
-}
 \description{
-An environment containing default transformer definitions available for feature engineering.
+An environment containing all built-in transformer definitions available
+for the evolutionary feature-engineering search.  Every entry is an
+\code{evo_transformer} object produced by \code{\link{create_transformer}}.
+}
+\details{
+\strong{Arithmetic (numeric → numeric)}
+\describe{
+  \item{\code{log}}{Safe natural logarithm: \code{log1p(|x|)}.}
+  \item{\code{sqrt}}{Safe square root: \code{sqrt(|x|)}.}
+  \item{\code{reciprocal}}{Reciprocal: \code{1/x} (0 where \code{x == 0}).}
+  \item{\code{power}}{Signed exponentiation: \code{sign(x) * |x|^p} where
+    \code{p} is sampled from \{0.5, 1/3, 2, 3\}.}
+  \item{\code{add}}{Element-wise sum of 2+ numeric columns.}
+  \item{\code{subtract}}{Element-wise difference of two numeric columns.}
+  \item{\code{multiply}}{Element-wise product of 2+ numeric columns.}
+  \item{\code{divide}}{Element-wise ratio (0 where denominator is 0).}
+  \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + ε)}.}
+  \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
+}
+
+\strong{Rank / distribution (numeric → numeric, stateful)}
+\describe{
+  \item{\code{rank_transform}}{ECDF-based percentile rank mapped to
+    \eqn{[0, 1]}.  Fit on training data; robust to outliers.}
+}
+
+\strong{Group-by aggregations (mixed cat × num → numeric, stateful)}
+\describe{
+  \item{\code{groupby_mean}}{Per-group mean.}
+  \item{\code{groupby_sd}}{Per-group standard deviation.}
+  \item{\code{groupby_max}}{Per-group maximum.}
+  \item{\code{groupby_min}}{Per-group minimum.}
+  \item{\code{groupby_ratio}}{\code{value / group_mean}.}
+  \item{\code{groupby_zscore}}{\code{(value - group_mean) / group_sd}.}
+  \item{\code{groupby_median}}{Per-group median (robust to outliers).}
+  \item{\code{groupby_quantile}}{Per-group Q1 or Q3 (\code{q} sampled from
+    \{0.25, 0.75\}).}
+}
+
+\strong{Supervised categorical encodings (categorical → numeric, stateful)}
+\describe{
+  \item{\code{target_encode}}{Smoothed mean-target encoding for binary /
+    regression tasks.}
+  \item{\code{target_encode_multiclass}}{Class-wise smoothed target encoding
+    for multiclass tasks.}
+  \item{\code{woe_encode}}{Weight of Evidence encoding for binary
+    classification: \code{ln(P(event|cat) / P(non-event|cat))} with Laplace
+    smoothing.  Falls back to 0 for non-binary targets.}
+}
+
+\strong{Unsupervised categorical / binning (stateful)}
+\describe{
+  \item{\code{frequency_encode}}{Count of each category level in training data.}
+  \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
+    an "other" bucket (\code{comp_idx} 1–6).}
+  \item{\code{quantile_binning}}{Assigns quantile-based bin index (numeric output).}
+  \item{\code{quantile_binning_cat}}{Same, with categorical output.}
+  \item{\code{log_binning}}{Log-scale bin index (numeric output).}
+  \item{\code{log_binning_cat}}{Same, with categorical output.}
+  \item{\code{datetime_extract}}{Extracts year, month, day, hour, day-of-week,
+    or weekend indicator from date/datetime columns.}
+}
+
+\strong{Dimensionality reduction (numeric → numeric, stateful)}
+\describe{
+  \item{\code{pca}}{Selected principal component from \code{prcomp}.}
+  \item{\code{truncated_svd}}{Selected component from truncated SVD.}
+  \item{\code{random_projection}}{Random unit-vector linear combination.}
+  \item{\code{umap}}{UMAP projection component (requires \pkg{uwot}).}
+}
+
+\strong{Manifold / graph learning (numeric → numeric or categorical, stateful)}
+\describe{
+  \item{\code{genie}}{Genie hierarchical cluster label (requires
+    \pkg{genieclust}).}
+  \item{\code{genie_centroid_dist}}{Distance to each Genie cluster centroid.}
+  \item{\code{lumbermark}}{Lumbermark hierarchical cluster label (requires
+    \pkg{lumbermark}).}
+  \item{\code{lumbermark_centroid_dist}}{Distance to each Lumbermark cluster
+    centroid.}
+  \item{\code{mst_score}}{MST-based anomaly score (requires
+    \pkg{quitefastmst}).}
+  \item{\code{deadwood}}{Deadwood outlier indicator (requires \pkg{deadwood}).}
+}
+}
+\seealso{
+\code{\link{create_transformer}}, \code{\link{register_transformer}}
 }

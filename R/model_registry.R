@@ -65,8 +65,8 @@ evo_evaluators <- new.env(parent = emptyenv())
 #' # Verify it is registered
 #' exists("mock_eval", envir = evo_evaluators)
 #' @export
-register_evaluator <- function(name, train_func, predict_func, base_evaluator = NULL) {
-  assign(name, list(train_func = train_func, predict_func = predict_func, base_evaluator = base_evaluator), envir = evo_evaluators)
+register_evaluator <- function(name, train_func, predict_func, base_evaluator = NULL, cleanup_func = NULL) {
+  assign(name, list(train_func = train_func, predict_func = predict_func, base_evaluator = base_evaluator, cleanup_func = cleanup_func), envir = evo_evaluators)
 }
 
 # --- Register Default Evaluators ---
@@ -119,7 +119,7 @@ register_evaluator(
     }
 
     valids <- list()
-    if (use_ts_refinement && !is.null(x_val) && !is.null(y_val)) {
+    if (!is.null(x_val) && !is.null(y_val)) {
       dval <- lightgbm::lgb.Dataset(data = x_val, label = y_val, reference = dtrain)
       valids$val <- dval
     }
@@ -130,6 +130,9 @@ register_evaluator(
       list(name = "ts_refinement", value = score, higher_better = FALSE)
     }
 
+    # early_stopping_rounds requires at least one validation dataset
+    esr <- if (length(valids) > 0) early_stopping_rounds else NULL
+
     utils::capture.output({
       model <- lightgbm::lgb.train(
         params = params,
@@ -137,7 +140,7 @@ register_evaluator(
         nrounds = nrounds,
         valids = valids,
         eval = if (use_ts_refinement) lgb_eval else NULL,
-        early_stopping_rounds = early_stopping_rounds,
+        early_stopping_rounds = esr,
         verbose = -1
       )
     })
@@ -470,6 +473,131 @@ register_evaluator(
     } else if (task == "multiclass") {
       p_array <- stats::predict(model, newx = x_mat, s = "lambda.min", type = "response")
       p_array[, , 1]
+    }
+  }
+)
+
+# 5. Keras 3 Feed-Forward Neural Network Evaluator
+register_evaluator(
+  "keras3",
+  train_func = function(x_train, y_train, x_val = NULL, task = "regression",
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+    if (!requireNamespace("keras3", quietly = TRUE)) {
+      stop("The 'keras3' package is required for the keras3 evaluator.")
+    }
+    
+    # Ensure deterministic weight initialization for stable fitness evaluations,
+    # but restore the R global random state so we don't freeze the genetic algorithm!
+    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
+    keras3::set_random_seed(42)
+    if (!is.null(old_seed)) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+    
+    # Extract tunable parameters from ... with defaults
+    extra_params <- list(...)
+    nn_layers <- if (!is.null(extra_params$nn_layers)) extra_params$nn_layers else 2
+    nn_units <- if (!is.null(extra_params$nn_units)) extra_params$nn_units else 64
+    nn_dropout <- if (!is.null(extra_params$nn_dropout)) extra_params$nn_dropout else 0.2
+    nn_lr <- if (!is.null(extra_params$nn_learning_rate)) extra_params$nn_learning_rate else 0.001
+    
+    # Ensure data is matrix
+    x_train <- as.matrix(x_train)
+    
+    # Define model architecture
+    model <- keras3::keras_model_sequential(input_shape = ncol(x_train))
+    model <- keras3::layer_dense(model, units = nn_units, activation = "relu")
+    if (nn_dropout > 0) model <- keras3::layer_dropout(model, rate = nn_dropout)
+    
+    if (nn_layers > 1) {
+      for (i in 2:nn_layers) {
+        # Reduce units in subsequent layers, bounded at 16
+        units_next <- max(16, as.integer(nn_units / (2 ^ (i - 1))))
+        model <- keras3::layer_dense(model, units = units_next, activation = "relu")
+        if (nn_dropout > 0) model <- keras3::layer_dropout(model, rate = nn_dropout)
+      }
+    }
+    
+    # Task-specific output layer and compilation
+    optimizer <- keras3::optimizer_adam(learning_rate = nn_lr)
+    
+    if (task == "regression") {
+      model <- keras3::layer_dense(model, units = 1)
+      keras3::compile(model, optimizer = optimizer, loss = "mse")
+    } else if (task == "classification") {
+      model <- keras3::layer_dense(model, units = 1, activation = "sigmoid")
+      keras3::compile(model, optimizer = optimizer, loss = "binary_crossentropy")
+    } else if (task == "multiclass") {
+      model <- keras3::layer_dense(model, units = num_class, activation = "softmax")
+      # Note: expects y_train to be integer 0 to num_class-1
+      keras3::compile(model, optimizer = optimizer, loss = "sparse_categorical_crossentropy")
+    }
+    
+    # Prepare validation data if provided
+    y_val <- extra_params$y_val
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+    val_data <- NULL
+    callbacks <- list()
+    if (!is.null(x_val) && !is.null(y_val)) {
+      val_data <- list(as.matrix(x_val), y_val)
+      if (!is.null(early_stopping_rounds) && early_stopping_rounds > 0) {
+        callbacks <- list(
+          keras3::callback_early_stopping(
+            monitor = "val_loss",
+            patience = early_stopping_rounds,
+            restore_best_weights = TRUE
+          )
+        )
+      }
+    }
+    
+    # Train
+    history <- keras3::fit(
+      model,
+      x = x_train,
+      y = y_train,
+      epochs = nrounds,
+      validation_data = val_data,
+      callbacks = callbacks,
+      verbose = 0
+    )
+    
+    # Predict on validation
+    preds <- NULL
+    if (!is.null(x_val)) {
+      x_val_mat <- as.matrix(x_val)
+      if (task == "regression" || task == "classification") {
+        preds <- as.numeric(stats::predict(model, x_val_mat, verbose = 0))
+      } else if (task == "multiclass") {
+        # Return probability matrix
+        preds <- as.matrix(stats::predict(model, x_val_mat, verbose = 0))
+      }
+    }
+    
+    # NNs don't have native feature importances, return NULL
+    list(model = model, predictions = preds, importances = NULL)
+  },
+  predict_func = function(model, x_new, task, ...) {
+    if (!requireNamespace("keras3", quietly = TRUE)) {
+      stop("The 'keras3' package is required for the keras3 evaluator.")
+    }
+    x_mat <- as.matrix(x_new)
+    if (task == "regression" || task == "classification") {
+      as.numeric(stats::predict(model, x_mat, verbose = 0))
+    } else if (task == "multiclass") {
+      as.matrix(stats::predict(model, x_mat, verbose = 0))
+    }
+  },
+  cleanup_func = function(model) {
+    if (requireNamespace("keras3", quietly = TRUE)) {
+      if (exists("clear_session", where = asNamespace("keras3"))) {
+        keras3::clear_session()
+      } else if (exists("k_clear_session", where = asNamespace("keras3"))) {
+        # Fallback for some versions
+        tryCatch(keras3::k_clear_session(), error = function(e) NULL)
+      }
     }
   }
 )
