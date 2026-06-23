@@ -25,7 +25,7 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{subtract}}{Element-wise difference of two numeric columns.}
   \item{\code{multiply}}{Element-wise product of 2+ numeric columns.}
   \item{\code{divide}}{Element-wise ratio (0 where denominator is 0).}
-  \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + ε)}.}
+  \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + 1e-6)}.}
   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
 }
 
