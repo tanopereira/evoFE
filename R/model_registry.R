@@ -199,7 +199,9 @@ register_evaluator(
       max_depth = 6,
       eta = 0.1,
       min_child_weight = 1,
-      seed = 42
+      seed = 42,
+      verbosity = 0,
+      silent = 1
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -225,6 +227,10 @@ register_evaluator(
       params[[name]] <- extra_params[[name]]
     }
 
+    if (identical(params$booster, "gblinear")) {
+      params$nthread <- 1
+    }
+
     evals <- list(train = dtrain)
     dval_metric <- NULL
     if (use_ts_refinement && !is.null(x_val) && !is.null(y_val)) {
@@ -241,7 +247,7 @@ register_evaluator(
     }
 
     utils::capture.output({
-      model <- xgboost::xgb.train(
+      model <- suppressWarnings(xgboost::xgb.train(
         params = params,
         data = dtrain,
         nrounds = nrounds,
@@ -250,13 +256,24 @@ register_evaluator(
         early_stopping_rounds = early_stopping_rounds,
         maximize = if (use_ts_refinement) FALSE else NULL,
         verbose = 0
-      )
+      ))
     })
+
+    best_iter <- if (!is.null(model$best_iteration)) {
+      model$best_iteration
+    } else {
+      tryCatch({
+        val <- xgboost::xgb.attr(model, "best_iteration")
+        if (!is.null(val)) as.numeric(val) else NULL
+      }, error = function(e) {
+        tryCatch(xgboost:::xgb.best_iteration(model), error = function(e) NULL)
+      })
+    }
 
     preds <- if (!is.null(x_val)) {
       dval <- xgboost::xgb.DMatrix(data = x_val)
-      p <- if (!is.null(model$best_iteration) && model$best_iteration >= 1) {
-        stats::predict(model, dval, iterationrange = c(1, model$best_iteration + 1))
+      p <- if (!is.null(best_iter) && best_iter >= 1) {
+        stats::predict(model, dval, iterationrange = c(1, best_iter + 1))
       } else {
         stats::predict(model, dval)
       }
@@ -281,9 +298,19 @@ register_evaluator(
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
+    best_iter <- if (!is.null(model$best_iteration)) {
+      model$best_iteration
+    } else {
+      tryCatch({
+        val <- xgboost::xgb.attr(model, "best_iteration")
+        if (!is.null(val)) as.numeric(val) else NULL
+      }, error = function(e) {
+        tryCatch(xgboost:::xgb.best_iteration(model), error = function(e) NULL)
+      })
+    }
     dmatrix <- xgboost::xgb.DMatrix(data = x_new)
-    preds <- if (!is.null(model$best_iteration) && model$best_iteration >= 1) {
-      stats::predict(model, dmatrix, iterationrange = c(1, model$best_iteration + 1))
+    preds <- if (!is.null(best_iter) && best_iter >= 1) {
+      stats::predict(model, dmatrix, iterationrange = c(1, best_iter + 1))
     } else {
       stats::predict(model, dmatrix)
     }

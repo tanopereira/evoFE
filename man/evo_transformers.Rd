@@ -19,6 +19,8 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{reciprocal}}{Reciprocal: \code{1/x} (0 where \code{x == 0}).}
   \item{\code{power}}{Signed exponentiation: \code{sign(x) * |x|^p} where
     \code{p} is sampled from \{0.5, 1/3, 2, 3\}.}
+  \item{\code{displaced_log}}{Displaced log: \code{log1p(|x + displacement|)} where
+    \code{displacement} is sampled from \code{[10, 1000]}.}
   \item{\code{add}}{Element-wise sum of 2+ numeric columns.}
   \item{\code{subtract}}{Element-wise difference of two numeric columns.}
   \item{\code{multiply}}{Element-wise product of 2+ numeric columns.}
@@ -50,6 +52,8 @@ for the evolutionary feature-engineering search.  Every entry is an
 \describe{
   \item{\code{target_encode}}{Smoothed mean-target encoding for binary /
     regression tasks.}
+  \item{\code{pooled_target_encode}}{Empirical Bayes pooled target encoding
+    for binary / regression tasks using dynamic shrinkage based on target variance.}
   \item{\code{target_encode_multiclass}}{Class-wise smoothed target encoding
     for multiclass tasks.}
   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
@@ -57,8 +61,9 @@ for the evolutionary feature-engineering search.  Every entry is an
     smoothing.  Falls back to 0 for non-binary targets.}
 }
 
-\strong{Unsupervised categorical / binning (stateful)}
+\strong{Unsupervised categorical / binning}
 \describe{
+  \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
   \item{\code{frequency_encode}}{Count of each category level in training data.}
   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
     an "other" bucket (\code{comp_idx} 1–6).}

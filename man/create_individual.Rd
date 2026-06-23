@@ -7,7 +7,8 @@
 create_individual(
   genes = list(),
   numeric_cols = character(0),
-  categorical_cols = character(0)
+  categorical_cols = character(0),
+  datetime_cols = character(0)
 )
 }
 \arguments{
@@ -16,6 +17,8 @@ create_individual(
 \item{numeric_cols}{Vector of numeric column names}
 
 \item{categorical_cols}{Vector of categorical column names}
+
+\item{datetime_cols}{Vector of datetime column names}
 }
 \value{
 An \code{evo_individual} S3 object:
@@ -25,4 +28,14 @@ An \code{evo_individual} S3 object:
 }
 \description{
 Create an individual
+}
+\examples{
+\donttest{
+ind <- create_individual(
+  genes = list(),
+  numeric_cols = c("a", "b"),
+  categorical_cols = c("c")
+)
+print(ind)
+}
 }

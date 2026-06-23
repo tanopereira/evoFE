@@ -3,6 +3,7 @@
 #' @param pop_size Population size.
 #' @param numeric_cols Vector of numeric column names.
 #' @param categorical_cols Vector of categorical column names.
+#' @param datetime_cols Vector of datetime column names.
 #' @param initial_genes Number of initial genes per individual.
 #' @param task Task type ("classification", "regression", or "multiclass").
 #' @param importances Optional numeric vector of feature importances.
@@ -12,10 +13,10 @@
 #'   The first individual is a baseline with no genes; the remaining
 #'   individuals each carry \code{initial_genes} randomly generated genes.
 #' @export
-initialize_population <- function(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL) {
+initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0), initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL) {
   pop <- list()
   for (i in 1:pop_size) {
-    ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols)
+    ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
     # Reserve the first individual as a baseline (original features only)
     if (i > 1) {
       attempts <- 0

@@ -8,6 +8,7 @@ test_that("Gene creation and formula representation works", {
 })
 
 test_that("Individual mutation and crossover works", {
+  set.seed(42)
   ind <- create_individual(genes = list(), numeric_cols = c("x", "y"), categorical_cols = "cat")
   expect_equal(length(ind$genes), 0)
   
@@ -1349,6 +1350,47 @@ test_that("make_tunable works correctly", {
   )
 })
 
+test_that("xgboost_mbo tuning is consistent and works correctly in regression", {
+  skip_if_not_installed("xgboost")
+  skip_if_not_installed("mlrMBO")
+  
+  # Register a tuned xgboost evaluator
+  param_ranges <- list(
+    eta = list(type = "numeric", lower = 0.3, upper = 0.7),
+    max_depth = list(type = "integer", lower = 3, upper = 8)
+  )
+  make_tunable("xgboost", param_ranges, tuner_name = "xgboost_tuned_reg")
+  
+  set.seed(42)
+  x_train <- matrix(rnorm(100), ncol = 2)
+  colnames(x_train) <- c("x1", "x2")
+  y_train <- x_train[, 1] * 2 + rnorm(50)
+  x_val <- matrix(rnorm(20), ncol = 2)
+  colnames(x_val) <- c("x1", "x2")
+  y_val <- x_val[, 1] * 2 + rnorm(10)
+  
+  res <- train_model(
+    x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+    evaluator = "xgboost_tuned_reg", mbo_iters = 3, mbo_init_design = 4, mbo_folds = 2,
+    verbose = FALSE
+  )
+  
+  expect_type(res, "list")
+  expect_true("best_params" %in% names(res))
+  expect_length(res$predictions, nrow(x_val))
+  
+  # Re-evaluate with the best parameters directly using xgboost to make sure predictions match
+  best_params <- res$best_params
+  best_res <- train_model(
+    x_train, y_train, x_val = x_val, y_val = y_val, task = "regression",
+    evaluator = "xgboost", verbose = FALSE,
+    eta = best_params$eta, max_depth = best_params$max_depth
+  )
+  
+  expect_equal(res$predictions, best_res$predictions)
+})
+
+
 test_that("add, subtract, and multiply transformers handle integer overflow gracefully", {
   # Test with values that exceed the 32-bit signed integer limit (2^31 - 1 = 2147483647)
   val1 <- 2000000000L
@@ -1630,6 +1672,7 @@ test_that("genie_centroid_dist and lumbermark_centroid_dist work", {
   
   gene_genie_dist2 <- create_gene("genie_centroid_dist", c("x1", "x2"))
   gene_genie_dist2$params$k <- 3
+  gene_genie_dist2$params$gini_threshold <- gene_genie_dist1$params$gini_threshold
   gene_genie_dist2$params$comp_idx <- 2
   gene_genie_dist2$output_col <- "GenieDist2"
   
@@ -1724,5 +1767,191 @@ test_that("Redundancy pruning works as expected", {
   gene <- create_gene("log", "x2")
   expect_error(apply_gene(gene, df, target_col = "target"), "Redundant column")
 })
+
+test_that("Datetime columns are correctly identified and processed by evolve_features", {
+  df <- data.frame(
+    x1 = as.numeric(1:10),
+    x2 = as.character(rep(c("A", "B"), each = 5)),
+    date_str = rep(c("2026-05-29 23:52:42", "2025-01-01 12:00:00"), 5),
+    target = as.numeric(1:10),
+    stringsAsFactors = FALSE
+  )
+  
+  # Check helper function
+  expect_true(.is_datetime_col(df$date_str))
+  expect_false(.is_datetime_col(df$x1))
+  expect_false(.is_datetime_col(df$x2))
+  
+  # Run evolution with allowed_transformers = c("datetime_extract") to force datetime extraction
+  recipe <- evolve_features(
+    data = df,
+    target_col = "target",
+    task = "regression",
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 2,
+    evaluator = "lm",
+    allowed_transformers = c("datetime_extract"),
+    verbose = FALSE
+  )
+  
+  # The best individual's datetime_cols should contain "date_str"
+  expect_true("date_str" %in% recipe$best_individual$datetime_cols)
+  # "date_str" should not be in numeric_cols or categorical_cols
+  expect_false("date_str" %in% recipe$best_individual$numeric_cols)
+  expect_false("date_str" %in% recipe$best_individual$categorical_cols)
+})
+
+test_that("displaced_log transformer works correctly", {
+  expect_true("displaced_log" %in% names(evo_transformers))
+  
+  # Create gene
+  gene <- create_gene("displaced_log", "col1")
+  expect_equal(gene$transformer_name, "displaced_log")
+  expect_true(!is.null(gene$params$displacement))
+  expect_true(gene$params$displacement >= 10 && gene$params$displacement <= 1000)
+  
+  # Formula representation
+  formula_str <- gene_to_formula(gene)
+  expected_formula <- sprintf("dlog%.2f(col1)", gene$params$displacement)
+  expect_equal(formula_str, expected_formula)
+  
+  # apply_func
+  df <- data.frame(col1 = c(10, -20, 0))
+  res <- apply_gene(gene, df, target_col = "target")
+  
+  expected_vals <- log1p(abs(df$col1 + gene$params$displacement))
+  expect_equal(res$train[[gene$output_col]], expected_vals)
+  
+  # Mutation parameter check
+  set.seed(123)
+  displacement_cand <- round(stats::runif(1, 10, 1000), 2)
+  expect_true(displacement_cand >= 10 && displacement_cand <= 1000)
+})
+
+test_that("pooled_target_encode transformer works correctly", {
+  expect_true("pooled_target_encode" %in% names(evo_transformers))
+  
+  df <- data.table::data.table(
+    cat = rep(c("A", "B"), each = 10),
+    target = c(rep(1, 8), rep(0, 2), rep(0, 7), rep(1, 3))
+  )
+  
+  gene <- create_gene("pooled_target_encode", "cat")
+  expect_equal(gene$transformer_name, "pooled_target_encode")
+  
+  # apply_func
+  res <- apply_gene(gene, df, target_col = "target")
+  expect_true(gene$output_col %in% names(res$train))
+  expect_type(res$train[[gene$output_col]], "double")
+  
+  # Check the exact mathematical results of Empirical Bayes pooled target encoding
+  # A: 8/10 positive. B: 3/10 positive. Global mean: 11/20 = 0.55
+  # var_A = 10/9 * (0.8 * 0.2) = 0.1777778
+  # var_B = 10/9 * (0.3 * 0.7) = 0.2333333
+  # pooled within variance (var_within) = (9 * var_A + 9 * var_B) / 18 = 0.2055556
+  # between variance (var_between) = var(c(0.8, 0.3)) = 0.125
+  # k = 0.2055556 / 0.125 = 1.644444
+  # A smoothed: (10 * 0.8 + 1.644444 * 0.55) / (10 + 1.644444) = 0.7646946
+  # B smoothed: (10 * 0.3 + 1.644444 * 0.55) / (10 + 1.644444) = 0.3353054
+  val_a <- res$train[[gene$output_col]][1]
+  val_b <- res$train[[gene$output_col]][11]
+  expect_equal(val_a, 0.7646946, tolerance = 1e-5)
+  expect_equal(val_b, 0.3353054, tolerance = 1e-5)
+  
+  # Check that the formula works
+  formula_str <- gene_to_formula(gene)
+  expect_equal(formula_str, "pooled_target_encode(cat)")
+})
+
+test_that("concat transformer works correctly", {
+  expect_true("concat" %in% names(evo_transformers))
+  
+  df <- data.table::data.table(
+    c1 = c("A", "B", "C"),
+    c2 = c("X", "Y", "Z"),
+    c3 = c("1", "2", "3")
+  )
+  
+  # Concatenate 2 columns
+  gene2 <- create_gene("concat", c("c1", "c2"))
+  expect_equal(gene2$transformer_name, "concat")
+  
+  res2 <- apply_gene(gene2, df)
+  expect_true(gene2$output_col %in% names(res2$train))
+  expect_s3_class(res2$train[[gene2$output_col]], "factor")
+  expect_equal(as.character(res2$train[[gene2$output_col]]), c("A_X", "B_Y", "C_Z"))
+  
+  # Concatenate 3 columns
+  gene3 <- create_gene("concat", c("c1", "c2", "c3"))
+  res3 <- apply_gene(gene3, df)
+  expect_equal(as.character(res3$train[[gene3$output_col]]), c("A_X_1", "B_Y_2", "C_Z_3"))
+  
+  # Check formula
+  expect_equal(gene_to_formula(gene2), "concat(c1, c2)")
+  expect_equal(gene_to_formula(gene3), "concat(c1, c2, c3)")
+})
+
+test_that("UMAP n_neighbors and dens_scale work and mutate correctly", {
+  gene <- create_gene("umap", c("x1", "x2", "x3", "x4", "x5", "x6"))
+  expect_equal(gene$transformer_name, "umap")
+  expect_true(!is.null(gene$params$n_neighbors))
+  expect_true(gene$params$n_neighbors >= 2)
+  expect_true(!is.null(gene$params$dens_scale))
+  expect_true(gene$params$dens_scale >= 0 && gene$params$dens_scale <= 1)
+  
+  # Check formula formatting
+  formula_str <- gene_to_formula(gene)
+  expect_match(formula_str, "^umap[0-9]+_nn[0-9]+_d[0-9\\.]+\\(x1, x2, x3, \\.\\.\\. \\+ 3 more\\)$")
+  
+  # Test gene_to_state_formula ignores comp_idx but retains parameters
+  state_formula <- gene_to_state_formula(gene)
+  expect_match(state_formula, "^umap_nn[0-9]+_d[0-9\\.]+\\(x1, x2, x3, x4, x5, x6\\)$")
+  
+  # Test genie_centroid_dist state formula retains parameters
+  gene_genie_cdist <- create_gene("genie_centroid_dist", c("x1", "x2"))
+  state_formula_genie <- gene_to_state_formula(gene_genie_cdist)
+  expect_match(state_formula_genie, "^genie_cdist_k[0-9]_t[0-9\\.]+\\(x1, x2\\)$")
+  
+  # Test that mutating to add UMAP creates all components with identical nn and ds
+  ind_empty <- create_individual(genes = list(), numeric_cols = c("x1", "x2", "x3", "x4", "x5", "x6"))
+  umap_components_added <- FALSE
+  attempts <- 0
+  while (!umap_components_added && attempts < 500) {
+    attempts <- attempts + 1
+    ind_mut <- mutate(ind_empty, force_add = TRUE)
+    if (length(ind_mut$genes) > 0 && ind_mut$genes[[1]]$transformer_name == "umap") {
+      umap_components_added <- TRUE
+      nns <- sapply(ind_mut$genes, function(g) g$params$n_neighbors)
+      dss <- sapply(ind_mut$genes, function(g) g$params$dens_scale)
+      expect_equal(length(unique(nns)), 1)
+      expect_equal(length(unique(dss)), 1)
+    }
+  }
+  expect_true(umap_components_added)
+  
+  # Test parameter mutation
+  ind <- create_individual(genes = list(gene), numeric_cols = c("x1", "x2", "x3", "x4", "x5", "x6"))
+  
+  # Mutate repeatedly to ensure parameters (n_neighbors and dens_scale) are mutated
+  mut_nn_changed <- FALSE
+  mut_ds_changed <- FALSE
+  for (i in 1:100) {
+    ind_mut <- mutate(ind, verbose = FALSE, force_add = FALSE)
+    # Check if a parameter has changed on the gene (if modify mutation happened)
+    if (length(ind_mut$genes) == 1) {
+      gene_mut <- ind_mut$genes[[1]]
+      if (!identical(gene_mut$params$n_neighbors, gene$params$n_neighbors)) {
+        mut_nn_changed <- TRUE
+      }
+      if (!identical(gene_mut$params$dens_scale, gene$params$dens_scale)) {
+        mut_ds_changed <- TRUE
+      }
+    }
+  }
+  expect_true(mut_nn_changed || mut_ds_changed)
+})
+
+
 
 

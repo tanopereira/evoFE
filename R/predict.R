@@ -36,7 +36,7 @@ predict.evo_recipe <- function(object, newdata, ...) {
   applied_ind <- res$ind
   
   gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
-  features <- c(applied_ind$numeric_cols, applied_ind$categorical_cols, gene_cols)
+  features <- c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols)
   
   res$train[, features, with = FALSE]
 }

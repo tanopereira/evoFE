@@ -284,7 +284,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     
     # Features = original + new
     gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
-    features <- c(res$ind$numeric_cols, res$ind$categorical_cols, gene_cols)
+    features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
     
     # Convert features to numeric matrix
     x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
@@ -387,7 +387,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       
       # Features = original + new
       gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
-      features <- c(res$ind$numeric_cols, res$ind$categorical_cols, gene_cols)
+      features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
       
       # Convert features to numeric matrix
       x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
@@ -500,7 +500,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   val_fold_feat <- res$val
   
   gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
-  features <- c(res$ind$numeric_cols, res$ind$categorical_cols, gene_cols)
+  features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
   
   x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
   x_val <- data.matrix(val_fold_feat[, features, with = FALSE])

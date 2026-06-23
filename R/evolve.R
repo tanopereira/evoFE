@@ -139,7 +139,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
     }
 
     if (verbose) {
-      improved <- pop[[i]]$fitness > running_best_fitness
+      improved <- !is.na(pop[[i]]$fitness) && (is.na(running_best_fitness) || pop[[i]]$fitness > running_best_fitness)
       green_start <- if (supports_color()) "\033[32m" else ""
       red_start <- if (supports_color()) "\033[31m" else ""
       color_reset <- if (supports_color()) "\033[0m" else ""
@@ -187,7 +187,11 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
   if (exists(cache_key, envir = cache, inherits = FALSE)) {
     cached_ind <- get(cache_key, envir = cache)
     known_fit <- cached_ind$fitness
-    taboo_threshold <- max(0.00002, .1 * (1 - abs(best_fit)))
+    if (abs(best_fit) <= 1) {
+      taboo_threshold <- max(0.00002, 0.1 * (1 - abs(best_fit)))
+    } else {
+      taboo_threshold <- max(0.00002, 0.01 * abs(best_fit))
+    }
     if (!is.infinite(best_fit) && isTRUE(known_fit < best_fit - taboo_threshold)) {
       return(TRUE)
     }
@@ -198,6 +202,16 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
 
 #' Tournament selection
 #' @keywords internal
+#' @examples
+#' \donttest{
+#' pop <- list(
+#'   list(fitness = 0.5),
+#'   list(fitness = 0.8),
+#'   list(fitness = 0.2)
+#' )
+#' best <- tournament_select(pop, k = 2)
+#' }
+#' @export
 tournament_select <- function(pop, k = 3) {
   k <- min(k, length(pop))
   candidates <- sample(seq_along(pop), k)
@@ -312,24 +326,23 @@ evolve_features <- function(data, target_col, task = "classification",
     } else if (allowed_transformers == "basic") {
       allowed_transformers <- intersect(all_trans, c(
         "add", "subtract", "multiply", "divide",
-        "log", "sqrt", "reciprocal", "power",
+        "log", "sqrt", "reciprocal", "power", "displaced_log",
         "normalized_difference", "frequency_encode",
-        "one_hot_encode", "target_encode", "target_encode_multiclass",
-        "rank_transform", "groupby_mean", "groupby_min", "groupby_max",
-        "pca"
+        "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
+        "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
       ))
     } else if (allowed_transformers == "clustering") {
       allowed_transformers <- intersect(all_trans, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
     } else if (allowed_transformers == "robust") {
       allowed_transformers <- intersect(all_trans, c(
-        "log", "sqrt", "reciprocal", "power", "rank_transform",
+        "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
         "add", "subtract", "multiply", "divide",
         "normalized_difference", "log_ratio",
-        "target_encode", "woe_encode", "frequency_encode",
+        "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",
         "groupby_mean", "groupby_median", "groupby_sd",
         "groupby_zscore", "groupby_ratio", "groupby_quantile",
         "groupby_min", "groupby_max",
-        "quantile_binning", "pca"
+        "quantile_binning", "pca", "concat"
       ))
     }
   }
@@ -437,9 +450,12 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   original_cols <- setdiff(names(data), target_col)
-  numeric_cols <- names(data)[sapply(data, is.numeric)]
+  datetime_cols <- names(data)[vapply(data, .is_datetime_col, logical(1))]
+  datetime_cols <- setdiff(datetime_cols, target_col)
+  numeric_cols <- names(data)[vapply(data, is.numeric, logical(1))]
   numeric_cols <- setdiff(numeric_cols, target_col)
-  categorical_cols <- setdiff(original_cols, numeric_cols)
+  numeric_cols <- setdiff(numeric_cols, datetime_cols)
+  categorical_cols <- setdiff(original_cols, c(numeric_cols, datetime_cols))
 
   classes <- NULL
   num_class <- NULL
@@ -475,6 +491,9 @@ evolve_features <- function(data, target_col, task = "classification",
     }
     message(sprintf("  Original Numeric columns: %s", truncate_cols(numeric_cols)))
     message(sprintf("  Original Categorical columns: %s", truncate_cols(categorical_cols)))
+    if (length(datetime_cols) > 0) {
+      message(sprintf("  Original Datetime columns: %s", truncate_cols(datetime_cols)))
+    }
   }
   # Pre-calculate fixed CV folds or split IDs
   fold_ids <- NULL
@@ -528,7 +547,7 @@ evolve_features <- function(data, target_col, task = "classification",
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
 
   # 1. Generation 0: Evaluate baseline individual first (original features only)
-  baseline_ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols)
+  baseline_ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
   if (verbose) {
     message("\n--- Generation 0 (Baseline) ---")
     message(sprintf("  Individual 1: %s", individual_to_recipe_string(baseline_ind)))
@@ -554,7 +573,7 @@ evolve_features <- function(data, target_col, task = "classification",
   assign(cache_key, baseline_ind, envir = fitness_cache)
 
   # 2. Initialize population for Generation 1 using baseline importances
-  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
+  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
   pop[[1]] <- baseline_ind
 
   global_best_fitness <- baseline_ind$fitness
@@ -607,7 +626,7 @@ evolve_features <- function(data, target_col, task = "classification",
     # (Active gene pool tracking removed to reduce verbosity)
 
     # Early stopping check
-    if (g == 1 || best_fitness > global_best_fitness) {
+    if (g == 1 || (!is.na(best_fitness) && (is.na(global_best_fitness) || best_fitness > global_best_fitness))) {
       global_best_fitness <- best_fitness
       generations_without_improvement <- 0
     } else {
@@ -768,7 +787,8 @@ evolve_features <- function(data, target_col, task = "classification",
     super_ind <- create_individual(
       genes = deduped_genes,
       numeric_cols = numeric_cols,
-      categorical_cols = categorical_cols
+      categorical_cols = categorical_cols,
+      datetime_cols = datetime_cols
     )
 
     # 4. Evaluate the super-individual's fitness
@@ -788,7 +808,7 @@ evolve_features <- function(data, target_col, task = "classification",
       super_ind$best_params <- best_ind$best_params
     }
 
-    if (super_ind$fitness > best_ind$fitness) {
+    if (!is.na(super_ind$fitness) && (is.na(best_ind$fitness) || super_ind$fitness > best_ind$fitness)) {
       if (verbose) {
         message(sprintf(
           "  Pooled features improved validation fitness from %.4f to %.4f. Using pooled features.",
@@ -830,7 +850,8 @@ evolve_features <- function(data, target_col, task = "classification",
       super_ind_hist <- create_individual(
         genes = deduped_historical_genes,
         numeric_cols = numeric_cols,
-        categorical_cols = categorical_cols
+        categorical_cols = categorical_cols,
+        datetime_cols = datetime_cols
       )
 
       # Evaluate the historical super-individual's fitness
@@ -850,7 +871,7 @@ evolve_features <- function(data, target_col, task = "classification",
         super_ind_hist$best_params <- best_ind$best_params
       }
 
-      if (super_ind_hist$fitness > best_ind$fitness) {
+      if (!is.na(super_ind_hist$fitness) && (is.na(best_ind$fitness) || super_ind_hist$fitness > best_ind$fitness)) {
         if (verbose) {
           message(sprintf(
             "  Historical pooled features improved validation fitness from %.4f to %.4f. Using historical pooled features.",
@@ -902,7 +923,7 @@ evolve_features <- function(data, target_col, task = "classification",
   best_ind <- res_full$ind
 
   gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
-  features <- c(best_ind$numeric_cols, best_ind$categorical_cols, gene_cols)
+  features <- c(best_ind$numeric_cols, best_ind$categorical_cols, best_ind$datetime_cols, gene_cols)
 
   x_full <- data.matrix(res_full$train[, features, with = FALSE])
   x_full[!is.finite(x_full)] <- NA

@@ -9,4 +9,14 @@ tournament_select(pop, k = 3)
 \description{
 Tournament selection
 }
+\examples{
+\donttest{
+pop <- list(
+  list(fitness = 0.5),
+  list(fitness = 0.8),
+  list(fitness = 0.2)
+)
+best <- tournament_select(pop, k = 2)
+}
+}
 \keyword{internal}

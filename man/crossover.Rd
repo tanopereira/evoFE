@@ -20,3 +20,12 @@ An \code{evo_individual} child created by randomly sampling genes
 \description{
 Crossover two individuals
 }
+\examples{
+\donttest{
+ind1 <- create_individual(numeric_cols = c("a", "b"))
+ind1 <- mutate(ind1, force_add = TRUE)
+ind2 <- create_individual(numeric_cols = c("a", "b"))
+ind2 <- mutate(ind2, force_add = TRUE)
+child <- crossover(ind1, ind2)
+}
+}

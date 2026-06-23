@@ -8,6 +8,7 @@ initialize_population(
   pop_size,
   numeric_cols,
   categorical_cols,
+  datetime_cols = character(0),
   initial_genes = 2,
   task = "classification",
   importances = NULL,
@@ -20,6 +21,8 @@ initialize_population(
 \item{numeric_cols}{Vector of numeric column names.}
 
 \item{categorical_cols}{Vector of categorical column names.}
+
+\item{datetime_cols}{Vector of datetime column names.}
 
 \item{initial_genes}{Number of initial genes per individual.}
 

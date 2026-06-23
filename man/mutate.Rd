@@ -44,3 +44,12 @@ An \code{evo_individual} with the mutation applied
 \description{
 Mutate an individual
 }
+\examples{
+\donttest{
+ind <- create_individual(
+  numeric_cols = c("a", "b"),
+  categorical_cols = c("c")
+)
+mutated_ind <- mutate(ind)
+}
+}

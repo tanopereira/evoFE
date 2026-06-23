@@ -12,6 +12,10 @@ create_gene <- function(transformer_name, input_cols) {
   if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
     C <- max(2L, as.integer(round(log2(length(input_cols)))))
     params$comp_idx <- sample(1:C, 1)
+    if (transformer_name == "umap") {
+      params$n_neighbors <- max(2L, stats::rpois(1, 15))
+      params$dens_scale <- round(stats::runif(1, 0, 1), 2)
+    }
   } else if (transformer_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
     params$k <- sample(2:5, 1)
     params$comp_idx <- sample(1:params$k, 1)
@@ -35,6 +39,8 @@ create_gene <- function(transformer_name, input_cols) {
     params$component <- sample(c("year", "month", "day", "hour", "day_of_week", "weekend"), 1)
   } else if (transformer_name == "power") {
     params$p <- sample(c(0.5, 1/3, 2, 3), 1)
+  } else if (transformer_name == "displaced_log") {
+    params$displacement <- round(stats::runif(1, 10, 1000), 2)
   } else if (transformer_name == "groupby_quantile") {
     params$q <- sample(c(0.25, 0.75), 1)
   }
@@ -74,6 +80,10 @@ gene_to_formula <- function(gene, truncate = TRUE) {
       sprintf("genie_cdist%d_k%d_t%.2f(%s)", gene$params$comp_idx, gene$params$k, gene$params$gini_threshold, cols_str)
     } else if (gene$transformer_name == "lumbermark_centroid_dist") {
       sprintf("lumb_cdist%d_k%d(%s)", gene$params$comp_idx, gene$params$k, cols_str)
+    } else if (gene$transformer_name == "umap") {
+      nn_str <- if (!is.null(gene$params$n_neighbors)) paste0("_nn", gene$params$n_neighbors) else ""
+      dens_str <- if (!is.null(gene$params$dens_scale)) paste0("_d", gene$params$dens_scale) else ""
+      sprintf("umap%d%s%s(%s)", gene$params$comp_idx, nn_str, dens_str, cols_str)
     } else {
       sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, cols_str)
     }
@@ -83,6 +93,8 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, cols_str)
   } else if (!is.null(gene$params$p)) {
     sprintf("pow%.4g(%s)", gene$params$p, cols_str)
+  } else if (!is.null(gene$params$displacement)) {
+    sprintf("dlog%.2f(%s)", gene$params$displacement, cols_str)
   } else if (!is.null(gene$params$q)) {
     sprintf("%s_q%.2f(%s)", gene$transformer_name, gene$params$q, cols_str)
   } else if (!is.null(gene$params$k)) {
@@ -104,8 +116,19 @@ gene_to_formula <- function(gene, truncate = TRUE) {
 #'   component index is omitted so that all components share one cache key.
 #' @export
 gene_to_state_formula <- function(gene) {
-  if (gene$transformer_name %in% c("pca", "truncated_svd", "umap", "genie_centroid_dist", "lumbermark_centroid_dist")) {
+  if (gene$transformer_name %in% c("pca", "truncated_svd")) {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
+  } else if (gene$transformer_name == "umap") {
+    nn <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
+    ds <- if (!is.null(gene$params$dens_scale)) gene$params$dens_scale else 0
+    sprintf("umap_nn%d_d%.2f(%s)", nn, ds, paste(gene$input_cols, collapse = ", "))
+  } else if (gene$transformer_name == "genie_centroid_dist") {
+    k_val <- if (!is.null(gene$params$k)) gene$params$k else 2
+    gini_val <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.5
+    sprintf("genie_cdist_k%d_t%.2f(%s)", k_val, gini_val, paste(gene$input_cols, collapse = ", "))
+  } else if (gene$transformer_name == "lumbermark_centroid_dist") {
+    k_val <- if (!is.null(gene$params$k)) gene$params$k else 2
+    sprintf("lumb_cdist_k%d(%s)", k_val, paste(gene$input_cols, collapse = ", "))
   } else {
     gene_to_formula(gene, truncate = FALSE)
   }
@@ -156,19 +179,30 @@ topological_sort_genes <- function(genes, original_cols) {
 #' @param genes List of genes
 #' @param numeric_cols Vector of numeric column names
 #' @param categorical_cols Vector of categorical column names
+#' @param datetime_cols Vector of datetime column names
 #' @return An \code{evo_individual} S3 object:
 #'   a list with elements \code{genes} (topologically sorted),
 #'   \code{numeric_cols}, \code{categorical_cols}, and \code{fitness}
 #'   (initialised to \code{NA_real_}).
+#' @examples
+#' \donttest{
+#' ind <- create_individual(
+#'   genes = list(),
+#'   numeric_cols = c("a", "b"),
+#'   categorical_cols = c("c")
+#' )
+#' print(ind)
+#' }
 #' @export
-create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0)) {
-  original_cols <- c(numeric_cols, categorical_cols)
+create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0), datetime_cols = character(0)) {
+  original_cols <- c(numeric_cols, categorical_cols, datetime_cols)
   sorted_genes <- topological_sort_genes(genes, original_cols)
   structure(
     list(
       genes = sorted_genes,
       numeric_cols = numeric_cols,
       categorical_cols = categorical_cols,
+      datetime_cols = datetime_cols,
       fitness = NA_real_
     ),
     class = "evo_individual"
@@ -192,13 +226,22 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #' @return An \code{evo_individual} with the mutation applied
 #'   (gene added, removed, or modified) and \code{fitness} reset
 #'   to \code{NA_real_}.
+#' @examples
+#' \donttest{
+#' ind <- create_individual(
+#'   numeric_cols = c("a", "b"),
+#'   categorical_cols = c("c")
+#' )
+#' mutated_ind <- mutate(ind)
+#' }
 #' @export
 mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL) {
-  if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0) return(ind)
+  if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0 && length(ind$datetime_cols) == 0) return(ind)
   
   # Categorize existing gene outputs by type, restricted to tested genes
   gene_num <- character(0)
   gene_cat <- character(0)
+  gene_date <- character(0)
   for (gene in ind$genes) {
     # Skip if this gene's output hasn't been evaluated yet
     if (!is.null(tested_gene_outputs) && !(gene$output_col %in% tested_gene_outputs)) {
@@ -208,6 +251,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     out_type <- if (!is.null(t_def$output_type)) t_def$output_type else "numeric"
     if (out_type == "categorical") {
       gene_cat <- c(gene_cat, gene$output_col)
+    } else if (out_type == "datetime") {
+      gene_date <- c(gene_date, gene$output_col)
     } else {
       gene_num <- c(gene_num, gene$output_col)
     }
@@ -294,9 +339,16 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     gene_num_ex <- setdiff(gene_num, gene_to_mod$output_col)
     avail_num <- c(ind$numeric_cols, gene_num_ex)
     avail_cat <- c(ind$categorical_cols, gene_cat)
-    avail_for_type <- if (t_def$input_type == "numeric") avail_num
-                      else if (t_def$input_type == "categorical") avail_cat
-                      else c(avail_cat, avail_num)
+    avail_date <- c(ind$datetime_cols, gene_date)
+    avail_for_type <- if (t_def$input_type == "numeric") {
+      avail_num
+    } else if (t_def$input_type == "categorical") {
+      avail_cat
+    } else if (t_def$input_type == "datetime") {
+      avail_date
+    } else {
+      c(avail_cat, avail_num)
+    }
     unused <- setdiff(avail_for_type, gene_to_mod$input_cols)
     
     max_cols <- if (t_name %in% c("add", "multiply")) {
@@ -384,6 +436,18 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         } else if (param_name == "base") {
           candidates <- setdiff(2:10, old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "displacement") {
+          round(stats::runif(1, 10, 1000), 2)
+        } else if (param_name == "n_neighbors") {
+          new_val <- max(2L, stats::rpois(1, 15))
+          attempts <- 0
+          while (new_val == old_val && attempts < 5) {
+            new_val <- max(2L, stats::rpois(1, 15))
+            attempts <- attempts + 1
+          }
+          new_val
+        } else if (param_name == "dens_scale") {
+          round(stats::runif(1, 0, 1), 2)
         } else if (param_name == "comp_idx") {
           # For multi-component transformers, don't mutate comp_idx in isolation
           # as components are managed together during Add mutation
@@ -391,6 +455,12 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         } else if (param_name == "component") {
           components <- c("year", "month", "day", "hour", "day_of_week", "weekend")
           candidates <- setdiff(components, old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "p") {
+          candidates <- setdiff(c(0.5, 1/3, 2, 3), old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "q") {
+          candidates <- setdiff(c(0.25, 0.75), old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else {
           old_val
@@ -432,7 +502,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       allowed_t <- allowed_transformers
     }
     if (task == "multiclass") {
-      allowed_t <- setdiff(allowed_t, c("target_encode"))
+      allowed_t <- setdiff(allowed_t, c("target_encode", "pooled_target_encode"))
     } else {
       allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
     }
@@ -442,12 +512,15 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     avail_num <- c(ind$numeric_cols, gene_num)
     avail_cat <- c(ind$categorical_cols, gene_cat)
+    avail_date <- c(ind$datetime_cols, gene_date)
     
     # Select available columns based on input_type
     available_cols <- if (t_def$input_type == "numeric") {
       avail_num
     } else if (t_def$input_type == "categorical") {
       avail_cat
+    } else if (t_def$input_type == "datetime") {
+      avail_date
     } else if (t_def$input_type == "mixed") {
       c(avail_cat, avail_num) # Placeholder to pass length check
     } else {
@@ -472,6 +545,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       if (length(available_cols) < 2) return(ind)
       max_cols <- if (t_name %in% c("add", "multiply")) {
         min(5, length(available_cols))
+      } else if (t_name == "concat") {
+        min(3, length(available_cols))
       } else {
         max(2, floor((1 - exp(-1)) * length(available_cols)))
       }
@@ -497,6 +572,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       }
       
       gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
+      n_neighbors <- if (t_name == "umap") max(2L, stats::rpois(1, 15)) else NULL
+      dens_scale <- if (t_name == "umap") round(stats::runif(1, 0, 1), 2) else NULL
       
       for (comp in 1:C) {
         g <- create_gene(t_name, cols)
@@ -504,6 +581,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
           g$params$k <- C
           if (!is.null(gini_threshold)) g$params$gini_threshold <- gini_threshold
+        } else if (t_name == "umap") {
+          g$params$n_neighbors <- n_neighbors
+          g$params$dens_scale <- dens_scale
         }
         g$output_col <- t_def$name_generator(g)
         new_genes_to_add <- c(new_genes_to_add, list(g))
@@ -545,6 +625,14 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
 #' @param verbose Logical. Whether to print crossover details.
 #' @return An \code{evo_individual} child created by randomly sampling genes
 #'   from both parents with duplicate gene outputs removed.
+#' @examples
+#' \donttest{
+#' ind1 <- create_individual(numeric_cols = c("a", "b"))
+#' ind1 <- mutate(ind1, force_add = TRUE)
+#' ind2 <- create_individual(numeric_cols = c("a", "b"))
+#' ind2 <- mutate(ind2, force_add = TRUE)
+#' child <- crossover(ind1, ind2)
+#' }
 #' @export
 crossover <- function(ind1, ind2, verbose = FALSE) {
   genes1 <- ind1$genes
@@ -581,7 +669,7 @@ crossover <- function(ind1, ind2, verbose = FALSE) {
                     len1_before, len2_before, child_genes_str))
   }
   
-  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols)
+  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols, datetime_cols = ind1$datetime_cols)
 }
 
 #' Union Crossover of two individuals
@@ -617,5 +705,5 @@ union_crossover <- function(ind1, ind2, verbose = FALSE) {
                     len1_before, len2_before, child_genes_str))
   }
   
-  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols)
+  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols, datetime_cols = ind1$datetime_cols)
 }

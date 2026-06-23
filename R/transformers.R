@@ -57,6 +57,8 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'   \item{\code{reciprocal}}{Reciprocal: \code{1/x} (0 where \code{x == 0}).}
 #'   \item{\code{power}}{Signed exponentiation: \code{sign(x) * |x|^p} where
 #'     \code{p} is sampled from \{0.5, 1/3, 2, 3\}.}
+#'   \item{\code{displaced_log}}{Displaced log: \code{log1p(|x + displacement|)} where
+#'     \code{displacement} is sampled from \code{[10, 1000]}.}
 #'   \item{\code{add}}{Element-wise sum of 2+ numeric columns.}
 #'   \item{\code{subtract}}{Element-wise difference of two numeric columns.}
 #'   \item{\code{multiply}}{Element-wise product of 2+ numeric columns.}
@@ -88,6 +90,8 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #' \describe{
 #'   \item{\code{target_encode}}{Smoothed mean-target encoding for binary /
 #'     regression tasks.}
+#'   \item{\code{pooled_target_encode}}{Empirical Bayes pooled target encoding
+#'     for binary / regression tasks using dynamic shrinkage based on target variance.}
 #'   \item{\code{target_encode_multiclass}}{Class-wise smoothed target encoding
 #'     for multiclass tasks.}
 #'   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
@@ -95,8 +99,9 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     smoothing.  Falls back to 0 for non-binary targets.}
 #' }
 #'
-#' \strong{Unsupervised categorical / binning (stateful)}
+#' \strong{Unsupervised categorical / binning}
 #' \describe{
+#'   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
 #'   \item{\code{frequency_encode}}{Count of each category level in training data.}
 #'   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
 #'     an "other" bucket (\code{comp_idx} 1–6).}
@@ -184,6 +189,25 @@ is_verbose <- function() {
     1, 6
   )
   paste0(prefix, "_", h)
+}
+
+.is_datetime_col <- function(x) {
+  if (inherits(x, c("POSIXt", "Date"))) {
+    return(TRUE)
+  }
+  if (is.character(x) || is.factor(x)) {
+    vals <- as.character(x)
+    vals <- vals[!is.na(vals) & vals != ""]
+    if (length(vals) == 0) return(FALSE)
+    sample_vals <- if (length(vals) > 100) sample(vals, 100) else vals
+    parsed <- tryCatch({
+      as.POSIXct(sample_vals, tryFormats = c("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"))
+    }, error = function(e) NULL)
+    if (!is.null(parsed) && !all(is.na(parsed))) {
+      return(mean(!is.na(parsed)) >= 0.7)
+    }
+  }
+  FALSE
 }
 
 # --- CLUSTERING SCAFFOLD HELPERS ---
@@ -419,6 +443,67 @@ evo_transformers$target_encode <- create_transformer(
     res
   },
   name_generator = function(gene) .gene_col_name(gene, "te")
+)
+
+# Pooled Target Encoding (Empirical Bayes Shrinkage)
+evo_transformers$pooled_target_encode <- create_transformer(
+  name = "pooled_target_encode",
+  type = "supervised_unary",
+  input_type = "categorical",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    y <- as.numeric(data[[target_col]])
+    
+    # Calculate global mean and total variance of the target
+    global_mean <- mean(y, na.rm = TRUE)
+    var_y <- stats::var(y, na.rm = TRUE)
+    if (is.na(var_y)) var_y <- 0
+    
+    # Calculate category means, within-category variances, and counts
+    dt <- data.table::data.table(x = x, y = y)
+    stats <- dt[, .(mean = mean(y, na.rm = TRUE), var = stats::var(y, na.rm = TRUE), n = .N), by = x]
+    
+    # Estimate pooled within-category variance (sigma^2)
+    df_sum <- sum(stats$n - 1, na.rm = TRUE)
+    var_within <- if (df_sum > 0) {
+      sum((stats$n - 1) * stats$var, na.rm = TRUE) / df_sum
+    } else {
+      mean_var <- mean(stats$var, na.rm = TRUE)
+      if (is.na(mean_var)) var_y else mean_var
+    }
+    if (is.na(var_within)) var_within <- var_y
+    
+    # Estimate variance of category means (between-group variance, tau^2)
+    var_between <- stats::var(stats$mean, na.rm = TRUE)
+    if (is.na(var_between)) var_between <- 0
+    
+    # Compute dynamic smoothing factor k = var_within / var_between
+    k <- if (var_between > 0) var_within / var_between else Inf
+    
+    # Calculate Empirical Bayes smoothed target encoding
+    # weight: lambda = n / (n + k)
+    stats[, smoothed := if (is.infinite(k)) global_mean else (n * mean + k * global_mean) / (n + k)]
+    
+    mapping <- stats[, .(x, smoothed)]
+    data.table::setkey(mapping, x)
+    
+    list(mapping = mapping, global_mean = global_mean)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    
+    # Join with mapping
+    dt <- data.table::data.table(x = x)
+    mapping <- state$mapping
+    
+    # Map, filling missing categories with global mean
+    res <- mapping[dt, on = "x"]$smoothed
+    res[is.na(res)] <- state$global_mean
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "pte")
 )
 
 # --- STATEFUL MULTIVARIATE TRANSFORMERS ---
@@ -666,20 +751,23 @@ evo_transformers$umap <- create_transformer(
       x_s <- x
     }
     
-    n_neighbors <- 15
-    if (nrow(x_s) < 15) {
+    n_neighbors <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
+    if (nrow(x_s) < n_neighbors) {
       n_neighbors <- max(2, nrow(x_s) - 1)
     }
+    
+    dens_scale <- if (!is.null(gene$params$dens_scale)) gene$params$dens_scale else 0
     
     t0 <- Sys.time()
     tryCatch({
       threads <- getOption("evoFE.threads", 1)
       C <- max(2L, as.integer(round(log2(ncol(x_s)))))
       model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
-                          ret_model = TRUE, n_threads = threads, verbose = FALSE, init = "random")
+                          dens_scale = dens_scale, ret_model = TRUE, 
+                          n_threads = threads, verbose = FALSE, init = "random")
       if (verbose) {
-        message(sprintf("  [UMAP Fit] umap on %d rows. %d neighbors. %.3f s",
-                        nrow(x_s), n_neighbors, as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+        message(sprintf("  [UMAP Fit] umap on %d rows. %d neighbors (dens_scale = %.2f). %.3f s",
+                        nrow(x_s), n_neighbors, dens_scale, as.numeric(difftime(Sys.time(), t0, units = "secs"))))
       }
       
       preds_cache <- new.env(hash = TRUE, parent = emptyenv())
@@ -1154,7 +1242,7 @@ evo_transformers$one_hot_encode <- create_transformer(
 evo_transformers$datetime_extract <- create_transformer(
   name = "datetime_extract",
   type = "unary",
-  input_type = "categorical",
+  input_type = "datetime",
   output_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     input_cols <- gene$input_cols
@@ -1338,6 +1426,21 @@ evo_transformers$power <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "pow")
 )
 
+# Displaced Log Transform
+evo_transformers$displaced_log <- create_transformer(
+  name = "displaced_log",
+  type = "unary",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    x <- data[[gene$input_cols[1]]]
+    displacement <- if (!is.null(gene$params$displacement)) gene$params$displacement else 100
+    res <- log1p(abs(x + displacement))
+    res[!is.finite(res)] <- 0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "dlog")
+)
+
 # Rank Transform (ECDF-based percentile rank)
 evo_transformers$rank_transform <- create_transformer(
   name = "rank_transform",
@@ -1472,3 +1575,19 @@ evo_transformers$groupby_quantile <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "gbq")
 )
+
+# Concatenation of Categorical Columns
+evo_transformers$concat <- create_transformer(
+  name = "concat",
+  type = "multivariate",
+  input_type = "categorical",
+  output_type = "categorical",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    col_list <- lapply(input_cols, function(c) as.character(data[[c]]))
+    do.call(paste, c(col_list, list(sep = "_")))
+  },
+  name_generator = function(gene) .gene_col_name(gene, "concat"),
+  allow_replace = FALSE
+)
+
