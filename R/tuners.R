@@ -28,12 +28,13 @@ register_evaluator(
     use_split <- !is.null(x_val) && !is.null(y_val)
     
     if (verbose) {
+      metric_name <- if (is.function(metric)) "custom" else metric
       if (use_split) {
         message(sprintf("\n[MBO] Starting LightGBM Hyperparameter Tuning (Iters: %d, Strategy: split, Metric: %s)...", 
-                        mbo_iters, metric))
+                        mbo_iters, metric_name))
       } else {
         message(sprintf("\n[MBO] Starting LightGBM Hyperparameter Tuning (Iters: %d, Strategy: cv-%d, Metric: %s)...", 
-                        mbo_iters, mbo_folds, metric))
+                        mbo_iters, mbo_folds, metric_name))
       }
     }
     

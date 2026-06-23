@@ -145,12 +145,13 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     use_split <- !is.null(x_val) && !is.null(y_val)
     
     if (verbose) {
+      metric_name <- if (is.function(metric)) "custom" else metric
       if (use_split) {
         message(sprintf("\n[MBO] Starting %s Hyperparameter Tuning (Iters: %d, Strategy: split, Metric: %s)...", 
-                        base_model_name, mbo_iters, metric))
+                        base_model_name, mbo_iters, metric_name))
       } else {
         message(sprintf("\n[MBO] Starting %s Hyperparameter Tuning (Iters: %d, Strategy: cv-%d, Metric: %s)...", 
-                        base_model_name, mbo_iters, mbo_folds, metric))
+                        base_model_name, mbo_iters, mbo_folds, metric_name))
       }
     }
 

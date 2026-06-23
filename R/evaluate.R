@@ -82,22 +82,22 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         is.numeric(train_data[[cn]]) && cn != gene$output_col
       })]
       if (length(existing_num_cols) > 0) {
-        new_fin <- new_col_train[is.finite(new_col_train)]
-        if (length(new_fin) > 2 && stats::sd(new_fin) > 0) {
-          for (ecol in existing_num_cols) {
-            ev <- train_data[[ecol]]
-            ev <- ev[is.finite(ev)]
-            n_ov <- min(length(new_fin), length(ev))
-            if (n_ov > 2) {
-              r <- tryCatch(
-                abs(stats::cor(new_fin[seq_len(n_ov)], ev[seq_len(n_ov)],
-                               use = "complete.obs")),
-                error = function(e) 0
-              )
-              if (!is.na(r) && r >= cor_threshold) stop("Redundant column")
-            }
+      new_is_finite <- is.finite(new_col_train)
+      if (sum(new_is_finite) > 2 && stats::sd(new_col_train[new_is_finite]) > 0) {
+        for (ecol in existing_num_cols) {
+          ev <- train_data[[ecol]]
+          # Find indices where both vectors are finite to preserve row alignment
+          valid_idx <- new_is_finite & is.finite(ev)
+          if (sum(valid_idx) > 2) {
+            r <- tryCatch(
+              abs(stats::cor(new_col_train[valid_idx], ev[valid_idx],
+                             use = "complete.obs")),
+              error = function(e) 0
+            )
+            if (!is.na(r) && r >= cor_threshold) stop("Redundant column")
           }
         }
+      }
       }
     }
 
