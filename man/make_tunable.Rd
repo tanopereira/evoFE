@@ -33,22 +33,20 @@ Invisibly returns \code{NULL}. Registers the tuned evaluator in the global \code
 }
 \description{
 Wraps an existing registered model evaluator in a Bayesian Optimization tuning loop
-using the \pkg{mlrMBO} framework. It automatically generates a parameter space, constructs
+using the \pkg{mlr3mbo} framework. It automatically generates a parameter space, constructs
 a cross-validation or split-validation objective function, searches for the optimal
 hyperparameters, and registers the tuned evaluator.
 }
 \details{
-The tuning loop uses a Latin Hypercube Design (LHS) for the initial parameters layout. It attempts
-to use a Kriging (Gaussian Process) surrogate model by default and automatically falls back to a
-Random Forest surrogate model if numerical singularities are encountered (which is common on small
-datasets).
+The tuning loop uses a Latin Hypercube Design (LHS) for the initial parameters layout. It uses
+the \pkg{mlr3mbo} package to run Bayesian Optimization to optimize hyperparameters.
 
 Evaluators registered via \code{make_tunable} accept several control parameters passed via \code{...}:
 \describe{
   \item{\code{mbo_iters}}{Integer: Number of Bayesian Optimization iterations (default 5).}
   \item{\code{mbo_init_design}}{Integer: Number of initial layout designs generated (default 8).}
   \item{\code{mbo_folds}}{Integer: Number of internal CV folds used for evaluation when no validation split is provided (default 3).}
-  \item{\code{mbo_infill_opt}}{Character: Strategy for infill optimization to find the next candidate parameter set. Supported values are \code{"focussearch"} (default) and \code{"ea"} (Evolutionary Algorithm, which requires package \code{emoa}).}
+  \item{\code{mbo_infill_opt}}{Character: Strategy for infill optimization to find the next candidate parameter set. Supported values are \code{"focussearch"} (default) and \code{"ea"} (deprecated).}
   \item{\code{best_params}}{List: Optional list of initial parameters to seed the MBO search.}
 }
 }

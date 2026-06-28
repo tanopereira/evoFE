@@ -1,7 +1,7 @@
 # Bayesian Optimization Hyperparameter Tuner for LightGBM
 #
 # Evaluator that tunes LightGBM hyperparameters using Bayesian Optimization
-# via 'mlrMBO', 'ParamHelpers', and 'smoof'.
+# via 'mlr3mbo', 'paradox', and 'bbotk'.
 #
 # @importFrom stats predict
 # @importFrom utils capture.output
@@ -18,10 +18,10 @@ register_evaluator(
                          verbose = FALSE, best_params = NULL, ...) {
     
     # Check for required packages
-    if (!requireNamespace("mlrMBO", quietly = TRUE) ||
-        !requireNamespace("ParamHelpers", quietly = TRUE) ||
-        !requireNamespace("smoof", quietly = TRUE)) {
-      stop("The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required to use the 'lightgbm_mbo' evaluator. Please install them.")
+    if (!requireNamespace("mlr3mbo", quietly = TRUE) ||
+        !requireNamespace("paradox", quietly = TRUE) ||
+        !requireNamespace("bbotk", quietly = TRUE)) {
+      stop("The packages 'mlr3mbo', 'paradox', and 'bbotk' are required to use the 'lightgbm_mbo' evaluator. Please install them.")
     }
     
     # Determine strategy: use provided validation set or internal CV
@@ -76,7 +76,7 @@ register_evaluator(
           message(sprintf("  [MBO Eval] lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f -> Val Fitness: %.4f", 
                           x$learning_rate, x$num_leaves, x$max_depth, x$feature_fraction, score))
         }
-        return(-score)
+        return(score)
       } else {
         # CV mode: internal cross-validation on x_train
         scores <- numeric(mbo_folds)
@@ -106,48 +106,63 @@ register_evaluator(
           message(sprintf("  [MBO Eval] lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f -> CV Fitness: %.4f", 
                           x$learning_rate, x$num_leaves, x$max_depth, x$feature_fraction, mean_score))
         }
-        return(-mean_score)
+        return(mean_score)
       }
     }
     
     # Parameter Set to optimize
-    ps <- ParamHelpers::makeParamSet(
-      ParamHelpers::makeNumericParam("learning_rate", lower = 0.01, upper = 0.3),
-      ParamHelpers::makeIntegerParam("num_leaves", lower = 7, upper = 63),
-      ParamHelpers::makeIntegerParam("max_depth", lower = 3, upper = 10),
-      ParamHelpers::makeNumericParam("feature_fraction", lower = 0.5, upper = 1.0)
+    ps <- paradox::ps(
+      learning_rate = paradox::p_dbl(lower = 0.01, upper = 0.3),
+      num_leaves = paradox::p_int(lower = 7, upper = 63),
+      max_depth = paradox::p_int(lower = 3, upper = 10),
+      feature_fraction = paradox::p_dbl(lower = 0.5, upper = 1.0)
     )
     
-    # Define smoof objective function
-    obj_fun <- smoof::makeSingleObjectiveFunction(
-      name = "lightgbm_hyperparameter_tuning",
-      fn = fn,
-      par.set = ps,
-      has.simple.signature = FALSE,
-      minimize = TRUE
+    # Define bbotk objective function
+    obj_fun_bbotk <- function(xs) {
+      params_list <- lapply(xs, function(val) {
+        if (is.factor(val)) as.character(val) else val
+      })
+      score <- fn(params_list)
+      list(y = score)
+    }
+    
+    codomain <- paradox::ps(y = paradox::p_dbl(tags = "maximize"))
+    
+    objective <- bbotk::ObjectiveRFun$new(
+      fun = obj_fun_bbotk,
+      domain = ps,
+      codomain = codomain
     )
     
     if (!mbo_infill_opt %in% c("focussearch", "ea")) {
       stop("mbo_infill_opt must be either 'focussearch' or 'ea'.")
     }
-    if (mbo_infill_opt == "ea" && !requireNamespace("emoa", quietly = TRUE)) {
-      stop("The package 'emoa' is required to use the 'ea' infill optimizer. Please install it.")
+    
+    if (mbo_infill_opt == "ea") {
+      warning("mbo_infill_opt = 'ea' is deprecated and ignored. mlr3mbo handles infill optimisation internally.", call. = FALSE)
     }
-    control <- mlrMBO::makeMBOControl()
-    control <- mlrMBO::setMBOControlTermination(control, iters = mbo_iters)
-    control <- mlrMBO::setMBOControlInfill(control, opt = mbo_infill_opt)
+    
+    instance <- bbotk::OptimInstanceBatchSingleCrit$new(
+      objective = objective,
+      terminator = bbotk::trm("evals", n_evals = mbo_init_design + mbo_iters)
+    )
     
     # Generate initial design using Maximin Latin Hypercube Design (LHS)
-    design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps, fun = lhs::maximinLHS)
+    design <- paradox::generate_design_lhs(ps, n = mbo_init_design)$data
     if (!is.null(best_params)) {
       req_params <- c("learning_rate", "num_leaves", "max_depth", "feature_fraction")
       if (all(req_params %in% names(best_params))) {
-        best_df <- data.frame(
-          learning_rate = as.numeric(best_params$learning_rate),
-          num_leaves = as.integer(best_params$num_leaves),
-          max_depth = as.integer(best_params$max_depth),
-          feature_fraction = as.numeric(best_params$feature_fraction)
-        )
+        best_df <- data.table::as.data.table(best_params[req_params])
+        for (col in names(best_df)) {
+          if (is.factor(design[[col]])) {
+            best_df[[col]] <- factor(as.character(best_df[[col]]), levels = levels(design[[col]]))
+          } else if (is.integer(design[[col]])) {
+            best_df[[col]] <- as.integer(best_df[[col]])
+          } else if (is.numeric(design[[col]])) {
+            best_df[[col]] <- as.numeric(best_df[[col]])
+          }
+        }
         design <- rbind(best_df, design)
         if (verbose) {
           message("[MBO] Seeding initial design with best parameters from previous tuning.")
@@ -155,25 +170,18 @@ register_evaluator(
       }
     }
     
-    # Run bayesian optimization
-    # Try Kriging (GP) surrogate first; fall back to Random Forest if Kriging
-    # encounters numerical singularities (common on small datasets)
-    mbo_res <- tryCatch({
-      suppressWarnings(mlrMBO::mbo(obj_fun, design = design, control = control, show.info = verbose))
-    }, error = function(e) {
-      if (!requireNamespace("mlr", quietly = TRUE) || !requireNamespace("randomForest", quietly = TRUE)) {
-        stop(sprintf("[MBO] Kriging surrogate failed, and fallback Random Forest surrogate is unavailable because suggested packages 'mlr' and/or 'randomForest' are not installed. Original Kriging error: %s", conditionMessage(e)))
-      }
-      if (verbose) {
-        message("[MBO] Kriging surrogate failed, falling back to Random Forest surrogate.")
-      }
-      rf_surrogate <- mlr::makeLearner("regr.randomForest", predict.type = "se")
-      suppressWarnings(
-        mlrMBO::mbo(obj_fun, design = design, learner = rf_surrogate,
-                    control = control, show.info = verbose)
-      )
+    # Evaluate initial design points first
+    instance$eval_batch(design)
+    
+    # Run optimization
+    optimizer <- bbotk::opt("mbo")
+    optimizer$optimize(instance)
+    
+    # Extract best hyperparams
+    best_params <- as.list(instance$result[, ps$ids(), with = FALSE])
+    best_params <- lapply(best_params, function(val) {
+      if (is.factor(val)) as.character(val) else val
     })
-    best_params <- mbo_res$x
     
     if (verbose) {
       message(sprintf("[MBO] Optimization Complete. Best Parameters: lr=%.4f, leaves=%d, depth=%d, feat_frac=%.2f", 

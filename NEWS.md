@@ -1,3 +1,20 @@
+# evoFE 0.3.0
+
+## Breaking Changes
+
+* The `mbo_infill_opt = "ea"` option is deprecated and ignored with a warning. The `emoa` package is no longer needed.
+
+## Enhancements
+
+* Migrated Bayesian Optimisation backend from `mlrMBO` / `ParamHelpers` / `smoof` / `lhs` to `mlr3mbo` / `paradox` / `bbotk`. The public API (`make_tunable()`, `lightgbm_mbo`, `xgboost_mbo`) remains fully unchanged.
+* Removed legacy packages `mlr`, `randomForest`, `DiceKriging`, and `emoa` from Suggested dependencies. The manual Kriging-to-RandomForest surrogate fallback has been replaced by `mlr3mbo`'s transparent internal surrogate management.
+* Reduced package dependencies in `Imports` from 12 to 11.
+* Added support for a **Hybrid Island Population Model** in `evolve_features()` via parameters `islands`, `migration_interval`, `migration_rate`, and `gene_migration_prob`.
+  * **Recipe-Level Migration**: Exchanges complete successful feature recipes between islands in a Ring topology to preserve co-adapted interactions.
+  * **Gene-Level Migration (Injection)**: Periodically compiles a pool of highly successful individual features (genes) from neighboring islands and injects them into the local mutation pool to foster hierarchical feature chaining (e.g. constructing new transformations on top of migrated features).
+  * **Independent Local Stagnation**: Dynamic population sizing and adaptive exploration rates are computed independently per island, allowing stagnant islands to expand and explore while active ones stay compact.
+  * **Verbose Reporting**: Clear logging has been integrated to distinguish exactly which island and individual is being evaluated.
+
 # evoFE 0.2.0
 
 ## Bug Fixes

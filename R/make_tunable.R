@@ -2,22 +2,20 @@
 #'
 #' @description
 #' Wraps an existing registered model evaluator in a Bayesian Optimization tuning loop
-#' using the \pkg{mlrMBO} framework. It automatically generates a parameter space, constructs
+#' using the \pkg{mlr3mbo} framework. It automatically generates a parameter space, constructs
 #' a cross-validation or split-validation objective function, searches for the optimal
 #' hyperparameters, and registers the tuned evaluator.
 #'
 #' @details
-#' The tuning loop uses a Latin Hypercube Design (LHS) for the initial parameters layout. It attempts
-#' to use a Kriging (Gaussian Process) surrogate model by default and automatically falls back to a
-#' Random Forest surrogate model if numerical singularities are encountered (which is common on small
-#' datasets).
+#' The tuning loop uses a Latin Hypercube Design (LHS) for the initial parameters layout. It uses
+#' the \pkg{mlr3mbo} package to run Bayesian Optimization to optimize hyperparameters.
 #'
 #' Evaluators registered via \code{make_tunable} accept several control parameters passed via \code{...}:
 #' \describe{
 #'   \item{\code{mbo_iters}}{Integer: Number of Bayesian Optimization iterations (default 5).}
 #'   \item{\code{mbo_init_design}}{Integer: Number of initial layout designs generated (default 8).}
 #'   \item{\code{mbo_folds}}{Integer: Number of internal CV folds used for evaluation when no validation split is provided (default 3).}
-#'   \item{\code{mbo_infill_opt}}{Character: Strategy for infill optimization to find the next candidate parameter set. Supported values are \code{"focussearch"} (default) and \code{"ea"} (Evolutionary Algorithm, which requires package \code{emoa}).}
+#'   \item{\code{mbo_infill_opt}}{Character: Strategy for infill optimization to find the next candidate parameter set. Supported values are \code{"focussearch"} (default) and \code{"ea"} (deprecated).}
 #'   \item{\code{best_params}}{List: Optional list of initial parameters to seed the MBO search.}
 #' }
 #'
@@ -38,9 +36,8 @@
 #'
 #' @return Invisibly returns \code{NULL}. Registers the tuned evaluator in the global \code{evo_evaluators} environment.
 #'
-#' @importFrom mlrMBO makeMBOControl setMBOControlTermination setMBOControlInfill mbo
-#' @importFrom ParamHelpers makeParamSet makeNumericParam makeIntegerParam makeDiscreteParam generateDesign
-#' @importFrom smoof makeSingleObjectiveFunction
+#' @importFrom paradox ps p_dbl p_int p_fct generate_design_lhs
+#' @importFrom bbotk ObjectiveRFun OptimInstanceBatchSingleCrit trm opt
 #' @importFrom lhs maximinLHS
 #' @importFrom utils modifyList
 #'
@@ -112,21 +109,22 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
   }
 
-  # 3. Convert tunable parameter ranges list into a ParamHelpers ParamSet
+  # 3. Convert tunable parameter ranges list into a paradox ParamSet
   make_param <- function(name, def) {
     if (def$type == "numeric") {
-      ParamHelpers::makeNumericParam(name, lower = def$lower, upper = def$upper)
+      paradox::p_dbl(lower = def$lower, upper = def$upper)
     } else if (def$type == "integer") {
-      ParamHelpers::makeIntegerParam(name, lower = def$lower, upper = def$upper)
+      paradox::p_int(lower = def$lower, upper = def$upper)
     } else if (def$type == "discrete") {
-      ParamHelpers::makeDiscreteParam(name, values = def$values)
+      paradox::p_fct(levels = as.character(def$values))
     } else {
       stop(sprintf("Unsupported parameter type: %s", def$type))
     }
   }
   
-  ps <- do.call(ParamHelpers::makeParamSet, 
-                lapply(names(tunable_defs), function(n) make_param(n, tunable_defs[[n]])))
+  param_list <- lapply(names(tunable_defs), function(n) make_param(n, tunable_defs[[n]]))
+  names(param_list) <- names(tunable_defs)
+  ps <- do.call(paradox::ps, param_list)
   
   # 4. Create a dynamic training function wrapper
   tuned_train_func <- function(x_train, y_train, x_val = NULL, y_val = NULL,
@@ -136,10 +134,10 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                                verbose = FALSE, best_params = NULL, ...) {
     
     # Check for required packages
-    if (!requireNamespace("mlrMBO", quietly = TRUE) ||
-        !requireNamespace("ParamHelpers", quietly = TRUE) ||
-        !requireNamespace("smoof", quietly = TRUE)) {
-      stop("The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required to use the tuned evaluator. Please install them.")
+    if (!requireNamespace("mlr3mbo", quietly = TRUE) ||
+        !requireNamespace("paradox", quietly = TRUE) ||
+        !requireNamespace("bbotk", quietly = TRUE)) {
+      stop("The packages 'mlr3mbo', 'paradox', and 'bbotk' are required to use the tuned evaluator. Please install them.")
     }
 
     use_split <- !is.null(x_val) && !is.null(y_val)
@@ -178,7 +176,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
           message(sprintf("  [MBO Eval] %s -> Val Fitness: %.4f", param_str, score))
         }
-        return(-score) # Negate because MBO minimizes
+        return(score)
       } else {
         # Cross-validation mode
         scores <- numeric(mbo_folds)
@@ -203,14 +201,25 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
           message(sprintf("  [MBO Eval] %s -> CV Fitness: %.4f", param_str, mean_score))
         }
-        return(-mean_score)
+        return(mean_score)
       }
     }
     
-    # 4. Run mlrMBO optimization
-    obj_fun <- smoof::makeSingleObjectiveFunction(
-      name = paste0(base_model_name, "_mbo_tuning"),
-      fn = fn, par.set = ps, has.simple.signature = FALSE, minimize = TRUE
+    # 4. Run bbotk/mlr3mbo optimization
+    obj_fun_bbotk <- function(xs) {
+      params_list <- lapply(xs, function(val) {
+        if (is.factor(val)) as.character(val) else val
+      })
+      score <- fn(params_list)
+      list(y = score)
+    }
+    
+    codomain <- paradox::ps(y = paradox::p_dbl(tags = "maximize"))
+    
+    objective <- bbotk::ObjectiveRFun$new(
+      fun = obj_fun_bbotk,
+      domain = ps,
+      codomain = codomain
     )
     
     if (!mbo_infill_opt %in% c("focussearch", "ea")) {
@@ -218,28 +227,31 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
     
     if (mbo_infill_opt == "ea") {
-      all_int <- all(vapply(tunable_defs, function(d) d$type == "integer", logical(1)))
-      if (all_int) {
-        if (verbose) {
-          message("[MBO] All tunable parameters are integers. Falling back to 'focussearch' optimizer to avoid 'emoa' crossover crash on purely integer spaces.")
-        }
-        mbo_infill_opt <- "focussearch"
-      } else if (!requireNamespace("emoa", quietly = TRUE)) {
-        stop("The package 'emoa' is required to use the 'ea' infill optimizer. Please install it.")
-      }
+      warning("mbo_infill_opt = 'ea' is deprecated and ignored. mlr3mbo handles infill optimisation internally.", call. = FALSE)
     }
-    control <- mlrMBO::makeMBOControl()
-    control <- mlrMBO::setMBOControlTermination(control, iters = mbo_iters)
-    control <- mlrMBO::setMBOControlInfill(control, opt = mbo_infill_opt)
+    
+    instance <- bbotk::OptimInstanceBatchSingleCrit$new(
+      objective = objective,
+      terminator = bbotk::trm("evals", n_evals = mbo_init_design + mbo_iters)
+    )
     
     # Generate initial design
-    design <- ParamHelpers::generateDesign(n = mbo_init_design, par.set = ps, fun = lhs::maximinLHS)
+    design <- paradox::generate_design_lhs(ps, n = mbo_init_design)$data
     
     # Seed with previous best_params if provided
     if (!is.null(best_params)) {
-      req_params <- names(param_ranges)
+      req_params <- names(tunable_defs)
       if (all(req_params %in% names(best_params))) {
-        best_df <- as.data.frame(best_params[req_params])
+        best_df <- data.table::as.data.table(best_params[req_params])
+        for (col in names(best_df)) {
+          if (is.factor(design[[col]])) {
+            best_df[[col]] <- factor(as.character(best_df[[col]]), levels = levels(design[[col]]))
+          } else if (is.integer(design[[col]])) {
+            best_df[[col]] <- as.integer(best_df[[col]])
+          } else if (is.numeric(design[[col]])) {
+            best_df[[col]] <- as.numeric(best_df[[col]])
+          }
+        }
         design <- rbind(best_df, design)
         if (verbose) {
           message("[MBO] Seeding initial design with best parameters from previous tuning.")
@@ -247,24 +259,18 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       }
     }
     
-    # Run optimization (fall back to Random Forest surrogate on Kriging errors)
-    mbo_res <- tryCatch({
-      suppressWarnings(mlrMBO::mbo(obj_fun, design = design, control = control, show.info = verbose))
-    }, error = function(e) {
-      if (!requireNamespace("mlr", quietly = TRUE) || !requireNamespace("randomForest", quietly = TRUE)) {
-        stop(sprintf("[MBO] Kriging surrogate failed, and fallback Random Forest surrogate is unavailable because suggested packages 'mlr' and/or 'randomForest' are not installed. Original Kriging error: %s", conditionMessage(e)))
-      }
-      if (verbose) {
-        message("[MBO] Kriging surrogate failed, falling back to Random Forest surrogate.")
-      }
-      rf_surrogate <- mlr::makeLearner("regr.randomForest", predict.type = "se")
-      suppressWarnings(
-        mlrMBO::mbo(obj_fun, design = design, learner = rf_surrogate,
-                    control = control, show.info = verbose)
-      )
-    })
+    # Evaluate initial design points first
+    instance$eval_batch(design)
     
-    best_hyperparams <- mbo_res$x
+    # Run optimization
+    optimizer <- bbotk::opt("mbo")
+    optimizer$optimize(instance)
+    
+    # Extract best hyperparams
+    best_hyperparams <- as.list(instance$result[, ps$ids(), with = FALSE])
+    best_hyperparams <- lapply(best_hyperparams, function(val) {
+      if (is.factor(val)) as.character(val) else val
+    })
     
     if (verbose) {
       message(sprintf("[MBO] Optimization Complete for %s. Best parameters: %s",

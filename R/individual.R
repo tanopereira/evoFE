@@ -223,6 +223,8 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #'   to block all chaining (e.g. during initialization).
 #' @param allowed_transformers A character vector of allowed transformer names,
 #'   or NULL/"all" to allow all.
+#' @param migrated_genes A list of genes migrated from other islands.
+#' @param gene_migration_prob Probability of selecting a migrated gene during mutation.
 #' @return An \code{evo_individual} with the mutation applied
 #'   (gene added, removed, or modified) and \code{fitness} reset
 #'   to \code{NA_real_}.
@@ -235,7 +237,7 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #' mutated_ind <- mutate(ind)
 #' }
 #' @export
-mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL) {
+mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL, migrated_genes = list(), gene_migration_prob = 0.2) {
   if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0 && length(ind$datetime_cols) == 0) return(ind)
   
   # Categorize existing gene outputs by type, restricted to tested genes
@@ -495,8 +497,34 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
   }
   
   if (mut_type == 3) {
-    # Add a random gene
-    if (is.null(allowed_transformers)) {
+    # Attempt to inject a migrated gene with probability gene_migration_prob
+    injected <- FALSE
+    if (length(migrated_genes) > 0 && stats::runif(1) < gene_migration_prob) {
+      selected_mig_gene <- sample(migrated_genes, 1)[[1]]
+      
+      existing_out_cols <- sapply(ind$genes, function(g) g$output_col)
+      valid_inputs <- c(ind$numeric_cols, ind$categorical_cols, ind$datetime_cols, existing_out_cols)
+      
+      if (all(selected_mig_gene$input_cols %in% valid_inputs)) {
+        existing_formulas <- vapply(ind$genes, gene_to_formula, character(1))
+        mig_formula <- gene_to_formula(selected_mig_gene)
+        
+        if (!(mig_formula %in% existing_formulas)) {
+          # Strip the state of the gene so it is re-fitted on the receiving island
+          selected_mig_gene$state <- NULL
+          ind$genes <- c(ind$genes, list(selected_mig_gene))
+          ind$fitness <- NA_real_
+          injected <- TRUE
+          if (verbose) {
+            message(sprintf("    [Mutation] Injected migrated gene: %s (%s)", selected_mig_gene$output_col, mig_formula))
+          }
+        }
+      }
+    }
+    
+    if (!injected) {
+      # Add a random gene
+      if (is.null(allowed_transformers)) {
       allowed_t <- names(evo_transformers)
     } else {
       allowed_t <- allowed_transformers
@@ -614,6 +642,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       ind$fitness <- NA_real_
     }
   }
+}
   ind$genes <- topological_sort_genes(ind$genes, c(ind$numeric_cols, ind$categorical_cols))
   ind
 }

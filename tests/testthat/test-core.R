@@ -1222,17 +1222,17 @@ test_that("CatBoost evaluator checks for package availability", {
 })
 
 test_that("lightgbm_mbo checks for package availability", {
-  # If mlrMBO, ParamHelpers, or smoof is not installed, it should raise a clear error
-  if (!requireNamespace("mlrMBO", quietly = TRUE) ||
-      !requireNamespace("ParamHelpers", quietly = TRUE) ||
-      !requireNamespace("smoof", quietly = TRUE)) {
+  # If mlr3mbo, paradox, or bbotk is not installed, it should raise a clear error
+  if (!requireNamespace("mlr3mbo", quietly = TRUE) ||
+      !requireNamespace("paradox", quietly = TRUE) ||
+      !requireNamespace("bbotk", quietly = TRUE)) {
     x_train <- matrix(rnorm(20), ncol = 2)
     colnames(x_train) <- c("x1", "x2")
     y_train <- rbinom(10, 1, 0.5)
     
     expect_error(
       train_model(x_train, y_train, task = "classification", evaluator = "lightgbm_mbo"),
-      "The packages 'mlrMBO', 'ParamHelpers', and 'smoof' are required"
+      "The packages 'mlr3mbo', 'paradox', and 'bbotk' are required"
     )
   } else {
     # If installed, test that it trains and predicts successfully
@@ -1352,7 +1352,7 @@ test_that("make_tunable works correctly", {
 
 test_that("xgboost_mbo tuning is consistent and works correctly in regression", {
   skip_if_not_installed("xgboost")
-  skip_if_not_installed("mlrMBO")
+  skip_if_not_installed("mlr3mbo")
   
   # Register a tuned xgboost evaluator
   param_ranges <- list(

@@ -12,7 +12,9 @@ mutate(
   temperature = 1,
   task = "classification",
   tested_gene_outputs = NULL,
-  allowed_transformers = NULL
+  allowed_transformers = NULL,
+  migrated_genes = list(),
+  gene_migration_prob = 0.2
 )
 }
 \arguments{
@@ -35,6 +37,10 @@ to block all chaining (e.g. during initialization).}
 
 \item{allowed_transformers}{A character vector of allowed transformer names,
 or NULL/"all" to allow all.}
+
+\item{migrated_genes}{A list of genes migrated from other islands.}
+
+\item{gene_migration_prob}{Probability of selecting a migrated gene during mutation.}
 }
 \value{
 An \code{evo_individual} with the mutation applied

@@ -15,3 +15,4 @@
 ^TEST_INFRA\.md$
 ^test_[^/]*\.R$
 ^\.Rd2pdf[^/]*$
+^SKILLS\.md$

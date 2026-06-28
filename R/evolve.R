@@ -114,7 +114,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          fold_ids, shared_folds, shared_full, state_cache,
                          fitness_cache, threads, verbose, running_best_fitness,
                          metric = "default", allow_prune = TRUE,
-                         complexity_penalty = 0, ...) {
+                         complexity_penalty = 0, island = NULL, ...) {
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) next
 
@@ -148,10 +148,17 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
       cache_str <- if (cached) " (cached)" else ""
       msg_color <- if (improved) green_start else red_start
 
-      msg <- sprintf(
-        "  Tested Individual %d%s -> Fitness: %.4f%s",
-        i, new_best_str, pop[[i]]$fitness, cache_str
-      )
+      if (!is.null(island)) {
+        msg <- sprintf(
+          "  [Island %d] Tested Individual %d%s -> Fitness: %.4f%s",
+          island, i, new_best_str, pop[[i]]$fitness, cache_str
+        )
+      } else {
+        msg <- sprintf(
+          "  Tested Individual %d%s -> Fitness: %.4f%s",
+          i, new_best_str, pop[[i]]$fitness, cache_str
+        )
+      }
       message(paste0(msg_color, msg, color_reset))
 
       if (improved) {
@@ -269,8 +276,13 @@ tournament_select <- function(pop, k = 3) {
 #'   individual's raw fitness as \code{complexity_penalty * n_genes}.  A small
 #'   value (e.g. \code{0.001}) encourages parsimonious recipes and reduces
 #'   overfitting on small datasets.  Default \code{0} disables the penalty.
+#' @param islands Integer. Number of independent subpopulations (islands) to evolve (default 1).
+#' @param migration_interval Integer. Number of generations between migrations (default 5).
+#' @param migration_rate Integer. Number of top individuals to migrate from each island to its neighbor (default 1).
+#' @param gene_migration_prob Numeric. Probability of injecting a migrated gene during mutation (default 0.2).
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
+#' @importFrom utils tail
 #' @return An \code{evo_recipe} S3 object:
 #'   a list with elements
 #'   \code{best_individual} (the top-scoring \code{evo_individual}),
@@ -313,7 +325,11 @@ evolve_features <- function(data, target_col, task = "classification",
                             model_all_final_genes = FALSE,
                             model_all_historical_genes = FALSE,
                             allowed_transformers = "all",
-                            complexity_penalty = 0, ...) {
+                            complexity_penalty = 0,
+                            islands = 1,
+                            migration_interval = 5,
+                            migration_rate = 1,
+                            gene_migration_prob = 0.2, ...) {
 
 
 
@@ -449,6 +465,28 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
+  # Validate island parameters
+  if (!is.numeric(islands) || islands < 1) {
+    stop("islands must be a positive integer >= 1.")
+  }
+  islands <- as.integer(islands)
+
+  if (islands > 1) {
+    if (!is.numeric(migration_interval) || migration_interval < 1) {
+      stop("migration_interval must be a positive integer >= 1.")
+    }
+    migration_interval <- as.integer(migration_interval)
+
+    if (!is.numeric(migration_rate) || migration_rate < 1) {
+      stop("migration_rate must be a positive integer >= 1.")
+    }
+    migration_rate <- as.integer(migration_rate)
+
+    if (!is.numeric(gene_migration_prob) || gene_migration_prob < 0 || gene_migration_prob > 1) {
+      stop("gene_migration_prob must be a numeric value between 0 and 1.")
+    }
+  }
+
   original_cols <- setdiff(names(data), target_col)
   datetime_cols <- names(data)[vapply(data, .is_datetime_col, logical(1))]
   datetime_cols <- setdiff(datetime_cols, target_col)
@@ -572,33 +610,182 @@ evolve_features <- function(data, target_col, task = "classification",
   cache_key <- digest::digest(recipe_str, algo = "md5", serialize = FALSE)
   assign(cache_key, baseline_ind, envir = fitness_cache)
 
-  # 2. Initialize population for Generation 1 using baseline importances
-  pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
-  pop[[1]] <- baseline_ind
+  if (islands == 1) {
+    # 2. Initialize population for Generation 1 using baseline importances
+    pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
+    pop[[1]] <- baseline_ind
 
-  global_best_fitness <- baseline_ind$fitness
-  running_best_fitness <- baseline_ind$fitness
-  generations_without_improvement <- 0
-  fitness_history <- numeric(generations)
+    global_best_fitness <- baseline_ind$fitness
+    running_best_fitness <- baseline_ind$fitness
+    generations_without_improvement <- 0
+    fitness_history <- numeric(generations)
 
-  historical_best_genes <- list()
-  current_pop_size <- pop_size
+    historical_best_genes <- list()
+    current_pop_size <- pop_size
 
-  for (g in 1:generations) {
-    if (verbose) {
-      if (global_best_fitness > -Inf) {
-        message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
+    for (g in 1:generations) {
+      if (verbose) {
+        if (global_best_fitness > -Inf) {
+          message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
+        } else {
+          message(sprintf("\n--- Generation %d / %d ---", g, generations))
+        }
+        # Print all individuals in the population for this generation
+        for (i in seq_along(pop)) {
+          fit_str <- if (is.na(pop[[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop[[i]]$fitness)
+          message(sprintf("  Individual %d (%s): %s", i, fit_str, individual_to_recipe_string(pop[[i]])))
+        }
+      }
+
+      # Evaluate fitness
+      eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
+        split_ids_val, shared_splits, evaluator,
+        fold_ids, shared_folds, shared_full, state_cache,
+        fitness_cache, threads, verbose, running_best_fitness,
+        metric = metric, complexity_penalty = complexity_penalty, ...
+      )
+      pop <- eval_res$pop
+      running_best_fitness <- eval_res$running_best_fitness
+
+      # Sort population by fitness descending
+      fitness_vals <- sapply(pop, function(ind) ind$fitness)
+      pop <- pop[order(fitness_vals, decreasing = TRUE)]
+
+      # Track historical best genes from this generation
+      historical_best_genes <- c(historical_best_genes, pop[[1]]$genes)
+
+      best_fitness <- pop[[1]]$fitness
+      fitness_history[g] <- best_fitness
+      if (verbose) message(sprintf("  Gen %d Best Fitness: %.4f", g, best_fitness))
+
+      if (verbose) {
+        message(sprintf("  Gen %d Best Recipe: %s", g, individual_to_recipe_string(pop[[1]])))
+      }
+
+      # Early stopping check
+      if (g == 1 || (!is.na(best_fitness) && (is.na(global_best_fitness) || best_fitness > global_best_fitness))) {
+        global_best_fitness <- best_fitness
+        generations_without_improvement <- 0
       } else {
-        message(sprintf("\n--- Generation %d / %d ---", g, generations))
+        generations_without_improvement <- generations_without_improvement + 1
       }
-      # Print all individuals in the population for this generation
-      for (i in seq_along(pop)) {
-        fit_str <- if (is.na(pop[[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop[[i]]$fitness)
-        message(sprintf("  Individual %d (%s): %s", i, fit_str, individual_to_recipe_string(pop[[i]])))
+
+      if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
+        message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_generations))
+        fitness_history <- fitness_history[1:g]
+        break
       }
+
+      if (g == generations) break
+
+      # Selection: keep top 50% of current population
+      num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
+      survivors <- pop[1:num_survivors]
+
+      # Collect outputs from evaluated genes — only these are safe for chaining
+      tested_gene_outputs <- unique(unlist(lapply(pop, function(ind) {
+        if (length(ind$genes) == 0) {
+          return(character(0))
+        }
+        vapply(ind$genes, function(g) g$output_col, character(1))
+      })))
+
+      # Aggregate importances from survivors
+      global_importances <- list()
+      for (s in survivors) {
+        if (length(s$importances) > 0) {
+          for (feat in names(s$importances)) {
+            if (is.null(global_importances[[feat]])) {
+              global_importances[[feat]] <- c(s$importances[[feat]])
+            } else {
+              global_importances[[feat]] <- c(global_importances[[feat]], s$importances[[feat]])
+            }
+          }
+        }
+      }
+
+      if (length(global_importances) > 0) {
+        global_importances_vec <- sapply(global_importances, mean)
+      } else {
+        global_importances_vec <- numeric(0)
+      }
+      # Adaptive mutation rate and temperature: increase exploration during stagnation
+      stagnation_ratio <- if (!is.null(early_stopping_generations) && early_stopping_generations > 0) {
+        min(1, generations_without_improvement / early_stopping_generations)
+      } else {
+        0
+      }
+      adaptive_mutation_rate <- 0.3 + 0.4 * stagnation_ratio
+      temperature <- 0.1 + 0.9 * stagnation_ratio
+
+      # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
+      target_pop_size <- pop_size
+      if (dynamic_population) {
+        if (generations_without_improvement > 0) {
+          # Expand population during stagnation relative to current size
+          current_pop_size <- max(current_pop_size + 1, floor(current_pop_size * dynamic_population_growth_rate))
+        } else {
+          # Gradual decay back to pop_size when there is improvement
+          current_pop_size <- max(pop_size, floor(current_pop_size * dynamic_population_decay_rate))
+        }
+        target_pop_size <- current_pop_size
+      }
+
+      # Next generation
+      next_gen <- list()
+      # Elitism: keep best
+      next_gen[[1]] <- survivors[[1]]
+
+      # Fill the rest
+      while (length(next_gen) < target_pop_size) {
+        idx <- length(next_gen) + 1
+        is_expansion <- idx > pop_size
+
+        if (is_expansion) {
+          # Expansion slots: High exploration (no crossover, extremely high temperature)
+          p <- tournament_select(pop, k = 3)
+          child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+        } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
+          # Crossover
+          p1 <- tournament_select(pop, k = 3)
+          p2 <- tournament_select(pop, k = 3)
+
+          # Determine whether to use union or random crossover
+          use_union <- FALSE
+          if (crossover_type == "union") {
+            use_union <- TRUE
+          } else if (crossover_type == "both") {
+            use_union <- stats::runif(1) < 0.5
+          }
+
+          if (use_union) {
+            child <- union_crossover(p1, p2, verbose = FALSE)
+          } else {
+            child <- crossover(p1, p2, verbose = FALSE)
+          }
+
+          if (stats::runif(1) < 0.2) {
+            child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+          }
+        } else {
+          # Mutate
+          p <- tournament_select(pop, k = 3)
+          child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+        }
+
+        # Validation Check: Duplicate in next_gen OR already known to be worse than best
+        attempts <- 0
+        while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
+          child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+          attempts <- attempts + 1
+        }
+
+        next_gen <- c(next_gen, list(child))
+      }
+      pop <- next_gen
     }
 
-    # Evaluate fitness
+    # Final evaluation of new individuals
     eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
       split_ids_val, shared_splits, evaluator,
       fold_ids, shared_folds, shared_full, state_cache,
@@ -606,163 +793,306 @@ evolve_features <- function(data, target_col, task = "classification",
       metric = metric, complexity_penalty = complexity_penalty, ...
     )
     pop <- eval_res$pop
-    running_best_fitness <- eval_res$running_best_fitness
-
-    # Sort population by fitness descending
     fitness_vals <- sapply(pop, function(ind) ind$fitness)
     pop <- pop[order(fitness_vals, decreasing = TRUE)]
 
-    # Track historical best genes from this generation
-    historical_best_genes <- c(historical_best_genes, pop[[1]]$genes)
+    best_ind <- pop[[1]]
 
-    best_fitness <- pop[[1]]$fitness
-    fitness_history[g] <- best_fitness
-    if (verbose) message(sprintf("  Gen %d Best Fitness: %.4f", g, best_fitness))
-
-    if (verbose) {
-      message(sprintf("  Gen %d Best Recipe: %s", g, individual_to_recipe_string(pop[[1]])))
+  } else {
+    # 2. Initialize populations for all islands
+    pop_list <- list()
+    for (j in 1:islands) {
+      pop_list[[j]] <- initialize_population(
+        pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols,
+        initial_genes = 2, task = task, importances = baseline_ind$importances,
+        allowed_transformers = allowed_transformers
+      )
+      pop_list[[j]][[1]] <- baseline_ind
     }
 
-    # (Active gene pool tracking removed to reduce verbosity)
+    global_best_fitness <- baseline_ind$fitness
+    global_best_individual <- baseline_ind
 
-    # Early stopping check
-    if (g == 1 || (!is.na(best_fitness) && (is.na(global_best_fitness) || best_fitness > global_best_fitness))) {
-      global_best_fitness <- best_fitness
-      generations_without_improvement <- 0
-    } else {
-      generations_without_improvement <- generations_without_improvement + 1
-    }
+    # Local trackers for each island
+    island_best_fitness <- rep(baseline_ind$fitness, islands)
+    island_best_individual <- lapply(1:islands, function(x) baseline_ind)
+    island_gens_without_improvement <- rep(0, islands)
+    island_current_pop_size <- rep(pop_size, islands)
 
-    if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
-      message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_generations))
-      fitness_history <- fitness_history[1:g]
-      break
-    }
+    # Global trackers
+    generations_without_improvement <- 0
+    fitness_history <- numeric(generations)
 
-    if (g == generations) break
+    historical_best_genes <- list()
 
-    # Selection: keep top 50% of current population
-    num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
-    survivors <- pop[1:num_survivors]
+    # Gene-level migration pool: list of lists
+    migrated_genes_pool <- lapply(1:islands, function(x) list())
 
-    # (Breeding starts silently)
-
-    # Collect outputs from evaluated genes — only these are safe for chaining
-    tested_gene_outputs <- unique(unlist(lapply(pop, function(ind) {
-      if (length(ind$genes) == 0) {
-        return(character(0))
+    for (g in 1:generations) {
+      if (verbose) {
+        if (global_best_fitness > -Inf) {
+          message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
+        } else {
+          message(sprintf("\n--- Generation %d / %d ---", g, generations))
+        }
       }
-      vapply(ind$genes, function(g) g$output_col, character(1))
-    })))
 
-    # Aggregate importances from survivors
-    global_importances <- list()
-    for (s in survivors) {
-      if (length(s$importances) > 0) {
-        for (feat in names(s$importances)) {
-          if (is.null(global_importances[[feat]])) {
-            global_importances[[feat]] <- c(s$importances[[feat]])
-          } else {
-            global_importances[[feat]] <- c(global_importances[[feat]], s$importances[[feat]])
+      # Evaluate, sort, and breed for each island sequentially
+      for (j in 1:islands) {
+        if (verbose) {
+          message(sprintf("\n  --- [Island %d] (Current Local Best Fitness: %.4f) ---", j, island_best_fitness[j]))
+          # Print all individuals in the population for this island
+          for (i in seq_along(pop_list[[j]])) {
+            fit_str <- if (is.na(pop_list[[j]][[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop_list[[j]][[i]]$fitness)
+            message(sprintf("    [Island %d] Individual %d (%s): %s", j, i, fit_str, individual_to_recipe_string(pop_list[[j]][[i]])))
+          }
+        }
+
+        # Evaluate fitness of this island's population
+        eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
+          split_ids_val, shared_splits, evaluator,
+          fold_ids, shared_folds, shared_full, state_cache,
+          fitness_cache, threads, verbose, island_best_fitness[j],
+          metric = metric, complexity_penalty = complexity_penalty, island = j, ...
+        )
+        pop_list[[j]] <- eval_res$pop
+
+        # Sort population by fitness descending
+        fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
+        pop_list[[j]] <- pop_list[[j]][order(fitness_vals, decreasing = TRUE)]
+
+        # Track historical best genes from this generation
+        historical_best_genes <- c(historical_best_genes, pop_list[[j]][[1]]$genes)
+
+        best_fitness_island <- pop_list[[j]][[1]]$fitness
+        if (verbose) {
+          message(sprintf("    [Island %d] Gen %d Best Fitness: %.4f", j, g, best_fitness_island))
+          message(sprintf("    [Island %d] Gen %d Best Recipe: %s", j, g, individual_to_recipe_string(pop_list[[j]][[1]])))
+        }
+
+        # Local early stopping/progress track for island-specific stagnation
+        if (best_fitness_island > island_best_fitness[j]) {
+          island_best_fitness[j] <- best_fitness_island
+          island_best_individual[[j]] <- pop_list[[j]][[1]]
+          island_gens_without_improvement[j] <- 0
+        } else {
+          island_gens_without_improvement[j] <- island_gens_without_improvement[j] + 1
+        }
+
+        # Track global best across all islands
+        if (best_fitness_island > global_best_fitness) {
+          global_best_fitness <- best_fitness_island
+          global_best_individual <- pop_list[[j]][[1]]
+        }
+      }
+
+      # Track global improvement
+      fitness_history[g] <- global_best_fitness
+      if (g == 1 || (global_best_fitness > fitness_history[max(1, g - 1)])) {
+        generations_without_improvement <- 0
+      } else {
+        generations_without_improvement <- generations_without_improvement + 1
+      }
+
+      # Global early stopping check
+      if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
+        message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
+        fitness_history <- fitness_history[1:g]
+        break
+      }
+
+      if (g == generations) break
+
+      # --- MIGRATION PHASE ---
+      if (g %% migration_interval == 0) {
+        if (verbose) {
+          message(sprintf("\n*** [Migration Phase] Triggering migration at Generation %d ***", g))
+        }
+
+        # Temp copy of populations to avoid using updated destination populations within the same step
+        old_pop_list <- pop_list
+
+        for (j in 1:islands) {
+          dest <- (j %% islands) + 1
+
+          # 1. Recipe-level migration
+          migrant_inds <- old_pop_list[[j]][1:migration_rate]
+
+          # Replace the worst individuals of the target population
+          worst_start <- length(pop_list[[dest]]) - migration_rate + 1
+          worst_end <- length(pop_list[[dest]])
+          pop_list[[dest]][worst_start:worst_end] <- migrant_inds
+
+          if (verbose) {
+            message(sprintf("  Migrating top %d recipe(s) from Island %d to Island %d", migration_rate, j, dest))
+          }
+
+          # 2. Gene-level migration (Gene Injection)
+          best_ind <- old_pop_list[[j]][[1]]
+          best_genes <- best_ind$genes
+          if (length(best_genes) > 0) {
+            for (d in 1:islands) {
+              if (d == j) next
+              existing_formulas <- vapply(migrated_genes_pool[[d]], gene_to_formula, character(1))
+              for (g_mig in best_genes) {
+                formula <- gene_to_formula(g_mig)
+                if (!formula %in% existing_formulas) {
+                  migrated_genes_pool[[d]] <- c(migrated_genes_pool[[d]], list(g_mig))
+                }
+              }
+              if (length(migrated_genes_pool[[d]]) > 20) {
+                migrated_genes_pool[[d]] <- tail(migrated_genes_pool[[d]], 20)
+              }
+            }
           }
         }
       }
-    }
 
-    if (length(global_importances) > 0) {
-      global_importances_vec <- sapply(global_importances, mean)
-    } else {
-      global_importances_vec <- numeric(0)
-    }
-    # Adaptive mutation rate and temperature: increase exploration during stagnation
-    stagnation_ratio <- if (!is.null(early_stopping_generations) && early_stopping_generations > 0) {
-      min(1, generations_without_improvement / early_stopping_generations)
-    } else {
-      0
-    }
-    adaptive_mutation_rate <- 0.3 + 0.4 * stagnation_ratio
-    temperature <- 0.1 + 0.9 * stagnation_ratio
+      # --- BREEDING PHASE FOR NEXT GENERATION ---
+      for (j in 1:islands) {
+        pop <- pop_list[[j]]
 
-    # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
-    target_pop_size <- pop_size
-    if (dynamic_population) {
-      if (generations_without_improvement > 0) {
-        # Expand population during stagnation relative to current size
-        current_pop_size <- max(current_pop_size + 1, floor(current_pop_size * dynamic_population_growth_rate))
-      } else {
-        # Gradual decay back to pop_size when there is improvement
-        current_pop_size <- max(pop_size, floor(current_pop_size * dynamic_population_decay_rate))
-      }
-      target_pop_size <- current_pop_size
-    }
+        # Selection: keep top 50% of current population
+        num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
+        survivors <- pop[1:num_survivors]
 
-    # Next generation
-    next_gen <- list()
+        # Collect outputs from evaluated genes
+        tested_gene_outputs <- unique(unlist(lapply(pop, function(ind) {
+          if (length(ind$genes) == 0) {
+            return(character(0))
+          }
+          vapply(ind$genes, function(g) g$output_col, character(1))
+        })))
 
-    # Elitism: keep best
-    next_gen[[1]] <- survivors[[1]]
-
-    # Fill the rest
-    while (length(next_gen) < target_pop_size) {
-      idx <- length(next_gen) + 1
-      is_expansion <- idx > pop_size
-
-      if (is_expansion) {
-        # Expansion slots: High exploration (no crossover, extremely high temperature)
-        p <- tournament_select(pop, k = 3)
-        child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
-      } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
-        # Crossover
-        p1 <- tournament_select(pop, k = 3)
-        p2 <- tournament_select(pop, k = 3)
-
-        # Determine whether to use union or random crossover
-        use_union <- FALSE
-        if (crossover_type == "union") {
-          use_union <- TRUE
-        } else if (crossover_type == "both") {
-          use_union <- stats::runif(1) < 0.5
+        # Aggregate importances from survivors
+        global_importances <- list()
+        for (s in survivors) {
+          if (length(s$importances) > 0) {
+            for (feat in names(s$importances)) {
+              if (is.null(global_importances[[feat]])) {
+                global_importances[[feat]] <- c(s$importances[[feat]])
+              } else {
+                global_importances[[feat]] <- c(global_importances[[feat]], s$importances[[feat]])
+              }
+            }
+          }
         }
 
-        if (use_union) {
-          child <- union_crossover(p1, p2, verbose = FALSE)
+        if (length(global_importances) > 0) {
+          global_importances_vec <- sapply(global_importances, mean)
         } else {
-          child <- crossover(p1, p2, verbose = FALSE)
+          global_importances_vec <- numeric(0)
         }
 
-        if (stats::runif(1) < 0.2) {
-          child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+        # Adaptive mutation rate and temperature: increase exploration during stagnation
+        stagnation_ratio <- if (!is.null(early_stopping_generations) && early_stopping_generations > 0) {
+          min(1, island_gens_without_improvement[j] / early_stopping_generations)
+        } else {
+          0
         }
-      } else {
-        # Mutate
-        p <- tournament_select(pop, k = 3)
-        child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
-      }
+        adaptive_mutation_rate <- 0.3 + 0.4 * stagnation_ratio
+        temperature <- 0.1 + 0.9 * stagnation_ratio
 
-      # Validation Check: Duplicate in next_gen OR already known to be worse than best
-      attempts <- 0
-      while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
-        child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
-        attempts <- attempts + 1
-      }
+        # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
+        target_pop_size <- pop_size
+        if (dynamic_population) {
+          if (island_gens_without_improvement[j] > 0) {
+            island_current_pop_size[j] <- max(island_current_pop_size[j] + 1, floor(island_current_pop_size[j] * dynamic_population_growth_rate))
+          } else {
+            island_current_pop_size[j] <- max(pop_size, floor(island_current_pop_size[j] * dynamic_population_decay_rate))
+          }
+          target_pop_size <- island_current_pop_size[j]
+        }
 
-      next_gen <- c(next_gen, list(child))
+        next_gen <- list()
+        next_gen[[1]] <- survivors[[1]]
+
+        # Fill the rest
+        while (length(next_gen) < target_pop_size) {
+          idx <- length(next_gen) + 1
+          is_expansion <- idx > pop_size
+
+          if (is_expansion) {
+            p <- tournament_select(pop, k = 3)
+            child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
+                            temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs,
+                            allowed_transformers = allowed_transformers,
+                            migrated_genes = migrated_genes_pool[[j]],
+                            gene_migration_prob = gene_migration_prob)
+          } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
+            p1 <- tournament_select(pop, k = 3)
+            p2 <- tournament_select(pop, k = 3)
+
+            use_union <- FALSE
+            if (crossover_type == "union") {
+              use_union <- TRUE
+            } else if (crossover_type == "both") {
+              use_union <- stats::runif(1) < 0.5
+            }
+
+            if (use_union) {
+              child <- union_crossover(p1, p2, verbose = FALSE)
+            } else {
+              child <- crossover(p1, p2, verbose = FALSE)
+            }
+
+            if (stats::runif(1) < 0.2) {
+              child <- mutate(child, verbose = FALSE, importances = global_importances_vec,
+                              temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
+                              allowed_transformers = allowed_transformers,
+                              migrated_genes = migrated_genes_pool[[j]],
+                              gene_migration_prob = gene_migration_prob)
+            }
+          } else {
+            p <- tournament_select(pop, k = 3)
+            child <- mutate(p, verbose = FALSE, importances = global_importances_vec,
+                            temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
+                            allowed_transformers = allowed_transformers,
+                            migrated_genes = migrated_genes_pool[[j]],
+                            gene_migration_prob = gene_migration_prob)
+          }
+
+          # Validation Check: Duplicate in next_gen OR already known to be worse than best
+          attempts <- 0
+          while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
+            child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
+                            temperature = if (is_expansion) 100.0 else temperature, task = task,
+                            tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers,
+                            migrated_genes = migrated_genes_pool[[j]],
+                            gene_migration_prob = gene_migration_prob)
+            attempts <- attempts + 1
+          }
+
+          next_gen <- c(next_gen, list(child))
+        }
+        pop_list[[j]] <- next_gen
+      }
     }
-    pop <- next_gen
+
+    # Final evaluation of individuals on all islands
+    for (j in 1:islands) {
+      eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
+        split_ids_val, shared_splits, evaluator,
+        fold_ids, shared_folds, shared_full, state_cache,
+        fitness_cache, threads, verbose, island_best_fitness[j],
+        metric = metric, complexity_penalty = complexity_penalty, island = j, ...
+      )
+      pop_list[[j]] <- eval_res$pop
+      fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
+      pop_list[[j]] <- pop_list[[j]][order(fitness_vals, decreasing = TRUE)]
+
+      if (pop_list[[j]][[1]]$fitness > global_best_fitness) {
+        global_best_fitness <- pop_list[[j]][[1]]$fitness
+        global_best_individual <- pop_list[[j]][[1]]
+      }
+    }
+
+    # Combine all island populations for final selection
+    pop <- unlist(pop_list, recursive = FALSE)
+    fitness_vals <- sapply(pop, function(ind) ind$fitness)
+    pop <- pop[order(fitness_vals, decreasing = TRUE)]
+    best_ind <- global_best_individual
   }
-
-  # Final evaluation of new individuals
-  eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
-    split_ids_val, shared_splits, evaluator,
-    fold_ids, shared_folds, shared_full, state_cache,
-    fitness_cache, threads, verbose, running_best_fitness,
-    metric = metric, complexity_penalty = complexity_penalty, ...
-  )
-  pop <- eval_res$pop
-  fitness_vals <- sapply(pop, function(ind) ind$fitness)
-  pop <- pop[order(fitness_vals, decreasing = TRUE)]
-
-  best_ind <- pop[[1]]
 
   if (model_all_final_genes) {
     if (verbose) {

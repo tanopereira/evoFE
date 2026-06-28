@@ -28,6 +28,10 @@ evolve_features(
   model_all_historical_genes = FALSE,
   allowed_transformers = "all",
   complexity_penalty = 0,
+  islands = 1,
+  migration_interval = 5,
+  migration_rate = 1,
+  gene_migration_prob = 0.2,
   ...
 )
 }
@@ -99,6 +103,14 @@ or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.}
 individual's raw fitness as \code{complexity_penalty * n_genes}.  A small
 value (e.g. \code{0.001}) encourages parsimonious recipes and reduces
 overfitting on small datasets.  Default \code{0} disables the penalty.}
+
+\item{islands}{Integer. Number of independent subpopulations (islands) to evolve (default 1).}
+
+\item{migration_interval}{Integer. Number of generations between migrations (default 5).}
+
+\item{migration_rate}{Integer. Number of top individuals to migrate from each island to its neighbor (default 1).}
+
+\item{gene_migration_prob}{Numeric. Probability of injecting a migrated gene during mutation (default 0.2).}
 
 \item{...}{Additional arguments passed to the underlying evaluator training
 functions.}

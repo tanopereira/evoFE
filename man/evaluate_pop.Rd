@@ -25,6 +25,7 @@ evaluate_pop(
   metric = "default",
   allow_prune = TRUE,
   complexity_penalty = 0,
+  island = NULL,
   ...
 )
 }
