@@ -22,6 +22,11 @@ test_that("evolve_features throws errors for invalid island parameters", {
     evolve_features(df, "am", task = "classification", islands = 2, gene_migration_prob = 1.5, verbose = FALSE),
     "gene_migration_prob must be a numeric value between 0 and 1"
   )
+
+  expect_error(
+    evolve_features(df, "am", task = "classification", islands = 2, pop_size = 4, migration_rate = 4, verbose = FALSE),
+    "migration_rate must be less than pop_size"
+  )
 })
 
 test_that("evolve_features runs successfully with multiple islands and outputs correct logging", {

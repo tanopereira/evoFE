@@ -16,3 +16,5 @@
 ^test_[^/]*\.R$
 ^\.Rd2pdf[^/]*$
 ^SKILLS\.md$
+^doc$
+^Meta$

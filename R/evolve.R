@@ -482,6 +482,10 @@ evolve_features <- function(data, target_col, task = "classification",
     }
     migration_rate <- as.integer(migration_rate)
 
+    if (migration_rate >= pop_size) {
+      stop("migration_rate must be less than pop_size.")
+    }
+
     if (!is.numeric(gene_migration_prob) || gene_migration_prob < 0 || gene_migration_prob > 1) {
       stop("gene_migration_prob must be a numeric value between 0 and 1.")
     }
@@ -728,7 +732,7 @@ evolve_features <- function(data, target_col, task = "classification",
           # Gradual decay back to pop_size when there is improvement
           current_pop_size <- max(pop_size, floor(current_pop_size * dynamic_population_decay_rate))
         }
-        target_pop_size <- current_pop_size
+        target_pop_size <- min(current_pop_size, pop_size * 5L)
       }
 
       # Next generation
@@ -915,34 +919,43 @@ evolve_features <- function(data, target_col, task = "classification",
         for (j in 1:islands) {
           dest <- (j %% islands) + 1
 
-          # 1. Recipe-level migration
-          migrant_inds <- old_pop_list[[j]][1:migration_rate]
+          # 1. Recipe-level migration (guarded for dynamic population sizes)
+          effective_rate <- min(migration_rate, length(old_pop_list[[j]]),
+                                length(pop_list[[dest]]) - 1L)
+          if (effective_rate > 0) {
+            migrant_inds <- old_pop_list[[j]][1:effective_rate]
 
-          # Replace the worst individuals of the target population
-          worst_start <- length(pop_list[[dest]]) - migration_rate + 1
-          worst_end <- length(pop_list[[dest]])
-          pop_list[[dest]][worst_start:worst_end] <- migrant_inds
+            # Replace the worst individuals of the target population
+            worst_start <- length(pop_list[[dest]]) - effective_rate + 1
+            worst_end <- length(pop_list[[dest]])
+            pop_list[[dest]][worst_start:worst_end] <- migrant_inds
 
-          if (verbose) {
-            message(sprintf("  Migrating top %d recipe(s) from Island %d to Island %d", migration_rate, j, dest))
+            if (verbose) {
+              message(sprintf("  Migrating top %d recipe(s) from Island %d to Island %d", effective_rate, j, dest))
+            }
           }
 
-          # 2. Gene-level migration (Gene Injection)
+          # 2. Gene-level migration — ring topology
+          # Genes diffuse naturally through the ring over successive migrations,
+          # creating a gradient of innovation: each island builds hierarchically
+          # on its neighbor's genes rather than all islands converging immediately.
           best_ind <- old_pop_list[[j]][[1]]
           best_genes <- best_ind$genes
           if (length(best_genes) > 0) {
-            for (d in 1:islands) {
-              if (d == j) next
-              existing_formulas <- vapply(migrated_genes_pool[[d]], gene_to_formula, character(1))
-              for (g_mig in best_genes) {
-                formula <- gene_to_formula(g_mig)
-                if (!formula %in% existing_formulas) {
-                  migrated_genes_pool[[d]] <- c(migrated_genes_pool[[d]], list(g_mig))
-                }
+            existing_formulas <- vapply(migrated_genes_pool[[dest]], gene_to_formula, character(1))
+            n_injected <- 0L
+            for (g_mig in best_genes) {
+              formula <- gene_to_formula(g_mig)
+              if (!formula %in% existing_formulas) {
+                migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], list(g_mig))
+                n_injected <- n_injected + 1L
               }
-              if (length(migrated_genes_pool[[d]]) > 20) {
-                migrated_genes_pool[[d]] <- tail(migrated_genes_pool[[d]], 20)
-              }
+            }
+            if (length(migrated_genes_pool[[dest]]) > 20) {
+              migrated_genes_pool[[dest]] <- tail(migrated_genes_pool[[dest]], 20)
+            }
+            if (verbose && n_injected > 0) {
+              message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", n_injected, dest, j))
             }
           }
         }
@@ -1001,7 +1014,7 @@ evolve_features <- function(data, target_col, task = "classification",
           } else {
             island_current_pop_size[j] <- max(pop_size, floor(island_current_pop_size[j] * dynamic_population_decay_rate))
           }
-          target_pop_size <- island_current_pop_size[j]
+          target_pop_size <- min(island_current_pop_size[j], pop_size * 5L)
         }
 
         next_gen <- list()
