@@ -333,39 +333,73 @@ evolve_features <- function(data, target_col, task = "classification",
 
 
 
+  # Validate island parameters early to support list allowed_transformers validation
+  if (!is.numeric(islands) || islands < 1) {
+    stop("islands must be a positive integer >= 1.")
+  }
+  islands <- as.integer(islands)
+
   # Parse allowed_transformers
   all_trans <- names(evo_transformers)
-  if (is.null(allowed_transformers)) allowed_transformers <- "all"
-  if (length(allowed_transformers) == 1) {
-    if (allowed_transformers == "all") {
-      allowed_transformers <- all_trans
-    } else if (allowed_transformers == "basic") {
-      allowed_transformers <- intersect(all_trans, c(
-        "add", "subtract", "multiply", "divide",
-        "log", "sqrt", "reciprocal", "power", "displaced_log",
-        "normalized_difference", "frequency_encode",
-        "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
-        "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
-      ))
-    } else if (allowed_transformers == "clustering") {
-      allowed_transformers <- intersect(all_trans, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
-    } else if (allowed_transformers == "robust") {
-      allowed_transformers <- intersect(all_trans, c(
-        "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
-        "add", "subtract", "multiply", "divide",
-        "normalized_difference", "log_ratio",
-        "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",
-        "groupby_mean", "groupby_median", "groupby_sd",
-        "groupby_zscore", "groupby_ratio", "groupby_quantile",
-        "groupby_min", "groupby_max",
-        "quantile_binning", "pca", "concat"
-      ))
+
+  .resolve_allowed_transformers <- function(at, all_t) {
+    if (is.null(at)) at <- "all"
+    if (length(at) == 1) {
+      if (at == "all") {
+        at <- all_t
+      } else if (at == "basic") {
+        at <- intersect(all_t, c(
+          "add", "subtract", "multiply", "divide",
+          "log", "sqrt", "reciprocal", "power", "displaced_log",
+          "normalized_difference", "frequency_encode",
+          "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
+          "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
+        ))
+      } else if (at == "clustering") {
+        at <- intersect(all_t, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
+      } else if (at == "robust") {
+        at <- intersect(all_t, c(
+          "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
+          "add", "subtract", "multiply", "divide",
+          "normalized_difference", "log_ratio",
+          "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",
+          "groupby_mean", "groupby_median", "groupby_sd",
+          "groupby_zscore", "groupby_ratio", "groupby_quantile",
+          "groupby_min", "groupby_max",
+          "quantile_binning", "pca", "concat"
+        ))
+      }
     }
+    at <- intersect(at, all_t)
+    if (length(at) == 0) {
+      warning("No valid transformers found in 'allowed_transformers'. Falling back to 'all'.")
+      at <- all_t
+    }
+    at
   }
-  allowed_transformers <- intersect(allowed_transformers, all_trans)
-  if (length(allowed_transformers) == 0) {
-    warning("No valid transformers found in 'allowed_transformers'. Falling back to 'all'.")
-    allowed_transformers <- all_trans
+
+  if (is.list(allowed_transformers)) {
+    if (islands == 1) {
+      if (length(allowed_transformers) > 1) {
+        stop("If allowed_transformers is a list, its length must match the number of islands (1).")
+      }
+      allowed_transformers <- .resolve_allowed_transformers(allowed_transformers[[1]], all_trans)
+    } else {
+      if (length(allowed_transformers) != islands) {
+        stop(sprintf("If allowed_transformers is a list, its length (%d) must match the number of islands (%d).", length(allowed_transformers), islands))
+      }
+      allowed_transformers <- lapply(allowed_transformers, .resolve_allowed_transformers, all_t = all_trans)
+    }
+  } else {
+    allowed_transformers <- .resolve_allowed_transformers(allowed_transformers, all_trans)
+  }
+
+  get_island_transformers <- function(j) {
+    if (is.list(allowed_transformers)) {
+      allowed_transformers[[j]]
+    } else {
+      allowed_transformers
+    }
   }
 
   # Temporarily configure max clustering size and threads options
@@ -466,11 +500,6 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   # Validate island parameters
-  if (!is.numeric(islands) || islands < 1) {
-    stop("islands must be a positive integer >= 1.")
-  }
-  islands <- as.integer(islands)
-
   if (islands > 1) {
     if (!is.numeric(migration_interval) || migration_interval < 1) {
       stop("migration_interval must be a positive integer >= 1.")
@@ -809,7 +838,7 @@ evolve_features <- function(data, target_col, task = "classification",
       pop_list[[j]] <- initialize_population(
         pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols,
         initial_genes = 2, task = task, importances = baseline_ind$importances,
-        allowed_transformers = allowed_transformers
+        allowed_transformers = get_island_transformers(j)
       )
       pop_list[[j]][[1]] <- baseline_ind
     }
@@ -1029,7 +1058,7 @@ evolve_features <- function(data, target_col, task = "classification",
             p <- tournament_select(pop, k = 3)
             child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
                             temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs,
-                            allowed_transformers = allowed_transformers,
+                            allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
                             gene_migration_prob = gene_migration_prob)
           } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
@@ -1052,7 +1081,7 @@ evolve_features <- function(data, target_col, task = "classification",
             if (stats::runif(1) < 0.2) {
               child <- mutate(child, verbose = FALSE, importances = global_importances_vec,
                               temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
-                              allowed_transformers = allowed_transformers,
+                              allowed_transformers = get_island_transformers(j),
                               migrated_genes = migrated_genes_pool[[j]],
                               gene_migration_prob = gene_migration_prob)
             }
@@ -1060,7 +1089,7 @@ evolve_features <- function(data, target_col, task = "classification",
             p <- tournament_select(pop, k = 3)
             child <- mutate(p, verbose = FALSE, importances = global_importances_vec,
                             temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
-                            allowed_transformers = allowed_transformers,
+                            allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
                             gene_migration_prob = gene_migration_prob)
           }
@@ -1070,7 +1099,7 @@ evolve_features <- function(data, target_col, task = "classification",
           while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
             child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
                             temperature = if (is_expansion) 100.0 else temperature, task = task,
-                            tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers,
+                            tested_gene_outputs = tested_gene_outputs, allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
                             gene_migration_prob = gene_migration_prob)
             attempts <- attempts + 1
