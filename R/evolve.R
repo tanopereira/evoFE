@@ -356,7 +356,7 @@ evolve_features <- function(data, target_col, task = "classification",
           "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
         ))
       } else if (at == "clustering") {
-        at <- intersect(all_t, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca"))
+        at <- intersect(all_t, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca", "umap_genie"))
       } else if (at == "robust") {
         at <- intersect(all_t, c(
           "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",

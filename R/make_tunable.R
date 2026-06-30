@@ -230,6 +230,10 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       warning("mbo_infill_opt = 'ea' is deprecated and ignored. mlr3mbo handles infill optimisation internally.", call. = FALSE)
     }
     
+    # Ensure initial design size is at least D + 2 for Kriging surrogate stability
+    D <- length(ps$ids())
+    mbo_init_design <- max(mbo_init_design, D + 2)
+
     instance <- bbotk::OptimInstanceBatchSingleCrit$new(
       objective = objective,
       terminator = bbotk::trm("evals", n_evals = mbo_init_design + mbo_iters)

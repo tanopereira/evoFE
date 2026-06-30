@@ -81,6 +81,16 @@ test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", 
   res_genie <- apply_gene(gene_genie, df, target_col = "target")
   expect_true(gene_genie$output_col %in% names(res_genie$train))
   expect_true(is.factor(res_genie$train[[gene_genie$output_col]]))
+
+  # Test UMAP-Genie
+  gene_ug <- create_gene("umap_genie", c("x1", "x2"))
+  expect_true(gene_ug$params$k >= 2 && gene_ug$params$k <= 5)
+  expect_true(gene_ug$params$gini_threshold >= 0.1 && gene_ug$params$gini_threshold <= 0.9)
+  expect_true(gene_ug$params$n_neighbors >= 2)
+  expect_true(gene_ug$params$dens_scale >= 0 && gene_ug$params$dens_scale <= 1)
+  res_ug <- apply_gene(gene_ug, df, target_col = "target")
+  expect_true(gene_ug$output_col %in% names(res_ug$train))
+  expect_true(is.factor(res_ug$train[[gene_ug$output_col]]))
   
   # Test MST Score
   gene_mst <- create_gene("mst_score", c("x1", "x2"))
@@ -152,9 +162,13 @@ test_that("Genie, MST Score, Lumbermark, and Deadwood handle constant/all-zero d
   # Deadwood on all zero data should generate a constant column and thus fail apply_gene
   gene_dead <- create_gene("deadwood", c("x1", "x2"))
   expect_error(apply_gene(gene_dead, df_zero, target_col = "target"), "Constant column generated")
+
+  # UMAP-Genie on all zero data should generate a constant column and thus fail apply_gene
+  gene_ug <- create_gene("umap_genie", c("x1", "x2"))
+  expect_error(apply_gene(gene_ug, df_zero, target_col = "target"), "Constant column generated")
   
   # Also verify with an individual that they are skipped during evaluation
-  ind <- create_individual(genes = list(gene_genie, gene_mst, gene_lumb, gene_dead), numeric_cols = c("x1", "x2"))
+  ind <- create_individual(genes = list(gene_genie, gene_mst, gene_lumb, gene_dead, gene_ug), numeric_cols = c("x1", "x2"))
   res <- apply_individual(ind, df_zero, target_col = "target")
   expect_equal(length(res$ind$genes), 0)
 })
@@ -658,12 +672,26 @@ test_that("umap, genie, and mst_score respect evoFE.verbose option", {
     evo_transformers$genie$apply_func(df, gene_genie, state_genie)
   })
   expect_true(any(grepl("\\[Genie Apply\\]", msg_genie_apply)))
+
+  # Test UMAP-Genie messages
+  gene_ug <- create_gene("umap_genie", c("x1", "x2"))
+  msg_ug_fit <- testthat::capture_messages({
+    state_ug <- evo_transformers$umap_genie$fit_func(df, gene_ug, "target")
+  })
+  expect_true(any(grepl("\\[UMAP-Genie Fit\\]", msg_ug_fit)))
+  
+  msg_ug_apply <- testthat::capture_messages({
+    evo_transformers$umap_genie$apply_func(df, gene_ug, state_ug)
+  })
+  expect_true(any(grepl("\\[UMAP-Genie Apply\\]", msg_ug_apply)))
   
   # Now set options(evoFE.verbose = 0) and verify NO messages are output
   options(evoFE.verbose = 0)
   msg_silent <- testthat::capture_messages({
     state_umap <- evo_transformers$umap$fit_func(df, gene_umap, "target")
     evo_transformers$umap$apply_func(df, gene_umap, state_umap)
+    state_ug <- evo_transformers$umap_genie$fit_func(df, gene_ug, "target")
+    evo_transformers$umap_genie$apply_func(df, gene_ug, state_ug)
   })
   expect_equal(length(msg_silent), 0)
 })

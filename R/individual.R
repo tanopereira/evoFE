@@ -27,6 +27,11 @@ create_gene <- function(transformer_name, input_cols) {
   } else if (transformer_name == "genie") {
     params$k <- sample(2:5, 1)
     params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
+  } else if (transformer_name == "umap_genie") {
+    params$n_neighbors <- max(2L, stats::rpois(1, 15))
+    params$dens_scale <- round(stats::runif(1, 0, 1), 2)
+    params$k <- sample(2:5, 1)
+    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
   } else if (transformer_name == "lumbermark") {
     params$k <- sample(2:5, 1)
   } else if (transformer_name %in% c("quantile_binning", "quantile_binning_cat")) {
@@ -97,6 +102,10 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     sprintf("dlog%.2f(%s)", gene$params$displacement, cols_str)
   } else if (!is.null(gene$params$q)) {
     sprintf("%s_q%.2f(%s)", gene$transformer_name, gene$params$q, cols_str)
+  } else if (gene$transformer_name == "umap_genie") {
+    nn_str <- if (!is.null(gene$params$n_neighbors)) paste0("_nn", gene$params$n_neighbors) else ""
+    dens_str <- if (!is.null(gene$params$dens_scale)) paste0("_d", gene$params$dens_scale) else ""
+    sprintf("umap_genie_k%d_t%.2f%s%s(%s)", gene$params$k, gene$params$gini_threshold, nn_str, dens_str, cols_str)
   } else if (!is.null(gene$params$k)) {
     if (gene$transformer_name == "genie" && !is.null(gene$params$gini_threshold)) {
       sprintf("genie_k%d_t%.2f(%s)", gene$params$k, gene$params$gini_threshold, cols_str)
@@ -129,6 +138,12 @@ gene_to_state_formula <- function(gene) {
   } else if (gene$transformer_name == "lumbermark_centroid_dist") {
     k_val <- if (!is.null(gene$params$k)) gene$params$k else 2
     sprintf("lumb_cdist_k%d(%s)", k_val, paste(gene$input_cols, collapse = ", "))
+  } else if (gene$transformer_name == "umap_genie") {
+    nn <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
+    ds <- if (!is.null(gene$params$dens_scale)) gene$params$dens_scale else 0
+    k_val <- if (!is.null(gene$params$k)) gene$params$k else 2
+    gini_val <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.5
+    sprintf("umap_genie_k%d_t%.2f_nn%d_d%.2f(%s)", k_val, gini_val, nn, ds, paste(gene$input_cols, collapse = ", "))
   } else {
     gene_to_formula(gene, truncate = FALSE)
   }
