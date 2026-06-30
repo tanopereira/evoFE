@@ -271,6 +271,10 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     surrogate <- mlr3mbo::default_surrogate(instance)
     if (inherits(surrogate, "SurrogateLearner") && surrogate$learner$id == "regr.km") {
       surrogate$learner$param_set$values$nugget.stability <- 1e-5
+      # Disable mlr3 encapsulation on km: the default "evaluate" method catches
+      # a logger serialization error on S4 DiceKriging objects and mistakenly
+      # reports training failure, triggering the ranger fallback.
+      surrogate$learner$encapsulate(method = "none")
     }
     optimizer$surrogate <- surrogate
     optimizer$optimize(instance)
