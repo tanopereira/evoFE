@@ -269,12 +269,15 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     # Run optimization
     optimizer <- bbotk::opt("mbo")
     surrogate <- mlr3mbo::default_surrogate(instance)
-    if (inherits(surrogate, "SurrogateLearner") && surrogate$learner$id == "regr.km") {
-      surrogate$learner$param_set$values$nugget.stability <- 1e-5
-      # Disable mlr3 encapsulation on km: the default "evaluate" method catches
-      # a logger serialization error on S4 DiceKriging objects and mistakenly
-      # reports training failure, triggering the ranger fallback.
+    if (inherits(surrogate, "SurrogateLearner")) {
+      # Disable mlr3 encapsulation on the surrogate learner: the default
+      # "evaluate" method catches a logger serialization error on the trained
+      # model object and misreports it as a training failure, triggering the
+      # ranger fallback even when training succeeded.
       surrogate$learner$encapsulate(method = "none")
+      if (surrogate$learner$id == "regr.km") {
+        surrogate$learner$param_set$values$nugget.stability <- 1e-5
+      }
     }
     optimizer$surrogate <- surrogate
     optimizer$optimize(instance)
