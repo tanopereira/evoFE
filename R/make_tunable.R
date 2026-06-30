@@ -268,6 +268,11 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     
     # Run optimization
     optimizer <- bbotk::opt("mbo")
+    surrogate <- mlr3mbo::default_surrogate(instance)
+    if (inherits(surrogate, "SurrogateLearner") && surrogate$learner$id == "regr.km") {
+      surrogate$learner$param_set$values$nugget.stability <- 1e-5
+    }
+    optimizer$surrogate <- surrogate
     optimizer$optimize(instance)
     
     # Extract best hyperparams
