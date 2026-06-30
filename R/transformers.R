@@ -1479,10 +1479,27 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
-    compute_dists <- function() lapply(state$centroids, function(c) sqrt(rowSums(sweep(x_test, 2, c, "-")^2)))
+    verbose <- is_verbose()
+    
+    compute_dists <- function() {
+      t0 <- Sys.time()
+      res <- lapply(state$centroids, function(c) sqrt(rowSums(sweep(x_test, 2, c, "-")^2)))
+      if (verbose) {
+        message(sprintf("  [GenieCDist Apply] computed distances on %d rows. %.3f s",
+                        nrow(x_test), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      res
+    }
+    
     if (is.null(state$preds_cache)) return(compute_dists()[[comp_idx]])
     key <- digest::digest(x_test, algo = "xxhash64")
-    if (!exists(key, envir = state$preds_cache)) assign(key, compute_dists(), envir = state$preds_cache)
+    if (!exists(key, envir = state$preds_cache)) {
+      assign(key, compute_dists(), envir = state$preds_cache)
+    } else {
+      if (verbose) {
+        message("  [GenieCDist Apply] (Cache Hit): returning cached distances. 0.000 s")
+      }
+    }
     get(key, envir = state$preds_cache)[[comp_idx]]
   },
   name_generator = function(gene) .gene_col_name(gene, "gncd")
@@ -1520,10 +1537,27 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
     x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
-    compute_dists <- function() lapply(state$centroids, function(c) sqrt(rowSums(sweep(x_test, 2, c, "-")^2)))
+    verbose <- is_verbose()
+    
+    compute_dists <- function() {
+      t0 <- Sys.time()
+      res <- lapply(state$centroids, function(c) sqrt(rowSums(sweep(x_test, 2, c, "-")^2)))
+      if (verbose) {
+        message(sprintf("  [LumbCDist Apply] computed distances on %d rows. %.3f s",
+                        nrow(x_test), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      res
+    }
+    
     if (is.null(state$preds_cache)) return(compute_dists()[[comp_idx]])
     key <- digest::digest(x_test, algo = "xxhash64")
-    if (!exists(key, envir = state$preds_cache)) assign(key, compute_dists(), envir = state$preds_cache)
+    if (!exists(key, envir = state$preds_cache)) {
+      assign(key, compute_dists(), envir = state$preds_cache)
+    } else {
+      if (verbose) {
+        message("  [LumbCDist Apply] (Cache Hit): returning cached distances. 0.000 s")
+      }
+    }
     get(key, envir = state$preds_cache)[[comp_idx]]
   },
   name_generator = function(gene) .gene_col_name(gene, "lmcd")
