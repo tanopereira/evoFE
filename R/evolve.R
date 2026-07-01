@@ -972,19 +972,46 @@ evolve_features <- function(data, target_col, task = "classification",
           best_genes <- best_ind$genes
           if (length(best_genes) > 0) {
             existing_formulas <- vapply(migrated_genes_pool[[dest]], gene_to_formula, character(1))
-            n_injected <- 0L
+            
+            # Find new genes
+            new_genes <- list()
             for (g_mig in best_genes) {
               formula <- gene_to_formula(g_mig)
               if (!formula %in% existing_formulas) {
-                migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], list(g_mig))
-                n_injected <- n_injected + 1L
+                new_genes <- c(new_genes, list(g_mig))
               }
             }
+            
+            if (length(new_genes) > 0) {
+              # Sort new genes by feature importance (highest first)
+              gene_imps <- vapply(new_genes, function(g) {
+                col <- g$output_col
+                if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
+                  as.numeric(best_ind$importances[[col]])
+                } else {
+                  0.0
+                }
+              }, double(1))
+              
+              new_genes <- new_genes[order(gene_imps, decreasing = TRUE)]
+              
+              # Limit to top 20 most important new genes
+              if (length(new_genes) > 20) {
+                new_genes <- new_genes[1:20]
+              }
+              
+              migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], new_genes)
+              n_injected <- length(new_genes)
+            } else {
+              n_injected <- 0L
+            }
+            
             if (length(migrated_genes_pool[[dest]]) > 20) {
               migrated_genes_pool[[dest]] <- tail(migrated_genes_pool[[dest]], 20)
             }
             if (verbose && n_injected > 0) {
-              message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", n_injected, dest, j))
+              actual_injected <- min(n_injected, 20L)
+              message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", actual_injected, dest, j))
             }
           }
         }
