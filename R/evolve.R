@@ -677,6 +677,10 @@ dynamic_population_decay_rate = 0.7,
   # State cache for full dataset to avoid re-fitting stateful transformers
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
 
+  island_fitness_caches <- NULL
+  island_state_caches <- NULL
+  island_baseline_inds <- list()
+
   # 1. Generation 0: Evaluate baseline individual first (original features only)
   baseline_ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
   if (verbose) {
@@ -702,6 +706,33 @@ dynamic_population_decay_rate = 0.7,
   recipe_str <- individual_to_recipe_string(baseline_ind)
   cache_key <- digest::digest(recipe_str, algo = "md5", serialize = FALSE)
   assign(cache_key, baseline_ind, envir = fitness_cache)
+
+  if (row_split_islands) {
+    island_fitness_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
+    island_state_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
+    for (j in 1:islands) {
+      local_baseline <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
+      local_baseline <- evaluate_fitness(
+        local_baseline, data, target_col,
+        task = task, cv_folds = cv_folds,
+        evaluation_strategy = evaluation_strategy,
+        split_ids = split_ids_val,
+        shared_splits = island_shared_splits[[j]],
+        evaluator = evaluator,
+        fold_ids = fold_ids,
+        shared_folds = island_shared_folds[[j]],
+        shared_full = shared_full,
+        state_cache = island_state_caches[[j]],
+        threads = threads, metric = metric,
+        verbose = FALSE, allow_prune = FALSE, ...
+      )
+      island_baseline_inds[[j]] <- local_baseline
+      # Pre-populate this island's local fitness cache to prevent global cache hit
+      local_recipe_str <- individual_to_recipe_string(local_baseline)
+      local_cache_key <- digest::digest(local_recipe_str, algo = "md5", serialize = FALSE)
+      assign(local_cache_key, local_baseline, envir = island_fitness_caches[[j]])
+    }
+  }
 
   if (islands == 1) {
     # 2. Initialize population for Generation 1 using baseline importances
@@ -900,15 +931,23 @@ dynamic_population_decay_rate = 0.7,
         initial_genes = 2, task = task, importances = baseline_ind$importances,
         allowed_transformers = get_island_transformers(j)
       )
-      pop_list[[j]][[1]] <- baseline_ind
+      pop_list[[j]][[1]] <- if (row_split_islands) island_baseline_inds[[j]] else baseline_ind
     }
 
     global_best_fitness <- baseline_ind$fitness
     global_best_individual <- baseline_ind
 
     # Local trackers for each island
-    island_best_fitness <- rep(baseline_ind$fitness, islands)
-    island_best_individual <- lapply(1:islands, function(x) baseline_ind)
+    island_best_fitness <- if (row_split_islands) {
+      sapply(island_baseline_inds, function(ind) ind$fitness)
+    } else {
+      rep(baseline_ind$fitness, islands)
+    }
+    island_best_individual <- if (row_split_islands) {
+      island_baseline_inds
+    } else {
+      lapply(1:islands, function(x) baseline_ind)
+    }
     island_gens_without_improvement <- rep(0, islands)
     island_current_pop_size <- rep(pop_size, islands)
 
@@ -948,8 +987,10 @@ dynamic_population_decay_rate = 0.7,
           evaluator,
           fold_ids,
           if (row_split_islands) island_shared_folds[[j]] else shared_folds,
-          shared_full, state_cache,
-          fitness_cache, threads, verbose, island_best_fitness[j],
+          shared_full,
+          if (row_split_islands) island_state_caches[[j]] else state_cache,
+          if (row_split_islands) island_fitness_caches[[j]] else fitness_cache,
+          threads, verbose, island_best_fitness[j],
           metric = metric, complexity_penalty = complexity_penalty, island = j, ...
         )
         pop_list[[j]] <- eval_res$pop
@@ -1210,8 +1251,10 @@ dynamic_population_decay_rate = 0.7,
         evaluator,
         fold_ids,
         if (row_split_islands) island_shared_folds[[j]] else shared_folds,
-        shared_full, state_cache,
-        fitness_cache, threads, verbose, island_best_fitness[j],
+        shared_full,
+        if (row_split_islands) island_state_caches[[j]] else state_cache,
+        if (row_split_islands) island_fitness_caches[[j]] else fitness_cache,
+        threads, verbose, island_best_fitness[j],
         metric = metric, complexity_penalty = complexity_penalty, island = j, ...
       )
       pop_list[[j]] <- eval_res$pop
@@ -1229,6 +1272,27 @@ dynamic_population_decay_rate = 0.7,
     fitness_vals <- sapply(pop, function(ind) ind$fitness)
     pop <- pop[order(fitness_vals, decreasing = TRUE)]
     best_ind <- global_best_individual
+  }
+
+  if (row_split_islands) {
+    if (verbose) {
+      message("\nRe-evaluating best individual on full training dataset...")
+    }
+    best_ind$fitness <- NA_real_
+    best_ind <- evaluate_fitness(
+      best_ind, data, target_col,
+      task = task, cv_folds = cv_folds,
+      evaluation_strategy = evaluation_strategy,
+      split_ids = split_ids_val, shared_splits = shared_splits,
+      evaluator = evaluator, fold_ids = fold_ids,
+      shared_folds = shared_folds,
+      shared_full = shared_full, state_cache = state_cache,
+      threads = threads, metric = metric, verbose = FALSE,
+      allow_prune = FALSE, ...
+    )
+    if (verbose) {
+      message(sprintf("  Global fitness of best individual: %.4f", best_ind$fitness))
+    }
   }
 
   if (model_all_final_genes) {
