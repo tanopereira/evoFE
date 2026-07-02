@@ -318,7 +318,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             early_stopping_generations = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE,
                             dynamic_population_growth_rate = 1.5,
-                            dynamic_population_decay_rate = 0.7,
+dynamic_population_decay_rate = 0.7,
                             crossover_type = "both",
                             threads = 2, max_clustering_size = 5000,
                             verbose = TRUE, metric = "default",
@@ -329,7 +329,8 @@ evolve_features <- function(data, target_col, task = "classification",
                             islands = 1,
                             migration_interval = 5,
                             migration_rate = 1,
-                            gene_migration_prob = 0.2, ...) {
+                            gene_migration_prob = 0.2,
+                            row_split_islands = FALSE, ...) {
 
 
 
@@ -338,6 +339,15 @@ evolve_features <- function(data, target_col, task = "classification",
     stop("islands must be a positive integer >= 1.")
   }
   islands <- as.integer(islands)
+
+  # Validate row_split_islands
+  if (!is.logical(row_split_islands) || length(row_split_islands) != 1) {
+    stop("row_split_islands must be a logical scalar (TRUE or FALSE).")
+  }
+  if (row_split_islands && islands == 1) {
+    warning("row_split_islands is TRUE but islands is 1. Setting row_split_islands to FALSE.")
+    row_split_islands <- FALSE
+  }
 
   # Parse allowed_transformers
   all_trans <- names(evo_transformers)
@@ -571,18 +581,35 @@ evolve_features <- function(data, target_col, task = "classification",
   shared_folds <- NULL
   split_ids_val <- NULL
   shared_splits <- NULL
+  island_shared_splits <- NULL
+  island_shared_folds <- NULL
 
   if (evaluation_strategy == "cv") {
     fold_ids <- cut(seq(1, nrow(data)), breaks = cv_folds, labels = FALSE)
     fold_ids <- sample(fold_ids)
 
-    # Shared data.table cache for folds and full data to avoid redundant computations
-    shared_folds <- list()
-    for (f in 1:cv_folds) {
-      shared_folds[[f]] <- list(
-        train = data.table::as.data.table(data[fold_ids != f, ]),
-        val = data.table::as.data.table(data[fold_ids == f, ])
-      )
+    if (row_split_islands) {
+      island_shared_folds <- lapply(1:islands, function(j) list())
+      for (f in 1:cv_folds) {
+        train_indices <- which(fold_ids != f)
+        train_indices <- sample(train_indices)
+        split_indices <- split(train_indices, cut(seq_along(train_indices), islands, labels = FALSE))
+        for (j in 1:islands) {
+          island_shared_folds[[j]][[f]] <- list(
+            train = data.table::as.data.table(data[split_indices[[j]], ]),
+            val = data.table::as.data.table(data[fold_ids == f, ])
+          )
+        }
+      }
+    } else {
+      # Shared data.table cache for folds and full data to avoid redundant computations
+      shared_folds <- list()
+      for (f in 1:cv_folds) {
+        shared_folds[[f]] <- list(
+          train = data.table::as.data.table(data[fold_ids != f, ]),
+          val = data.table::as.data.table(data[fold_ids == f, ])
+        )
+      }
     }
   } else if (evaluation_strategy == "split") {
     if (is.null(split_ids)) {
@@ -591,18 +618,51 @@ evolve_features <- function(data, target_col, task = "classification",
       split_ids_val <- split_ids
     }
 
-    shared_splits <- list(
-      train = data.table::as.data.table(data[split_ids_val == "train", ]),
-      val = data.table::as.data.table(data[split_ids_val == "val", ])
-    )
+    global_train_dt <- data.table::as.data.table(data[split_ids_val == "train", ])
+    global_val_dt <- data.table::as.data.table(data[split_ids_val == "val", ])
+    global_holdout_dt <- NULL
     if ("holdout" %in% split_ids_val) {
-      shared_splits$holdout <- data.table::as.data.table(data[split_ids_val == "holdout", ])
+      global_holdout_dt <- data.table::as.data.table(data[split_ids_val == "holdout", ])
+    }
+
+    if (row_split_islands) {
+      train_indices <- which(split_ids_val == "train")
+      train_indices <- sample(train_indices)
+      split_indices <- split(train_indices, cut(seq_along(train_indices), islands, labels = FALSE))
+      island_shared_splits <- list()
+      for (j in 1:islands) {
+        island_shared_splits[[j]] <- list(
+          train = data.table::as.data.table(data[split_indices[[j]], ]),
+          val = global_val_dt
+        )
+        if (!is.null(global_holdout_dt)) {
+          island_shared_splits[[j]]$holdout <- global_holdout_dt
+        }
+      }
+      shared_splits <- list(
+        train = global_train_dt,
+        val = global_val_dt,
+        holdout = global_holdout_dt
+      )
+    } else {
+      shared_splits <- list(
+        train = global_train_dt,
+        val = global_val_dt
+      )
+      if (!is.null(global_holdout_dt)) {
+        shared_splits$holdout <- global_holdout_dt
+      }
     }
 
     if (verbose) {
-      msg_split <- sprintf("  Split sizes -> Train: %d, Val: %d", nrow(shared_splits$train), nrow(shared_splits$val))
-      if (!is.null(shared_splits$holdout)) {
-        msg_split <- paste0(msg_split, sprintf(", Holdout: %d", nrow(shared_splits$holdout)))
+      train_size_str <- if (row_split_islands) {
+        sprintf("%d (split into %d local sets of ~%d rows)", nrow(global_train_dt), islands, round(nrow(global_train_dt) / islands))
+      } else {
+        sprintf("%d", nrow(global_train_dt))
+      }
+      msg_split <- sprintf("  Split sizes -> Train: %s, Val: %d", train_size_str, nrow(global_val_dt))
+      if (!is.null(global_holdout_dt)) {
+        msg_split <- paste0(msg_split, sprintf(", Holdout: %d", nrow(global_holdout_dt)))
       }
       message(msg_split)
     }
@@ -883,8 +943,12 @@ evolve_features <- function(data, target_col, task = "classification",
 
         # Evaluate fitness of this island's population
         eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
-          split_ids_val, shared_splits, evaluator,
-          fold_ids, shared_folds, shared_full, state_cache,
+          split_ids_val,
+          if (row_split_islands) island_shared_splits[[j]] else shared_splits,
+          evaluator,
+          fold_ids,
+          if (row_split_islands) island_shared_folds[[j]] else shared_folds,
+          shared_full, state_cache,
           fitness_cache, threads, verbose, island_best_fitness[j],
           metric = metric, complexity_penalty = complexity_penalty, island = j, ...
         )
@@ -1141,8 +1205,12 @@ evolve_features <- function(data, target_col, task = "classification",
     # Final evaluation of individuals on all islands
     for (j in 1:islands) {
       eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
-        split_ids_val, shared_splits, evaluator,
-        fold_ids, shared_folds, shared_full, state_cache,
+        split_ids_val,
+        if (row_split_islands) island_shared_splits[[j]] else shared_splits,
+        evaluator,
+        fold_ids,
+        if (row_split_islands) island_shared_folds[[j]] else shared_folds,
+        shared_full, state_cache,
         fitness_cache, threads, verbose, island_best_fitness[j],
         metric = metric, complexity_penalty = complexity_penalty, island = j, ...
       )

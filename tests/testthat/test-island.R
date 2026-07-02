@@ -108,3 +108,54 @@ test_that("evolve_features runs successfully with heterogeneous per-island allow
   expect_true(length(recipe$best_individual) > 0)
 })
 
+test_that("evolve_features validates and runs successfully with row_split_islands", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  # 1. Validation error for non-logical type
+  expect_error(
+    evolve_features(df, "am", task = "classification", row_split_islands = "invalid", verbose = FALSE),
+    "row_split_islands must be a logical scalar"
+  )
+  
+  # 2. Warning for row_split_islands = TRUE with islands = 1
+  expect_warning(
+    evolve_features(df, "am", task = "classification", islands = 1, row_split_islands = TRUE, generations = 1, pop_size = 2, cv_folds = 2, verbose = FALSE),
+    "row_split_islands is TRUE but islands is 1"
+  )
+
+  set.seed(42)
+  # 3. Split strategy row_split_islands test
+  recipe_split <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 2,
+    pop_size = 4,
+    islands = 2,
+    row_split_islands = TRUE,
+    evaluation_strategy = "split",
+    split_ratio = c(0.6, 0.4),
+    verbose = FALSE
+  )
+  expect_s3_class(recipe_split, "evo_recipe")
+
+  # 4. CV strategy row_split_islands test
+  recipe_cv <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 2,
+    pop_size = 4,
+    islands = 2,
+    row_split_islands = TRUE,
+    evaluation_strategy = "cv",
+    cv_folds = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(recipe_cv, "evo_recipe")
+})
+
