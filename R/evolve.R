@@ -934,9 +934,6 @@ dynamic_population_decay_rate = 0.7,
       pop_list[[j]][[1]] <- if (row_split_islands) island_baseline_inds[[j]] else baseline_ind
     }
 
-    global_best_fitness <- baseline_ind$fitness
-    global_best_individual <- baseline_ind
-
     # Local trackers for each island
     island_best_fitness <- if (row_split_islands) {
       sapply(island_baseline_inds, function(ind) ind$fitness)
@@ -950,6 +947,15 @@ dynamic_population_decay_rate = 0.7,
     }
     island_gens_without_improvement <- rep(0, islands)
     island_current_pop_size <- rep(pop_size, islands)
+
+    if (row_split_islands) {
+      best_idx <- which.max(island_best_fitness)
+      global_best_fitness <- island_best_fitness[best_idx]
+      global_best_individual <- island_baseline_inds[[best_idx]]
+    } else {
+      global_best_fitness <- baseline_ind$fitness
+      global_best_individual <- baseline_ind
+    }
 
     # Global trackers
     generations_without_improvement <- 0
