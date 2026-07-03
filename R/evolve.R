@@ -1120,6 +1120,11 @@ dynamic_population_decay_rate = 0.7,
           if (effective_rate > 0) {
             migrant_inds <- old_pop_list[[j]][1:effective_rate]
 
+            if (per_island_validation) {
+              # Fitness was evaluated on Island j's local val — must re-evaluate on dest's local val
+              migrant_inds <- lapply(migrant_inds, function(ind) { ind$fitness <- NA_real_; ind })
+            }
+
             # Replace the worst individuals of the target population
             worst_start <- length(pop_list[[dest]]) - effective_rate + 1
             worst_end <- length(pop_list[[dest]])
