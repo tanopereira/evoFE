@@ -330,7 +330,8 @@ dynamic_population_decay_rate = 0.7,
                             migration_interval = 5,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
-                            row_split_islands = FALSE, ...) {
+                            row_split_islands = FALSE,
+                            per_island_validation = FALSE, ...) {
 
 
 
@@ -347,6 +348,17 @@ dynamic_population_decay_rate = 0.7,
   if (row_split_islands && islands == 1) {
     warning("row_split_islands is TRUE but islands is 1. Setting row_split_islands to FALSE.")
     row_split_islands <- FALSE
+  }
+
+  # Validate per_island_validation
+  if (!is.logical(per_island_validation) || length(per_island_validation) != 1) {
+    stop("per_island_validation must be a logical scalar (TRUE or FALSE).")
+  }
+  if (per_island_validation && !row_split_islands) {
+    stop("per_island_validation = TRUE requires row_split_islands = TRUE.")
+  }
+  if (per_island_validation && evaluation_strategy == "cv") {
+    stop("per_island_validation = TRUE is only supported with evaluation_strategy = 'split'.")
   }
 
   # Parse allowed_transformers
@@ -631,17 +643,29 @@ dynamic_population_decay_rate = 0.7,
       split_indices <- split(train_indices, cut(seq_along(train_indices), islands, labels = FALSE))
       island_shared_splits <- list()
       for (j in 1:islands) {
-        island_shared_splits[[j]] <- list(
-          train = data.table::as.data.table(data[split_indices[[j]], ]),
-          val = global_val_dt
-        )
+        if (per_island_validation) {
+          # Carve a local val from within this island's rows
+          n_j <- length(split_indices[[j]])
+          n_local_train <- max(1L, floor(split_ratio[1] * n_j))
+          local_train_idx <- split_indices[[j]][seq_len(n_local_train)]
+          local_val_idx   <- split_indices[[j]][seq(n_local_train + 1L, n_j)]
+          island_shared_splits[[j]] <- list(
+            train = data.table::as.data.table(data[local_train_idx, ]),
+            val   = data.table::as.data.table(data[local_val_idx,   ])
+          )
+        } else {
+          island_shared_splits[[j]] <- list(
+            train = data.table::as.data.table(data[split_indices[[j]], ]),
+            val   = global_val_dt
+          )
+        }
         if (!is.null(global_holdout_dt)) {
           island_shared_splits[[j]]$holdout <- global_holdout_dt
         }
       }
       shared_splits <- list(
         train = global_train_dt,
-        val = global_val_dt,
+        val   = global_val_dt,
         holdout = global_holdout_dt
       )
     } else {
@@ -655,12 +679,26 @@ dynamic_population_decay_rate = 0.7,
     }
 
     if (verbose) {
-      train_size_str <- if (row_split_islands) {
-        sprintf("%d (split into %d local sets of ~%d rows)", nrow(global_train_dt), islands, round(nrow(global_train_dt) / islands))
+      if (row_split_islands) {
+        if (per_island_validation) {
+          n_j_approx <- round(nrow(global_train_dt) / islands)
+          n_local_train_approx <- round(split_ratio[1] * n_j_approx)
+          n_local_val_approx   <- n_j_approx - n_local_train_approx
+          train_size_str <- sprintf(
+            "%d (split into %d islands of ~%d local train / ~%d local val rows)",
+            nrow(global_train_dt), islands, n_local_train_approx, n_local_val_approx
+          )
+          msg_split <- sprintf("  Split sizes -> Train: %s, Global Val (tournament only): %d", train_size_str, nrow(global_val_dt))
+        } else {
+          train_size_str <- sprintf(
+            "%d (split into %d local sets of ~%d rows)",
+            nrow(global_train_dt), islands, round(nrow(global_train_dt) / islands)
+          )
+          msg_split <- sprintf("  Split sizes -> Train: %s, Val: %d", train_size_str, nrow(global_val_dt))
+        }
       } else {
-        sprintf("%d", nrow(global_train_dt))
+        msg_split <- sprintf("  Split sizes -> Train: %d, Val: %d", nrow(global_train_dt), nrow(global_val_dt))
       }
-      msg_split <- sprintf("  Split sizes -> Train: %s, Val: %d", train_size_str, nrow(global_val_dt))
       if (!is.null(global_holdout_dt)) {
         msg_split <- paste0(msg_split, sprintf(", Holdout: %d", nrow(global_holdout_dt)))
       }
@@ -1038,11 +1076,25 @@ dynamic_population_decay_rate = 0.7,
         generations_without_improvement <- generations_without_improvement + 1
       }
 
-      # Global early stopping check
-      if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
-        message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
-        fitness_history <- fitness_history[1:g]
-        break
+      # Early stopping check
+      if (!is.null(early_stopping_generations)) {
+        if (per_island_validation) {
+          # Fitness scores are not comparable across islands — stop only when all islands stagnate
+          if (all(island_gens_without_improvement >= early_stopping_generations)) {
+            message(sprintf(
+              "  Early stopping triggered: all %d islands stagnated for %d generations.",
+              islands, early_stopping_generations
+            ))
+            fitness_history <- fitness_history[1:g]
+            break
+          }
+        } else {
+          if (generations_without_improvement >= early_stopping_generations) {
+            message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
+            fitness_history <- fitness_history[1:g]
+            break
+          }
+        }
       }
 
       if (g == generations) break
@@ -1281,23 +1333,56 @@ dynamic_population_decay_rate = 0.7,
   }
 
   if (row_split_islands) {
-    if (verbose) {
-      message("\nRe-evaluating best individual on full training dataset...")
-    }
-    best_ind$fitness <- NA_real_
-    best_ind <- evaluate_fitness(
-      best_ind, data, target_col,
-      task = task, cv_folds = cv_folds,
-      evaluation_strategy = evaluation_strategy,
-      split_ids = split_ids_val, shared_splits = shared_splits,
-      evaluator = evaluator, fold_ids = fold_ids,
-      shared_folds = shared_folds,
-      shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = FALSE,
-      allow_prune = FALSE, ...
-    )
-    if (verbose) {
-      message(sprintf("  Global fitness of best individual: %.4f", best_ind$fitness))
+    if (per_island_validation) {
+      # Tournament: re-evaluate each island's best individual on the full global dataset
+      if (verbose) {
+        message(sprintf("\nRunning final tournament: re-evaluating best individual from each of %d islands on full training dataset...", islands))
+      }
+      candidates <- lapply(seq_len(islands), function(j) {
+        ind <- island_best_individual[[j]]
+        ind$fitness <- NA_real_
+        ind <- evaluate_fitness(
+          ind, data, target_col,
+          task = task, cv_folds = cv_folds,
+          evaluation_strategy = evaluation_strategy,
+          split_ids = split_ids_val, shared_splits = shared_splits,
+          evaluator = evaluator, fold_ids = fold_ids,
+          shared_folds = shared_folds,
+          shared_full = shared_full, state_cache = state_cache,
+          threads = threads, metric = metric, verbose = FALSE,
+          allow_prune = FALSE, ...
+        )
+        if (verbose) {
+          message(sprintf("  [Island %d] Global fitness: %.4f  Recipe: %s", j, ind$fitness, individual_to_recipe_string(ind)))
+        }
+        ind
+      })
+      tournament_fitness <- sapply(candidates, function(ind) ind$fitness)
+      winner_idx <- which.max(tournament_fitness)
+      best_ind <- candidates[[winner_idx]]
+      if (verbose) {
+        message(sprintf("  Tournament winner: Island %d (fitness %.4f)", winner_idx, best_ind$fitness))
+      }
+    } else {
+      # Single re-evaluation of global best on full training dataset
+      if (verbose) {
+        message("\nRe-evaluating best individual on full training dataset...")
+      }
+      best_ind$fitness <- NA_real_
+      best_ind <- evaluate_fitness(
+        best_ind, data, target_col,
+        task = task, cv_folds = cv_folds,
+        evaluation_strategy = evaluation_strategy,
+        split_ids = split_ids_val, shared_splits = shared_splits,
+        evaluator = evaluator, fold_ids = fold_ids,
+        shared_folds = shared_folds,
+        shared_full = shared_full, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = FALSE,
+        allow_prune = FALSE, ...
+      )
+      if (verbose) {
+        message(sprintf("  Global fitness of best individual: %.4f", best_ind$fitness))
+      }
     }
   }
 

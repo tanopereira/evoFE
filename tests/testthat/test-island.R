@@ -159,3 +159,54 @@ test_that("evolve_features validates and runs successfully with row_split_island
   expect_s3_class(recipe_cv, "evo_recipe")
 })
 
+test_that("evolve_features throws errors for invalid per_island_validation parameters", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  # per_island_validation without row_split_islands should error
+  expect_error(
+    evolve_features(df, "am", task = "classification",
+                    islands = 2, row_split_islands = FALSE,
+                    per_island_validation = TRUE, verbose = FALSE),
+    "per_island_validation = TRUE requires row_split_islands = TRUE"
+  )
+
+  # per_island_validation with cv evaluation_strategy should error
+  expect_error(
+    evolve_features(df, "am", task = "classification",
+                    islands = 2, row_split_islands = TRUE,
+                    per_island_validation = TRUE,
+                    evaluation_strategy = "cv", verbose = FALSE),
+    "per_island_validation = TRUE is only supported with evaluation_strategy = 'split'"
+  )
+
+  # non-logical per_island_validation should error
+  expect_error(
+    evolve_features(df, "am", task = "classification",
+                    islands = 2, per_island_validation = "yes", verbose = FALSE),
+    "per_island_validation must be a logical scalar"
+  )
+})
+
+test_that("evolve_features runs successfully with per_island_validation = TRUE", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  set.seed(42)
+  recipe <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 2,
+    pop_size = 4,
+    islands = 2,
+    row_split_islands = TRUE,
+    per_island_validation = TRUE,
+    evaluation_strategy = "split",
+    verbose = FALSE
+  )
+  expect_s3_class(recipe, "evo_recipe")
+})
