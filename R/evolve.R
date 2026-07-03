@@ -644,9 +644,9 @@ dynamic_population_decay_rate = 0.7,
       island_shared_splits <- list()
       for (j in 1:islands) {
         if (per_island_validation) {
-          # Carve a local val from within this island's rows
-          # Normalize split_ratio in case it is unnormalized (e.g. c(6,2,2))
-          local_split_frac <- split_ratio[1] / sum(split_ratio)
+          # Carve a local val from within this island's rows.
+          # Use only train+val components of split_ratio; holdout is handled globally.
+          local_split_frac <- split_ratio[1] / sum(split_ratio[1:2])
           n_j <- length(split_indices[[j]])
           n_local_train <- max(1L, floor(local_split_frac * n_j))
           local_train_idx <- split_indices[[j]][seq_len(n_local_train)]
@@ -683,7 +683,7 @@ dynamic_population_decay_rate = 0.7,
     if (verbose) {
       if (row_split_islands) {
         if (per_island_validation) {
-          local_split_frac <- split_ratio[1] / sum(split_ratio)
+          local_split_frac <- split_ratio[1] / sum(split_ratio[1:2])
           n_j_approx <- round(nrow(global_train_dt) / islands)
           n_local_train_approx <- round(local_split_frac * n_j_approx)
           n_local_val_approx   <- n_j_approx - n_local_train_approx
