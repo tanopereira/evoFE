@@ -1422,7 +1422,11 @@
         function renderGeneration(data) {
             latestGenSnapshot = data;
             const gen = data.generation;
-            genCounter.innerText = `Gen ${gen}`;
+            if (config && config.generations) {
+                genCounter.innerText = `Gen ${gen} / ${config.generations}`;
+            } else {
+                genCounter.innerText = `Gen ${gen}`;
+            }
 
             // Add update to history
             historyData.push(data);
