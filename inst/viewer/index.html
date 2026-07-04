@@ -926,10 +926,7 @@
 
     <main>
         <div class="card topology-card">
-            <div class="card-title">
-                Island Topology
-                <span id="topology-detail">Ring Network Topology</span>
-            </div>
+            <div class="card-title">Island Network</div>
             <svg id="topology-svg"></svg>
 
             <!-- Overlay for Tournament Phase -->
@@ -999,7 +996,10 @@
             </div>
 
             <div class="card">
-                <div class="card-title">Current Best Individual</div>
+                <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Current Best Individual</span>
+                    <span id="best-gen-span" style="font-size: 0.78rem; font-family: monospace; color: var(--secondary); background: rgba(6, 182, 212, 0.1); padding: 0.15rem 0.4rem; border-radius: 0.25rem;"></span>
+                </div>
                 <div class="stat-group">
                     <div class="stat-box">
                         <div class="stat-lbl">Source Island</div>
@@ -1422,10 +1422,14 @@
         function renderGeneration(data) {
             latestGenSnapshot = data;
             const gen = data.generation;
+            let genText = `Gen ${gen}`;
             if (config && config.generations) {
-                genCounter.innerText = `Gen ${gen} / ${config.generations}`;
-            } else {
-                genCounter.innerText = `Gen ${gen}`;
+                genText = `Gen ${gen} / ${config.generations}`;
+            }
+            genCounter.innerText = genText;
+            const bestGenSpan = document.getElementById("best-gen-span");
+            if (bestGenSpan) {
+                bestGenSpan.textContent = genText;
             }
 
             // Add update to history
