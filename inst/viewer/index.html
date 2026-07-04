@@ -556,9 +556,154 @@
                 filter: drop-shadow(0 0 0px var(--secondary));
             }
         }
+
+        /* High-contrast text shadows inside circles */
+        .node-text {
+            text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 2px 4px rgba(0,0,0,0.9);
+            font-size: 13px !important;
+            letter-spacing: 0.05em;
+        }
+        .node-subtext {
+            text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 1px 3px rgba(0,0,0,0.9);
+            font-size: 11px !important;
+            font-weight: 500;
+        }
+
+        /* Hover Zoom on Nodes */
+        .node-group {
+            transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .node-group:hover {
+            transform: scale(1.18);
+        }
+
+        /* Chart Highlights */
+        .chart-line-path {
+            transition: stroke-width 0.2s, opacity 0.2s;
+        }
+        .chart-line-path:hover {
+            stroke-width: 5px !important;
+            opacity: 1.0 !important;
+            cursor: pointer;
+        }
+
+        /* Floating Tooltip */
+        .tooltip {
+            position: absolute;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid var(--card-border);
+            padding: 0.75rem 1rem;
+            border-radius: 0.6rem;
+            font-size: 0.8rem;
+            pointer-events: none;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.6);
+            z-index: 1000;
+            display: none;
+            color: var(--text-main);
+            min-width: 180px;
+        }
+        .tooltip-title {
+            font-family: var(--font-header);
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-bottom: 0.35rem;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding-bottom: 0.25rem;
+        }
+        .tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 1.5rem;
+            margin-top: 0.25rem;
+        }
+        .tooltip-lbl {
+            color: var(--text-muted);
+        }
+
+        /* Tabs Layout & Pill Switcher */
+        .tabs-header {
+            display: flex;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--card-border);
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+        }
+        .tab-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-family: var(--font-header);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            padding: 0.35rem 0.85rem;
+            border-radius: 1.5rem;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .tab-btn.active {
+            color: #ffffff;
+            background: var(--primary);
+            box-shadow: 0 0 10px rgba(79, 70, 229, 0.3);
+        }
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Preview Table Styles */
+        .table-container {
+            overflow-x: auto;
+            max-height: 220px;
+            border-radius: 0.5rem;
+            border: 1px solid var(--card-border);
+            background: rgba(0, 0, 0, 0.25);
+        }
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: monospace;
+            font-size: 0.72rem;
+            text-align: left;
+        }
+        .preview-table th, .preview-table td {
+            padding: 0.45rem 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            white-space: nowrap;
+        }
+        .preview-table th {
+            background: rgba(255, 255, 255, 0.03);
+            font-weight: 600;
+            color: var(--text-muted);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            border-bottom: 1px solid var(--card-border);
+        }
+        .preview-table tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .preview-table .evolved-col {
+            color: var(--secondary) !important;
+            font-weight: 600;
+            background: rgba(6, 182, 212, 0.02);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
+    <div id="tooltip" class="tooltip"></div>
     <header>
         <div class="logo-container">
             <div class="logo-icon">e</div>
@@ -613,9 +758,30 @@
 
         <div class="info-grid">
             <div class="card">
-                <div class="card-title">Island Health & Local Fitness</div>
-                <div class="health-list" id="health-list">
-                    <!-- Dynamic Island Health Rows -->
+                <div class="tabs-header">
+                    <button class="tab-btn active" id="btn-tab-dashboard" onclick="switchTab('dashboard')">Island Health</button>
+                    <button class="tab-btn" id="btn-tab-preview" onclick="switchTab('preview')">Transformed Data Sample</button>
+                </div>
+                <div class="tab-content active" id="tab-dashboard">
+                    <div class="health-list" id="health-list">
+                        <!-- Dynamic Island Health Rows -->
+                    </div>
+                </div>
+                <div class="tab-content" id="tab-preview">
+                    <div class="table-container">
+                        <table class="preview-table" id="preview-table">
+                            <thead>
+                                <tr id="preview-thead-tr">
+                                    <th>No columns loaded</th>
+                                </tr>
+                            </thead>
+                            <tbody id="preview-tbody">
+                                <tr>
+                                    <td>Start the run to preview data</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
@@ -670,6 +836,7 @@
         let config = {};
         let activeIslands = 0;
         let islandPositions = [];
+        let latestGenSnapshot = null;
 
         // Elements
         const playPauseBtn = document.getElementById("play-pause-btn");
@@ -756,6 +923,9 @@
                     baselineFitness = msg.data.fitness;
                     updateBaselineOnChart(baselineFitness);
                     updateBestInfo("-", baselineFitness, 0, msg.data.recipe);
+                    if (msg.data.sample) {
+                        renderPreviewTable(msg.data.sample);
+                    }
                     break;
                 case "generation":
                     renderGeneration(msg.data);
@@ -822,12 +992,14 @@
             islandPositions.forEach((pos, idx) => {
                 const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 g.setAttribute("id", `island-node-${pos.id}`);
+                g.setAttribute("class", "node-group");
                 g.style.cursor = "pointer";
+                g.style.transformOrigin = `${pos.x}px ${pos.y}px`;
 
                 const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 circle.setAttribute("cx", pos.x);
                 circle.setAttribute("cy", pos.y);
-                circle.setAttribute("r", 30);
+                circle.setAttribute("r", 45); // Increased radius to 45 for better legibility
                 circle.setAttribute("class", "node-circle");
                 circle.setAttribute("id", `island-circle-${pos.id}`);
                 circle.style.setProperty("--stroke-col", islandColors[idx % islandColors.length]);
@@ -841,7 +1013,7 @@
 
                 const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 txt.setAttribute("x", pos.x);
-                txt.setAttribute("y", pos.y - 4);
+                txt.setAttribute("y", pos.y - 6);
                 txt.setAttribute("class", "node-text");
                 txt.textContent = `ISL ${pos.id}`;
                 g.appendChild(txt);
@@ -851,8 +1023,13 @@
                 subtxt.setAttribute("y", pos.y + 12);
                 subtxt.setAttribute("class", "node-subtext");
                 subtxt.setAttribute("id", `island-score-${pos.id}`);
-                subtxt.textContent = "0.000";
+                subtxt.textContent = "0.0000";
                 g.appendChild(subtxt);
+
+                // Tooltip events
+                g.addEventListener("mouseenter", (e) => showIslandTooltip(e, pos.id));
+                g.addEventListener("mousemove", moveTooltip);
+                g.addEventListener("mouseleave", hideTooltip);
 
                 topologySvg.appendChild(g);
             });
@@ -942,12 +1119,17 @@
 
         // Draw live/replay generation details
         function renderGeneration(data) {
+            latestGenSnapshot = data;
             const gen = data.generation;
             genCounter.innerText = `Gen ${gen}`;
 
             // Add update to history
             historyData.push(data);
             updateChartLine();
+
+            if (data.sample) {
+                renderPreviewTable(data.sample);
+            }
 
             // Update islands
             data.islands.forEach(isl => {
@@ -1007,7 +1189,7 @@
             for (let i = 0; i < maxSubpoints; i++) {
                 const fit = fitnesses[i];
                 const angle = (2 * Math.PI * i / maxSubpoints);
-                const r = 16; // layout radius
+                const r = 29; // layout radius (increased to clear center text)
                 const px = pos.x + r * Math.cos(angle);
                 const py = pos.y + r * Math.sin(angle);
 
@@ -1053,6 +1235,29 @@
                 path.setAttribute("stroke", color);
                 path.setAttribute("stroke-width", 1.5);
                 path.setAttribute("opacity", 0.4);
+
+                // Tooltip and highlight events
+                path.addEventListener("mouseenter", (e) => {
+                    const lastGen = historyData[historyData.length - 1];
+                    const isl = lastGen.islands.find(item => item.island === (i + 1));
+                    const fitVal = isl ? (isl.best_fitness || 0) : 0;
+                    showLineTooltip(e, `Island ${i + 1}`, fitVal, lastGen.generation);
+                    
+                    // Highlight this line, dim others
+                    chartSvg.querySelectorAll(".chart-line-path").forEach(p => p.style.opacity = "0.1");
+                    path.style.opacity = "1.0";
+                    path.style.strokeWidth = "5px";
+                });
+                path.addEventListener("mousemove", moveTooltip);
+                path.addEventListener("mouseleave", () => {
+                    hideTooltip();
+                    // Restore line states
+                    chartSvg.querySelectorAll(".chart-line-path").forEach(p => {
+                        p.style.opacity = p.getAttribute("stroke") === "var(--secondary)" ? "1.0" : "0.4";
+                        p.style.strokeWidth = p.getAttribute("stroke") === "var(--secondary)" ? "3px" : "1.5px";
+                    });
+                });
+
                 chartSvg.appendChild(path);
             }
 
@@ -1070,6 +1275,25 @@
             globalPath.setAttribute("fill", "none");
             globalPath.setAttribute("stroke", "var(--secondary)");
             globalPath.setAttribute("stroke-width", 3);
+
+            globalPath.addEventListener("mouseenter", (e) => {
+                const lastGen = historyData[historyData.length - 1];
+                const fitVal = lastGen.global_best_fitness || 0;
+                showLineTooltip(e, "Global Best", fitVal, lastGen.generation);
+
+                chartSvg.querySelectorAll(".chart-line-path").forEach(p => p.style.opacity = "0.1");
+                globalPath.style.opacity = "1.0";
+                globalPath.style.strokeWidth = "6px";
+            });
+            globalPath.addEventListener("mousemove", moveTooltip);
+            globalPath.addEventListener("mouseleave", () => {
+                hideTooltip();
+                chartSvg.querySelectorAll(".chart-line-path").forEach(p => {
+                    p.style.opacity = p.getAttribute("stroke") === "var(--secondary)" ? "1.0" : "0.4";
+                    p.style.strokeWidth = p.getAttribute("stroke") === "var(--secondary)" ? "3px" : "1.5px";
+                });
+            });
+
             chartSvg.appendChild(globalPath);
         }
 
@@ -1152,6 +1376,126 @@
                     genUpdate.migrations.forEach(mig => triggerMigrationAnimation(mig));
                 }
             }, playbackSpeed);
+        }
+
+        // Tab switching function
+        window.switchTab = function(tabId) {
+            // Remove active class from all buttons
+            document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+            // Hide all tab contents
+            document.querySelectorAll(".tab-content").forEach(content => content.classList.remove("active"));
+
+            // Add active to selected button and tab content
+            document.getElementById(`btn-tab-${tabId}`).classList.add("active");
+            document.getElementById(`tab-${tabId}`).classList.add("active");
+        };
+
+        // Render 5-row transformed data sample table preview
+        function renderPreviewTable(sample) {
+            const theadTr = document.getElementById("preview-thead-tr");
+            const tbody = document.getElementById("preview-tbody");
+            if (!theadTr || !tbody || !sample) return;
+
+            theadTr.innerHTML = "";
+            tbody.innerHTML = "";
+
+            const colNames = Object.keys(sample);
+            if (colNames.length === 0) {
+                theadTr.innerHTML = "<th>No columns available</th>";
+                tbody.innerHTML = "<tr><td>Empty dataset preview</td></tr>";
+                return;
+            }
+
+            // Determine which columns are evolved
+            const originalCols = new Set([
+                ...(config.numeric_cols || []),
+                ...(config.categorical_cols || []),
+                ...(config.datetime_cols || []),
+                config.target_col
+            ]);
+
+            // Render table header
+            colNames.forEach(col => {
+                const th = document.createElement("th");
+                th.textContent = col;
+                if (!originalCols.has(col)) {
+                    th.classList.add("evolved-col");
+                }
+                theadTr.appendChild(th);
+            });
+
+            // Find number of rows to render (usually 5)
+            const numRows = sample[colNames[0]] ? sample[colNames[0]].length : 0;
+            for (let r = 0; r < numRows; r++) {
+                const tr = document.createElement("tr");
+                colNames.forEach(col => {
+                    const td = document.createElement("td");
+                    const val = sample[col][r];
+                    td.textContent = (val !== null && val !== undefined) ? val : "";
+                    if (!originalCols.has(col)) {
+                        td.classList.add("evolved-col");
+                    }
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            }
+        }
+
+        // Floating tooltip events and logic
+        const tooltip = document.getElementById("tooltip");
+
+        function showIslandTooltip(e, islandId) {
+            if (!latestGenSnapshot) return;
+            const data = latestGenSnapshot.islands.find(item => item.island === islandId);
+            if (!data) return;
+
+            const color = islandColors[(islandId - 1) % islandColors.length];
+            const fitnessStr = data.best_fitness ? data.best_fitness.toFixed(4) : "0.0000";
+
+            tooltip.innerHTML = `
+                <div class="tooltip-title" style="color: ${color}">Island ${islandId} Details</div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Best Fitness:</span>
+                    <span>${fitnessStr}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Stagnation:</span>
+                    <span>${data.stagnation} gens</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Pop Size:</span>
+                    <span>${data.pop_size} ind</span>
+                </div>
+            `;
+            tooltip.style.display = "block";
+            moveTooltip(e);
+        }
+
+        function showLineTooltip(e, label, fitness, gen) {
+            tooltip.innerHTML = `
+                <div class="tooltip-title">${label}</div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Fitness:</span>
+                    <span>${fitness.toFixed(4)}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Generation:</span>
+                    <span>Gen ${gen}</span>
+                </div>
+            `;
+            tooltip.style.display = "block";
+            moveTooltip(e);
+        }
+
+        function moveTooltip(e) {
+            const x = e.pageX + 15;
+            const y = e.pageY + 15;
+            tooltip.style.left = `${x}px`;
+            tooltip.style.top = `${y}px`;
+        }
+
+        function hideTooltip() {
+            tooltip.style.display = "none";
         }
 
         function pause() {

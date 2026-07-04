@@ -815,9 +815,21 @@ dynamic_population_decay_rate = 0.7,
   }
 
   if (record) {
+    # Generate 5-row baseline data sample
+    res_sample <- tryCatch({
+      apply_individual(baseline_ind, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+    }, error = function(e) list(train = head(shared_full, 5)))
+    baseline_dt <- res_sample$train
+    baseline_list <- lapply(names(baseline_dt), function(col) {
+      val <- baseline_dt[[col]]
+      if (is.numeric(val)) round(val, 4) else as.character(val)
+    })
+    names(baseline_list) <- names(baseline_dt)
+
     evolution_log$baseline <- list(
       fitness = baseline_ind$fitness,
-      recipe = individual_to_recipe_string(baseline_ind)
+      recipe = individual_to_recipe_string(baseline_ind),
+      sample = baseline_list
     )
     viewer$send(list(type = "baseline", data = evolution_log$baseline))
   }
@@ -883,6 +895,17 @@ dynamic_population_decay_rate = 0.7,
       }
 
       if (record) {
+        # Generate 5-row transformed data sample
+        res_sample <- tryCatch({
+          apply_individual(pop[[1]], head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        }, error = function(e) list(train = head(shared_full, 5)))
+        best_dt <- res_sample$train
+        best_list <- lapply(names(best_dt), function(col) {
+          val <- best_dt[[col]]
+          if (is.numeric(val)) round(val, 4) else as.character(val)
+        })
+        names(best_list) <- names(best_dt)
+
         gen_snapshot <- list(
           generation = g,
           islands = list(
@@ -899,7 +922,8 @@ dynamic_population_decay_rate = 0.7,
           ),
           global_best_fitness = global_best_fitness,
           global_best_recipe = individual_to_recipe_string(pop[[1]]),
-          global_best_n_genes = length(pop[[1]]$genes)
+          global_best_n_genes = length(pop[[1]]$genes),
+          sample = best_list
         )
         evolution_log$generations[[g]] <- gen_snapshot
         viewer$send(list(type = "generation", data = gen_snapshot))
@@ -1142,6 +1166,17 @@ dynamic_population_decay_rate = 0.7,
       }
 
       if (record) {
+        # Generate 5-row transformed data sample
+        res_sample <- tryCatch({
+          apply_individual(global_best_individual, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        }, error = function(e) list(train = head(shared_full, 5)))
+        best_dt <- res_sample$train
+        best_list <- lapply(names(best_dt), function(col) {
+          val <- best_dt[[col]]
+          if (is.numeric(val)) round(val, 4) else as.character(val)
+        })
+        names(best_list) <- names(best_dt)
+
         gen_snapshot <- list(
           generation = g,
           islands = lapply(seq_len(islands), function(j) {
@@ -1159,7 +1194,8 @@ dynamic_population_decay_rate = 0.7,
           }),
           global_best_fitness = global_best_fitness,
           global_best_recipe = individual_to_recipe_string(global_best_individual),
-          global_best_n_genes = length(global_best_individual$genes)
+          global_best_n_genes = length(global_best_individual$genes),
+          sample = best_list
         )
         # Find which island contains the global best individual
         for (j in seq_len(islands)) {
