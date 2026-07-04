@@ -32,6 +32,9 @@ evolve_features(
   migration_interval = 5,
   migration_rate = 1,
   gene_migration_prob = 0.2,
+  row_split_islands = FALSE,
+  per_island_validation = FALSE,
+  record = FALSE,
   ...
 )
 }

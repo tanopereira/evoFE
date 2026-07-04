@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>evoFE - Evolutionary Feature Engineering Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0c10;
+            --card-bg: rgba(26, 28, 36, 0.65);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --primary: #4f46e5;
+            --primary-glow: rgba(79, 70, 229, 0.4);
+            --secondary: #06b6d4;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gold: #fbbf24;
+            --font-main: 'Outfit', sans-serif;
+            --font-header: 'Space Grotesk', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: var(--font-main);
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(at 10% 10%, rgba(79, 70, 229, 0.15) 0px, transparent 50%),
+                radial-gradient(at 90% 90%, rgba(6, 118, 212, 0.12) 0px, transparent 50%);
+            min-height: 100vh;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--card-border);
+            background: rgba(11, 12, 16, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            width: 2.2rem;
+            height: 2.2rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-family: var(--font-header);
+            box-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        h1 {
+            font-family: var(--font-header);
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #ffffff, #9ca3af);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .controls-panel {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.5rem 1.25rem;
+            border-radius: 2rem;
+            border: 1px solid var(--card-border);
+        }
+
+        .playback-btn {
+            background: none;
+            border: none;
+            color: var(--text-main);
+            cursor: pointer;
+            width: 2rem;
+            height: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+
+        .playback-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.1);
+        }
+
+        .playback-btn svg {
+            width: 1.2rem;
+            height: 1.2rem;
+            fill: currentColor;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .slider-container input[type=range] {
+            -webkit-appearance: none;
+            width: 120px;
+            background: rgba(255, 255, 255, 0.1);
+            height: 4px;
+            border-radius: 2px;
+            outline: none;
+        }
+
+        .slider-container input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--secondary);
+            cursor: pointer;
+            box-shadow: 0 0 8px var(--secondary);
+            transition: transform 0.1s;
+        }
+
+        .slider-container input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.3);
+        }
+
+        .status-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .status-badge {
+            font-family: var(--font-header);
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .status-live {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+        }
+
+        .status-live::before {
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: var(--danger);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-replay {
+            background: rgba(6, 182, 212, 0.15);
+            color: var(--secondary);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+        }
+
+        .status-finished {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .generation-counter {
+            font-family: var(--font-header);
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 1.5rem;
+            padding: 1.5rem 2rem;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            transition: border-color 0.3s;
+        }
+
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .card-title {
+            font-family: var(--font-header);
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 0.75rem;
+        }
+
+        .card-title span {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            font-family: var(--font-main);
+            font-weight: 400;
+        }
+
+        .topology-card {
+            grid-row: span 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+
+        #topology-svg {
+            width: 100%;
+            height: 480px;
+            max-height: 70vh;
+        }
+
+        .node-circle {
+            fill: rgba(30, 41, 59, 0.7);
+            stroke-width: 2px;
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
+        }
+
+        .node-circle.improving {
+            animation: pulse-border 1s ease-out;
+        }
+
+        .node-text {
+            font-family: var(--font-header);
+            font-weight: 600;
+            fill: #ffffff;
+            font-size: 14px;
+            text-anchor: middle;
+            dominant-baseline: middle;
+            pointer-events: none;
+        }
+
+        .node-subtext {
+            font-family: var(--font-main);
+            font-weight: 400;
+            fill: var(--text-muted);
+            font-size: 10px;
+            text-anchor: middle;
+            dominant-baseline: middle;
+            pointer-events: none;
+        }
+
+        .migration-path {
+            stroke: rgba(255, 255, 255, 0.1);
+            stroke-width: 2px;
+            fill: none;
+            stroke-dasharray: 6 4;
+        }
+
+        .migration-pulse {
+            stroke: var(--secondary);
+            stroke-width: 3px;
+            fill: none;
+            stroke-linecap: round;
+            stroke-dasharray: 30 150;
+            stroke-dashoffset: 0;
+            animation: dash 2s linear infinite;
+            filter: drop-shadow(0 0 4px var(--secondary));
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 250px;
+        }
+
+        #chart-svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-top: 1rem;
+            font-size: 0.8rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: var(--text-muted);
+        }
+
+        .legend-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 1.5rem;
+            grid-column: span 2;
+        }
+
+        .health-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }
+
+        .health-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .health-label {
+            font-family: var(--font-header);
+            font-size: 0.85rem;
+            width: 4rem;
+        }
+
+        .health-bar-container {
+            flex-grow: 1;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .health-bar {
+            height: 100%;
+            width: 0%;
+            background: var(--primary);
+            border-radius: 4px;
+            transition: width 0.4s ease-out, background-color 0.4s;
+        }
+
+        .health-val {
+            font-size: 0.85rem;
+            width: 3.5rem;
+            text-align: right;
+            font-weight: 500;
+        }
+
+        .health-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .health-status.active {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .recipe-display {
+            font-family: 'Space Grotesk', monospace;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--card-border);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-size: 0.85rem;
+            max-height: 180px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: #a78bfa;
+            line-height: 1.4;
+        }
+
+        .stat-group {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .stat-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--card-border);
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            text-align: center;
+        }
+
+        .stat-lbl {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-val {
+            font-family: var(--font-header);
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        /* Overlay messages / tournament overlay */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(11, 12, 16, 0.9);
+            backdrop-filter: blur(8px);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 1rem;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+
+        .overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .overlay-title {
+            font-family: var(--font-header);
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(135deg, var(--gold), #f59e0b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .tournament-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            width: 80%;
+            max-width: 450px;
+            margin-bottom: 1.5rem;
+        }
+
+        .tournament-item {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--card-border);
+            padding: 0.75rem 1.25rem;
+            border-radius: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: transform 0.3s;
+        }
+
+        .tournament-item.winner {
+            border-color: var(--gold);
+            background: rgba(251, 191, 36, 0.1);
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(251, 191, 36, 0.25);
+        }
+
+        .tournament-item.winner .candidate-island {
+            color: var(--gold);
+            font-weight: 600;
+        }
+
+        .dismiss-btn {
+            background: var(--primary);
+            border: none;
+            color: #fff;
+            padding: 0.5rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-family: var(--font-header);
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .dismiss-btn:hover {
+            background: #4338ca;
+            transform: translateY(-2px);
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -180;
+            }
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        @keyframes pulse-border {
+            0% {
+                stroke: var(--secondary);
+                stroke-width: 2px;
+                filter: drop-shadow(0 0 0px var(--secondary));
+            }
+            50% {
+                stroke: #ffffff;
+                stroke-width: 6px;
+                filter: drop-shadow(0 0 10px var(--secondary));
+            }
+            100% {
+                stroke: var(--stroke-col, rgba(255,255,255,0.2));
+                stroke-width: 2px;
+                filter: drop-shadow(0 0 0px var(--secondary));
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-container">
+            <div class="logo-icon">e</div>
+            <h1>evoFE Evolution Viewer</h1>
+        </div>
+        <div class="controls-panel" id="controls">
+            <button class="playback-btn" id="play-pause-btn" title="Play/Pause">
+                <!-- Play Icon -->
+                <svg id="play-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <!-- Pause Icon -->
+                <svg id="pause-icon" viewBox="0 0 24 24" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            </button>
+            <div class="slider-container">
+                <span>Speed</span>
+                <input type="range" id="speed-slider" min="1" max="10" value="5">
+            </div>
+            <div class="generation-counter" id="gen-counter">Gen 0</div>
+        </div>
+        <div class="status-container">
+            <div class="status-badge" id="status-badge">loading</div>
+        </div>
+    </header>
+
+    <main>
+        <div class="card topology-card">
+            <div class="card-title">
+                Island Topology
+                <span id="topology-detail">Ring Network Topology</span>
+            </div>
+            <svg id="topology-svg"></svg>
+
+            <!-- Overlay for Tournament Phase -->
+            <div class="overlay" id="tournament-overlay">
+                <div class="overlay-title">🏆 Global Tournament</div>
+                <div class="tournament-list" id="tournament-results-list"></div>
+                <button class="dismiss-btn" onclick="dismissOverlay()">Show Evolved Recipe</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Fitness History</div>
+            <div class="chart-container">
+                <svg id="chart-svg"></svg>
+            </div>
+            <div class="legend" id="chart-legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ffffff; border: 1px dashed var(--text-muted);"></div>
+                    <span>Baseline (0.0000)</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-grid">
+            <div class="card">
+                <div class="card-title">Island Health & Local Fitness</div>
+                <div class="health-list" id="health-list">
+                    <!-- Dynamic Island Health Rows -->
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Current Best Individual</div>
+                <div class="stat-group">
+                    <div class="stat-box">
+                        <div class="stat-lbl">Source Island</div>
+                        <div class="stat-val" id="best-island">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-lbl">Global Fitness</div>
+                        <div class="stat-val" id="best-fitness">-</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-lbl">Gene Count</div>
+                        <div class="stat-val" id="best-genes">-</div>
+                    </div>
+                </div>
+                <div class="recipe-display" id="best-recipe">[Original features only]</div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // R will replace this string with the actual JSON payload during view() calls
+        const rawData = "__EVOLUTION_DATA__";
+        const isReplay = !rawData.startsWith("__EVOLUTION_DATA");
+
+        let logData = null;
+        let isPlaying = false;
+        let playInterval = null;
+        let currentGenIndex = -1;
+        let playbackSpeed = 1000; // ms per step
+
+        // Color palette for islands
+        const islandColors = [
+            '#3b82f6', // blue
+            '#10b981', // green
+            '#ec4899', // pink
+            '#f59e0b', // amber
+            '#8b5cf6', // purple
+            '#06b6d4', // cyan
+            '#f97316', // orange
+            '#14b8a6'  // teal
+        ];
+
+        // Global states
+        let baselineFitness = 0;
+        let config = {};
+        let activeIslands = 0;
+        let islandPositions = [];
+
+        // Elements
+        const playPauseBtn = document.getElementById("play-pause-btn");
+        const playIcon = document.getElementById("play-icon");
+        const pauseIcon = document.getElementById("pause-icon");
+        const speedSlider = document.getElementById("speed-slider");
+        const genCounter = document.getElementById("gen-counter");
+        const statusBadge = document.getElementById("status-badge");
+        const topologySvg = document.getElementById("topology-svg");
+        const chartSvg = document.getElementById("chart-svg");
+        const healthList = document.getElementById("health-list");
+
+        // Initialization
+        window.addEventListener("DOMContentLoaded", () => {
+            if (isReplay) {
+                logData = JSON.parse(rawData);
+                setupReplayMode();
+            } else {
+                setupLiveWSMode();
+            }
+        });
+
+        // Set up post-hoc playback mode
+        function setupReplayMode() {
+            statusBadge.innerText = "Replay";
+            statusBadge.className = "status-badge status-replay";
+
+            config = logData.config;
+            baselineFitness = logData.baseline ? logData.baseline.fitness : 0;
+            activeIslands = config.islands;
+
+            setupLayout();
+            initializeChart();
+
+            // Set up controls
+            playPauseBtn.addEventListener("click", togglePlay);
+            speedSlider.addEventListener("input", (e) => {
+                playbackSpeed = (11 - e.target.value) * 200; // 200ms to 2000ms
+                if (isPlaying) {
+                    pause();
+                    play();
+                }
+            });
+
+            // Start playback immediately
+            play();
+        }
+
+        // Set up real-time live streaming mode via WebSockets
+        function setupLiveWSMode() {
+            statusBadge.innerText = "Connecting";
+            statusBadge.className = "status-badge status-replay";
+            document.getElementById("controls").style.display = "none"; // Hide playback controls in live mode
+
+            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const ws = new WebSocket(`${wsProto}//${window.location.host}`);
+
+            ws.onopen = () => {
+                statusBadge.innerText = "Live";
+                statusBadge.className = "status-badge status-live";
+            };
+
+            ws.onclose = () => {
+                statusBadge.innerText = "Completed";
+                statusBadge.className = "status-badge status-finished";
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleLiveUpdate(msg);
+            };
+        }
+
+        // Live Mode event handler
+        function handleLiveUpdate(msg) {
+            switch(msg.type) {
+                case "config":
+                    config = msg.data;
+                    activeIslands = config.islands;
+                    setupLayout();
+                    initializeChart();
+                    break;
+                case "baseline":
+                    baselineFitness = msg.data.fitness;
+                    updateBaselineOnChart(baselineFitness);
+                    updateBestInfo("-", baselineFitness, 0, msg.data.recipe);
+                    break;
+                case "generation":
+                    renderGeneration(msg.data);
+                    break;
+                case "migration":
+                    triggerMigrationAnimation(msg.data);
+                    break;
+                case "tournament":
+                    showTournamentOverlay(msg.data);
+                    break;
+                case "pooled":
+                    // Extra stats update at end if needed
+                    break;
+                case "complete":
+                    statusBadge.innerText = "Finished";
+                    statusBadge.className = "status-badge status-finished";
+                    break;
+            }
+        }
+
+        // Draw static SVG nodes/structure based on layout
+        function setupLayout() {
+            topologySvg.innerHTML = "";
+            const width = topologySvg.clientWidth || 600;
+            const height = topologySvg.clientHeight || 450;
+            const cx = width / 2;
+            const cy = height / 2;
+            const r = Math.min(width, height) * 0.33;
+
+            // Generate island node positions
+            islandPositions = [];
+            for (let i = 0; i < activeIslands; i++) {
+                const angle = (2 * Math.PI * i / activeIslands) - (Math.PI / 2);
+                islandPositions.push({
+                    id: i + 1,
+                    x: cx + r * Math.cos(angle),
+                    y: cy + r * Math.sin(angle)
+                });
+            }
+
+            // Create Ring migration paths
+            if (activeIslands > 1) {
+                islandPositions.forEach((pos, idx) => {
+                    const nextPos = islandPositions[(idx + 1) % activeIslands];
+                    
+                    // Main path line
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    const d = `M ${pos.x} ${pos.y} L ${nextPos.x} ${nextPos.y}`;
+                    line.setAttribute("d", d);
+                    line.setAttribute("class", "migration-path");
+                    topologySvg.appendChild(line);
+
+                    // Pulse overlay line
+                    const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                    pulse.setAttribute("d", d);
+                    pulse.setAttribute("class", "migration-pulse");
+                    pulse.setAttribute("id", `pulse-from-${pos.id}`);
+                    pulse.style.display = "none";
+                    topologySvg.appendChild(pulse);
+                });
+            }
+
+            // Create Node elements
+            islandPositions.forEach((pos, idx) => {
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.setAttribute("id", `island-node-${pos.id}`);
+                g.style.cursor = "pointer";
+
+                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                circle.setAttribute("cx", pos.x);
+                circle.setAttribute("cy", pos.y);
+                circle.setAttribute("r", 30);
+                circle.setAttribute("class", "node-circle");
+                circle.setAttribute("id", `island-circle-${pos.id}`);
+                circle.style.setProperty("--stroke-col", islandColors[idx % islandColors.length]);
+                circle.setAttribute("stroke", islandColors[idx % islandColors.length]);
+                g.appendChild(circle);
+
+                // Add Swarm points container inside Node circle
+                const swarmG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                swarmG.setAttribute("id", `swarm-${pos.id}`);
+                g.appendChild(swarmG);
+
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", pos.x);
+                txt.setAttribute("y", pos.y - 4);
+                txt.setAttribute("class", "node-text");
+                txt.textContent = `ISL ${pos.id}`;
+                g.appendChild(txt);
+
+                const subtxt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                subtxt.setAttribute("x", pos.x);
+                subtxt.setAttribute("y", pos.y + 12);
+                subtxt.setAttribute("class", "node-subtext");
+                subtxt.setAttribute("id", `island-score-${pos.id}`);
+                subtxt.textContent = "0.000";
+                g.appendChild(subtxt);
+
+                topologySvg.appendChild(g);
+            });
+
+            // Create health progress bars list
+            healthList.innerHTML = "";
+            for (let i = 0; i < activeIslands; i++) {
+                const color = islandColors[i % islandColors.length];
+                const row = document.createElement("div");
+                row.className = "health-row";
+                row.innerHTML = `
+                    <div class="health-label" style="color: ${color}">Island ${i+1}</div>
+                    <div class="health-bar-container">
+                        <div class="health-bar" id="health-bar-${i+1}" style="background-color: ${color}"></div>
+                    </div>
+                    <div class="health-val" id="health-val-${i+1}">0.0000</div>
+                    <div class="health-status" id="health-status-${i+1}"></div>
+                `;
+                healthList.appendChild(row);
+            }
+        }
+
+        // Re-evaluate coordinates and draw SVGs for line chart
+        let chartWidth = 500;
+        let chartHeight = 200;
+        const padding = { top: 15, right: 15, bottom: 20, left: 45 };
+        let historyData = []; // list of gen updates
+
+        function initializeChart() {
+            chartSvg.innerHTML = "";
+            chartWidth = chartSvg.clientWidth || 500;
+            chartHeight = chartSvg.clientHeight || 200;
+            historyData = [];
+
+            // Draw Y-axis gridlines and labels
+            const gridLines = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+            gridLines.forEach(val => {
+                const y = padding.top + (1 - val) * (chartHeight - padding.top - padding.bottom);
+                
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("x1", padding.left);
+                line.setAttribute("y1", y);
+                line.setAttribute("x2", chartWidth - padding.right);
+                line.setAttribute("y2", y);
+                line.setAttribute("stroke", "rgba(255,255,255,0.04)");
+                line.setAttribute("stroke-width", 1);
+                chartSvg.appendChild(line);
+
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", padding.left - 10);
+                txt.setAttribute("y", y + 4);
+                txt.setAttribute("fill", "var(--text-muted)");
+                txt.setAttribute("font-size", 10);
+                txt.setAttribute("text-anchor", "end");
+                txt.textContent = val.toFixed(1);
+                chartSvg.appendChild(txt);
+            });
+
+            // Draw baseline line
+            const baselineY = padding.top + (1 - baselineFitness) * (chartHeight - padding.top - padding.bottom);
+            const baselineLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            baselineLine.setAttribute("id", "chart-baseline-line");
+            baselineLine.setAttribute("x1", padding.left);
+            baselineLine.setAttribute("y1", baselineY);
+            baselineLine.setAttribute("x2", chartWidth - padding.right);
+            baselineLine.setAttribute("y2", baselineY);
+            baselineLine.setAttribute("stroke", "rgba(255,255,255,0.3)");
+            baselineLine.setAttribute("stroke-dasharray", "4 4");
+            baselineLine.setAttribute("stroke-width", 1.5);
+            chartSvg.appendChild(baselineLine);
+
+            updateBaselineOnChart(baselineFitness);
+        }
+
+        function updateBaselineOnChart(fitness) {
+            const baselineY = padding.top + (1 - fitness) * (chartHeight - padding.top - padding.bottom);
+            const line = document.getElementById("chart-baseline-line");
+            if (line) {
+                line.setAttribute("y1", baselineY);
+                line.setAttribute("y2", baselineY);
+            }
+            const legend = document.getElementById("chart-legend");
+            if (legend) {
+                legend.children[0].querySelector("span").textContent = `Baseline (${fitness.toFixed(4)})`;
+            }
+        }
+
+        // Draw live/replay generation details
+        function renderGeneration(data) {
+            const gen = data.generation;
+            genCounter.innerText = `Gen ${gen}`;
+
+            // Add update to history
+            historyData.push(data);
+            updateChartLine();
+
+            // Update islands
+            data.islands.forEach(isl => {
+                const nodeCircle = document.getElementById(`island-circle-${isl.island}`);
+                const scoreText = document.getElementById(`island-score-${isl.island}`);
+                const healthBar = document.getElementById(`health-bar-${isl.island}`);
+                const healthVal = document.getElementById(`health-val-${isl.island}`);
+                const healthStatus = document.getElementById(`health-status-${isl.island}`);
+
+                // Update text scores
+                const fitnessVal = isl.best_fitness || 0;
+                scoreText.textContent = fitnessVal.toFixed(3);
+                healthVal.textContent = fitnessVal.toFixed(4);
+
+                // Update health bar width
+                healthBar.style.width = `${fitnessVal * 100}%`;
+
+                // Update stagnation dot (improving = active, stale = warning/inactive)
+                if (isl.stagnation === 0) {
+                    healthStatus.className = "health-status active";
+                    nodeCircle.classList.add("improving");
+                    setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
+                } else {
+                    healthStatus.className = "health-status";
+                }
+
+                // Node color based on stagnation and fitness
+                if (isl.stagnation > config.early_stopping_generations / 2) {
+                    nodeCircle.setAttribute("fill", "rgba(100, 30, 30, 0.4)"); // Warning state
+                } else {
+                    nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
+                }
+
+                // Render population swarm inside node circle
+                renderSwarm(isl.island, isl.all_fitness || []);
+            });
+
+            // Update overall global best info
+            updateBestInfo(
+                data.global_best_island || "-",
+                data.global_best_fitness,
+                data.global_best_n_genes || 0,
+                data.global_best_recipe
+            );
+        }
+
+        // Draws circles representing individuals inside the island's node circle
+        function renderSwarm(islandId, fitnesses) {
+            const swarmG = document.getElementById(`swarm-${islandId}`);
+            if (!swarmG) return;
+            swarmG.innerHTML = "";
+
+            const pos = islandPositions[islandId - 1];
+            const maxSubpoints = Math.min(fitnesses.length, 12);
+            
+            // Draw radial layout of points inside node circle
+            for (let i = 0; i < maxSubpoints; i++) {
+                const fit = fitnesses[i];
+                const angle = (2 * Math.PI * i / maxSubpoints);
+                const r = 16; // layout radius
+                const px = pos.x + r * Math.cos(angle);
+                const py = pos.y + r * Math.sin(angle);
+
+                const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                dot.setAttribute("cx", px);
+                dot.setAttribute("cy", py);
+                dot.setAttribute("r", 2.5);
+                dot.setAttribute("fill", fit > baselineFitness ? "var(--success)" : "var(--text-muted)");
+                dot.setAttribute("opacity", 0.75);
+                swarmG.appendChild(dot);
+            }
+        }
+
+        // Draw multi-line line chart using SVG paths
+        function updateChartLine() {
+            if (historyData.length < 2) return;
+
+            // Remove existing paths
+            const oldPaths = chartSvg.querySelectorAll(".chart-line-path");
+            oldPaths.forEach(p => p.remove());
+
+            const totalGens = Math.max(config.generations, historyData.length);
+            const xStep = (chartWidth - padding.left - padding.right) / (totalGens - 1);
+            const scaleY = (val) => padding.top + (1 - val) * (chartHeight - padding.top - padding.bottom);
+
+            // Draw per-island lines
+            for (let i = 0; i < activeIslands; i++) {
+                const color = islandColors[i % islandColors.length];
+                let d = "";
+
+                historyData.forEach((genData, idx) => {
+                    const isl = genData.islands.find(item => item.island === (i + 1));
+                    const fitVal = isl ? (isl.best_fitness || 0) : 0;
+                    const x = padding.left + idx * xStep;
+                    const y = scaleY(fitVal);
+                    d += (idx === 0 ? "M " : " L ") + `${x} ${y}`;
+                });
+
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                path.setAttribute("d", d);
+                path.setAttribute("class", "chart-line-path");
+                path.setAttribute("fill", "none");
+                path.setAttribute("stroke", color);
+                path.setAttribute("stroke-width", 1.5);
+                path.setAttribute("opacity", 0.4);
+                chartSvg.appendChild(path);
+            }
+
+            // Draw global best line
+            let dGlobal = "";
+            historyData.forEach((genData, idx) => {
+                const x = padding.left + idx * xStep;
+                const y = scaleY(genData.global_best_fitness || 0);
+                dGlobal += (idx === 0 ? "M " : " L ") + `${x} ${y}`;
+            });
+
+            const globalPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            globalPath.setAttribute("d", dGlobal);
+            globalPath.setAttribute("class", "chart-line-path");
+            globalPath.setAttribute("fill", "none");
+            globalPath.setAttribute("stroke", "var(--secondary)");
+            globalPath.setAttribute("stroke-width", 3);
+            chartSvg.appendChild(globalPath);
+        }
+
+        // Trigger pulse on the migration paths in SVG
+        function triggerMigrationAnimation(data) {
+            const pulse = document.getElementById(`pulse-from-${data.from}`);
+            if (pulse) {
+                pulse.style.display = "block";
+                setTimeout(() => {
+                    pulse.style.display = "none";
+                }, 2000);
+            }
+        }
+
+        // Show/hide tournament results overlay
+        function showTournamentOverlay(data) {
+            const overlay = document.getElementById("tournament-overlay");
+            const list = document.getElementById("tournament-results-list");
+            list.innerHTML = "";
+
+            data.candidates.forEach(cand => {
+                const isWinner = cand.island === data.winner_island;
+                const color = islandColors[(cand.island - 1) % islandColors.length];
+                const item = document.createElement("div");
+                item.className = isWinner ? "tournament-item winner" : "tournament-item";
+                item.innerHTML = `
+                    <span class="candidate-island" style="color: ${isWinner ? 'var(--gold)' : color}">Island ${cand.island}</span>
+                    <span class="candidate-recipe" style="font-size: 0.8rem; color: var(--text-muted); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cand.recipe}</span>
+                    <span class="candidate-fitness">${cand.global_fitness.toFixed(4)}</span>
+                `;
+                list.appendChild(item);
+            });
+
+            overlay.classList.add("visible");
+        }
+
+        function dismissOverlay() {
+            document.getElementById("tournament-overlay").classList.remove("visible");
+        }
+
+        function updateBestInfo(island, fitness, genes, recipe) {
+            document.getElementById("best-island").textContent = island;
+            document.getElementById("best-fitness").textContent = fitness.toFixed(4);
+            document.getElementById("best-genes").textContent = genes;
+            document.getElementById("best-recipe").textContent = recipe || "[Original features only]";
+        }
+
+        // Playback Control logic
+        function togglePlay() {
+            if (isPlaying) {
+                pause();
+            } else {
+                play();
+            }
+        }
+
+        function play() {
+            isPlaying = true;
+            playIcon.style.display = "none";
+            pauseIcon.style.display = "block";
+
+            playInterval = setInterval(() => {
+                currentGenIndex++;
+                if (currentGenIndex >= logData.generations.length) {
+                    pause();
+                    currentGenIndex = logData.generations.length - 1;
+                    
+                    // Show final tournament results overlay at the end of the replay
+                    if (logData.tournament) {
+                        showTournamentOverlay(logData.tournament);
+                    }
+                    return;
+                }
+                
+                const genUpdate = logData.generations[currentGenIndex];
+                renderGeneration(genUpdate);
+
+                // Run migration pulses for replay mode
+                if (genUpdate.migrations && genUpdate.migrations.length > 0) {
+                    genUpdate.migrations.forEach(mig => triggerMigrationAnimation(mig));
+                }
+            }, playbackSpeed);
+        }
+
+        function pause() {
+            isPlaying = false;
+            playIcon.style.display = "block";
+            pauseIcon.style.display = "none";
+            clearInterval(playInterval);
+        }
+    </script>
+</body>
+</html>

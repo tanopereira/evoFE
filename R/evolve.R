@@ -331,7 +331,8 @@ dynamic_population_decay_rate = 0.7,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
                             row_split_islands = FALSE,
-                            per_island_validation = FALSE, ...) {
+                            per_island_validation = FALSE,
+                            record = FALSE, ...) {
 
 
 
@@ -359,6 +360,11 @@ dynamic_population_decay_rate = 0.7,
   }
   if (per_island_validation && evaluation_strategy == "cv") {
     stop("per_island_validation = TRUE is only supported with evaluation_strategy = 'split'.")
+  }
+
+  # Validate record
+  if (!is.logical(record) || length(record) != 1) {
+    stop("record must be a logical scalar (TRUE or FALSE).")
   }
 
   # Parse allowed_transformers
@@ -718,6 +724,32 @@ dynamic_population_decay_rate = 0.7,
   # State cache for full dataset to avoid re-fitting stateful transformers
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
 
+  viewer <- NULL
+  evolution_log <- NULL
+
+  if (record) {
+    evolution_log <- list(
+      config = list(
+        islands = islands, pop_size = pop_size, generations = generations,
+        task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
+        row_split_islands = row_split_islands, per_island_validation = per_island_validation,
+        target_col = target_col, migration_interval = migration_interval,
+        early_stopping_generations = early_stopping_generations
+      ),
+      baseline = NULL,
+      generations = list(),
+      tournament = NULL,
+      pooled = NULL,
+      historical = NULL,
+      final = NULL
+    )
+
+    viewer <- start_evolution_viewer()
+    utils::browseURL(viewer$url)
+    Sys.sleep(1.5)  # Allow browser to connect before sending data
+    viewer$send(list(type = "config", data = evolution_log$config))
+  }
+
   island_fitness_caches <- NULL
   island_state_caches <- NULL
   island_baseline_inds <- list()
@@ -773,6 +805,14 @@ dynamic_population_decay_rate = 0.7,
       local_cache_key <- digest::digest(local_recipe_str, algo = "md5", serialize = FALSE)
       assign(local_cache_key, local_baseline, envir = island_fitness_caches[[j]])
     }
+  }
+
+  if (record) {
+    evolution_log$baseline <- list(
+      fitness = baseline_ind$fitness,
+      recipe = individual_to_recipe_string(baseline_ind)
+    )
+    viewer$send(list(type = "baseline", data = evolution_log$baseline))
   }
 
   if (islands == 1) {
@@ -833,6 +873,29 @@ dynamic_population_decay_rate = 0.7,
         generations_without_improvement <- 0
       } else {
         generations_without_improvement <- generations_without_improvement + 1
+      }
+
+      if (record) {
+        gen_snapshot <- list(
+          generation = g,
+          islands = list(
+            list(
+              island = 1,
+              best_fitness = best_fitness,
+              stagnation = generations_without_improvement,
+              pop_size = length(pop),
+              population = lapply(head(pop, 5), function(ind) {
+                list(fitness = ind$fitness, n_genes = length(ind$genes))
+              }),
+              all_fitness = sapply(pop, function(ind) ind$fitness)
+            )
+          ),
+          global_best_fitness = global_best_fitness,
+          global_best_recipe = individual_to_recipe_string(pop[[1]]),
+          global_best_n_genes = length(pop[[1]]$genes)
+        )
+        evolution_log$generations[[g]] <- gen_snapshot
+        viewer$send(list(type = "generation", data = gen_snapshot))
       }
 
       if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
@@ -1071,6 +1134,37 @@ dynamic_population_decay_rate = 0.7,
         }
       }
 
+      if (record) {
+        gen_snapshot <- list(
+          generation = g,
+          islands = lapply(seq_len(islands), function(j) {
+            pop_j <- pop_list[[j]]
+            list(
+              island = j,
+              best_fitness = island_best_fitness[j],
+              stagnation = island_gens_without_improvement[j],
+              pop_size = length(pop_j),
+              population = lapply(head(pop_j, 5), function(ind) {
+                list(fitness = ind$fitness, n_genes = length(ind$genes))
+              }),
+              all_fitness = sapply(pop_j, function(ind) ind$fitness)
+            )
+          }),
+          global_best_fitness = global_best_fitness,
+          global_best_recipe = individual_to_recipe_string(global_best_individual),
+          global_best_n_genes = length(global_best_individual$genes)
+        )
+        # Find which island contains the global best individual
+        for (j in seq_len(islands)) {
+          if (identical(pop_list[[j]][[1]], global_best_individual)) {
+            gen_snapshot$global_best_island <- j
+            break
+          }
+        }
+        evolution_log$generations[[g]] <- gen_snapshot
+        viewer$send(list(type = "generation", data = gen_snapshot))
+      }
+
       # Track global improvement
       fitness_history[g] <- global_best_fitness
       if (g == 1 || (global_best_fitness > fitness_history[max(1, g - 1)])) {
@@ -1113,10 +1207,14 @@ dynamic_population_decay_rate = 0.7,
 
         for (j in 1:islands) {
           dest <- (j %% islands) + 1
+          n_injected <- 0L
+          effective_rate <- 0L
 
           # 1. Recipe-level migration (guarded for dynamic population sizes)
-          effective_rate <- min(migration_rate, length(old_pop_list[[j]]),
-                                length(pop_list[[dest]]) - 1L)
+          if (length(old_pop_list[[j]]) > 0) {
+            effective_rate <- min(migration_rate, length(old_pop_list[[j]]),
+                                  length(pop_list[[dest]]) - 1L)
+          }
           if (effective_rate > 0) {
             migrant_inds <- old_pop_list[[j]][1:effective_rate]
 
@@ -1139,51 +1237,70 @@ dynamic_population_decay_rate = 0.7,
           # Genes diffuse naturally through the ring over successive migrations,
           # creating a gradient of innovation: each island builds hierarchically
           # on its neighbor's genes rather than all islands converging immediately.
-          best_ind <- old_pop_list[[j]][[1]]
-          best_genes <- best_ind$genes
-          if (length(best_genes) > 0) {
-            existing_formulas <- vapply(migrated_genes_pool[[dest]], gene_to_formula, character(1))
-            
-            # Find new genes
-            new_genes <- list()
-            for (g_mig in best_genes) {
-              formula <- gene_to_formula(g_mig)
-              if (!formula %in% existing_formulas) {
-                new_genes <- c(new_genes, list(g_mig))
-              }
-            }
-            
-            if (length(new_genes) > 0) {
-              # Sort new genes by feature importance (highest first)
-              gene_imps <- vapply(new_genes, function(g) {
-                col <- g$output_col
-                if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
-                  as.numeric(best_ind$importances[[col]])
-                } else {
-                  0.0
+          if (length(old_pop_list[[j]]) > 0) {
+            best_ind <- old_pop_list[[j]][[1]]
+            best_genes <- best_ind$genes
+            if (length(best_genes) > 0) {
+              existing_formulas <- vapply(migrated_genes_pool[[dest]], gene_to_formula, character(1))
+              
+              # Find new genes
+              new_genes <- list()
+              for (g_mig in best_genes) {
+                formula <- gene_to_formula(g_mig)
+                if (!formula %in% existing_formulas) {
+                  new_genes <- c(new_genes, list(g_mig))
                 }
-              }, double(1))
-              
-              new_genes <- new_genes[order(gene_imps, decreasing = TRUE)]
-              
-              # Limit to top 20 most important new genes
-              if (length(new_genes) > 20) {
-                new_genes <- new_genes[1:20]
               }
               
-              migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], new_genes)
-              n_injected <- length(new_genes)
-            } else {
-              n_injected <- 0L
+              if (length(new_genes) > 0) {
+                # Sort new genes by feature importance (highest first)
+                gene_imps <- vapply(new_genes, function(g) {
+                  col <- g$output_col
+                  if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
+                    as.numeric(best_ind$importances[[col]])
+                  } else {
+                    0.0
+                  }
+                }, double(1))
+                
+                new_genes <- new_genes[order(gene_imps, decreasing = TRUE)]
+                
+                # Limit to top 20 most important new genes
+                if (length(new_genes) > 20) {
+                  new_genes <- new_genes[1:20]
+                }
+                
+                migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], new_genes)
+                n_injected <- length(new_genes)
+              } else {
+                n_injected <- 0L
+              }
+              
+              if (length(migrated_genes_pool[[dest]]) > 20) {
+                migrated_genes_pool[[dest]] <- tail(migrated_genes_pool[[dest]], 20)
+              }
+              if (verbose && n_injected > 0) {
+                actual_injected <- min(n_injected, 20L)
+                message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", actual_injected, dest, j))
+              }
             }
-            
-            if (length(migrated_genes_pool[[dest]]) > 20) {
-              migrated_genes_pool[[dest]] <- tail(migrated_genes_pool[[dest]], 20)
+          }
+
+          if (record) {
+            migration_event <- list(
+              from = j,
+              to = dest,
+              n_recipes = effective_rate,
+              n_genes = n_injected
+            )
+            if (is.null(evolution_log$generations[[g]]$migrations)) {
+              evolution_log$generations[[g]]$migrations <- list()
             }
-            if (verbose && n_injected > 0) {
-              actual_injected <- min(n_injected, 20L)
-              message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", actual_injected, dest, j))
-            }
+            evolution_log$generations[[g]]$migrations <- c(
+              evolution_log$generations[[g]]$migrations,
+              list(migration_event)
+            )
+            viewer$send(list(type = "migration", data = migration_event))
           }
         }
       }
@@ -1394,6 +1511,42 @@ dynamic_population_decay_rate = 0.7,
     }
   }
 
+  if (record && row_split_islands) {
+    if (per_island_validation) {
+      tournament_data <- list(
+        candidates = lapply(seq_len(islands), function(j) {
+          list(
+            island = j,
+            local_fitness = island_best_fitness[j],
+            global_fitness = tournament_fitness[j],
+            recipe = individual_to_recipe_string(candidates[[j]]),
+            n_genes = length(candidates[[j]]$genes)
+          )
+        }),
+        winner_island = winner_idx,
+        winner_fitness = best_ind$fitness
+      )
+      evolution_log$tournament <- tournament_data
+      viewer$send(list(type = "tournament", data = tournament_data))
+    } else {
+      tournament_data <- list(
+        candidates = list(
+          list(
+            island = 1,
+            local_fitness = global_best_fitness,
+            global_fitness = best_ind$fitness,
+            recipe = individual_to_recipe_string(best_ind),
+            n_genes = length(best_ind$genes)
+          )
+        ),
+        winner_island = 1,
+        winner_fitness = best_ind$fitness
+      )
+      evolution_log$tournament <- tournament_data
+      viewer$send(list(type = "tournament", data = tournament_data))
+    }
+  }
+
   if (model_all_final_genes) {
     if (verbose) {
       message("\nEvaluating pooled features (all final genes)...")
@@ -1453,6 +1606,15 @@ dynamic_population_decay_rate = 0.7,
           super_ind$fitness, best_ind$fitness
         ))
       }
+    }
+
+    if (record) {
+      evolution_log$pooled <- list(
+        n_genes = length(deduped_genes),
+        fitness = super_ind$fitness,
+        adopted = (super_ind$fitness > best_ind$fitness)
+      )
+      viewer$send(list(type = "pooled", data = evolution_log$pooled))
     }
   }
 
@@ -1522,6 +1684,15 @@ dynamic_population_decay_rate = 0.7,
         message("  No historical genes found to evaluate.")
       }
     }
+
+    if (record) {
+      evolution_log$historical <- list(
+        n_genes = length(deduped_historical_genes),
+        fitness = super_ind_hist$fitness,
+        adopted = (super_ind_hist$fitness > best_ind$fitness)
+      )
+      viewer$send(list(type = "historical", data = evolution_log$historical))
+    }
   }
 
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
@@ -1572,6 +1743,17 @@ dynamic_population_decay_rate = 0.7,
   )
   best_model <- res_model$model
 
+  if (record) {
+    final_data <- list(
+      best_fitness = best_ind$fitness,
+      best_recipe = individual_to_recipe_string(best_ind),
+      holdout_fitness = if (exists("best_ind") && !is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NA_real_,
+      n_genes = length(best_ind$genes)
+    )
+    evolution_log$final <- final_data
+    viewer$send(list(type = "complete", data = final_data))
+  }
+
   structure(
     list(
       best_individual = best_ind,
@@ -1581,7 +1763,8 @@ dynamic_population_decay_rate = 0.7,
       best_model = best_model,
       evaluator = evaluator,
       classes = classes,
-      metric = metric
+      metric = metric,
+      evolution_log = if (record) evolution_log else NULL
     ),
     class = "evo_recipe"
   )
