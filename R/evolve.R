@@ -734,7 +734,10 @@ dynamic_population_decay_rate = 0.7,
         task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
-        early_stopping_generations = early_stopping_generations
+        early_stopping_generations = early_stopping_generations,
+        numeric_cols = numeric_cols,
+        categorical_cols = categorical_cols,
+        datetime_cols = datetime_cols
       ),
       baseline = NULL,
       generations = list(),
@@ -829,7 +832,8 @@ dynamic_population_decay_rate = 0.7,
     evolution_log$baseline <- list(
       fitness = baseline_ind$fitness,
       recipe = individual_to_recipe_string(baseline_ind),
-      sample = baseline_list
+      sample = baseline_list,
+      importances = if (!is.null(baseline_ind$importances)) as.list(baseline_ind$importances) else list()
     )
     viewer$send(list(type = "baseline", data = evolution_log$baseline))
   }
@@ -918,6 +922,21 @@ dynamic_population_decay_rate = 0.7,
         })
         names(best_list) <- names(best_dt)
 
+        # Prepare serialized genes
+        serialized_genes <- lapply(pop[[1]]$genes, function(gene) {
+          col <- gene$output_col
+          imp_val <- if (!is.null(pop[[1]]$importances) && col %in% names(pop[[1]]$importances)) {
+            as.numeric(pop[[1]]$importances[[col]])
+          } else {
+            0.0
+          }
+          list(
+            formula = gene_to_formula(gene),
+            output_col = col,
+            importance = imp_val
+          )
+        })
+
         gen_snapshot <- list(
           generation = g,
           islands = list(
@@ -935,6 +954,8 @@ dynamic_population_decay_rate = 0.7,
           global_best_fitness = global_best_fitness,
           global_best_recipe = individual_to_recipe_string(pop[[1]]),
           global_best_n_genes = length(pop[[1]]$genes),
+          global_best_importances = if (!is.null(pop[[1]]$importances)) as.list(pop[[1]]$importances) else list(),
+          global_best_genes = serialized_genes,
           sample = best_list
         )
         evolution_log$generations[[g]] <- gen_snapshot
@@ -1201,6 +1222,21 @@ dynamic_population_decay_rate = 0.7,
         })
         names(best_list) <- names(best_dt)
 
+        # Prepare serialized genes
+        serialized_genes <- lapply(global_best_individual$genes, function(gene) {
+          col <- gene$output_col
+          imp_val <- if (!is.null(global_best_individual$importances) && col %in% names(global_best_individual$importances)) {
+            as.numeric(global_best_individual$importances[[col]])
+          } else {
+            0.0
+          }
+          list(
+            formula = gene_to_formula(gene),
+            output_col = col,
+            importance = imp_val
+          )
+        })
+
         gen_snapshot <- list(
           generation = g,
           islands = lapply(seq_len(islands), function(j) {
@@ -1219,6 +1255,8 @@ dynamic_population_decay_rate = 0.7,
           global_best_fitness = global_best_fitness,
           global_best_recipe = individual_to_recipe_string(global_best_individual),
           global_best_n_genes = length(global_best_individual$genes),
+          global_best_importances = if (!is.null(global_best_individual$importances)) as.list(global_best_individual$importances) else list(),
+          global_best_genes = serialized_genes,
           sample = best_list
         )
         # Find which island contains the global best individual
@@ -1354,11 +1392,29 @@ dynamic_population_decay_rate = 0.7,
           }
 
           if (record) {
+            migrated_gene_details <- list()
+            if (length(new_genes) > 0) {
+              migrated_gene_details <- lapply(new_genes, function(g_mig) {
+                col <- g_mig$output_col
+                imp_val <- if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
+                  as.numeric(best_ind$importances[[col]])
+                } else {
+                  0.0
+                }
+                list(
+                  formula = gene_to_formula(g_mig),
+                  output_col = col,
+                  importance = imp_val
+                )
+              })
+            }
+
             migration_event <- list(
               from = j,
               to = dest,
               n_recipes = effective_rate,
-              n_genes = n_injected
+              n_genes = n_injected,
+              migrated_genes = migrated_gene_details
             )
             if (is.null(evolution_log$generations[[g]]$migrations)) {
               evolution_log$generations[[g]]$migrations <- list()

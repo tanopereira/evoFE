@@ -5,7 +5,7 @@
     <title>evoFE - Evolutionary Feature Engineering Viewer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg-color: #0b0d13;
@@ -488,6 +488,9 @@
             gap: 0.75rem;
             width: 80%;
             max-width: 450px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 0.5rem;
             margin-bottom: 1.5rem;
         }
 
@@ -517,17 +520,17 @@
         .dismiss-btn {
             background: var(--primary);
             border: none;
-            color: #fff;
+            color: #0b0d13;
             padding: 0.5rem 1.5rem;
             border-radius: 0.5rem;
             cursor: pointer;
             font-family: var(--font-header);
-            font-weight: 500;
+            font-weight: 600;
             transition: all 0.2s;
         }
 
         .dismiss-btn:hover {
-            background: #4338ca;
+            background: #22c55e;
             transform: translateY(-2px);
         }
 
@@ -671,9 +674,9 @@
             background: rgba(255, 255, 255, 0.03);
         }
         .tab-btn.active {
-            color: #ffffff;
+            color: #0b0d13;
             background: var(--primary);
-            box-shadow: 0 0 10px rgba(79, 70, 229, 0.3);
+            box-shadow: 0 0 10px rgba(74, 222, 128, 0.35);
         }
         .tab-content {
             display: none;
@@ -683,9 +686,153 @@
             display: block;
         }
 
+        /* Value Scramble Glitch styling */
+        .glitching {
+            animation: textGlitch 0.25s infinite;
+            color: var(--secondary) !important;
+            text-shadow: 0.05em 0 0 rgba(255,0,0,.75),
+                        -0.025em -0.05em 0 rgba(0,255,0,.75),
+                         0.025em 0.05em 0 rgba(0,0,255,.75);
+        }
+        @keyframes textGlitch {
+            0% {
+                text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.025em -0.05em 0 rgba(0,255,0,.75), 0.025em 0.05em 0 rgba(0,0,255,.75);
+            }
+            14% {
+                text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.025em -0.05em 0 rgba(0,255,0,.75), 0.025em 0.05em 0 rgba(0,0,255,.75);
+            }
+            15% {
+                text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75);
+            }
+            49% {
+                text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75);
+            }
+            50% {
+                text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75);
+            }
+            99% {
+                text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75);
+            }
+            100% {
+                text-shadow: -0.025em 0 0 rgba(255,0,0,.75), -0.025em -0.025em 0 rgba(0,255,0,.75), -0.025em -0.05em 0 rgba(0,0,255,.75);
+            }
+        }
+
+        /* Importance Bar Styling inside table headers */
+        .th-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            position: relative;
+        }
+        .col-imp-bar-container {
+            width: 100%;
+            height: 3px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 1px;
+            overflow: hidden;
+            margin-top: 2px;
+        }
+        .col-imp-bar {
+            height: 100%;
+            background: var(--success);
+            box-shadow: 0 0 4px var(--success);
+            border-radius: 1px;
+            transition: width 0.4s ease-out;
+        }
+
+        /* Monospace terminal feed styles */
+        .terminal-container {
+            background: #050608;
+            border: 1px solid rgba(0, 255, 102, 0.12);
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+            max-height: 220px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            color: #33ff33; /* hacker green */
+            text-shadow: 0 0 2px rgba(51, 255, 51, 0.3);
+            box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9);
+        }
+        .terminal-feed {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .terminal-line {
+            font-size: 0.75rem;
+            line-height: 1.35;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .terminal-line.info { color: #5bc0be; }
+        .terminal-line.success { color: #4ade80; }
+        .terminal-line.warn { color: #facc15; }
+        .terminal-line.system-msg { color: #94a3b8; opacity: 0.7; }
+        .terminal-line.migration { color: #c084fc; }
+
+        /* Gene Breakdown Tab Styles */
+        .genes-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 0.5rem;
+        }
+        .gene-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--card-border);
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+        }
+        .gene-col-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            flex-grow: 1;
+            min-width: 0;
+        }
+        .gene-col-name {
+            font-family: monospace;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .gene-formula-tag {
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #a78bfa;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .gene-importance-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.2rem;
+            width: 5.5rem;
+            flex-shrink: 0;
+        }
+        .gene-importance-val {
+            font-family: monospace;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
         /* Preview Table Styles */
         .table-container {
             overflow-x: auto;
+            overflow-y: auto;
             max-height: 220px;
             border-radius: 0.5rem;
             border: 1px solid var(--card-border);
@@ -804,6 +951,8 @@
                 <div class="tabs-header">
                     <button class="tab-btn active" id="btn-tab-dashboard" onclick="switchTab('dashboard')">Island Health</button>
                     <button class="tab-btn" id="btn-tab-preview" onclick="switchTab('preview')">Transformed Data Sample</button>
+                    <button class="tab-btn" id="btn-tab-genes" onclick="switchTab('genes')">🧬 Gene Breakdown</button>
+                    <button class="tab-btn" id="btn-tab-terminal" onclick="switchTab('terminal')">📟 Terminal Log</button>
                 </div>
                 <div class="tab-content active" id="tab-dashboard">
                     <div class="health-list" id="health-list">
@@ -824,6 +973,20 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+                <div class="tab-content" id="tab-genes">
+                    <div class="genes-list" id="genes-list">
+                        <div style="color: var(--text-muted); font-size: 0.8rem; text-align: center; padding-top: 2rem;">
+                            No genes evolved yet. Start the run to see the recipe details.
+                        </div>
+                    </div>
+                </div>
+                <div class="tab-content" id="tab-terminal">
+                    <div class="terminal-container">
+                        <div class="terminal-feed" id="terminal-feed">
+                            <div class="terminal-line system-msg">📟 TERMINAL INITIALIZED. AWAITING EVOLUTION PROCESS...</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -962,14 +1125,16 @@
                     activeIslands = config.islands;
                     setupLayout();
                     initializeChart();
+                    logToTerminal("System Configured. Islands: " + config.islands + ", Pop Size: " + config.pop_size + ", Generations: " + config.generations, "system-msg");
                     break;
                 case "baseline":
                     baselineFitness = msg.data.fitness;
                     updateBaselineOnChart(baselineFitness);
                     updateBestInfo("-", baselineFitness, 0, msg.data.recipe);
                     if (msg.data.sample) {
-                        renderPreviewTable(msg.data.sample);
+                        renderPreviewTable(msg.data.sample, msg.data.importances);
                     }
+                    logToTerminal("Baseline Fitness Calculated: " + baselineFitness.toFixed(4) + " | Recipe: " + msg.data.recipe, "info");
                     break;
                 case "status":
                     handleIslandStatusUpdate(msg.data);
@@ -992,6 +1157,7 @@
                 case "complete":
                     statusBadge.innerText = "Finished";
                     statusBadge.className = "status-badge status-finished";
+                    logToTerminal("✔ Evolution completed! Best Fitness: " + (msg.data && msg.data.best_fitness ? msg.data.best_fitness.toFixed(4) : "-"), "system-msg");
                     break;
             }
         }
@@ -1237,7 +1403,7 @@
             updateChartLine();
 
             if (data.sample) {
-                renderPreviewTable(data.sample);
+                renderPreviewTable(data.sample, data.global_best_importances);
             }
 
             // Update islands
@@ -1257,8 +1423,16 @@
 
                 // Update text scores
                 const fitnessVal = isl.best_fitness || 0;
-                scoreText.textContent = fitnessVal.toFixed(3);
-                healthVal.textContent = fitnessVal.toFixed(4);
+                const oldText = scoreText.textContent;
+                const newText = fitnessVal.toFixed(3);
+                if (oldText !== newText) {
+                    glitchText(scoreText, fitnessVal, 150);
+                }
+                const oldHealth = healthVal.textContent;
+                const newHealth = fitnessVal.toFixed(4);
+                if (oldHealth !== newHealth) {
+                    glitchText(healthVal, fitnessVal, 150);
+                }
 
                 // Update health bar width
                 healthBar.style.width = `${fitnessVal * 100}%`;
@@ -1290,6 +1464,12 @@
                 data.global_best_n_genes || 0,
                 data.global_best_recipe
             );
+
+            // Render gene breakdown
+            renderGeneBreakdown(data.global_best_genes);
+
+            // Log completion to terminal log
+            logToTerminal(`★ Generation ${gen} complete. Global Best: ${data.global_best_fitness.toFixed(4)} (Island ${data.global_best_island || "-"})`, "success");
         }
 
         // Draws circles representing individuals inside the island's node circle
@@ -1436,14 +1616,17 @@
             }
 
             const key = `${data.from}-${data.to}`;
-            const count = data.n_injected || (data.migrant_genes ? data.migrant_genes.length : 1);
-            const type = data.migrant_genes ? "Gene-level (random migrant genes)" : "Recipe-level (full best individual copy)";
+            const count = `${data.n_recipes} recipes, ${data.n_genes} genes`;
+            const type = "Ring Network Migration";
 
             lastMigrationInfo[key] = {
-                generation: latestGenSnapshot ? latestGenSnapshot.generation : 0,
+                generation: data.generation || (latestGenSnapshot ? latestGenSnapshot.generation : 0),
                 count: count,
-                type: type
+                type: type,
+                migrated_genes: data.migrated_genes || []
             };
+
+            logToTerminal(`⇄ Migration: Island ${data.from} ➔ Island ${data.to} | Injected: ${data.n_recipes} recipes, ${data.n_genes} genes`, "migration");
         }
 
         // Show/hide tournament results overlay
@@ -1466,6 +1649,7 @@
             });
 
             overlay.classList.add("visible");
+            logToTerminal(`🏆 Tournament Final! Winner: Island ${data.winner_island} with fitness ${data.winner_fitness.toFixed(4)}`, "success");
         }
 
         window.dismissOverlay = function() {
@@ -1474,8 +1658,8 @@
 
         function updateBestInfo(island, fitness, genes, recipe) {
             document.getElementById("best-island").textContent = island;
-            document.getElementById("best-fitness").textContent = fitness.toFixed(4);
-            document.getElementById("best-genes").textContent = genes;
+            glitchText(document.getElementById("best-fitness"), fitness);
+            glitchText(document.getElementById("best-genes"), genes);
             document.getElementById("best-recipe").textContent = recipe || "[Original features only]";
         }
 
@@ -1516,6 +1700,54 @@
             }, playbackSpeed);
         }
 
+        // Monospace Terminal Feed logger
+        function logToTerminal(message, type = "info") {
+            const feed = document.getElementById("terminal-feed");
+            if (!feed) return;
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0] + "." + String(now.getMilliseconds()).padStart(3, '0');
+            const line = document.createElement("div");
+            line.className = `terminal-line ${type}`;
+            line.innerHTML = `<span style="color: var(--text-muted)">[${timeStr}]</span> ${message}`;
+            feed.appendChild(line);
+
+            // Auto-scroll to bottom of the terminal container
+            const container = feed.parentElement;
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+
+            // Limit to last 150 lines to prevent DOM bloatedness
+            while (feed.children.length > 150) {
+                feed.removeChild(feed.firstChild);
+            }
+        }
+
+        // Value Scramble Glitch text animation
+        function glitchText(element, finalValue, duration = 250) {
+            if (!element) return;
+            element.classList.add("glitching");
+            const steps = 8;
+            const stepMs = duration / steps;
+            let step = 0;
+            const isNum = typeof finalValue === "number";
+            
+            const interval = setInterval(() => {
+                if (step >= steps) {
+                    clearInterval(interval);
+                    element.textContent = isNum ? finalValue.toFixed(4) : finalValue;
+                    element.classList.remove("glitching");
+                } else {
+                    if (isNum) {
+                        element.textContent = (Math.random() * 0.99).toFixed(4);
+                    } else {
+                        element.textContent = Math.random().toString(36).substring(2, 8).toUpperCase();
+                    }
+                    step++;
+                }
+            }, stepMs);
+        }
+
         // Tab switching function
         window.switchTab = function(tabId) {
             // Remove active class from all buttons
@@ -1529,7 +1761,7 @@
         };
 
         // Render 5-row transformed data sample table preview
-        function renderPreviewTable(sample) {
+        function renderPreviewTable(sample, importances = null) {
             const theadTr = document.getElementById("preview-thead-tr");
             const tbody = document.getElementById("preview-tbody");
             if (!theadTr || !tbody || !sample) return;
@@ -1552,13 +1784,50 @@
                 config.target_col
             ]);
 
+            // Find max importance for scaling minibars
+            let maxImp = 0.0001;
+            if (importances) {
+                Object.values(importances).forEach(val => {
+                    if (val > maxImp) maxImp = val;
+                });
+            }
+
             // Render table header
             colNames.forEach(col => {
                 const th = document.createElement("th");
-                th.textContent = col;
                 if (!originalCols.has(col)) {
                     th.classList.add("evolved-col");
                 }
+
+                const thContent = document.createElement("div");
+                thContent.className = "th-content";
+
+                const colName = document.createElement("span");
+                colName.textContent = col;
+                thContent.appendChild(colName);
+
+                if (importances && importances[col] !== undefined) {
+                    const impVal = importances[col];
+                    const pct = (impVal / maxImp) * 100;
+
+                    const impValSpan = document.createElement("span");
+                    impValSpan.style.fontSize = "0.6rem";
+                    impValSpan.style.color = "var(--text-muted)";
+                    impValSpan.textContent = `Imp: ${impVal.toFixed(4)}`;
+                    thContent.appendChild(impValSpan);
+
+                    const barContainer = document.createElement("div");
+                    barContainer.className = "col-imp-bar-container";
+
+                    const bar = document.createElement("div");
+                    bar.className = "col-imp-bar";
+                    bar.style.width = `${pct}%`;
+
+                    barContainer.appendChild(bar);
+                    thContent.appendChild(barContainer);
+                }
+
+                th.appendChild(thContent);
                 theadTr.appendChild(th);
             });
 
@@ -1577,6 +1846,71 @@
                 });
                 tbody.appendChild(tr);
             }
+        }
+
+        // Render best individual's genes
+        function renderGeneBreakdown(genes) {
+            const listContainer = document.getElementById("genes-list");
+            if (!listContainer) return;
+
+            if (!genes || genes.length === 0) {
+                listContainer.innerHTML = `
+                    <div style="color: var(--text-muted); font-size: 0.8rem; text-align: center; padding-top: 2rem;">
+                        No genes evolved yet. Start the run to see the recipe details.
+                    </div>
+                `;
+                return;
+            }
+
+            listContainer.innerHTML = "";
+
+            // Find max importance for color scaling
+            let maxImp = 0.0001;
+            genes.forEach(g => {
+                if (g.importance > maxImp) maxImp = g.importance;
+            });
+
+            genes.forEach(g => {
+                const row = document.createElement("div");
+                row.className = "gene-row";
+
+                const info = document.createElement("div");
+                info.className = "gene-col-info";
+
+                const formula = document.createElement("span");
+                formula.className = "gene-formula-tag";
+                formula.textContent = g.formula;
+
+                const colName = document.createElement("span");
+                colName.className = "gene-col-name";
+                colName.textContent = `Output col: ${g.output_col}`;
+
+                info.appendChild(formula);
+                info.appendChild(colName);
+
+                const impContainer = document.createElement("div");
+                impContainer.className = "gene-importance-container";
+
+                const impVal = document.createElement("span");
+                impVal.className = "gene-importance-val";
+                impVal.textContent = g.importance.toFixed(4);
+
+                const barContainer = document.createElement("div");
+                barContainer.className = "col-imp-bar-container";
+                barContainer.style.width = "100%";
+
+                const bar = document.createElement("div");
+                bar.className = "col-imp-bar";
+                bar.style.width = `${(g.importance / maxImp) * 100}%`;
+
+                barContainer.appendChild(bar);
+                impContainer.appendChild(impVal);
+                impContainer.appendChild(barContainer);
+
+                row.appendChild(info);
+                row.appendChild(impContainer);
+                listContainer.appendChild(row);
+            });
         }
 
         // Floating tooltip events and logic
@@ -1657,6 +1991,8 @@
                 healthVal.textContent = status === "evaluating" ? "EVALUATING..." : "BREEDING...";
                 healthVal.style.color = status === "evaluating" ? "var(--secondary)" : "var(--primary)";
             }
+
+            logToTerminal(`Island ${islandId} ▸ status set to: ${status.toUpperCase()} (Gen ${data.generation})`, "system-msg");
         }
 
         // Live R island evaluation completion update
@@ -1680,12 +2016,20 @@
             // 2. Update text scores
             const scoreText = document.getElementById(`island-score-${islandId}`);
             if (scoreText) {
-                scoreText.textContent = fitnessVal.toFixed(3);
+                const oldText = scoreText.textContent;
+                const newText = fitnessVal.toFixed(3);
+                if (oldText !== newText) {
+                    glitchText(scoreText, fitnessVal, 150);
+                }
             }
 
             const healthVal = document.getElementById(`health-val-${islandId}`);
             if (healthVal) {
-                healthVal.textContent = fitnessVal.toFixed(4);
+                const oldText = healthVal.textContent;
+                const newText = fitnessVal.toFixed(4);
+                if (oldText !== newText) {
+                    glitchText(healthVal, fitnessVal, 150);
+                }
                 healthVal.style.color = "";
             }
 
@@ -1701,6 +2045,8 @@
 
             // 3. Render swarm
             renderSwarm(islandId, data.all_fitness || []);
+
+            logToTerminal(`Island ${islandId} ▸ evaluation complete. Fitness: ${fitnessVal.toFixed(4)}`, "success");
         }
 
         // Migration link details tooltip
@@ -1710,19 +2056,33 @@
 
             let lastMigHTML = `<div style="color: var(--text-muted); font-size: 0.75rem;">No migrations logged yet</div>`;
             if (info) {
+                let genesHTML = "";
+                if (info.migrated_genes && info.migrated_genes.length > 0) {
+                    genesHTML = `<div style="border-top: 1px dashed rgba(0,255,102,0.15); margin-top: 0.5rem; padding-top: 0.4rem; font-family: monospace; font-size: 0.72rem; max-width: 250px;">
+                        <div style="color: var(--secondary); font-weight: bold; margin-bottom: 0.25rem;">Injected Genes:</div>`;
+                    info.migrated_genes.forEach(g => {
+                        genesHTML += `<div style="display: flex; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.15rem;">
+                            <span style="color: #a78bfa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;" title="${g.formula}">${g.formula}</span>
+                            <span style="color: var(--primary)">${g.importance ? g.importance.toFixed(4) : "0.0000"}</span>
+                        </div>`;
+                    });
+                    genesHTML += `</div>`;
+                }
+
                 lastMigHTML = `
                     <div class="tooltip-row">
                         <span class="tooltip-lbl">Last Gen:</span>
                         <span>Gen ${info.generation}</span>
                     </div>
                     <div class="tooltip-row">
-                        <span class="tooltip-lbl">Transfer Count:</span>
-                        <span>${info.count} individuals/genes</span>
+                        <span class="tooltip-lbl">Transfer:</span>
+                        <span>${info.count}</span>
                     </div>
                     <div class="tooltip-row">
                         <span class="tooltip-lbl">Type:</span>
                         <span>${info.type}</span>
                     </div>
+                    ${genesHTML}
                 `;
             }
 
