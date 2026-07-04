@@ -48,6 +48,9 @@ start_evolution_viewer <- function(port = NULL) {
   list(
     url = url,
     server = server,
+    get_connection = function() {
+      ws_connection
+    },
     send = function(data) {
       if (!is.null(ws_connection)) {
         json <- jsonlite::toJSON(data, auto_unbox = TRUE)

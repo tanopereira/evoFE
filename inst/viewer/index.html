@@ -640,10 +640,12 @@
         </div>
     </main>
 
+    <!-- Injection placeholder tag: R will replace "__EVOLUTION_DATA__" with the actual JSON payload -->
+    <script id="evolution-data" type="application/json">__EVOLUTION_DATA__</script>
     <script>
-        // R will replace this string with the actual JSON payload during view() calls
-        const rawData = "__EVOLUTION_DATA__";
-        const isReplay = !rawData.startsWith("__EVOLUTION_DATA");
+        const dataEl = document.getElementById("evolution-data");
+        const rawData = dataEl ? dataEl.textContent : "";
+        const isReplay = rawData && !rawData.startsWith("__EVOLUTION_DATA");
 
         let logData = null;
         let isPlaying = false;

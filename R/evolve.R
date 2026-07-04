@@ -746,7 +746,14 @@ dynamic_population_decay_rate = 0.7,
 
     viewer <- start_evolution_viewer()
     utils::browseURL(viewer$url)
-    Sys.sleep(1.5)  # Allow browser to connect before sending data
+    # Poll for websocket connection (up to 10 seconds)
+    max_wait <- 10.0
+    slept <- 0.0
+    while (is.null(viewer$get_connection()) && slept < max_wait) {
+      Sys.sleep(0.1)
+      slept <- slept + 0.1
+      httpuv::service(10)
+    }
     viewer$send(list(type = "config", data = evolution_log$config))
   }
 

@@ -47,7 +47,7 @@ test_that("start_evolution_viewer starts and stops httpuv server correctly", {
 
   viewer <- start_evolution_viewer()
   expect_type(viewer, "list")
-  expect_named(viewer, c("url", "server", "send", "stop"))
+  expect_named(viewer, c("url", "server", "get_connection", "send", "stop"))
   expect_type(viewer$url, "character")
   expect_true(grepl("^http://127.0.0.1:", viewer$url))
 
