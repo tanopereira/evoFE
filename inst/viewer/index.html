@@ -8,18 +8,18 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #030407;
-            --card-bg: rgba(10, 12, 18, 0.85);
-            --card-border: rgba(0, 255, 102, 0.12);
-            --primary: #00ff66;
-            --primary-glow: rgba(0, 255, 102, 0.25);
-            --secondary: #00e5ff;
+            --bg-color: #0b0d13;
+            --card-bg: rgba(18, 22, 33, 0.85);
+            --card-border: rgba(255, 255, 255, 0.07);
+            --primary: #4ade80;
+            --primary-glow: rgba(74, 222, 128, 0.12);
+            --secondary: #22d3ee;
             --text-main: #e2e8f0;
             --text-muted: #64748b;
-            --success: #00ff66;
-            --warning: #ffaa00;
-            --danger: #ff3366;
-            --gold: #ffcc00;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --gold: #fbbf24;
             --font-main: 'Space Grotesk', sans-serif;
             --font-header: 'Space Grotesk', sans-serif;
         }
@@ -36,8 +36,8 @@
             font-family: var(--font-main);
             overflow-x: hidden;
             background-image: 
-                linear-gradient(rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.3) 50%),
-                radial-gradient(circle at center, rgba(0, 255, 102, 0.06) 0%, rgba(0, 0, 0, 0) 80%);
+                linear-gradient(rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.15) 50%),
+                radial-gradient(circle at center, rgba(74, 222, 128, 0.02) 0%, rgba(0, 0, 0, 0) 80%);
             background-size: 100% 4px, 100% 100%;
             min-height: 100vh;
         }
@@ -862,16 +862,16 @@
         let currentGenIndex = -1;
         let playbackSpeed = 1000; // ms per step
 
-        // Color palette for islands (Neon Cyber Hacker shades)
+        // Color palette for islands (Muted Cyber Hacker shades)
         const islandColors = [
-            '#00f0ff', // Cyber Cyan
-            '#00ff66', // Matrix Green
-            '#bd00ff', // Purple Rain
-            '#ffaa00', // Neon Amber
-            '#ff007f', // Cyber Pink
-            '#ff5500', // Electric Orange
-            '#aaff00', // Neon Lime
-            '#00ffcc'  // Tech Teal
+            '#38bdf8', // Soft Sky Blue
+            '#4ade80', // Soft Green
+            '#a78bfa', // Soft Purple
+            '#fbbf24', // Soft Amber
+            '#f472b6', // Soft Pink
+            '#fb923c', // Soft Orange
+            '#a3e635', // Soft Lime
+            '#2dd4bf'  // Soft Teal
         ];
 
         // Global states
