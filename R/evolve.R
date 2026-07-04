@@ -838,6 +838,8 @@ dynamic_population_decay_rate = 0.7,
     viewer$send(list(type = "baseline", data = evolution_log$baseline))
   }
 
+  best_ind_source <- "Island 1"
+
   if (islands == 1) {
     # 2. Initialize population for Generation 1 using baseline importances
     pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
@@ -1124,9 +1126,11 @@ dynamic_population_decay_rate = 0.7,
       best_idx <- which.max(island_best_fitness)
       global_best_fitness <- island_best_fitness[best_idx]
       global_best_individual <- island_baseline_inds[[best_idx]]
+      best_ind_source <- paste0("Island ", best_idx)
     } else {
       global_best_fitness <- baseline_ind$fitness
       global_best_individual <- baseline_ind
+      best_ind_source <- "Island 1"
     }
 
     # Global trackers
@@ -1211,6 +1215,7 @@ dynamic_population_decay_rate = 0.7,
         if (best_fitness_island > global_best_fitness) {
           global_best_fitness <- best_fitness_island
           global_best_individual <- pop_list[[j]][[1]]
+          best_ind_source <- paste0("Island ", j)
         }
       }
 
@@ -1578,6 +1583,7 @@ dynamic_population_decay_rate = 0.7,
       if (pop_list[[j]][[1]]$fitness > global_best_fitness) {
         global_best_fitness <- pop_list[[j]][[1]]$fitness
         global_best_individual <- pop_list[[j]][[1]]
+        best_ind_source <- paste0("Island ", j)
       }
     }
 
@@ -1616,6 +1622,7 @@ dynamic_population_decay_rate = 0.7,
       tournament_fitness <- sapply(candidates, function(ind) ind$fitness)
       winner_idx <- which.max(tournament_fitness)
       best_ind <- candidates[[winner_idx]]
+      best_ind_source <- paste0("Island ", winner_idx)
       if (verbose) {
         message(sprintf("  Tournament winner: Island %d (fitness %.4f)", winner_idx, best_ind$fitness))
       }
@@ -1730,6 +1737,7 @@ dynamic_population_decay_rate = 0.7,
         ))
       }
       best_ind <- super_ind
+      best_ind_source <- "Adopted (Pooled)"
     } else {
       if (verbose) {
         message(sprintf(
@@ -1802,6 +1810,7 @@ dynamic_population_decay_rate = 0.7,
           ))
         }
         best_ind <- super_ind_hist
+        best_ind_source <- "Adopted (Historical)"
       } else {
         if (verbose) {
           message(sprintf(
@@ -1912,7 +1921,8 @@ dynamic_population_decay_rate = 0.7,
       n_genes = length(best_ind$genes),
       global_best_importances = if (!is.null(best_ind$importances)) as.list(best_ind$importances) else list(),
       global_best_genes = serialized_genes,
-      sample = best_list
+      sample = best_list,
+      source_island = best_ind_source
     )
     evolution_log$final <- final_data
     viewer$send(list(type = "complete", data = final_data))

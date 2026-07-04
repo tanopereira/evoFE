@@ -1163,7 +1163,7 @@
                     statusBadge.innerText = "Finished";
                     statusBadge.className = "status-badge status-finished";
                     if (msg.data) {
-                        updateBestInfo("Adopted Super-Ind", msg.data.best_fitness, msg.data.n_genes, msg.data.best_recipe);
+                        updateBestInfo(msg.data.source_island || "Adopted Super-Ind", msg.data.best_fitness, msg.data.n_genes, msg.data.best_recipe);
                         if (msg.data.sample) {
                             renderPreviewTable(msg.data.sample, msg.data.global_best_importances);
                         }
