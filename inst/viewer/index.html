@@ -974,6 +974,9 @@
                 case "status":
                     handleIslandStatusUpdate(msg.data);
                     break;
+                case "island_evaluated":
+                    handleIslandEvaluatedUpdate(msg.data);
+                    break;
                 case "generation":
                     renderGeneration(msg.data);
                     break;
@@ -1654,6 +1657,50 @@
                 healthVal.textContent = status === "evaluating" ? "EVALUATING..." : "BREEDING...";
                 healthVal.style.color = status === "evaluating" ? "var(--secondary)" : "var(--primary)";
             }
+        }
+
+        // Live R island evaluation completion update
+        function handleIslandEvaluatedUpdate(data) {
+            const islandId = data.island;
+            const fitnessVal = data.best_fitness || 0;
+
+            // 1. Clear status animations
+            const nodeCircle = document.getElementById(`island-circle-${islandId}`);
+            if (nodeCircle) {
+                nodeCircle.classList.remove("evaluating", "breeding");
+                // Trigger improving animation if fitness increased
+                const scoreText = document.getElementById(`island-score-${islandId}`);
+                const oldVal = parseFloat(scoreText.textContent) || 0;
+                if (fitnessVal > oldVal) {
+                    nodeCircle.classList.add("improving");
+                    setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
+                }
+            }
+
+            // 2. Update text scores
+            const scoreText = document.getElementById(`island-score-${islandId}`);
+            if (scoreText) {
+                scoreText.textContent = fitnessVal.toFixed(3);
+            }
+
+            const healthVal = document.getElementById(`health-val-${islandId}`);
+            if (healthVal) {
+                healthVal.textContent = fitnessVal.toFixed(4);
+                healthVal.style.color = "";
+            }
+
+            const healthBar = document.getElementById(`health-bar-${islandId}`);
+            if (healthBar) {
+                healthBar.style.width = `${fitnessVal * 100}%`;
+            }
+
+            const healthStatus = document.getElementById(`health-status-${islandId}`);
+            if (healthStatus) {
+                healthStatus.className = "health-status";
+            }
+
+            // 3. Render swarm
+            renderSwarm(islandId, data.all_fitness || []);
         }
 
         // Migration link details tooltip

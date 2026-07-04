@@ -878,6 +878,15 @@ dynamic_population_decay_rate = 0.7,
       fitness_vals <- sapply(pop, function(ind) ind$fitness)
       pop <- pop[order(fitness_vals, decreasing = TRUE)]
 
+      if (record) {
+        viewer$send(list(type = "island_evaluated", data = list(
+          island = 1,
+          generation = g,
+          best_fitness = pop[[1]]$fitness,
+          all_fitness = fitness_vals
+        )))
+      }
+
       # Track historical best genes from this generation
       historical_best_genes <- c(historical_best_genes, pop[[1]]$genes)
 
@@ -1145,6 +1154,15 @@ dynamic_population_decay_rate = 0.7,
         # Sort population by fitness descending
         fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
         pop_list[[j]] <- pop_list[[j]][order(fitness_vals, decreasing = TRUE)]
+
+        if (record) {
+          viewer$send(list(type = "island_evaluated", data = list(
+            island = j,
+            generation = g,
+            best_fitness = pop_list[[j]][[1]]$fitness,
+            all_fitness = fitness_vals
+          )))
+        }
 
         # Track historical best genes from this generation
         historical_best_genes <- c(historical_best_genes, pop_list[[j]][[1]]$genes)
