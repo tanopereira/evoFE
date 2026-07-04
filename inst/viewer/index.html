@@ -1323,12 +1323,22 @@
             let range = maxF - minF;
             if (range < 0.001) range = 0.001;
 
-            yMin = Math.max(0.0, minF - range * 0.15);
-            yMax = Math.min(1.0, maxF + range * 0.15);
+            if (config && config.task === "regression") {
+                yMin = minF - range * 0.15;
+                yMax = Math.min(0.0, maxF + range * 0.15);
+            } else {
+                yMin = Math.max(0.0, minF - range * 0.15);
+                yMax = Math.min(1.0, maxF + range * 0.15);
+            }
 
             if (yMax <= yMin) {
-                yMin = 0.0;
-                yMax = 1.0;
+                if (config && config.task === "regression") {
+                    yMin = -1.0;
+                    yMax = 0.0;
+                } else {
+                    yMin = 0.0;
+                    yMax = 1.0;
+                }
             }
         }
 
@@ -1449,7 +1459,7 @@
                 }
 
                 // Update health bar width
-                healthBar.style.width = `${fitnessVal * 100}%`;
+                healthBar.style.width = `${getHealthBarPercentage(fitnessVal)}%`;
 
                 // Update stagnation dot (improving = active, stale = warning/inactive)
                 if (isl.stagnation === 0) {
@@ -1762,6 +1772,17 @@
             }, stepMs);
         }
 
+        // Calculate progress percentage for health list bar (supports regression too)
+        function getHealthBarPercentage(fitnessVal) {
+            if (config && config.task === "regression") {
+                const baseErr = Math.abs(baselineFitness) || 1.0;
+                const currErr = Math.abs(fitnessVal);
+                return Math.max(0, Math.min(100, ((baseErr - currErr) / baseErr) * 100));
+            } else {
+                return Math.max(0, Math.min(100, fitnessVal * 100));
+            }
+        }
+
         // Tab switching function
         window.switchTab = function(tabId) {
             // Remove active class from all buttons
@@ -2049,7 +2070,7 @@
 
             const healthBar = document.getElementById(`health-bar-${islandId}`);
             if (healthBar) {
-                healthBar.style.width = `${fitnessVal * 100}%`;
+                healthBar.style.width = `${getHealthBarPercentage(fitnessVal)}%`;
             }
 
             const healthStatus = document.getElementById(`health-status-${islandId}`);
