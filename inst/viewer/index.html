@@ -839,7 +839,8 @@
             background: rgba(0, 0, 0, 0.25);
         }
         .preview-table {
-            width: 100%;
+            width: max-content;
+            min-width: 100%;
             border-collapse: collapse;
             font-family: monospace;
             font-size: 0.72rem;
@@ -849,6 +850,10 @@
             padding: 0.45rem 0.75rem;
             border-bottom: 1px solid rgba(255, 255, 255, 0.04);
             white-space: nowrap;
+            min-width: 140px;
+            max-width: 250px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .preview-table th {
             background: rgba(255, 255, 255, 0.03);
@@ -1157,6 +1162,15 @@
                 case "complete":
                     statusBadge.innerText = "Finished";
                     statusBadge.className = "status-badge status-finished";
+                    if (msg.data) {
+                        updateBestInfo("Adopted Super-Ind", msg.data.best_fitness, msg.data.n_genes, msg.data.best_recipe);
+                        if (msg.data.sample) {
+                            renderPreviewTable(msg.data.sample, msg.data.global_best_importances);
+                        }
+                        if (msg.data.global_best_genes) {
+                            renderGeneBreakdown(msg.data.global_best_genes);
+                        }
+                    }
                     logToTerminal("✔ Evolution completed! Best Fitness: " + (msg.data && msg.data.best_fitness ? msg.data.best_fitness.toFixed(4) : "-"), "system-msg");
                     break;
             }

@@ -936,6 +936,10 @@ dynamic_population_decay_rate = 0.7,
             importance = imp_val
           )
         })
+        if (length(serialized_genes) > 0) {
+          gene_imps <- sapply(serialized_genes, function(x) x$importance)
+          serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
+        }
 
         gen_snapshot <- list(
           generation = g,
@@ -1236,6 +1240,10 @@ dynamic_population_decay_rate = 0.7,
             importance = imp_val
           )
         })
+        if (length(serialized_genes) > 0) {
+          gene_imps <- sapply(serialized_genes, function(x) x$importance)
+          serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
+        }
 
         gen_snapshot <- list(
           generation = g,
@@ -1867,11 +1875,44 @@ dynamic_population_decay_rate = 0.7,
   best_model <- res_model$model
 
   if (record) {
+    # Generate 5-row transformed data sample for the final best individual
+    res_sample <- tryCatch({
+      apply_individual(best_ind, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+    }, error = function(e) list(train = head(shared_full, 5)))
+    best_dt <- res_sample$train
+    best_list <- lapply(names(best_dt), function(col) {
+      val <- best_dt[[col]]
+      if (is.numeric(val)) round(val, 4) else as.character(val)
+    })
+    names(best_list) <- names(best_dt)
+
+    serialized_genes <- lapply(best_ind$genes, function(gene) {
+      col <- gene$output_col
+      imp_val <- if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
+        as.numeric(best_ind$importances[[col]])
+      } else {
+        0.0
+      }
+      list(
+        formula = gene_to_formula(gene),
+        output_col = col,
+        importance = imp_val
+      )
+    })
+    # Sort genes by importance descending
+    if (length(serialized_genes) > 0) {
+      gene_imps <- sapply(serialized_genes, function(x) x$importance)
+      serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
+    }
+
     final_data <- list(
       best_fitness = best_ind$fitness,
       best_recipe = individual_to_recipe_string(best_ind),
       holdout_fitness = if (exists("best_ind") && !is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NA_real_,
-      n_genes = length(best_ind$genes)
+      n_genes = length(best_ind$genes),
+      global_best_importances = if (!is.null(best_ind$importances)) as.list(best_ind$importances) else list(),
+      global_best_genes = serialized_genes,
+      sample = best_list
     )
     evolution_log$final <- final_data
     viewer$send(list(type = "complete", data = final_data))
