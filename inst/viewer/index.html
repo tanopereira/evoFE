@@ -8,19 +8,19 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0c10;
-            --card-bg: rgba(26, 28, 36, 0.65);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --primary: #4f46e5;
-            --primary-glow: rgba(79, 70, 229, 0.4);
-            --secondary: #06b6d4;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --gold: #fbbf24;
-            --font-main: 'Outfit', sans-serif;
+            --bg-color: #030407;
+            --card-bg: rgba(10, 12, 18, 0.85);
+            --card-border: rgba(0, 255, 102, 0.12);
+            --primary: #00ff66;
+            --primary-glow: rgba(0, 255, 102, 0.25);
+            --secondary: #00e5ff;
+            --text-main: #e2e8f0;
+            --text-muted: #64748b;
+            --success: #00ff66;
+            --warning: #ffaa00;
+            --danger: #ff3366;
+            --gold: #ffcc00;
+            --font-main: 'Space Grotesk', sans-serif;
             --font-header: 'Space Grotesk', sans-serif;
         }
 
@@ -36,8 +36,9 @@
             font-family: var(--font-main);
             overflow-x: hidden;
             background-image: 
-                radial-gradient(at 10% 10%, rgba(79, 70, 229, 0.15) 0px, transparent 50%),
-                radial-gradient(at 90% 90%, rgba(6, 118, 212, 0.12) 0px, transparent 50%);
+                linear-gradient(rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.3) 50%),
+                radial-gradient(circle at center, rgba(0, 255, 102, 0.06) 0%, rgba(0, 0, 0, 0) 80%);
+            background-size: 100% 4px, 100% 100%;
             min-height: 100vh;
         }
 
@@ -352,6 +353,9 @@
             display: flex;
             flex-direction: column;
             gap: 0.85rem;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 0.5rem;
         }
 
         .health-row {
@@ -557,6 +561,27 @@
             }
         }
 
+        .health-status.evaluating {
+            background: var(--secondary) !important;
+            box-shadow: 0 0 10px var(--secondary) !important;
+            animation: pulse 0.8s infinite alternate;
+        }
+        .health-status.breeding {
+            background: var(--primary) !important;
+            box-shadow: 0 0 10px var(--primary) !important;
+        }
+        .node-circle.evaluating {
+            animation: pulse-evaluating 0.8s infinite alternate !important;
+            stroke: var(--secondary) !important;
+        }
+        .node-circle.breeding {
+            stroke: var(--primary) !important;
+        }
+        @keyframes pulse-evaluating {
+            from { stroke-width: 2px; filter: drop-shadow(0 0 2px var(--secondary)); }
+            to { stroke-width: 8px; filter: drop-shadow(0 0 16px var(--secondary)); }
+        }
+
         /* High-contrast text shadows inside circles */
         .node-text {
             text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 2px 4px rgba(0,0,0,0.9);
@@ -700,6 +725,24 @@
             from { opacity: 0; transform: translateY(4px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        /* Custom hacker scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 102, 0.3);
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 255, 102, 0.6);
+        }
     </style>
 </head>
 <body>
@@ -819,16 +862,16 @@
         let currentGenIndex = -1;
         let playbackSpeed = 1000; // ms per step
 
-        // Color palette for islands
+        // Color palette for islands (Neon Cyber Hacker shades)
         const islandColors = [
-            '#3b82f6', // blue
-            '#10b981', // green
-            '#ec4899', // pink
-            '#f59e0b', // amber
-            '#8b5cf6', // purple
-            '#06b6d4', // cyan
-            '#f97316', // orange
-            '#14b8a6'  // teal
+            '#00f0ff', // Cyber Cyan
+            '#00ff66', // Matrix Green
+            '#bd00ff', // Purple Rain
+            '#ffaa00', // Neon Amber
+            '#ff007f', // Cyber Pink
+            '#ff5500', // Electric Orange
+            '#aaff00', // Neon Lime
+            '#00ffcc'  // Tech Teal
         ];
 
         // Global states
@@ -837,6 +880,7 @@
         let activeIslands = 0;
         let islandPositions = [];
         let latestGenSnapshot = null;
+        let lastMigrationInfo = {};
 
         // Elements
         const playPauseBtn = document.getElementById("play-pause-btn");
@@ -927,6 +971,9 @@
                         renderPreviewTable(msg.data.sample);
                     }
                     break;
+                case "status":
+                    handleIslandStatusUpdate(msg.data);
+                    break;
                 case "generation":
                     renderGeneration(msg.data);
                     break;
@@ -976,6 +1023,20 @@
                     const d = `M ${pos.x} ${pos.y} L ${nextPos.x} ${nextPos.y}`;
                     line.setAttribute("d", d);
                     line.setAttribute("class", "migration-path");
+                    line.style.cursor = "pointer";
+
+                    // Hover events for migration link tooltip
+                    line.addEventListener("mouseenter", (e) => {
+                        showMigrationTooltip(e, pos.id, nextPos.id);
+                        line.style.stroke = "var(--primary)";
+                        line.style.strokeWidth = "4px";
+                    });
+                    line.addEventListener("mousemove", moveTooltip);
+                    line.addEventListener("mouseleave", () => {
+                        hideTooltip();
+                        line.style.stroke = "";
+                        line.style.strokeWidth = "";
+                    });
                     topologySvg.appendChild(line);
 
                     // Pulse overlay line
@@ -1057,55 +1118,100 @@
         let chartHeight = 200;
         const padding = { top: 15, right: 15, bottom: 20, left: 45 };
         let historyData = []; // list of gen updates
+        let yMin = 0.0;
+        let yMax = 1.0;
+
+        function computeYBounds() {
+            let allFits = [baselineFitness];
+            historyData.forEach(gen => {
+                if (gen.global_best_fitness !== null && gen.global_best_fitness !== undefined && !isNaN(gen.global_best_fitness)) {
+                    allFits.push(gen.global_best_fitness);
+                }
+                gen.islands.forEach(isl => {
+                    if (isl.best_fitness !== null && isl.best_fitness !== undefined && !isNaN(isl.best_fitness)) {
+                        allFits.push(isl.best_fitness);
+                    }
+                });
+            });
+
+            const minF = Math.min(...allFits);
+            const maxF = Math.max(...allFits);
+
+            let range = maxF - minF;
+            if (range < 0.001) range = 0.001;
+
+            yMin = Math.max(0.0, minF - range * 0.15);
+            yMax = Math.min(1.0, maxF + range * 0.15);
+
+            if (yMax <= yMin) {
+                yMin = 0.0;
+                yMax = 1.0;
+            }
+        }
+
+        function drawAxes() {
+            const existing = chartSvg.querySelectorAll(".static-gridline, .axis-label");
+            existing.forEach(el => el.remove());
+
+            const ticks = 5;
+            const step = (yMax - yMin) / (ticks - 1);
+            for (let i = 0; i < ticks; i++) {
+                const val = yMin + i * step;
+                const y = padding.top + (1 - (val - yMin) / (yMax - yMin)) * (chartHeight - padding.top - padding.bottom);
+
+                if (isNaN(y)) continue;
+
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("x1", padding.left);
+                line.setAttribute("y1", y);
+                line.setAttribute("x2", chartWidth - padding.right);
+                line.setAttribute("y2", y);
+                line.setAttribute("stroke", "rgba(0, 255, 102, 0.05)");
+                line.setAttribute("stroke-width", 1);
+                line.setAttribute("class", "static-gridline");
+                chartSvg.appendChild(line);
+
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", padding.left - 10);
+                txt.setAttribute("y", y + 3.5);
+                txt.setAttribute("fill", "var(--text-muted)");
+                txt.setAttribute("font-size", 9);
+                txt.setAttribute("font-family", "monospace");
+                txt.setAttribute("text-anchor", "end");
+                txt.setAttribute("class", "axis-label");
+                txt.textContent = val.toFixed(4);
+                chartSvg.appendChild(txt);
+            }
+        }
 
         function initializeChart() {
             chartSvg.innerHTML = "";
             chartWidth = chartSvg.clientWidth || 500;
             chartHeight = chartSvg.clientHeight || 200;
             historyData = [];
+            yMin = 0.0;
+            yMax = 1.0;
 
-            // Draw Y-axis gridlines and labels
-            const gridLines = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
-            gridLines.forEach(val => {
-                const y = padding.top + (1 - val) * (chartHeight - padding.top - padding.bottom);
-                
-                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                line.setAttribute("x1", padding.left);
-                line.setAttribute("y1", y);
-                line.setAttribute("x2", chartWidth - padding.right);
-                line.setAttribute("y2", y);
-                line.setAttribute("stroke", "rgba(255,255,255,0.04)");
-                line.setAttribute("stroke-width", 1);
-                chartSvg.appendChild(line);
-
-                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                txt.setAttribute("x", padding.left - 10);
-                txt.setAttribute("y", y + 4);
-                txt.setAttribute("fill", "var(--text-muted)");
-                txt.setAttribute("font-size", 10);
-                txt.setAttribute("text-anchor", "end");
-                txt.textContent = val.toFixed(1);
-                chartSvg.appendChild(txt);
-            });
-
-            // Draw baseline line
-            const baselineY = padding.top + (1 - baselineFitness) * (chartHeight - padding.top - padding.bottom);
             const baselineLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
             baselineLine.setAttribute("id", "chart-baseline-line");
             baselineLine.setAttribute("x1", padding.left);
-            baselineLine.setAttribute("y1", baselineY);
+            baselineLine.setAttribute("y1", padding.top);
             baselineLine.setAttribute("x2", chartWidth - padding.right);
-            baselineLine.setAttribute("y2", baselineY);
-            baselineLine.setAttribute("stroke", "rgba(255,255,255,0.3)");
+            baselineLine.setAttribute("y2", padding.top);
+            baselineLine.setAttribute("stroke", "rgba(0, 255, 102, 0.4)");
             baselineLine.setAttribute("stroke-dasharray", "4 4");
             baselineLine.setAttribute("stroke-width", 1.5);
             chartSvg.appendChild(baselineLine);
 
-            updateBaselineOnChart(baselineFitness);
+            drawAxes();
         }
 
         function updateBaselineOnChart(fitness) {
-            const baselineY = padding.top + (1 - fitness) * (chartHeight - padding.top - padding.bottom);
+            computeYBounds();
+            drawAxes();
+
+            const scaleY = (val) => padding.top + (1 - (val - yMin) / (yMax - yMin)) * (chartHeight - padding.top - padding.bottom);
+            const baselineY = scaleY(fitness);
             const line = document.getElementById("chart-baseline-line");
             if (line) {
                 line.setAttribute("y1", baselineY);
@@ -1138,6 +1244,13 @@
                 const healthBar = document.getElementById(`health-bar-${isl.island}`);
                 const healthVal = document.getElementById(`health-val-${isl.island}`);
                 const healthStatus = document.getElementById(`health-status-${isl.island}`);
+
+                if (nodeCircle) {
+                    nodeCircle.classList.remove("evaluating", "breeding");
+                }
+                if (healthVal) {
+                    healthVal.style.color = "";
+                }
 
                 // Update text scores
                 const fitnessVal = isl.best_fitness || 0;
@@ -1207,13 +1320,25 @@
         function updateChartLine() {
             if (historyData.length < 2) return;
 
+            // Recompute dynamic Y bounds and redraw axes
+            computeYBounds();
+            drawAxes();
+
+            // Update baseline line y value dynamically as Y bounds shift
+            const scaleY = (val) => padding.top + (1 - (val - yMin) / (yMax - yMin)) * (chartHeight - padding.top - padding.bottom);
+            const baselineY = scaleY(baselineFitness);
+            const baselineLine = document.getElementById("chart-baseline-line");
+            if (baselineLine) {
+                baselineLine.setAttribute("y1", baselineY);
+                baselineLine.setAttribute("y2", baselineY);
+            }
+
             // Remove existing paths
             const oldPaths = chartSvg.querySelectorAll(".chart-line-path");
             oldPaths.forEach(p => p.remove());
 
             const totalGens = Math.max(config.generations, historyData.length);
             const xStep = (chartWidth - padding.left - padding.right) / (totalGens - 1);
-            const scaleY = (val) => padding.top + (1 - val) * (chartHeight - padding.top - padding.bottom);
 
             // Draw per-island lines
             for (let i = 0; i < activeIslands; i++) {
@@ -1306,6 +1431,16 @@
                     pulse.style.display = "none";
                 }, 2000);
             }
+
+            const key = `${data.from}-${data.to}`;
+            const count = data.n_injected || (data.migrant_genes ? data.migrant_genes.length : 1);
+            const type = data.migrant_genes ? "Gene-level (random migrant genes)" : "Recipe-level (full best individual copy)";
+
+            lastMigrationInfo[key] = {
+                generation: latestGenSnapshot ? latestGenSnapshot.generation : 0,
+                count: count,
+                type: type
+            };
         }
 
         // Show/hide tournament results overlay
@@ -1496,6 +1631,74 @@
 
         function hideTooltip() {
             tooltip.style.display = "none";
+        }
+
+        // Live R process status updates
+        function handleIslandStatusUpdate(data) {
+            const islandId = data.island;
+            const status = data.status; // "evaluating" or "breeding"
+
+            const nodeCircle = document.getElementById(`island-circle-${islandId}`);
+            if (nodeCircle) {
+                nodeCircle.classList.remove("evaluating", "breeding");
+                nodeCircle.classList.add(status);
+            }
+
+            const healthStatus = document.getElementById(`health-status-${islandId}`);
+            if (healthStatus) {
+                healthStatus.className = `health-status ${status}`;
+            }
+
+            const healthVal = document.getElementById(`health-val-${islandId}`);
+            if (healthVal) {
+                healthVal.textContent = status === "evaluating" ? "EVALUATING..." : "BREEDING...";
+                healthVal.style.color = status === "evaluating" ? "var(--secondary)" : "var(--primary)";
+            }
+        }
+
+        // Migration link details tooltip
+        function showMigrationTooltip(e, fromId, toId) {
+            const key = `${fromId}-${toId}`;
+            const info = lastMigrationInfo[key];
+
+            let lastMigHTML = `<div style="color: var(--text-muted); font-size: 0.75rem;">No migrations logged yet</div>`;
+            if (info) {
+                lastMigHTML = `
+                    <div class="tooltip-row">
+                        <span class="tooltip-lbl">Last Gen:</span>
+                        <span>Gen ${info.generation}</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span class="tooltip-lbl">Transfer Count:</span>
+                        <span>${info.count} individuals/genes</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span class="tooltip-lbl">Type:</span>
+                        <span>${info.type}</span>
+                    </div>
+                `;
+            }
+
+            const interval = config.migration_interval || 5;
+            const rate = config.migration_rate ? (config.migration_rate * 100).toFixed(0) + "%" : "10%";
+
+            tooltip.innerHTML = `
+                <div class="tooltip-title" style="color: var(--primary)">Migration Link (ISL ${fromId} → ISL ${toId})</div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Rate (pop size fraction):</span>
+                    <span>${rate}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Interval (generations):</span>
+                    <span>Every ${interval} gens</span>
+                </div>
+                <div style="border-top: 1px dashed rgba(0,255,102,0.2); margin: 0.5rem 0 0.25rem 0; padding-top: 0.5rem;">
+                    <div style="font-size: 0.72rem; font-weight: 700; color: var(--secondary); margin-bottom: 0.25rem; font-family: monospace;">[LAST TRANSFER EVENT]</div>
+                    ${lastMigHTML}
+                </div>
+            `;
+            tooltip.style.display = "block";
+            moveTooltip(e);
         }
 
         function pause() {

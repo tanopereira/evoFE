@@ -861,6 +861,9 @@ dynamic_population_decay_rate = 0.7,
         }
       }
 
+      if (record) {
+        viewer$send(list(type = "status", data = list(island = 1, status = "evaluating", generation = g)))
+      }
       # Evaluate fitness
       eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
         split_ids_val, shared_splits, evaluator,
@@ -1121,6 +1124,9 @@ dynamic_population_decay_rate = 0.7,
           }
         }
 
+        if (record) {
+          viewer$send(list(type = "status", data = list(island = j, status = "evaluating", generation = g)))
+        }
         # Evaluate fitness of this island's population
         eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
           split_ids_val,
