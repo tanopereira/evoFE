@@ -1330,9 +1330,9 @@
             overlay.classList.add("visible");
         }
 
-        function dismissOverlay() {
+        window.dismissOverlay = function() {
             document.getElementById("tournament-overlay").classList.remove("visible");
-        }
+        };
 
         function updateBestInfo(island, fitness, genes, recipe) {
             document.getElementById("best-island").textContent = island;
