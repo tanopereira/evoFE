@@ -73,3 +73,27 @@ test_that("start_evolution_viewer respects custom port parameter and global opti
   expect_equal(viewer_opt$url, "http://127.0.0.1:14568")
   expect_silent(viewer_opt$stop())
 })
+
+test_that("start_evolution_viewer handles port in use by falling back to another port with warning", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("jsonlite")
+
+  # 1. Bind to a port first to make it busy
+  busy_port <- 14569
+  viewer1 <- start_evolution_viewer(port = busy_port)
+  
+  # 2. Try to bind to the same port, expect it to fallback with warning
+  expect_warning(
+    {
+      viewer2 <- start_evolution_viewer(port = busy_port)
+    },
+    "was already in use. Falling back to port"
+  )
+  
+  # Check that the second viewer chose a different port and successfully started
+  expect_true(viewer2$url != viewer1$url)
+  
+  # Cleanup
+  expect_silent(viewer1$stop())
+  expect_silent(viewer2$stop())
+})

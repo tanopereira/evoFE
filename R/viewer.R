@@ -33,20 +33,45 @@ start_evolution_viewer <- function(port = NULL) {
     "<html><body><h1>Evolution Viewer Template Missing</h1></body></html>"
   }
 
-  server <- httpuv::startServer("127.0.0.1", port,
-    list(
-      call = function(req) {
+  original_port <- port
+  server <- NULL
+  attempts <- 0
+  max_attempts <- 5
+  last_error <- NULL
+
+  while (is.null(server) && attempts < max_attempts) {
+    attempts <- attempts + 1
+    if (attempts > 1 || is.null(port)) {
+      port <- httpuv::randomPort()
+    }
+    server <- tryCatch({
+      httpuv::startServer("127.0.0.1", port,
         list(
-          status = 200L,
-          headers = list("Content-Type" = "text/html"),
-          body = html_content
+          call = function(req) {
+            list(
+              status = 200L,
+              headers = list("Content-Type" = "text/html"),
+              body = html_content
+            )
+          },
+          onWSOpen = function(ws) {
+            ws_connection <<- ws
+          }
         )
-      },
-      onWSOpen = function(ws) {
-        ws_connection <<- ws
-      }
-    )
-  )
+      )
+    }, error = function(e) {
+      last_error <<- e
+      NULL
+    })
+  }
+
+  if (is.null(server)) {
+    stop("Failed to start evolution viewer server after 5 attempts: ", conditionMessage(last_error))
+  }
+
+  if (!is.null(original_port) && port != original_port) {
+    warning(sprintf("Port %d was already in use. Falling back to port %d.", original_port, port))
+  }
 
   url <- sprintf("http://127.0.0.1:%d", port)
 
