@@ -8,18 +8,18 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #0b0d13;
-            --card-bg: rgba(18, 22, 33, 0.85);
-            --card-border: rgba(255, 255, 255, 0.07);
-            --primary: #4ade80;
-            --primary-glow: rgba(74, 222, 128, 0.12);
-            --secondary: #22d3ee;
+            --bg-color: #090b10;
+            --card-bg: rgba(15, 19, 28, 0.9);
+            --card-border: rgba(255, 255, 255, 0.06);
+            --primary: #34d399;
+            --primary-glow: rgba(52, 211, 153, 0.1);
+            --secondary: #38bdf8;
             --text-main: #e2e8f0;
             --text-muted: #64748b;
-            --success: #4ade80;
+            --success: #34d399;
             --warning: #fbbf24;
             --danger: #f87171;
-            --gold: #fbbf24;
+            --gold: #f59e0b;
             --font-main: 'Space Grotesk', sans-serif;
             --font-header: 'Space Grotesk', sans-serif;
         }
@@ -36,9 +36,9 @@
             font-family: var(--font-main);
             overflow-x: hidden;
             background-image: 
-                linear-gradient(rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.15) 50%),
-                radial-gradient(circle at center, rgba(74, 222, 128, 0.02) 0%, rgba(0, 0, 0, 0) 80%);
-            background-size: 100% 4px, 100% 100%;
+                linear-gradient(rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.06) 50%),
+                radial-gradient(ellipse at 50% 0%, rgba(52, 211, 153, 0.03) 0%, transparent 60%);
+            background-size: 100% 3px, 100% 100%;
             min-height: 100vh;
         }
 
@@ -200,9 +200,14 @@
 
         .generation-counter {
             font-family: var(--font-header);
-            font-size: 1.1rem;
+            font-size: 0.85rem;
             font-weight: 600;
-            color: var(--text-main);
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.2rem 0.6rem;
+            border-radius: 0.35rem;
+            border: 1px solid var(--card-border);
+            letter-spacing: 0.02em;
         }
 
         main {
@@ -227,7 +232,8 @@
         }
 
         .card:hover {
-            border-color: rgba(255, 255, 255, 0.15);
+            border-color: rgba(52, 211, 153, 0.15);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(52, 211, 153, 0.05);
         }
 
         .card-title {
@@ -264,10 +270,10 @@
         }
 
         .node-circle {
-            fill: rgba(30, 41, 59, 0.7);
-            stroke-width: 2px;
+            fill: rgba(15, 23, 42, 0.85);
+            stroke-width: 1.5px;
             transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
+            filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
         }
 
         .node-circle.improving {
@@ -383,9 +389,10 @@
         .health-bar {
             height: 100%;
             width: 0%;
-            background: var(--primary);
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
             border-radius: 4px;
             transition: width 0.4s ease-out, background-color 0.4s;
+            box-shadow: 0 0 6px rgba(52, 211, 153, 0.3);
         }
 
         .health-val {
@@ -433,8 +440,13 @@
             background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--card-border);
             padding: 0.75rem;
-            border-radius: 0.5rem;
+            border-radius: 0.6rem;
             text-align: center;
+            transition: border-color 0.3s, background 0.3s;
+        }
+        .stat-box:hover {
+            border-color: rgba(52, 211, 153, 0.12);
+            background: rgba(255, 255, 255, 0.03);
         }
 
         .stat-lbl {
@@ -532,8 +544,9 @@
         }
 
         .dismiss-btn:hover {
-            background: #22c55e;
+            background: #10b981;
             transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 211, 153, 0.3);
         }
 
         @keyframes dash {
@@ -690,33 +703,24 @@
 
         /* Value Scramble Glitch styling */
         .glitching {
-            animation: textGlitch 0.25s infinite;
+            animation: textGlitch 0.2s infinite;
             color: var(--secondary) !important;
-            text-shadow: 0.05em 0 0 rgba(255,0,0,.75),
-                        -0.025em -0.05em 0 rgba(0,255,0,.75),
-                         0.025em 0.05em 0 rgba(0,0,255,.75);
+            text-shadow: 0.03em 0 0 rgba(56, 189, 248, 0.4),
+                        -0.02em -0.03em 0 rgba(52, 211, 153, 0.3),
+                         0.02em 0.03em 0 rgba(167, 139, 250, 0.3);
         }
         @keyframes textGlitch {
-            0% {
-                text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.025em -0.05em 0 rgba(0,255,0,.75), 0.025em 0.05em 0 rgba(0,0,255,.75);
+            0%, 14% {
+                text-shadow: 0.03em 0 0 rgba(56, 189, 248, 0.4), -0.02em -0.03em 0 rgba(52, 211, 153, 0.3), 0.02em 0.03em 0 rgba(167, 139, 250, 0.3);
             }
-            14% {
-                text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.025em -0.05em 0 rgba(0,255,0,.75), 0.025em 0.05em 0 rgba(0,0,255,.75);
+            15%, 49% {
+                text-shadow: -0.03em -0.02em 0 rgba(56, 189, 248, 0.4), 0.02em 0.02em 0 rgba(52, 211, 153, 0.3), -0.03em -0.03em 0 rgba(167, 139, 250, 0.3);
             }
-            15% {
-                text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75);
-            }
-            49% {
-                text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75);
-            }
-            50% {
-                text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75);
-            }
-            99% {
-                text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75);
+            50%, 99% {
+                text-shadow: 0.02em 0.03em 0 rgba(56, 189, 248, 0.4), 0.03em 0 0 rgba(52, 211, 153, 0.3), 0 -0.03em 0 rgba(167, 139, 250, 0.3);
             }
             100% {
-                text-shadow: -0.025em 0 0 rgba(255,0,0,.75), -0.025em -0.025em 0 rgba(0,255,0,.75), -0.025em -0.05em 0 rgba(0,0,255,.75);
+                text-shadow: -0.02em 0 0 rgba(56, 189, 248, 0.4), -0.02em -0.02em 0 rgba(52, 211, 153, 0.3), -0.02em -0.03em 0 rgba(167, 139, 250, 0.3);
             }
         }
 
@@ -745,16 +749,16 @@
 
         /* Monospace terminal feed styles */
         .terminal-container {
-            background: #050608;
-            border: 1px solid rgba(0, 255, 102, 0.12);
+            background: #060810;
+            border: 1px solid rgba(52, 211, 153, 0.08);
             border-radius: 0.5rem;
             padding: 0.75rem 1rem;
             max-height: 220px;
             overflow-y: auto;
             font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-            color: #33ff33; /* hacker green */
-            text-shadow: 0 0 2px rgba(51, 255, 51, 0.3);
-            box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9);
+            color: #6ee7b7;
+            text-shadow: 0 0 1px rgba(110, 231, 183, 0.2);
+            box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.8);
         }
         .terminal-feed {
             display: flex;
@@ -890,12 +894,12 @@
             border-radius: 3px;
         }
         ::-webkit-scrollbar-thumb {
-            background: rgba(0, 255, 102, 0.3);
+            background: rgba(52, 211, 153, 0.2);
             border-radius: 3px;
             transition: background 0.2s;
         }
         ::-webkit-scrollbar-thumb:hover {
-            background: rgba(0, 255, 102, 0.6);
+            background: rgba(52, 211, 153, 0.45);
         }
     </style>
 </head>
