@@ -78,9 +78,9 @@ test_that("start_evolution_viewer handles port in use by falling back to another
   skip_if_not_installed("httpuv")
   skip_if_not_installed("jsonlite")
 
-  # 1. Bind to a port first to make it busy
+  # 1. Bind to a port first using raw httpuv (so it's not in .viewer_env)
   busy_port <- 14569
-  viewer1 <- start_evolution_viewer(port = busy_port)
+  server1 <- httpuv::startServer("127.0.0.1", busy_port, list(call = function(req) list(status = 200L)))
   
   # 2. Try to bind to the same port, expect it to fallback with warning
   expect_warning(
@@ -91,9 +91,31 @@ test_that("start_evolution_viewer handles port in use by falling back to another
   )
   
   # Check that the second viewer chose a different port and successfully started
-  expect_true(viewer2$url != viewer1$url)
+  expect_true(viewer2$url != paste0("http://127.0.0.1:", busy_port))
   
   # Cleanup
-  expect_silent(viewer1$stop())
+  httpuv::stopServer(server1)
   expect_silent(viewer2$stop())
+})
+
+test_that("start_evolution_viewer automatically stops the previous active viewer session", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("jsonlite")
+
+  # 1. Start first viewer session
+  v1 <- start_evolution_viewer(port = 14570)
+  expect_true(exists("active_viewer", envir = .viewer_env))
+  expect_identical(.viewer_env$active_viewer$server, v1$server)
+
+  # 2. Start second viewer session on the same port
+  # It should succeed without warning because v1 is stopped automatically
+  v2 <- start_evolution_viewer(port = 14570)
+  
+  # Check that v2 is now the active one
+  expect_identical(.viewer_env$active_viewer$server, v2$server)
+  expect_equal(v2$url, "http://127.0.0.1:14570")
+
+  # Shutdown v2
+  expect_silent(v2$stop())
+  expect_false(exists("active_viewer", envir = .viewer_env))
 })

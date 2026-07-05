@@ -1,3 +1,6 @@
+# Package-level environment to store active viewer session
+.viewer_env <- new.env(parent = emptyenv())
+
 #' Start the Evolution Live Viewer Server
 #'
 #' Launches an httpuv web server and returns a controller list to interact with it.
@@ -11,6 +14,22 @@ start_evolution_viewer <- function(port = NULL) {
   }
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     stop("Package 'jsonlite' is required for the evolution viewer. Install it with: install.packages('jsonlite')")
+  }
+
+  # Stop any existing active viewer server in this session
+  if (exists("active_viewer", envir = .viewer_env)) {
+    tryCatch({
+      .viewer_env$active_viewer$stop()
+    }, error = function(e) {
+      # Ignore
+    })
+    if (exists("active_viewer", envir = .viewer_env)) {
+      tryCatch({
+        rm("active_viewer", envir = .viewer_env)
+      }, error = function(e) {
+        # Ignore
+      })
+    }
   }
 
   if (is.null(port)) {
@@ -75,7 +94,7 @@ start_evolution_viewer <- function(port = NULL) {
 
   url <- sprintf("http://127.0.0.1:%d", port)
 
-  list(
+  viewer <- list(
     url = url,
     server = server,
     get_connection = function() {
@@ -91,8 +110,18 @@ start_evolution_viewer <- function(port = NULL) {
     },
     stop = function() {
       httpuv::stopServer(server)
+      if (exists("active_viewer", envir = .viewer_env) && identical(.viewer_env$active_viewer$server, server)) {
+        tryCatch({
+          rm("active_viewer", envir = .viewer_env)
+        }, error = function(e) {
+          # Ignore
+        })
+      }
     }
   )
+
+  .viewer_env$active_viewer <- viewer
+  viewer
 }
 
 #' View the evolution history of an evo_recipe
