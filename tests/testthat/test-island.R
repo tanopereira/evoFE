@@ -210,3 +210,23 @@ test_that("evolve_features runs successfully with per_island_validation = TRUE",
   )
   expect_s3_class(recipe, "evo_recipe")
 })
+
+test_that("evolve_features handles migration when no new genes are generated without error", {
+  data(iris)
+  set.seed(42)
+  recipe <- evolve_features(
+    data = iris,
+    target_col = "Species",
+    task = "multiclass",
+    evaluator = "lightgbm",
+    generations = 5,
+    pop_size = 4,
+    cv_folds = 2,
+    islands = 2,
+    migration_interval = 1,
+    migration_rate = 1,
+    gene_migration_prob = 0.5,
+    verbose = FALSE
+  )
+  expect_s3_class(recipe, "evo_recipe")
+})

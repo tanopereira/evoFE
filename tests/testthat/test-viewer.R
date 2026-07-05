@@ -54,3 +54,22 @@ test_that("start_evolution_viewer starts and stops httpuv server correctly", {
   # Shutdown
   expect_silent(viewer$stop())
 })
+
+test_that("start_evolution_viewer respects custom port parameter and global option", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("jsonlite")
+
+  # 1. Custom port parameter
+  test_port <- 14567
+  viewer <- start_evolution_viewer(port = test_port)
+  expect_equal(viewer$url, paste0("http://127.0.0.1:", test_port))
+  expect_silent(viewer$stop())
+
+  # 2. Global option evoFE.viewer_port
+  options(evoFE.viewer_port = 14568)
+  on.exit(options(evoFE.viewer_port = NULL), add = TRUE)
+  
+  viewer_opt <- start_evolution_viewer()
+  expect_equal(viewer_opt$url, "http://127.0.0.1:14568")
+  expect_silent(viewer_opt$stop())
+})

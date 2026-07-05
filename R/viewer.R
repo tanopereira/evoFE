@@ -13,7 +13,12 @@ start_evolution_viewer <- function(port = NULL) {
     stop("Package 'jsonlite' is required for the evolution viewer. Install it with: install.packages('jsonlite')")
   }
 
-  if (is.null(port)) port <- httpuv::randomPort()
+  if (is.null(port)) {
+    port <- getOption("evoFE.viewer_port", NULL)
+  }
+  if (is.null(port)) {
+    port <- httpuv::randomPort()
+  }
 
   ws_connection <- NULL
   html_path <- system.file("viewer", "index.html", package = "evoFE")

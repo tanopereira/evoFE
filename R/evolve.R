@@ -280,6 +280,10 @@ tournament_select <- function(pop, k = 3) {
 #' @param migration_interval Integer. Number of generations between migrations (default 5).
 #' @param migration_rate Integer. Number of top individuals to migrate from each island to its neighbor (default 1).
 #' @param gene_migration_prob Numeric. Probability of injecting a migrated gene during mutation (default 0.2).
+#' @param row_split_islands Logical. If TRUE, splits data rows across islands (default FALSE).
+#' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
+#' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
+#' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @importFrom utils tail
@@ -330,9 +334,10 @@ dynamic_population_decay_rate = 0.7,
                             migration_interval = 5,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
-                            row_split_islands = FALSE,
-                            per_island_validation = FALSE,
-                            record = FALSE, ...) {
+                             row_split_islands = FALSE,
+                             per_island_validation = FALSE,
+                             record = FALSE,
+                             port = NULL, ...) {
 
 
 
@@ -747,7 +752,7 @@ dynamic_population_decay_rate = 0.7,
       final = NULL
     )
 
-    viewer <- start_evolution_viewer()
+    viewer <- start_evolution_viewer(port = port)
     utils::browseURL(viewer$url)
     # Poll for websocket connection (up to 10 seconds)
     max_wait <- 10.0
@@ -1327,6 +1332,7 @@ dynamic_population_decay_rate = 0.7,
           dest <- (j %% islands) + 1
           n_injected <- 0L
           effective_rate <- 0L
+          new_genes <- list()
 
           # 1. Recipe-level migration (guarded for dynamic population sizes)
           if (length(old_pop_list[[j]]) > 0) {
