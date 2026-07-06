@@ -209,3 +209,22 @@ test_that("toggle_raw_feature supports multi-column toggling via geometric distr
     expect_gte(length(ind2_mut$numeric_cols), 2)
   }
 })
+
+test_that("multivariate sampling uses with-replacement and deduplication, concentrating on active columns", {
+  set.seed(42)
+  cols <- paste0("col", 1:50)
+  ind <- create_individual(numeric_cols = c("col1", "col2"), all_numeric_cols = cols)
+  
+  imps <- rep(0.0, 50)
+  names(imps) <- cols
+  imps["col1"] <- 100.0
+  imps["col2"] <- 100.0
+  
+  ind_mut <- mutate(ind, force_add = TRUE, allowed_transformers = "pca", importances = imps, temperature = 0.01)
+  
+  expect_gt(length(ind_mut$genes), 0)
+  gene <- ind_mut$genes[[1]]
+  expect_equal(gene$transformer_name, "pca")
+  expect_equal(length(gene$input_cols), length(unique(gene$input_cols)))
+  expect_equal(sort(gene$input_cols), c("col1", "col2"))
+})

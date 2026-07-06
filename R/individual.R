@@ -825,7 +825,15 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       }
       num_cols <- if (max_cols == 2) 2 else sample(2:max_cols, 1)
       allow_rep <- if (!is.null(t_def$allow_replace)) t_def$allow_replace else FALSE
-      cols <- weighted_sample(available_cols, num_cols, replace = allow_rep)
+      if (!allow_rep) {
+        sampled_cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
+        cols <- unique(sampled_cols)
+        if (length(cols) < 2) {
+          cols <- weighted_sample(available_cols, min(2, length(available_cols)), replace = FALSE)
+        }
+      } else {
+        cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
+      }
     } else if (t_def$input_type == "mixed") {
       # Mixed takes 1 categorical and 1 numeric
       col_cat <- weighted_sample(avail_cat, 1)
