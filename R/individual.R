@@ -157,9 +157,26 @@ gene_to_state_formula <- function(gene) {
 #'   when the individual has no genes.
 #' @export
 individual_to_recipe_string <- function(ind) {
-  if (length(ind$genes) == 0) return("[Original features only]")
-  formulas <- sapply(ind$genes, gene_to_formula)
-  paste0("[", paste(formulas, collapse = ", "), "]")
+  n_active_raw <- length(ind$numeric_cols) + length(ind$categorical_cols) + length(ind$datetime_cols)
+  
+  all_num <- if (!is.null(ind$all_numeric_cols)) ind$all_numeric_cols else ind$numeric_cols
+  all_cat <- if (!is.null(ind$all_categorical_cols)) ind$all_categorical_cols else ind$categorical_cols
+  all_date <- if (!is.null(ind$all_datetime_cols)) ind$all_datetime_cols else ind$datetime_cols
+  n_all_raw <- length(all_num) + length(all_cat) + length(all_date)
+  
+  n_genes <- length(ind$genes)
+  
+  features_str <- if (n_genes == 0) {
+    "[Original features only]"
+  } else {
+    formulas <- sapply(ind$genes, gene_to_formula)
+    paste0("[", paste(formulas, collapse = ", "), "]")
+  }
+  
+  stats_str <- sprintf(" (active: %d/%d raw, %d gene%s)", 
+                       n_active_raw, n_all_raw, n_genes, if (n_genes == 1) "" else "s")
+  
+  paste0(features_str, stats_str)
 }
 
 topological_sort_genes <- function(genes, original_cols) {
