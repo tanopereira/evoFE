@@ -334,6 +334,7 @@ dynamic_population_decay_rate = 0.7,
                             migration_interval = 5,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
+                             raw_toggle_prob = 0.2,
                              row_split_islands = FALSE,
                              per_island_validation = FALSE,
                              record = FALSE,
@@ -770,7 +771,15 @@ dynamic_population_decay_rate = 0.7,
   island_baseline_inds <- list()
 
   # 1. Generation 0: Evaluate baseline individual first (original features only)
-  baseline_ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
+  baseline_ind <- create_individual(
+    genes = list(),
+    numeric_cols = numeric_cols,
+    categorical_cols = categorical_cols,
+    datetime_cols = datetime_cols,
+    all_numeric_cols = numeric_cols,
+    all_categorical_cols = categorical_cols,
+    all_datetime_cols = datetime_cols
+  )
   if (verbose) {
     message("\n--- Generation 0 (Baseline) ---")
     message(sprintf("  Individual 1: %s", individual_to_recipe_string(baseline_ind)))
@@ -799,7 +808,15 @@ dynamic_population_decay_rate = 0.7,
     island_fitness_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
     island_state_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
     for (j in 1:islands) {
-      local_baseline <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
+      local_baseline <- create_individual(
+        genes = list(),
+        numeric_cols = numeric_cols,
+        categorical_cols = categorical_cols,
+        datetime_cols = datetime_cols,
+        all_numeric_cols = numeric_cols,
+        all_categorical_cols = categorical_cols,
+        all_datetime_cols = datetime_cols
+      )
       local_baseline <- evaluate_fitness(
         local_baseline, data, target_col,
         task = task, cv_folds = cv_folds,
@@ -1047,7 +1064,7 @@ dynamic_population_decay_rate = 0.7,
         if (is_expansion) {
           # Expansion slots: High exploration (no crossover, extremely high temperature)
           p <- tournament_select(pop, k = 3)
-          child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+          child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
         } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
           # Crossover
           p1 <- tournament_select(pop, k = 3)
@@ -1068,18 +1085,18 @@ dynamic_population_decay_rate = 0.7,
           }
 
           if (stats::runif(1) < 0.2) {
-            child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+            child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
           }
         } else {
           # Mutate
           p <- tournament_select(pop, k = 3)
-          child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+          child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
         }
 
         # Validation Check: Duplicate in next_gen OR already known to be worse than best
         attempts <- 0
         while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
-          child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers)
+          child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
           attempts <- attempts + 1
         }
 
@@ -1517,7 +1534,8 @@ dynamic_population_decay_rate = 0.7,
                             temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs,
                             allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
-                            gene_migration_prob = gene_migration_prob)
+                            gene_migration_prob = gene_migration_prob,
+                            raw_toggle_prob = raw_toggle_prob)
           } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
             p1 <- tournament_select(pop, k = 3)
             p2 <- tournament_select(pop, k = 3)
@@ -1540,7 +1558,8 @@ dynamic_population_decay_rate = 0.7,
                               temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
                               allowed_transformers = get_island_transformers(j),
                               migrated_genes = migrated_genes_pool[[j]],
-                              gene_migration_prob = gene_migration_prob)
+                              gene_migration_prob = gene_migration_prob,
+                              raw_toggle_prob = raw_toggle_prob)
             }
           } else {
             p <- tournament_select(pop, k = 3)
@@ -1548,7 +1567,8 @@ dynamic_population_decay_rate = 0.7,
                             temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
                             allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
-                            gene_migration_prob = gene_migration_prob)
+                            gene_migration_prob = gene_migration_prob,
+                            raw_toggle_prob = raw_toggle_prob)
           }
 
           # Validation Check: Duplicate in next_gen OR already known to be worse than best
@@ -1558,7 +1578,8 @@ dynamic_population_decay_rate = 0.7,
                             temperature = if (is_expansion) 100.0 else temperature, task = task,
                             tested_gene_outputs = tested_gene_outputs, allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
-                            gene_migration_prob = gene_migration_prob)
+                            gene_migration_prob = gene_migration_prob,
+                            raw_toggle_prob = raw_toggle_prob)
             attempts <- attempts + 1
           }
 
@@ -1713,9 +1734,12 @@ dynamic_population_decay_rate = 0.7,
     # 3. Create the super-individual
     super_ind <- create_individual(
       genes = deduped_genes,
-      numeric_cols = numeric_cols,
-      categorical_cols = categorical_cols,
-      datetime_cols = datetime_cols
+      numeric_cols = best_ind$numeric_cols,
+      categorical_cols = best_ind$categorical_cols,
+      datetime_cols = best_ind$datetime_cols,
+      all_numeric_cols = best_ind$all_numeric_cols,
+      all_categorical_cols = best_ind$all_categorical_cols,
+      all_datetime_cols = best_ind$all_datetime_cols
     )
 
     # 4. Evaluate the super-individual's fitness
@@ -1786,9 +1810,12 @@ dynamic_population_decay_rate = 0.7,
       # Create the historical super-individual
       super_ind_hist <- create_individual(
         genes = deduped_historical_genes,
-        numeric_cols = numeric_cols,
-        categorical_cols = categorical_cols,
-        datetime_cols = datetime_cols
+        numeric_cols = best_ind$numeric_cols,
+        categorical_cols = best_ind$categorical_cols,
+        datetime_cols = best_ind$datetime_cols,
+        all_numeric_cols = best_ind$all_numeric_cols,
+        all_categorical_cols = best_ind$all_categorical_cols,
+        all_datetime_cols = best_ind$all_datetime_cols
       )
 
       # Evaluate the historical super-individual's fitness

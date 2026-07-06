@@ -16,7 +16,15 @@
 initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0), initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL) {
   pop <- list()
   for (i in 1:pop_size) {
-    ind <- create_individual(genes = list(), numeric_cols = numeric_cols, categorical_cols = categorical_cols, datetime_cols = datetime_cols)
+    ind <- create_individual(
+      genes = list(),
+      numeric_cols = numeric_cols,
+      categorical_cols = categorical_cols,
+      datetime_cols = datetime_cols,
+      all_numeric_cols = numeric_cols,
+      all_categorical_cols = categorical_cols,
+      all_datetime_cols = datetime_cols
+    )
     # Reserve the first individual as a baseline (original features only)
     if (i > 1) {
       attempts <- 0

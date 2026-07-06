@@ -209,8 +209,13 @@ topological_sort_genes <- function(genes, original_cols) {
 #' print(ind)
 #' }
 #' @export
-create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0), datetime_cols = character(0)) {
-  original_cols <- c(numeric_cols, categorical_cols, datetime_cols)
+create_individual <- function(genes = list(), numeric_cols = character(0), categorical_cols = character(0), datetime_cols = character(0),
+                              all_numeric_cols = NULL, all_categorical_cols = NULL, all_datetime_cols = NULL) {
+  if (is.null(all_numeric_cols)) all_numeric_cols <- numeric_cols
+  if (is.null(all_categorical_cols)) all_categorical_cols <- categorical_cols
+  if (is.null(all_datetime_cols)) all_datetime_cols <- datetime_cols
+  
+  original_cols <- c(all_numeric_cols, all_categorical_cols, all_datetime_cols)
   sorted_genes <- topological_sort_genes(genes, original_cols)
   structure(
     list(
@@ -218,10 +223,91 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
       numeric_cols = numeric_cols,
       categorical_cols = categorical_cols,
       datetime_cols = datetime_cols,
+      all_numeric_cols = all_numeric_cols,
+      all_categorical_cols = all_categorical_cols,
+      all_datetime_cols = all_datetime_cols,
       fitness = NA_real_
     ),
     class = "evo_individual"
   )
+}
+
+toggle_raw_feature <- function(ind, importances = numeric(0), temperature = 1.0, verbose = FALSE) {
+  all_num <- ind$all_numeric_cols
+  all_cat <- ind$all_categorical_cols
+  all_date <- ind$all_datetime_cols
+  
+  active_num <- ind$numeric_cols
+  active_cat <- ind$categorical_cols
+  active_date <- ind$datetime_cols
+  
+  inactive_num <- setdiff(all_num, active_num)
+  inactive_cat <- setdiff(all_cat, active_cat)
+  inactive_date <- setdiff(all_date, active_date)
+  
+  active_cols <- c(active_num, active_cat, active_date)
+  inactive_cols <- c(inactive_num, inactive_cat, inactive_date)
+  
+  total_active <- length(active_cols) + length(ind$genes)
+  
+  can_deactivate <- (total_active > 1) && (length(active_cols) > 0)
+  can_activate <- length(inactive_cols) > 0
+  
+  if (!can_deactivate && !can_activate) {
+    return(ind)
+  }
+  
+  op <- if (can_deactivate && can_activate) {
+    sample(c("deactivate", "activate"), 1)
+  } else if (can_deactivate) {
+    "deactivate"
+  } else {
+    "activate"
+  }
+  
+  if (op == "deactivate") {
+    weights <- sapply(active_cols, function(c) {
+      val <- if (c %in% names(importances)) importances[[c]] else 0.0
+      if (is.na(val) || !is.finite(val)) val <- 0.0
+      exp(-val / temperature)
+    })
+    
+    weights[is.na(weights) | !is.finite(weights)] <- 0
+    if (sum(weights) == 0) weights <- rep(1, length(weights))
+    
+    col_to_deactivate <- sample(active_cols, 1, prob = weights)
+    
+    if (col_to_deactivate %in% active_num) {
+      ind$numeric_cols <- setdiff(ind$numeric_cols, col_to_deactivate)
+    } else if (col_to_deactivate %in% active_cat) {
+      ind$categorical_cols <- setdiff(ind$categorical_cols, col_to_deactivate)
+    } else if (col_to_deactivate %in% active_date) {
+      ind$datetime_cols <- setdiff(ind$datetime_cols, col_to_deactivate)
+    }
+    
+    ind$fitness <- NA_real_
+    if (verbose) {
+      message(sprintf("    [Mutation] Toggled Off (Deactivated) raw feature: '%s'", col_to_deactivate))
+    }
+    
+  } else {
+    col_to_activate <- sample(inactive_cols, 1)
+    
+    if (col_to_activate %in% inactive_num) {
+      ind$numeric_cols <- c(ind$numeric_cols, col_to_activate)
+    } else if (col_to_activate %in% inactive_cat) {
+      ind$categorical_cols <- c(ind$categorical_cols, col_to_activate)
+    } else if (col_to_activate %in% inactive_date) {
+      ind$datetime_cols <- c(ind$datetime_cols, col_to_activate)
+    }
+    
+    ind$fitness <- NA_real_
+    if (verbose) {
+      message(sprintf("    [Mutation] Toggled On (Activated) raw feature: '%s'", col_to_activate))
+    }
+  }
+  
+  ind
 }
 
 #' Mutate an individual
@@ -252,8 +338,12 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #' mutated_ind <- mutate(ind)
 #' }
 #' @export
-mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL, migrated_genes = list(), gene_migration_prob = 0.2) {
-  if (length(ind$numeric_cols) == 0 && length(ind$categorical_cols) == 0 && length(ind$datetime_cols) == 0) return(ind)
+mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL, migrated_genes = list(), gene_migration_prob = 0.2, raw_toggle_prob = 0.2) {
+  if (length(ind$all_numeric_cols) == 0 && length(ind$all_categorical_cols) == 0 && length(ind$all_datetime_cols) == 0) return(ind)
+  
+  if (!force_add && stats::runif(1) < raw_toggle_prob) {
+    return(toggle_raw_feature(ind, importances = importances, temperature = temperature, verbose = verbose))
+  }
   
   # Categorize existing gene outputs by type, restricted to tested genes
   gene_num <- character(0)
@@ -354,9 +444,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     old_formula <- gene_to_formula(gene_to_mod)
     
     gene_num_ex <- setdiff(gene_num, gene_to_mod$output_col)
-    avail_num <- c(ind$numeric_cols, gene_num_ex)
-    avail_cat <- c(ind$categorical_cols, gene_cat)
-    avail_date <- c(ind$datetime_cols, gene_date)
+    avail_num <- c(ind$all_numeric_cols, gene_num_ex)
+    avail_cat <- c(ind$all_categorical_cols, gene_cat)
+    avail_date <- c(ind$all_datetime_cols, gene_date)
     avail_for_type <- if (t_def$input_type == "numeric") {
       avail_num
     } else if (t_def$input_type == "categorical") {
@@ -518,7 +608,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       selected_mig_gene <- sample(migrated_genes, 1)[[1]]
       
       existing_out_cols <- sapply(ind$genes, function(g) g$output_col)
-      valid_inputs <- c(ind$numeric_cols, ind$categorical_cols, ind$datetime_cols, existing_out_cols)
+      valid_inputs <- c(ind$all_numeric_cols, ind$all_categorical_cols, ind$all_datetime_cols, existing_out_cols)
       
       if (all(selected_mig_gene$input_cols %in% valid_inputs)) {
         existing_formulas <- vapply(ind$genes, gene_to_formula, character(1))
@@ -553,9 +643,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     t_name <- sample(allowed_t, 1)
     t_def <- evo_transformers[[t_name]]
     
-    avail_num <- c(ind$numeric_cols, gene_num)
-    avail_cat <- c(ind$categorical_cols, gene_cat)
-    avail_date <- c(ind$datetime_cols, gene_date)
+    avail_num <- c(ind$all_numeric_cols, gene_num)
+    avail_cat <- c(ind$all_categorical_cols, gene_cat)
+    avail_date <- c(ind$all_datetime_cols, gene_date)
     
     # Select available columns based on input_type
     available_cols <- if (t_def$input_type == "numeric") {
@@ -658,7 +748,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     }
   }
 }
-  ind$genes <- topological_sort_genes(ind$genes, c(ind$numeric_cols, ind$categorical_cols))
+  ind$genes <- topological_sort_genes(ind$genes, c(ind$all_numeric_cols, ind$all_categorical_cols, ind$all_datetime_cols))
   ind
 }
 
@@ -713,7 +803,46 @@ crossover <- function(ind1, ind2, verbose = FALSE) {
                     len1_before, len2_before, child_genes_str))
   }
   
-  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols, datetime_cols = ind1$datetime_cols)
+  crossover_mask <- function(active1, active2, all_cols) {
+    if (length(all_cols) == 0) return(character(0))
+    choose_from_1 <- stats::runif(length(all_cols)) < 0.5
+    active_child <- character(0)
+    for (i in seq_along(all_cols)) {
+      col <- all_cols[i]
+      is_active <- if (choose_from_1[i]) (col %in% active1) else (col %in% active2)
+      if (is_active) {
+        active_child <- c(active_child, col)
+      }
+    }
+    active_child
+  }
+  
+  child_num <- crossover_mask(ind1$numeric_cols, ind2$numeric_cols, ind1$all_numeric_cols)
+  child_cat <- crossover_mask(ind1$categorical_cols, ind2$categorical_cols, ind1$all_categorical_cols)
+  child_date <- crossover_mask(ind1$datetime_cols, ind2$datetime_cols, ind1$all_datetime_cols)
+  
+  if (length(child_num) + length(child_cat) + length(child_date) + length(child_genes) == 0) {
+    active_p1 <- c(ind1$numeric_cols, ind1$categorical_cols, ind1$datetime_cols)
+    active_p2 <- c(ind2$numeric_cols, ind2$categorical_cols, ind2$datetime_cols)
+    pool <- union(active_p1, active_p2)
+    if (length(pool) == 0) pool <- c(ind1$all_numeric_cols, ind1$all_categorical_cols, ind1$all_datetime_cols)
+    if (length(pool) > 0) {
+      force_active <- sample(pool, 1)
+      if (force_active %in% ind1$all_numeric_cols) child_num <- force_active
+      else if (force_active %in% ind1$all_categorical_cols) child_cat <- force_active
+      else if (force_active %in% ind1$all_datetime_cols) child_date <- force_active
+    }
+  }
+  
+  create_individual(
+    genes = child_genes,
+    numeric_cols = child_num,
+    categorical_cols = child_cat,
+    datetime_cols = child_date,
+    all_numeric_cols = ind1$all_numeric_cols,
+    all_categorical_cols = ind1$all_categorical_cols,
+    all_datetime_cols = ind1$all_datetime_cols
+  )
 }
 
 #' Union Crossover of two individuals
@@ -749,5 +878,17 @@ union_crossover <- function(ind1, ind2, verbose = FALSE) {
                     len1_before, len2_before, child_genes_str))
   }
   
-  create_individual(genes = child_genes, numeric_cols = ind1$numeric_cols, categorical_cols = ind1$categorical_cols, datetime_cols = ind1$datetime_cols)
+  child_num <- union(ind1$numeric_cols, ind2$numeric_cols)
+  child_cat <- union(ind1$categorical_cols, ind2$categorical_cols)
+  child_date <- union(ind1$datetime_cols, ind2$datetime_cols)
+  
+  create_individual(
+    genes = child_genes,
+    numeric_cols = child_num,
+    categorical_cols = child_cat,
+    datetime_cols = child_date,
+    all_numeric_cols = ind1$all_numeric_cols,
+    all_categorical_cols = ind1$all_categorical_cols,
+    all_datetime_cols = ind1$all_datetime_cols
+  )
 }
