@@ -1496,8 +1496,10 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     if (!exists(key, envir = state$preds_cache)) {
       assign(key, compute_dists(), envir = state$preds_cache)
     } else {
-      if (verbose) {
+      printed_key <- paste0(key, "_printed")
+      if (verbose && !exists(printed_key, envir = state$preds_cache)) {
         message("  [GenieCDist Apply] (Cache Hit): returning cached distances. 0.000 s")
+        assign(printed_key, TRUE, envir = state$preds_cache)
       }
     }
     get(key, envir = state$preds_cache)[[comp_idx]]
@@ -1554,8 +1556,10 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     if (!exists(key, envir = state$preds_cache)) {
       assign(key, compute_dists(), envir = state$preds_cache)
     } else {
-      if (verbose) {
+      printed_key <- paste0(key, "_printed")
+      if (verbose && !exists(printed_key, envir = state$preds_cache)) {
         message("  [LumbCDist Apply] (Cache Hit): returning cached distances. 0.000 s")
+        assign(printed_key, TRUE, envir = state$preds_cache)
       }
     }
     get(key, envir = state$preds_cache)[[comp_idx]]
