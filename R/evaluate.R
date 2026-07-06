@@ -184,6 +184,32 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
   }
   
   ind$genes <- new_genes
+  
+  # Safety check: if genes were pruned and total active columns fell below min_active,
+  # restore raw columns to meet the safety floor
+  all_num <- ind$all_numeric_cols
+  all_cat <- ind$all_categorical_cols
+  all_date <- ind$all_datetime_cols
+  total_avail <- length(all_num) + length(all_cat) + length(all_date)
+  if (total_avail > 0) {
+    total_active <- length(ind$numeric_cols) + length(ind$categorical_cols) + length(ind$datetime_cols) + length(ind$genes)
+    min_active <- if (total_avail >= 2) 2 else 1
+    if (total_active < min_active) {
+      all_cols <- c(all_num, all_cat, all_date)
+      active_cols <- c(ind$numeric_cols, ind$categorical_cols, ind$datetime_cols)
+      inactive_cols <- setdiff(all_cols, active_cols)
+      needed <- min_active - total_active
+      if (length(inactive_cols) > 0) {
+        to_activate <- sample(inactive_cols, min(length(inactive_cols), needed))
+        for (col in to_activate) {
+          if (col %in% all_num) ind$numeric_cols <- unique(c(ind$numeric_cols, col))
+          else if (col %in% all_cat) ind$categorical_cols <- unique(c(ind$categorical_cols, col))
+          else if (col %in% all_date) ind$datetime_cols <- unique(c(ind$datetime_cols, col))
+        }
+      }
+    }
+  }
+  
   list(train = dt_train, val = dt_val, ind = ind)
 }
 

@@ -228,3 +228,23 @@ test_that("multivariate sampling uses with-replacement and deduplication, concen
   expect_equal(length(gene$input_cols), length(unique(gene$input_cols)))
   expect_equal(sort(gene$input_cols), c("col1", "col2"))
 })
+
+test_that("apply_individual restores raw features to safety floor if all genes are pruned", {
+  set.seed(42)
+  cols <- c("a", "b", "c", "d")
+  bad_gene1 <- create_gene("pca", c("nonexistent1", "nonexistent2"))
+  bad_gene2 <- create_gene("pca", c("nonexistent3", "nonexistent4"))
+  
+  ind <- create_individual(
+    genes = list(bad_gene1, bad_gene2),
+    numeric_cols = character(0),
+    all_numeric_cols = cols
+  )
+  
+  df <- data.table(a = 1:5, b = 1:5, c = 1:5, d = 1:5)
+  
+  res <- apply_individual(ind, df, val_data = NULL, target_col = NULL, allow_prune = TRUE)
+  
+  expect_equal(length(res$ind$genes), 0)
+  expect_equal(length(res$ind$numeric_cols), 2)
+})
