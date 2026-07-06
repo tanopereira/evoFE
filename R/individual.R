@@ -336,75 +336,98 @@ toggle_raw_feature <- function(ind, importances = numeric(0), temperature = 1.0,
   all_cat <- ind$all_categorical_cols
   all_date <- ind$all_datetime_cols
   
-  active_num <- ind$numeric_cols
-  active_cat <- ind$categorical_cols
-  active_date <- ind$datetime_cols
-  
-  inactive_num <- setdiff(all_num, active_num)
-  inactive_cat <- setdiff(all_cat, active_cat)
-  inactive_date <- setdiff(all_date, active_date)
-  
-  active_cols <- c(active_num, active_cat, active_date)
-  inactive_cols <- c(inactive_num, inactive_cat, inactive_date)
-  
-  total_active <- length(active_cols) + length(ind$genes)
   total_avail <- length(all_num) + length(all_cat) + length(all_date)
-  min_active <- if (total_avail >= 2) 2 else 1
+  if (total_avail == 0) return(ind)
   
-  can_deactivate <- (total_active > min_active) && (length(active_cols) > 0)
-  can_activate <- length(inactive_cols) > 0
+  # Determine number of features to toggle using geometric distribution
+  p <- 1.0 / (1.0 + log(total_avail))
+  k <- 1 + stats::rgeom(1, p)
+  k <- min(k, total_avail)
   
-  if (!can_deactivate && !can_activate) {
-    return(ind)
+  toggled_active <- character(0)
+  toggled_inactive <- character(0)
+  
+  for (step in 1:k) {
+    active_num <- ind$numeric_cols
+    active_cat <- ind$categorical_cols
+    active_date <- ind$datetime_cols
+    
+    inactive_num <- setdiff(all_num, active_num)
+    inactive_cat <- setdiff(all_cat, active_cat)
+    inactive_date <- setdiff(all_date, active_date)
+    
+    # Exclude already toggled columns from candidate lists
+    already_toggled <- c(toggled_active, toggled_inactive)
+    active_cols <- setdiff(c(active_num, active_cat, active_date), already_toggled)
+    inactive_cols <- setdiff(c(inactive_num, inactive_cat, inactive_date), already_toggled)
+    
+    # Safety checks based on current actual active list
+    total_active <- length(active_num) + length(active_cat) + length(active_date) + length(ind$genes)
+    min_active <- if (total_avail >= 2) 2 else 1
+    
+    can_deactivate <- (total_active > min_active) && (length(active_cols) > 0)
+    can_activate <- length(inactive_cols) > 0
+    
+    if (!can_deactivate && !can_activate) {
+      break
+    }
+    
+    op <- if (can_deactivate && can_activate) {
+      sample(c("deactivate", "activate"), 1)
+    } else if (can_deactivate) {
+      "deactivate"
+    } else {
+      "activate"
+    }
+    
+    if (op == "deactivate") {
+      weights <- sapply(active_cols, function(c) {
+        val <- if (c %in% names(importances)) importances[[c]] else 0.0
+        if (is.na(val) || !is.finite(val)) val <- 0.0
+        exp(-val / temperature)
+      })
+      
+      weights[is.na(weights) | !is.finite(weights)] <- 0
+      if (sum(weights) == 0) weights <- rep(1, length(weights))
+      
+      col_to_deactivate <- sample(active_cols, 1, prob = weights)
+      
+      if (col_to_deactivate %in% active_num) {
+        ind$numeric_cols <- setdiff(ind$numeric_cols, col_to_deactivate)
+      } else if (col_to_deactivate %in% active_cat) {
+        ind$categorical_cols <- setdiff(ind$categorical_cols, col_to_deactivate)
+      } else if (col_to_deactivate %in% active_date) {
+        ind$datetime_cols <- setdiff(ind$datetime_cols, col_to_deactivate)
+      }
+      
+      toggled_inactive <- c(toggled_inactive, col_to_deactivate)
+      
+    } else {
+      col_to_activate <- sample(inactive_cols, 1)
+      
+      if (col_to_activate %in% inactive_num) {
+        ind$numeric_cols <- c(ind$numeric_cols, col_to_activate)
+      } else if (col_to_activate %in% inactive_cat) {
+        ind$categorical_cols <- c(ind$categorical_cols, col_to_activate)
+      } else if (col_to_activate %in% inactive_date) {
+        ind$datetime_cols <- c(ind$datetime_cols, col_to_activate)
+      }
+      
+      toggled_active <- c(toggled_active, col_to_activate)
+    }
   }
   
-  op <- if (can_deactivate && can_activate) {
-    sample(c("deactivate", "activate"), 1)
-  } else if (can_deactivate) {
-    "deactivate"
-  } else {
-    "activate"
-  }
-  
-  if (op == "deactivate") {
-    weights <- sapply(active_cols, function(c) {
-      val <- if (c %in% names(importances)) importances[[c]] else 0.0
-      if (is.na(val) || !is.finite(val)) val <- 0.0
-      exp(-val / temperature)
-    })
-    
-    weights[is.na(weights) | !is.finite(weights)] <- 0
-    if (sum(weights) == 0) weights <- rep(1, length(weights))
-    
-    col_to_deactivate <- sample(active_cols, 1, prob = weights)
-    
-    if (col_to_deactivate %in% active_num) {
-      ind$numeric_cols <- setdiff(ind$numeric_cols, col_to_deactivate)
-    } else if (col_to_deactivate %in% active_cat) {
-      ind$categorical_cols <- setdiff(ind$categorical_cols, col_to_deactivate)
-    } else if (col_to_deactivate %in% active_date) {
-      ind$datetime_cols <- setdiff(ind$datetime_cols, col_to_deactivate)
-    }
-    
+  if (length(toggled_active) > 0 || length(toggled_inactive) > 0) {
     ind$fitness <- NA_real_
     if (verbose) {
-      message(sprintf("    [Mutation] Toggled Off (Deactivated) raw feature: '%s'", col_to_deactivate))
-    }
-    
-  } else {
-    col_to_activate <- sample(inactive_cols, 1)
-    
-    if (col_to_activate %in% inactive_num) {
-      ind$numeric_cols <- c(ind$numeric_cols, col_to_activate)
-    } else if (col_to_activate %in% inactive_cat) {
-      ind$categorical_cols <- c(ind$categorical_cols, col_to_activate)
-    } else if (col_to_activate %in% inactive_date) {
-      ind$datetime_cols <- c(ind$datetime_cols, col_to_activate)
-    }
-    
-    ind$fitness <- NA_real_
-    if (verbose) {
-      message(sprintf("    [Mutation] Toggled On (Activated) raw feature: '%s'", col_to_activate))
+      msg <- "    [Mutation] Toggled raw features:"
+      if (length(toggled_active) > 0) {
+        msg <- paste0(msg, " Activated: ", paste(toggled_active, collapse = ", "))
+      }
+      if (length(toggled_inactive) > 0) {
+        msg <- paste0(msg, " Deactivated: ", paste(toggled_inactive, collapse = ", "))
+      }
+      message(msg)
     }
   }
   

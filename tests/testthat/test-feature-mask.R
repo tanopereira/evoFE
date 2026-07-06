@@ -33,10 +33,11 @@ test_that("toggle_raw_feature toggles features correctly and respects safety lim
   
   # Case 3: Activating when we have inactive features
   ind3 <- create_individual(numeric_cols = c("a", "b"), all_numeric_cols = c("a", "b", "c"))
-  # Since total_active is 2 (min_active = 2), we can't deactivate. We must activate "c"
+  # Since total_active is 2 (min_active = 2), we can't deactivate. We must activate "c" first.
+  # If k > 1, it might subsequently deactivate one of "a" or "b".
   ind_mut3 <- toggle_raw_feature(ind3, verbose = FALSE)
-  expect_equal(length(ind_mut3$numeric_cols), 3)
   expect_true("c" %in% ind_mut3$numeric_cols)
+  expect_gte(length(ind_mut3$numeric_cols), 2)
 })
 
 test_that("toggle_raw_feature respects temperature-scaled feature importance", {
@@ -185,4 +186,26 @@ test_that("mutate triggers recalculate_mask under high probability", {
   ind_mut <- mutate(ind, recalculate_mask_prob = 1.0, raw_toggle_prob = 0.0, importances = imps, temperature = 0.1)
   expect_equal(sort(ind_mut$numeric_cols), c("a", "b"))
   expect_true(is.na(ind_mut$fitness))
+})
+
+test_that("toggle_raw_feature supports multi-column toggling via geometric distribution", {
+  set.seed(42)
+  
+  cols <- paste0("col", 1:50)
+  ind <- create_individual(numeric_cols = cols)
+  
+  deactivated_counts <- numeric(0)
+  for (i in 1:20) {
+    ind_mut <- toggle_raw_feature(ind, verbose = FALSE)
+    deactivated_counts <- c(deactivated_counts, 50 - length(ind_mut$numeric_cols))
+  }
+  
+  expect_gt(max(deactivated_counts), 1)
+  
+  # Ensure safety floor of min_active (2) is respected
+  ind2 <- create_individual(numeric_cols = c("col1", "col2"), all_numeric_cols = cols)
+  for (i in 1:20) {
+    ind2_mut <- toggle_raw_feature(ind2, verbose = FALSE)
+    expect_gte(length(ind2_mut$numeric_cols), 2)
+  }
 })
