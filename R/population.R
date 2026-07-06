@@ -1,3 +1,22 @@
+sample_active_mask <- function(cols, importances, temperature, fallback_rate = 0.7) {
+  if (length(cols) == 0) return(character(0))
+  
+  has_imps <- length(importances) > 0 && any(importances > 0)
+  
+  if (has_imps) {
+    threshold <- 1.0 / length(cols)
+    probs <- sapply(cols, function(c) {
+      val <- if (c %in% names(importances)) importances[[c]] else 0.0
+      if (is.na(val) || !is.finite(val)) val <- 0.0
+      1.0 / (1.0 + exp(-(val - threshold) / temperature))
+    })
+    keep <- stats::runif(length(cols)) < probs
+  } else {
+    keep <- stats::runif(length(cols)) < fallback_rate
+  }
+  cols[keep]
+}
+
 #' Initialize a population
 #'
 #' @param pop_size Population size.
@@ -13,18 +32,56 @@
 #'   The first individual is a baseline with no genes; the remaining
 #'   individuals each carry \code{initial_genes} randomly generated genes.
 #' @export
-initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0), initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL) {
+initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0), initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL, mask_temp_factor = 0.5) {
   pop <- list()
   for (i in 1:pop_size) {
-    ind <- create_individual(
-      genes = list(),
-      numeric_cols = numeric_cols,
-      categorical_cols = categorical_cols,
-      datetime_cols = datetime_cols,
-      all_numeric_cols = numeric_cols,
-      all_categorical_cols = categorical_cols,
-      all_datetime_cols = datetime_cols
-    )
+    if (i == 1) {
+      ind <- create_individual(
+        genes = list(),
+        numeric_cols = numeric_cols,
+        categorical_cols = categorical_cols,
+        datetime_cols = datetime_cols,
+        all_numeric_cols = numeric_cols,
+        all_categorical_cols = categorical_cols,
+        all_datetime_cols = datetime_cols
+      )
+    } else {
+      n_cols <- length(numeric_cols) + length(categorical_cols) + length(datetime_cols)
+      threshold <- 1.0 / max(1.0, n_cols)
+      temperature <- mask_temp_factor * threshold
+      
+      init_num <- sample_active_mask(numeric_cols, importances, temperature)
+      init_cat <- sample_active_mask(categorical_cols, importances, temperature)
+      init_date <- sample_active_mask(datetime_cols, importances, temperature)
+      
+      total_active <- length(init_num) + length(init_cat) + length(init_date)
+      total_avail <- length(numeric_cols) + length(categorical_cols) + length(datetime_cols)
+      min_active <- if (total_avail >= 2) 2 else 1
+      
+      if (total_active < min_active) {
+        all_cols <- c(numeric_cols, categorical_cols, datetime_cols)
+        active_cols <- c(init_num, init_cat, init_date)
+        inactive_cols <- setdiff(all_cols, active_cols)
+        if (length(inactive_cols) > 0) {
+          to_activate <- sample(inactive_cols, min(length(inactive_cols), min_active - total_active))
+          for (col in to_activate) {
+            if (col %in% numeric_cols) init_num <- c(init_num, col)
+            else if (col %in% categorical_cols) init_cat <- c(init_cat, col)
+            else if (col %in% datetime_cols) init_date <- c(init_date, col)
+          }
+        }
+      }
+      
+      ind <- create_individual(
+        genes = list(),
+        numeric_cols = init_num,
+        categorical_cols = init_cat,
+        datetime_cols = init_date,
+        all_numeric_cols = numeric_cols,
+        all_categorical_cols = categorical_cols,
+        all_datetime_cols = datetime_cols
+      )
+    }
     # Reserve the first individual as a baseline (original features only)
     if (i > 1) {
       attempts <- 0

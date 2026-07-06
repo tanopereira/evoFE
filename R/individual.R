@@ -266,8 +266,10 @@ toggle_raw_feature <- function(ind, importances = numeric(0), temperature = 1.0,
   inactive_cols <- c(inactive_num, inactive_cat, inactive_date)
   
   total_active <- length(active_cols) + length(ind$genes)
+  total_avail <- length(all_num) + length(all_cat) + length(all_date)
+  min_active <- if (total_avail >= 2) 2 else 1
   
-  can_deactivate <- (total_active > 1) && (length(active_cols) > 0)
+  can_deactivate <- (total_active > min_active) && (length(active_cols) > 0)
   can_activate <- length(inactive_cols) > 0
   
   if (!can_deactivate && !can_activate) {
@@ -838,16 +840,27 @@ crossover <- function(ind1, ind2, verbose = FALSE) {
   child_cat <- crossover_mask(ind1$categorical_cols, ind2$categorical_cols, ind1$all_categorical_cols)
   child_date <- crossover_mask(ind1$datetime_cols, ind2$datetime_cols, ind1$all_datetime_cols)
   
-  if (length(child_num) + length(child_cat) + length(child_date) + length(child_genes) == 0) {
+  total_active <- length(child_num) + length(child_cat) + length(child_date) + length(child_genes)
+  total_avail <- length(ind1$all_numeric_cols) + length(ind1$all_categorical_cols) + length(ind1$all_datetime_cols)
+  min_active <- if (total_avail >= 2) 2 else 1
+  
+  if (total_active < min_active) {
     active_p1 <- c(ind1$numeric_cols, ind1$categorical_cols, ind1$datetime_cols)
     active_p2 <- c(ind2$numeric_cols, ind2$categorical_cols, ind2$datetime_cols)
     pool <- union(active_p1, active_p2)
-    if (length(pool) == 0) pool <- c(ind1$all_numeric_cols, ind1$all_categorical_cols, ind1$all_datetime_cols)
+    if (length(pool) < min_active) pool <- c(ind1$all_numeric_cols, ind1$all_categorical_cols, ind1$all_datetime_cols)
+    
+    needed <- min_active - total_active
     if (length(pool) > 0) {
-      force_active <- sample(pool, 1)
-      if (force_active %in% ind1$all_numeric_cols) child_num <- force_active
-      else if (force_active %in% ind1$all_categorical_cols) child_cat <- force_active
-      else if (force_active %in% ind1$all_datetime_cols) child_date <- force_active
+      inactive_pool <- setdiff(pool, c(child_num, child_cat, child_date))
+      if (length(inactive_pool) < needed) inactive_pool <- pool
+      
+      force_active <- sample(inactive_pool, min(length(inactive_pool), needed))
+      for (col in force_active) {
+        if (col %in% ind1$all_numeric_cols) child_num <- unique(c(child_num, col))
+        else if (col %in% ind1$all_categorical_cols) child_cat <- unique(c(child_cat, col))
+        else if (col %in% ind1$all_datetime_cols) child_date <- unique(c(child_date, col))
+      }
     }
   }
   

@@ -334,13 +334,12 @@ dynamic_population_decay_rate = 0.7,
                             migration_interval = 5,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
-                             raw_toggle_prob = 0.2,
-                             row_split_islands = FALSE,
-                             per_island_validation = FALSE,
-                             record = FALSE,
-                             port = NULL, ...) {
-
-
+                            raw_toggle_prob = 0.2,
+                            mask_temp_factor = 0.5,
+                            row_split_islands = FALSE,
+                            per_island_validation = FALSE,
+                            record = FALSE,
+                            port = NULL, ...) {
 
   # Validate island parameters early to support list allowed_transformers validation
   if (!is.numeric(islands) || islands < 1) {
@@ -864,7 +863,7 @@ dynamic_population_decay_rate = 0.7,
 
   if (islands == 1) {
     # 2. Initialize population for Generation 1 using baseline importances
-    pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers)
+    pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers, mask_temp_factor = mask_temp_factor)
     pop[[1]] <- baseline_ind
 
     global_best_fitness <- baseline_ind$fitness
@@ -1125,7 +1124,8 @@ dynamic_population_decay_rate = 0.7,
       pop_list[[j]] <- initialize_population(
         pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols,
         initial_genes = 2, task = task, importances = baseline_ind$importances,
-        allowed_transformers = get_island_transformers(j)
+        allowed_transformers = get_island_transformers(j),
+        mask_temp_factor = mask_temp_factor
       )
       pop_list[[j]][[1]] <- if (row_split_islands) island_baseline_inds[[j]] else baseline_ind
     }

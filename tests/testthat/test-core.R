@@ -463,6 +463,7 @@ test_that("set.seed before evolve_features produces reproducible results", {
       cv_folds = 2,
       early_stopping_generations = 1,
       evaluator = "xgboost",
+      threads = 1,
       verbose = FALSE
     )
   }
