@@ -12,7 +12,8 @@ initialize_population(
   initial_genes = 2,
   task = "classification",
   importances = NULL,
-  allowed_transformers = NULL
+  allowed_transformers = NULL,
+  mask_temp_factor = 0.5
 )
 }
 \arguments{

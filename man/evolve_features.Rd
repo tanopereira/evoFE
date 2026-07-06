@@ -32,9 +32,13 @@ evolve_features(
   migration_interval = 5,
   migration_rate = 1,
   gene_migration_prob = 0.2,
+  raw_toggle_prob = 0.15,
+  recalculate_mask_prob = 0.05,
+  mask_temp_factor = 0.5,
   row_split_islands = FALSE,
   per_island_validation = FALSE,
   record = FALSE,
+  port = NULL,
   ...
 )
 }
@@ -114,6 +118,14 @@ overfitting on small datasets.  Default \code{0} disables the penalty.}
 \item{migration_rate}{Integer. Number of top individuals to migrate from each island to its neighbor (default 1).}
 
 \item{gene_migration_prob}{Numeric. Probability of injecting a migrated gene during mutation (default 0.2).}
+
+\item{row_split_islands}{Logical. If TRUE, splits data rows across islands (default FALSE).}
+
+\item{per_island_validation}{Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).}
+
+\item{record}{Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).}
+
+\item{port}{Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').}
 
 \item{...}{Additional arguments passed to the underlying evaluator training
 functions.}

@@ -14,6 +14,12 @@
   * **Gene-Level Migration (Injection)**: Periodically injects highly successful individual features (genes) from the ring neighbor's best individual into the local mutation pool. Genes diffuse naturally through the ring over successive migrations, creating a gradient of innovation where each island builds hierarchically on its neighbor's features.
   * **Independent Local Stagnation**: Dynamic population sizing and adaptive exploration rates are computed independently per island, allowing stagnant islands to expand and explore while active ones stay compact. Population growth is capped at 5× `pop_size` to prevent runaway expansion.
   * **Verbose Reporting**: Clear logging has been integrated to distinguish exactly which island and individual is being evaluated, including gene pool injection events.
+* Added support for a **Hybrid Feature Mask Approach** for raw feature selection alongside evolved feature engineering:
+  * **Sigmoid Active Mask Initialization**: Guides active feature masks of new individuals using baseline model importances centered at average feature importance.
+  * **Smart Mask Mutation Operators**: Supports multi-column toggles scaled via a dynamic geometric distribution, single raw feature toggles with temperature-scaled importance probability, and complete mask recalculation.
+  * **With-Replacement Multivariate Sampling**: Employs with-replacement sampling and deduplication for multivariate transformers to concentrate inputs around active, important features.
+  * **Pruning Safety Floor Restoration**: Safeguards evaluations by automatically restoring raw features to meet the `min_active` floor if all genes are pruned during evaluation.
+  * **Cache Hit Logging Reduction**: Silenced redundant `(Cache Hit)` prints for centroid distance components to reduce console verbosity.
 
 # evoFE 0.2.0
 

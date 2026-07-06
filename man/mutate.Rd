@@ -14,7 +14,9 @@ mutate(
   tested_gene_outputs = NULL,
   allowed_transformers = NULL,
   migrated_genes = list(),
-  gene_migration_prob = 0.2
+  gene_migration_prob = 0.2,
+  raw_toggle_prob = 0.15,
+  recalculate_mask_prob = 0.05
 )
 }
 \arguments{

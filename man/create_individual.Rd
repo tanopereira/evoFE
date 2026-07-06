@@ -8,7 +8,10 @@ create_individual(
   genes = list(),
   numeric_cols = character(0),
   categorical_cols = character(0),
-  datetime_cols = character(0)
+  datetime_cols = character(0),
+  all_numeric_cols = NULL,
+  all_categorical_cols = NULL,
+  all_datetime_cols = NULL
 )
 }
 \arguments{
