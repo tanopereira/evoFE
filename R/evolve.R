@@ -334,7 +334,8 @@ dynamic_population_decay_rate = 0.7,
                             migration_interval = 5,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
-                            raw_toggle_prob = 0.2,
+                            raw_toggle_prob = 0.15,
+                            recalculate_mask_prob = 0.05,
                             mask_temp_factor = 0.5,
                             row_split_islands = FALSE,
                             per_island_validation = FALSE,
@@ -1063,7 +1064,7 @@ dynamic_population_decay_rate = 0.7,
         if (is_expansion) {
           # Expansion slots: High exploration (no crossover, extremely high temperature)
           p <- tournament_select(pop, k = 3)
-          child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
+          child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
         } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
           # Crossover
           p1 <- tournament_select(pop, k = 3)
@@ -1084,18 +1085,18 @@ dynamic_population_decay_rate = 0.7,
           }
 
           if (stats::runif(1) < 0.2) {
-            child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
+            child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
           }
         } else {
           # Mutate
           p <- tournament_select(pop, k = 3)
-          child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
+          child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
         }
 
         # Validation Check: Duplicate in next_gen OR already known to be worse than best
         attempts <- 0
         while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
-          child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob)
+          child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
           attempts <- attempts + 1
         }
 
@@ -1535,7 +1536,8 @@ dynamic_population_decay_rate = 0.7,
                             allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
                             gene_migration_prob = gene_migration_prob,
-                            raw_toggle_prob = raw_toggle_prob)
+                            raw_toggle_prob = raw_toggle_prob,
+                            recalculate_mask_prob = recalculate_mask_prob)
           } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
             p1 <- tournament_select(pop, k = 3)
             p2 <- tournament_select(pop, k = 3)
@@ -1559,7 +1561,8 @@ dynamic_population_decay_rate = 0.7,
                               allowed_transformers = get_island_transformers(j),
                               migrated_genes = migrated_genes_pool[[j]],
                               gene_migration_prob = gene_migration_prob,
-                              raw_toggle_prob = raw_toggle_prob)
+                              raw_toggle_prob = raw_toggle_prob,
+                              recalculate_mask_prob = recalculate_mask_prob)
             }
           } else {
             p <- tournament_select(pop, k = 3)
@@ -1568,7 +1571,8 @@ dynamic_population_decay_rate = 0.7,
                             allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
                             gene_migration_prob = gene_migration_prob,
-                            raw_toggle_prob = raw_toggle_prob)
+                            raw_toggle_prob = raw_toggle_prob,
+                            recalculate_mask_prob = recalculate_mask_prob)
           }
 
           # Validation Check: Duplicate in next_gen OR already known to be worse than best
@@ -1579,7 +1583,8 @@ dynamic_population_decay_rate = 0.7,
                             tested_gene_outputs = tested_gene_outputs, allowed_transformers = get_island_transformers(j),
                             migrated_genes = migrated_genes_pool[[j]],
                             gene_migration_prob = gene_migration_prob,
-                            raw_toggle_prob = raw_toggle_prob)
+                            raw_toggle_prob = raw_toggle_prob,
+                            recalculate_mask_prob = recalculate_mask_prob)
             attempts <- attempts + 1
           }
 

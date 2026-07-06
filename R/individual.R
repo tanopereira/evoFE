@@ -249,6 +249,88 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
   )
 }
 
+sample_gene_inputs <- function(cols, n, importances = numeric(0), temperature = 1.0) {
+  if (length(cols) == 0) return(character(0))
+  if (length(cols) <= n) return(cols)
+  
+  has_imps <- length(importances) > 0 && any(importances > 0)
+  if (has_imps) {
+    weights <- sapply(cols, function(c) {
+      val <- if (c %in% names(importances)) importances[[c]] else 0.0
+      if (is.na(val) || !is.finite(val)) val <- 0.0
+      exp(val / temperature)
+    })
+    if (sum(weights) == 0 || any(is.na(weights))) {
+      weights <- NULL
+    }
+    sample(cols, size = n, replace = FALSE, prob = weights)
+  } else {
+    sample(cols, size = n, replace = FALSE)
+  }
+}
+
+recalculate_mask <- function(ind, importances = numeric(0), temperature = 1.0, verbose = FALSE) {
+  has_imps <- length(importances) > 0 && any(importances > 0)
+  if (!has_imps) return(ind)
+  
+  all_num <- ind$all_numeric_cols
+  all_cat <- ind$all_categorical_cols
+  all_date <- ind$all_datetime_cols
+  
+  total_avail <- length(all_num) + length(all_cat) + length(all_date)
+  if (total_avail == 0) return(ind)
+  threshold <- 1.0 / total_avail
+  
+  sample_sigmoid <- function(cols) {
+    if (length(cols) == 0) return(character(0))
+    probs <- sapply(cols, function(c) {
+      val <- if (c %in% names(importances)) importances[[c]] else 0.0
+      if (is.na(val) || !is.finite(val)) val <- 0.0
+      1.0 / (1.0 + exp(-(val - threshold) / temperature))
+    })
+    keep <- stats::runif(length(cols)) < probs
+    cols[keep]
+  }
+  
+  new_num <- sample_sigmoid(all_num)
+  new_cat <- sample_sigmoid(all_cat)
+  new_date <- sample_sigmoid(all_date)
+  
+  total_active <- length(new_num) + length(new_cat) + length(new_date) + length(ind$genes)
+  min_active <- if (total_avail >= 2) 2 else 1
+  
+  if (total_active < min_active) {
+    all_cols <- c(all_num, all_cat, all_date)
+    active_cols <- c(new_num, new_cat, new_date)
+    inactive_cols <- setdiff(all_cols, active_cols)
+    needed <- min_active - total_active
+    if (length(inactive_cols) > 0) {
+      to_activate <- sample(inactive_cols, min(length(inactive_cols), needed))
+      for (col in to_activate) {
+        if (col %in% all_num) new_num <- unique(c(new_num, col))
+        else if (col %in% all_cat) new_cat <- unique(c(new_cat, col))
+        else if (col %in% all_date) new_date <- unique(c(new_date, col))
+      }
+    }
+  }
+  
+  mask_changed <- !identical(sort(new_num), sort(ind$numeric_cols)) ||
+                  !identical(sort(new_cat), sort(ind$categorical_cols)) ||
+                  !identical(sort(new_date), sort(ind$datetime_cols))
+  
+  if (mask_changed) {
+    ind$numeric_cols <- new_num
+    ind$categorical_cols <- new_cat
+    ind$datetime_cols <- new_date
+    ind$fitness <- NA_real_
+    if (verbose) {
+      message("  Recalculated active mask based on feature importances.")
+    }
+  }
+  
+  ind
+}
+
 toggle_raw_feature <- function(ind, importances = numeric(0), temperature = 1.0, verbose = FALSE) {
   all_num <- ind$all_numeric_cols
   all_cat <- ind$all_categorical_cols
@@ -357,11 +439,16 @@ toggle_raw_feature <- function(ind, importances = numeric(0), temperature = 1.0,
 #' mutated_ind <- mutate(ind)
 #' }
 #' @export
-mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL, migrated_genes = list(), gene_migration_prob = 0.2, raw_toggle_prob = 0.2) {
+mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeric(0), temperature = 1.0, task = "classification", tested_gene_outputs = NULL, allowed_transformers = NULL, migrated_genes = list(), gene_migration_prob = 0.2, raw_toggle_prob = 0.15, recalculate_mask_prob = 0.05) {
   if (length(ind$all_numeric_cols) == 0 && length(ind$all_categorical_cols) == 0 && length(ind$all_datetime_cols) == 0) return(ind)
   
-  if (!force_add && stats::runif(1) < raw_toggle_prob) {
-    return(toggle_raw_feature(ind, importances = importances, temperature = temperature, verbose = verbose))
+  if (!force_add) {
+    r <- stats::runif(1)
+    if (r < recalculate_mask_prob) {
+      return(recalculate_mask(ind, importances = importances, temperature = temperature, verbose = verbose))
+    } else if (r < recalculate_mask_prob + raw_toggle_prob) {
+      return(toggle_raw_feature(ind, importances = importances, temperature = temperature, verbose = verbose))
+    }
   }
   
   # Categorize existing gene outputs by type, restricted to tested genes
@@ -402,9 +489,20 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     clean_importances <- importances[!is.na(importances) & is.finite(importances) & importances > 0]
     baseline <- if (length(clean_importances) > 0) min(clean_importances) else 0.01
     
+    active_raw_cols <- c(ind$numeric_cols, ind$categorical_cols, ind$datetime_cols)
+    all_raw_cols <- c(ind$all_numeric_cols, ind$all_categorical_cols, ind$all_datetime_cols)
+    
     weights <- sapply(cols, function(c) {
-      val <- if (c %in% names(importances)) importances[[c]] else baseline
-      if (is.na(val) || !is.finite(val)) val <- baseline
+      is_active <- TRUE
+      if (c %in% all_raw_cols) {
+        is_active <- c %in% active_raw_cols
+      }
+      val <- if (is_active) {
+        if (c %in% names(importances)) importances[[c]] else baseline
+      } else {
+        0.0
+      }
+      if (is.na(val) || !is.finite(val)) val <- if (is_active) baseline else 0.0
       exp(val / temperature)
     })
     

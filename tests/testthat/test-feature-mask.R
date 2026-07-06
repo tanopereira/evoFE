@@ -138,3 +138,51 @@ test_that("initialize_population creates baseline and importance-guided populati
   # x3 (zero importance): expected ~12% active (or slightly higher due to safety check fallback, but always < 35%)
   expect_lt(x3_active_count, 35)
 })
+
+test_that("sample_gene_inputs works correctly and respects temperature-scaled importances", {
+  set.seed(42)
+  cols <- c("x1", "x2", "x3")
+  imps <- c(x1 = 100.0, x2 = 0.0, x3 = 0.0)
+  
+  # When sampling 1 input under extreme temperature-scaled weights, x1 should be selected almost always
+  sampled <- character(0)
+  for (i in 1:100) {
+    res <- sample_gene_inputs(cols, n = 1, importances = imps, temperature = 1.0)
+    sampled <- c(sampled, res)
+  }
+  
+  expect_gt(sum(sampled == "x1"), 95)
+})
+
+test_that("recalculate_mask recalculates active mask and resets fitness if changed", {
+  set.seed(42)
+  ind <- create_individual(numeric_cols = c("a", "b", "c"))
+  ind$fitness <- 0.8
+  
+  # Case 1: Extreme importances (a = 1.0, b = 1.0, c = 0.0)
+  # threshold = 1/3 = 0.33
+  # temp = 0.1
+  # a and b should remain active, c should become inactive
+  imps <- c(a = 1.0, b = 1.0, c = 0.0)
+  ind_mut <- recalculate_mask(ind, importances = imps, temperature = 0.1, verbose = FALSE)
+  
+  expect_equal(sort(ind_mut$numeric_cols), c("a", "b"))
+  expect_true(is.na(ind_mut$fitness))
+  
+  # Case 2: Safety limit. Even if all importances are zero, recalculate_mask must keep min_active active (2 here)
+  ind$fitness <- 0.8
+  imps_zero <- c(a = 0.0, b = 0.0, c = 0.0)
+  ind_mut2 <- recalculate_mask(ind, importances = imps_zero, temperature = 0.1, verbose = FALSE)
+  expect_equal(ind_mut2$fitness, 0.8)
+})
+
+test_that("mutate triggers recalculate_mask under high probability", {
+  set.seed(42)
+  ind <- create_individual(numeric_cols = c("a", "b", "c"))
+  ind$fitness <- 0.8
+  imps <- c(a = 1.0, b = 1.0, c = 0.0)
+  
+  ind_mut <- mutate(ind, recalculate_mask_prob = 1.0, raw_toggle_prob = 0.0, importances = imps, temperature = 0.1)
+  expect_equal(sort(ind_mut$numeric_cols), c("a", "b"))
+  expect_true(is.na(ind_mut$fitness))
+})
