@@ -127,6 +127,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     \pkg{genieclust}).}
 #'   \item{\code{genie_centroid_dist}}{Distance to each Genie cluster centroid.}
 #'   \item{\code{umap_genie}}{Genie cluster label computed on low-dimensional UMAP embedding (requires \pkg{uwot} and \pkg{genieclust}).}
+#'   \item{\code{umap_lumbermark}}{Lumbermark cluster label computed on low-dimensional UMAP embedding (requires \pkg{uwot} and \pkg{lumbermark}).}
 #'   \item{\code{lumbermark}}{Lumbermark hierarchical cluster label (requires
 #'     \pkg{lumbermark}).}
 #'   \item{\code{lumbermark_centroid_dist}}{Distance to each Lumbermark cluster
@@ -1023,6 +1024,125 @@ evo_transformers$umap_genie <- create_transformer(
     preds
   },
   name_generator = function(gene) .gene_col_name(gene, "ug")
+)
+
+# UMAP-Lumbermark Combo
+evo_transformers$umap_lumbermark <- create_transformer(
+  name = "umap_lumbermark",
+  type = "multivariate",
+  input_type = "numeric",
+  output_type = "categorical",
+  fit_func = function(data, gene, target_col = NULL) {
+    if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
+    x <- as.matrix(data[, gene$input_cols, with = FALSE])
+    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    
+    k <- if (!is.null(gene$params$k)) gene$params$k else 2
+    n_neighbors <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
+    dens_scale <- if (!is.null(gene$params$dens_scale)) gene$params$dens_scale else 0
+    
+    verbose <- is_verbose()
+    x_s <- .cluster_prep_x(x, min_rows = max(15L, 2L * k), verbose = verbose, tag = "UMAP-Lumbermark Fit")
+    if (is.null(x_s)) return(list(x_train = NULL, labels = NULL, valid = FALSE))
+    
+    if (nrow(x_s) < n_neighbors) {
+      n_neighbors <- max(2, nrow(x_s) - 1)
+    }
+    
+    t0 <- Sys.time()
+    tryCatch({
+      if (!requireNamespace("uwot", quietly = TRUE)) stop("uwot package is not available")
+      if (!requireNamespace("lumbermark", quietly = TRUE)) stop("lumbermark package is not available")
+      
+      threads <- getOption("evoFE.threads", 1)
+      C <- max(2L, as.integer(round(log2(ncol(x_s)))))
+      
+      # 1. Fit UMAP
+      umap_model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
+                              dens_scale = dens_scale, ret_model = TRUE, 
+                              n_threads = threads, verbose = FALSE, init = "random")
+      x_s_umap <- umap_model$embedding
+      
+      # 2. Run Lumbermark clustering on UMAP embedding
+      labels <- lumbermark::lumbermark(x_s_umap, k = k, min_cluster_size = 2)
+      
+      if (verbose) {
+        message(sprintf("  [UMAP-Lumb Fit] umap + lumbermark on %d rows. %d components, %d clusters. %.3f s",
+                        nrow(x_s), C, k, as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      
+      preds_cache <- new.env(hash = TRUE, parent = emptyenv())
+      list(
+        umap_model = umap_model,
+        x_train = x_s,
+        x_train_umap = x_s_umap,
+        labels = as.integer(labels),
+        valid = TRUE,
+        preds_cache = preds_cache
+      )
+    }, error = function(e) {
+      if (verbose) {
+        message(sprintf("  [UMAP-Lumb Fit] Failed: %s", conditionMessage(e)))
+      }
+      list(umap_model = NULL, x_train = NULL, x_train_umap = NULL, labels = NULL, valid = FALSE)
+    })
+  },
+  apply_func = function(data, gene, state = NULL) {
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(1L, nrow(data)))
+    
+    input_cols <- gene$input_cols
+    x_test <- as.matrix(data[, input_cols, with = FALSE])
+    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    
+    verbose <- is_verbose()
+    
+    # Fast path check on original x_test
+    if (nrow(x_test) == nrow(state$x_train) && all(x_test == state$x_train)) {
+      if (verbose) {
+        message("  [UMAP-Lumb Apply] (Fast Path): using cached training predictions. 0.000 s")
+      }
+      return(state$labels)
+    }
+    
+    compute <- function() {
+      t0 <- Sys.time()
+      threads <- getOption("evoFE.threads", 1)
+      
+      # 1. Transform test data to UMAP space
+      x_test_umap <- uwot::umap_transform(x_test, model = state$umap_model, n_threads = threads, verbose = FALSE)
+      
+      # 2. KNN lookup in UMAP space
+      dummy_state <- list(
+        x_train = state$x_train_umap,
+        labels = state$labels,
+        valid = TRUE,
+        preds_cache = NULL
+      )
+      
+      labels_test <- .cluster_knn_apply(x_test_umap, dummy_state, function(idx, s) s$labels[idx],
+                                        verbose = FALSE, tag = "UMAP-Lumb Apply Internal")
+      
+      if (verbose) {
+        message(sprintf("  [UMAP-Lumb Apply] Transform + KNN: %d test rows. %.3f s",
+                        nrow(x_test), as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+      }
+      as.integer(labels_test)
+    }
+    
+    if (is.null(state$preds_cache)) {
+      return(compute())
+    }
+    
+    x_key <- digest::digest(x_test, algo = "xxhash64")
+    if (exists(x_key, envir = state$preds_cache)) {
+      return(get(x_key, envir = state$preds_cache))
+    }
+    
+    preds <- compute()
+    assign(x_key, preds, envir = state$preds_cache)
+    preds
+  },
+  name_generator = function(gene) .gene_col_name(gene, "ulm")
 )
 
 # Group-by Ratio

@@ -89,6 +89,7 @@ for the evolutionary feature-engineering search.  Every entry is an
     \pkg{genieclust}).}
   \item{\code{genie_centroid_dist}}{Distance to each Genie cluster centroid.}
   \item{\code{umap_genie}}{Genie cluster label computed on low-dimensional UMAP embedding (requires \pkg{uwot} and \pkg{genieclust}).}
+  \item{\code{umap_lumbermark}}{Lumbermark cluster label computed on low-dimensional UMAP embedding (requires \pkg{uwot} and \pkg{lumbermark}).}
   \item{\code{lumbermark}}{Lumbermark hierarchical cluster label (requires
     \pkg{lumbermark}).}
   \item{\code{lumbermark_centroid_dist}}{Distance to each Lumbermark cluster

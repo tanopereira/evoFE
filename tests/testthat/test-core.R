@@ -91,6 +91,16 @@ test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", 
   res_ug <- apply_gene(gene_ug, df, target_col = "target")
   expect_true(gene_ug$output_col %in% names(res_ug$train))
   expect_true(is.factor(res_ug$train[[gene_ug$output_col]]))
+
+  # Test UMAP-Lumbermark
+  gene_ulm <- create_gene("umap_lumbermark", c("x1", "x2"))
+  expect_true(gene_ulm$params$k >= 2 && gene_ulm$params$k <= 5)
+  expect_true(is.null(gene_ulm$params$gini_threshold))
+  expect_true(gene_ulm$params$n_neighbors >= 2)
+  expect_true(gene_ulm$params$dens_scale >= 0 && gene_ulm$params$dens_scale <= 1)
+  res_ulm <- apply_gene(gene_ulm, df, target_col = "target")
+  expect_true(gene_ulm$output_col %in% names(res_ulm$train))
+  expect_true(is.factor(res_ulm$train[[gene_ulm$output_col]]))
   
   # Test MST Score
   gene_mst <- create_gene("mst_score", c("x1", "x2"))
@@ -166,9 +176,13 @@ test_that("Genie, MST Score, Lumbermark, and Deadwood handle constant/all-zero d
   # UMAP-Genie on all zero data should generate a constant column and thus fail apply_gene
   gene_ug <- create_gene("umap_genie", c("x1", "x2"))
   expect_error(apply_gene(gene_ug, df_zero, target_col = "target"), "Constant column generated")
+
+  # UMAP-Lumbermark on all zero data should generate a constant column and thus fail apply_gene
+  gene_ulm <- create_gene("umap_lumbermark", c("x1", "x2"))
+  expect_error(apply_gene(gene_ulm, df_zero, target_col = "target"), "Constant column generated")
   
   # Also verify with an individual that they are skipped during evaluation
-  ind <- create_individual(genes = list(gene_genie, gene_mst, gene_lumb, gene_dead, gene_ug), numeric_cols = c("x1", "x2"))
+  ind <- create_individual(genes = list(gene_genie, gene_mst, gene_lumb, gene_dead, gene_ug, gene_ulm), numeric_cols = c("x1", "x2"))
   res <- apply_individual(ind, df_zero, target_col = "target")
   expect_equal(length(res$ind$genes), 0)
 })
@@ -685,6 +699,18 @@ test_that("umap, genie, and mst_score respect evoFE.verbose option", {
     evo_transformers$umap_genie$apply_func(df, gene_ug, state_ug)
   })
   expect_true(any(grepl("\\[UMAP-Genie Apply\\]", msg_ug_apply)))
+
+  # Test UMAP-Lumbermark messages
+  gene_ulm <- create_gene("umap_lumbermark", c("x1", "x2"))
+  msg_ulm_fit <- testthat::capture_messages({
+    state_ulm <- evo_transformers$umap_lumbermark$fit_func(df, gene_ulm, "target")
+  })
+  expect_true(any(grepl("\\[UMAP-Lumb Fit\\]", msg_ulm_fit)))
+  
+  msg_ulm_apply <- testthat::capture_messages({
+    evo_transformers$umap_lumbermark$apply_func(df, gene_ulm, state_ulm)
+  })
+  expect_true(any(grepl("\\[UMAP-Lumb Apply\\]", msg_ulm_apply)))
   
   # Now set options(evoFE.verbose = 0) and verify NO messages are output
   options(evoFE.verbose = 0)
@@ -693,6 +719,8 @@ test_that("umap, genie, and mst_score respect evoFE.verbose option", {
     evo_transformers$umap$apply_func(df, gene_umap, state_umap)
     state_ug <- evo_transformers$umap_genie$fit_func(df, gene_ug, "target")
     evo_transformers$umap_genie$apply_func(df, gene_ug, state_ug)
+    state_ulm <- evo_transformers$umap_lumbermark$fit_func(df, gene_ulm, "target")
+    evo_transformers$umap_lumbermark$apply_func(df, gene_ulm, state_ulm)
   })
   expect_equal(length(msg_silent), 0)
 })
