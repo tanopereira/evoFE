@@ -17,11 +17,21 @@ create_individual(
 \arguments{
 \item{genes}{List of genes}
 
-\item{numeric_cols}{Vector of numeric column names}
+\item{numeric_cols}{Vector of active numeric column names visible to this individual.}
 
-\item{categorical_cols}{Vector of categorical column names}
+\item{categorical_cols}{Vector of active categorical column names visible to this individual.}
 
-\item{datetime_cols}{Vector of datetime column names}
+\item{datetime_cols}{Vector of active datetime column names visible to this individual.}
+
+\item{all_numeric_cols}{Vector of all numeric column names in the dataset
+(superset of \code{numeric_cols}).  Used to initialize the full feature
+pool for mask toggling.  Defaults to \code{numeric_cols} when \code{NULL}.}
+
+\item{all_categorical_cols}{Vector of all categorical column names in the
+dataset.  Defaults to \code{categorical_cols} when \code{NULL}.}
+
+\item{all_datetime_cols}{Vector of all datetime column names in the dataset.
+Defaults to \code{datetime_cols} when \code{NULL}.}
 }
 \value{
 An \code{evo_individual} S3 object:

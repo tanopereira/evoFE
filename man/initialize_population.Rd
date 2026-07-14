@@ -33,6 +33,12 @@ initialize_population(
 
 \item{allowed_transformers}{A character vector of allowed transformer names,
 or NULL/"all" to allow all.}
+
+\item{mask_temp_factor}{Numeric > 0. Temperature scaling factor applied to
+feature importances during active mask initialization.  Higher values
+flatten the importance distribution (more uniform sampling); lower values
+concentrate sampling on the highest-importance features.  Default
+\code{0.5}.}
 }
 \value{
 A list of \code{evo_individual} objects of length \code{pop_size}.

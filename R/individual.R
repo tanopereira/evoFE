@@ -222,9 +222,16 @@ topological_sort_genes <- function(genes, original_cols) {
 #' Create an individual
 #'
 #' @param genes List of genes
-#' @param numeric_cols Vector of numeric column names
-#' @param categorical_cols Vector of categorical column names
-#' @param datetime_cols Vector of datetime column names
+#' @param numeric_cols Vector of active numeric column names visible to this individual.
+#' @param categorical_cols Vector of active categorical column names visible to this individual.
+#' @param datetime_cols Vector of active datetime column names visible to this individual.
+#' @param all_numeric_cols Vector of all numeric column names in the dataset
+#'   (superset of \code{numeric_cols}).  Used to initialize the full feature
+#'   pool for mask toggling.  Defaults to \code{numeric_cols} when \code{NULL}.
+#' @param all_categorical_cols Vector of all categorical column names in the
+#'   dataset.  Defaults to \code{categorical_cols} when \code{NULL}.
+#' @param all_datetime_cols Vector of all datetime column names in the dataset.
+#'   Defaults to \code{datetime_cols} when \code{NULL}.
 #' @return An \code{evo_individual} S3 object:
 #'   a list with elements \code{genes} (topologically sorted),
 #'   \code{numeric_cols}, \code{categorical_cols}, and \code{fitness}
@@ -463,6 +470,12 @@ toggle_raw_feature <- function(ind, importances = numeric(0), temperature = 1.0,
 #'   or NULL/"all" to allow all.
 #' @param migrated_genes A list of genes migrated from other islands.
 #' @param gene_migration_prob Probability of selecting a migrated gene during mutation.
+#' @param raw_toggle_prob Numeric in \code{[0, 1]}. Probability that a mutation
+#'   event toggles one or more raw input features in the individual's active
+#'   mask rather than adding/modifying/removing a gene.  Default \code{0.15}.
+#' @param recalculate_mask_prob Numeric in \code{[0, 1]}. Probability that a
+#'   mutation event completely recalculates the active raw feature mask from
+#'   scratch using feature importances.  Default \code{0.05}.
 #' @return An \code{evo_individual} with the mutation applied
 #'   (gene added, removed, or modified) and \code{fitness} reset
 #'   to \code{NA_real_}.

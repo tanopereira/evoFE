@@ -43,6 +43,14 @@ or NULL/"all" to allow all.}
 \item{migrated_genes}{A list of genes migrated from other islands.}
 
 \item{gene_migration_prob}{Probability of selecting a migrated gene during mutation.}
+
+\item{raw_toggle_prob}{Numeric in \code{[0, 1]}. Probability that a mutation
+event toggles one or more raw input features in the individual's active
+mask rather than adding/modifying/removing a gene.  Default \code{0.15}.}
+
+\item{recalculate_mask_prob}{Numeric in \code{[0, 1]}. Probability that a
+mutation event completely recalculates the active raw feature mask from
+scratch using feature importances.  Default \code{0.05}.}
 }
 \value{
 An \code{evo_individual} with the mutation applied

@@ -300,7 +300,7 @@ tournament_select <- function(pop, k = 3) {
 #'   Default \code{0.5}.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
-#' @importFrom utils tail
+#' @importFrom utils tail head
 #' @return An \code{evo_recipe} S3 object:
 #'   a list with elements
 #'   \code{best_individual} (the top-scoring \code{evo_individual}),

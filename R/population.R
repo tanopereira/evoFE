@@ -28,6 +28,11 @@ sample_active_mask <- function(cols, importances, temperature, fallback_rate = 0
 #' @param importances Optional numeric vector of feature importances.
 #' @param allowed_transformers A character vector of allowed transformer names,
 #'   or NULL/"all" to allow all.
+#' @param mask_temp_factor Numeric > 0. Temperature scaling factor applied to
+#'   feature importances during active mask initialization.  Higher values
+#'   flatten the importance distribution (more uniform sampling); lower values
+#'   concentrate sampling on the highest-importance features.  Default
+#'   \code{0.5}.
 #' @return A list of \code{evo_individual} objects of length \code{pop_size}.
 #'   The first individual is a baseline with no genes; the remaining
 #'   individuals each carry \code{initial_genes} randomly generated genes.
