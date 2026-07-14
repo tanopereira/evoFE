@@ -848,7 +848,21 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     }
     
     # Select random columns
-    if (t_def$type %in% c("unary", "supervised_unary") && t_def$input_type != "mixed") {
+    if (t_def$input_type == "mixed") {
+      if (t_name == "famd") {
+        num_cat <- min(sample(1:3, 1), length(avail_cat))
+        num_num <- min(sample(1:5, 1), length(avail_num))
+        cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
+      } else if (t_name == "between_group_pca") {
+        if (length(avail_num) < 2) return(ind)
+        num_num <- min(sample(2:5, 1), length(avail_num))
+        cols <- c(weighted_sample(avail_cat, 1), weighted_sample(avail_num, num_num))
+      } else {
+        col_cat <- weighted_sample(avail_cat, 1)
+        col_num <- weighted_sample(avail_num, 1)
+        cols <- c(col_cat, col_num)
+      }
+    } else if (t_def$type %in% c("unary", "supervised_unary")) {
       cols <- weighted_sample(available_cols, 1)
     } else if (t_def$type == "binary") {
       allow_rep <- if (t_name %in% c("subtract", "divide")) FALSE else TRUE
@@ -873,20 +887,6 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         }
       } else {
         cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
-      }
-    } else if (t_def$input_type == "mixed") {
-      if (t_name == "famd") {
-        num_cat <- min(sample(1:3, 1), length(avail_cat))
-        num_num <- min(sample(1:5, 1), length(avail_num))
-        cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
-      } else if (t_name == "between_group_pca") {
-        if (length(avail_num) < 2) return(ind)
-        num_num <- min(sample(2:5, 1), length(avail_num))
-        cols <- c(weighted_sample(avail_cat, 1), weighted_sample(avail_num, num_num))
-      } else {
-        col_cat <- weighted_sample(avail_cat, 1)
-        col_num <- weighted_sample(avail_num, 1)
-        cols <- c(col_cat, col_num)
       }
     } else {
       cols <- weighted_sample(available_cols, 1)
