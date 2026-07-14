@@ -30,12 +30,14 @@ applied to new data at prediction time.
 ### How it works
 
 1. **Initialisation** — A population of individuals is created. Each individual
-   is a "recipe" containing a set of feature transformations (genes).
+   is a "recipe" containing a set of feature transformations (genes) and an
+   **active feature mask** that controls which raw input columns are visible.
 2. **Evaluation** — Every individual is scored via cross-validated or
-   split model performance (LightGBM or XGBoost).
+   split model performance (LightGBM, XGBoost, or any custom evaluator).
 3. **Selection** — The top 50 % survive to breed.
 4. **Breeding** — Survivors are combined (crossover) and randomly altered
-   (mutation) to produce the next generation.
+   (mutation) to produce the next generation. Mutations may add/remove/modify
+   genes *or* toggle which raw features are active.
 5. **Repeat** — The cycle continues until the fitness plateaus or the
    generation budget is exhausted.
 
@@ -171,78 +173,97 @@ round(probs, 3)
 
 ## Transformer Reference
 
-evoFE ships with **39 built-in transformers** that the genetic algorithm can
+evoFE ships with **42 built-in transformers** that the genetic algorithm can
 select from during evolution. The table below groups them by category.
 
 ### Arithmetic (numeric → numeric)
 
 | Transformer | Arity | Description |
 |:---|:---:|:---|
-| `log` | unary | Natural logarithm (safe: `log(abs(x) + 1)`) |
-| `sqrt` | unary | Square root (safe: `sqrt(abs(x))`) |
-| `reciprocal` | unary | `1 / (x + ε)` |
-| `power` | unary | Signed exponentiation: `sign(x) * \|x\|^p`, `p` ∈ {0.5, 1/3, 2, 3} |
+| `log` | unary | Safe natural logarithm: `log1p(abs(x))` |
+| `sqrt` | unary | Safe square root: `sqrt(abs(x))` |
+| `reciprocal` | unary | `1/x` (0 where `x == 0`) |
+| `power` | unary | Signed exponentiation: `sign(x) * |x|^p`, `p` ∈ {0.5, 1/3, 2, 3} |
+| `displaced_log` | unary | `log1p(|x + d|)` where `d` is sampled from [10, 1000] |
 | `add` | multi | Element-wise sum of 2+ columns |
 | `subtract` | binary | `x₁ − x₂` |
 | `multiply` | multi | Element-wise product of 2+ columns |
-| `divide` | binary | `x₁ / (x₂ + ε)` |
-| `normalized_difference` | binary | `(x₁ − x₂) / (x₁ + x₂ + ε)` |
-| `log_ratio` | binary | `log((x₁ + ε) / (x₂ + ε))` |
+| `divide` | binary | `x₁ / x₂` (0 where denominator is 0) |
+| `normalized_difference` | binary | `(x₁ − x₂) / (|x₁| + |x₂| + 1e-6)` |
+| `log_ratio` | binary | `log1p(|x₁|) − log1p(|x₂|)` |
 
-### Rank / distribution (numeric → numeric)
+### Rank / Distribution (numeric → numeric)
 
 | Transformer | Description |
 |:---|:---|
-| `rank_transform` | ECDF-based percentile rank mapped to \[0, 1\]; fit on training data, robust to outliers |
+| `rank_transform` | ECDF-based percentile rank mapped to [0, 1]; fit on training data, robust to outliers |
 
-### Group-by aggregations (mixed → numeric)
+### Group-by Aggregations (mixed cat × num → numeric)
 
 These combine a **categorical** grouping column with a **numeric** value column.
+All are stateful (fit on training data).
 
 | Transformer | Description |
 |:---|:---|
-| `groupby_mean` | Mean of value within each group |
-| `groupby_sd` | Standard deviation within each group |
-| `groupby_max` / `groupby_min` | Max / min within each group |
-| `groupby_median` | Median within each group (robust to outliers) |
-| `groupby_quantile` | Q1 or Q3 within each group (`q` ∈ {0.25, 0.75}) |
+| `groupby_mean` | Per-group mean |
+| `groupby_sd` | Per-group standard deviation |
+| `groupby_max` | Per-group maximum |
+| `groupby_min` | Per-group minimum |
+| `groupby_median` | Per-group median (robust to outliers) |
+| `groupby_quantile` | Per-group Q1 or Q3 (`q` ∈ {0.25, 0.75}) |
 | `groupby_ratio` | `value / group_mean` |
 | `groupby_zscore` | `(value − group_mean) / group_sd` |
 
-### Encoding & binning
+### Supervised Categorical Encodings (categorical → numeric)
 
-| Transformer | Input → Output | Description |
-|:---|:---:|:---|
-| `target_encode` | cat → num | Supervised mean-target encoding with smoothing (for binary classification / regression) |
-| `target_encode_multiclass` | cat → num | Supervised mean-target encoding for multiclass classification tasks (one component per class-indicator) |
-| `woe_encode` | cat → num | Weight of Evidence: `ln(P(event\|cat) / P(non-event\|cat))` with Laplace smoothing; binary classification only |
-| `frequency_encode` | cat → num | Proportion of each category in the data |
-| `one_hot_encode` | cat → num | Binary one-hot encoding indicator for a specific category (or "other" for rare categories) |
-| `quantile_binning` | num → num | Assign quantile rank (1–5) |
-| `log_binning` | num → num | Assign log-scale bin index |
-| `quantile_binning_cat` | num → cat | Same as `quantile_binning`, output as factor |
-| `log_binning_cat` | num → cat | Same as `log_binning`, output as factor |
-| `datetime_extract` | cat → num | Extracted datetime components (year, month, day, hour, day of week, or weekend indicator) from date/time columns |
-
-### Dimensionality reduction (numeric → numeric)
+All are stateful (fit on training data only — no leakage).
 
 | Transformer | Description |
 |:---|:---|
-| `pca` | First principal component of 2+ columns |
-| `truncated_svd` | First component from truncated SVD |
-| `random_projection` | Random linear combination of 2+ columns |
-| `umap` | Low-dimensional UMAP projection |
+| `target_encode` | Smoothed mean-target encoding for binary classification / regression |
+| `pooled_target_encode` | Empirical Bayes pooled target encoding with dynamic shrinkage based on target variance |
+| `target_encode_multiclass` | Class-wise smoothed target encoding for multiclass tasks |
+| `woe_encode` | Weight of Evidence: `ln(P(event|cat) / P(non-event|cat))` with Laplace smoothing; binary classification only |
 
-### Manifold & Graph Learning (numeric → categorical/numeric)
+### Unsupervised Encoding & Binning
+
+| Transformer | Input → Output | Description |
+|:---|:---:|:---|
+| `frequency_encode` | cat → num | Count of each category level in training data |
+| `one_hot_encode` | cat → num | Binary indicator for up to 5 top categories plus an "other" bucket |
+| `concat` | cat × cat → cat | Concatenates 2 or 3 categorical columns with underscore separator |
+| `quantile_binning` | num → num | Quantile-based bin index (numeric output) |
+| `quantile_binning_cat` | num → cat | Quantile-based bin label (categorical output) |
+| `log_binning` | num → num | Log-scale bin index (numeric output) |
+| `log_binning_cat` | num → cat | Log-scale bin label (categorical output) |
+| `datetime_extract` | date → num | Extracted datetime component: year, month, day, hour, day-of-week, or weekend indicator |
+
+### Dimensionality Reduction (numeric → numeric)
+
+All are stateful (fit on training data).
+
+| Transformer | Description |
+|:---|:---|
+| `pca` | Selected principal component from `prcomp` |
+| `truncated_svd` | Selected component from truncated SVD |
+| `random_projection` | Random unit-vector linear combination |
+| `umap` | UMAP projection component (requires **uwot**) |
+
+### Manifold & Graph Learning (numeric → categorical or numeric)
+
+All are stateful. Clustering is fit on a (optionally downsampled) training set;
+new data is assigned to clusters via 1-NN lookup.
 
 | Transformer | Output | Description |
 |:---|:---:|:---|
-| `genie` | categorical | Genie robust hierarchical clustering |
-| `genie_centroid_dist` | numeric | Distance to Genie cluster centroid |
-| `lumbermark` | categorical | Lumbermark hierarchical clustering |
-| `lumbermark_centroid_dist` | numeric | Distance to Lumbermark cluster centroid |
-| `mst_score` | numeric | Minimum Spanning Tree-based anomaly score |
-| `deadwood` | categorical | Deadwood anomaly detection (outlier indicators) |
+| `genie` | categorical | Genie robust hierarchical cluster label (requires **genieclust**) |
+| `genie_centroid_dist` | numeric | Distance to each Genie cluster centroid |
+| `umap_genie` | categorical | Genie cluster labels on UMAP embedding (requires **uwot** + **genieclust**) |
+| `lumbermark` | categorical | Lumbermark MST-based hierarchical cluster label (requires **lumbermark**) |
+| `lumbermark_centroid_dist` | numeric | Distance to each Lumbermark cluster centroid |
+| `umap_lumbermark` | categorical | Lumbermark cluster labels on UMAP embedding (requires **uwot** + **lumbermark**) |
+| `mst_score` | numeric | MST-based anomaly score (requires **quitefastmst**) |
+| `deadwood` | categorical | Deadwood outlier indicator (requires **deadwood**) |
 
 ## Hierarchical Features (Gene Chaining)
 
@@ -262,16 +283,143 @@ evaluated in a **previous** generation. A brand-new untested gene is never used
 as input for another gene in the same individual. This prevents fragile
 dependency chains built on unproven transformations.
 
+## Hybrid Active Feature Mask
+
+Each individual in evoFE not only carries a set of transformation genes, but
+also an **active feature mask** — a subset of the original raw input columns
+that the individual sees. This allows the evolutionary search to simultaneously
+optimise *which features to include* and *how to transform them*.
+
+### How the mask works
+
+At initialisation, the mask is seeded using the **baseline model importances**.
+Features with higher importance (relative to the average) have a higher
+probability of being included via a sigmoid function:
+
+$$P(\text{include } x_i) = \sigma\!\left(\frac{\text{importance}(x_i) - \bar{\text{importance}}}{\tau}\right)$$
+
+where $\tau$ is the temperature controlled by `mask_temp_factor`.
+
+### Mask mutation operators
+
+Three mask-specific mutation operators are randomly triggered during each
+mutation event:
+
+| Operator | Trigger probability | Effect |
+|:---|:---:|:---|
+| **Recalculate mask** | `recalculate_mask_prob` (default 0.05) | Redraws the entire mask from scratch using current importances |
+| **Toggle raw feature(s)** | `raw_toggle_prob` (default 0.15) | Activates or deactivates one or more features; count drawn from a geometric distribution |
+| **Gene mutation** | `1 - recalculate_mask_prob - raw_toggle_prob` | Standard add/remove/modify gene operation |
+
+### Tuning advice
+
+```r
+# More aggressive feature selection (wider exploration)
+recipe <- evolve_features(
+  data = df, target_col = "y", task = "classification",
+  raw_toggle_prob = 0.25,       # toggle features more often
+  recalculate_mask_prob = 0.10, # recalculate mask more often
+  mask_temp_factor = 1.0        # flatter importance distribution
+)
+
+# Conservative — mostly stick to all features, rely on gene mutations
+recipe <- evolve_features(
+  data = df, target_col = "y", task = "classification",
+  raw_toggle_prob = 0.05,
+  recalculate_mask_prob = 0.02,
+  mask_temp_factor = 0.3  # sharper — concentrate on highest-importance features
+)
+```
+
+## Island Model
+
+The island model partitions the population into independent sub-populations
+(**islands**) that evolve in parallel. Periodic **migration** exchanges
+successful recipes and genes between islands, helping the overall search escape
+local optima while preserving diversity.
+
+### Recipe-level migration (Ring topology)
+
+Every `migration_interval` generations, the top `migration_rate` individuals
+from each island are copied into the neighbouring island's population (ring
+topology). This preserves co-adapted gene interactions.
+
+### Gene-level migration (Injection)
+
+In addition to whole-recipe migration, individual genes from each island's best
+individual are periodically injected into a neighbour island's mutation pool.
+When a mutation event fires on the receiving island, there is a
+`gene_migration_prob` chance that a migrated gene is injected instead of a
+random new gene.
+
+### Basic island example
+
+```r
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  generations = 10,
+  pop_size = 8,
+  islands = 4,                  # 4 independent sub-populations
+  migration_interval = 5,       # migrate every 5 generations
+  migration_rate = 2,           # top-2 individuals migrate
+  gene_migration_prob = 0.2,    # 20% chance to inject a migrated gene
+  verbose = TRUE
+)
+```
+
+### Row-split islands
+
+When `row_split_islands = TRUE`, each island receives a distinct subset of the
+training rows. This is useful for very large datasets where evaluating every
+individual on the full dataset is prohibitively slow.
+
+```r
+recipe <- evolve_features(
+  data = big_df,
+  target_col = "y",
+  task = "regression",
+  islands = 4,
+  row_split_islands = TRUE,     # each island sees ~25% of rows
+  evaluation_strategy = "split",
+  split_ratio = c(0.6, 0.2, 0.2)
+)
+```
+
+When combined with `per_island_validation = TRUE`, each island also uses its
+own local validation split during the evolutionary search. Only the final
+tournament (between islands) uses the global validation set. This prevents
+cross-island data leakage during evolution.
+
+### Heterogeneous transformer pools
+
+Each island can search over a different transformer vocabulary:
+
+```r
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  islands = 2,
+  allowed_transformers = list(
+    "basic",       # island 1: arithmetic + encodings only
+    "clustering"   # island 2: UMAP, Genie, MST, etc.
+  )
+)
+```
+
 ## Custom Transformer Registration
 
-`evoFE` makes it easy to register your own custom transformations, extending the genetic algorithm's vocabulary with domain-specific features. 
-
-Use `create_transformer()` to define your transformer, and register it with `register_transformer()` to make it available during evolution:
+evoFE makes it easy to register your own custom transformations. Use
+`create_transformer()` to define your transformer, and `register_transformer()`
+to make it available during evolution:
 
 ```r
 library(evoFE)
 
-# 1. Define a transformer that adds 5 to a numeric variable
+# 1. Define a transformer that adds a constant to a numeric variable
 add_five_trans <- create_transformer(
   name = "add_five",
   type = "unary",
@@ -285,9 +433,102 @@ add_five_trans <- create_transformer(
 # 2. Register it with the package registry
 register_transformer("add_five", add_five_trans)
 
-# Now, "add_five" is part of the active transformer pool and will
-# be automatically selected, mutated, and chained during evolution!
+# Now "add_five" is part of the transformer pool for all future evolution runs.
+# You can also restrict to only your custom transformer:
+recipe <- evolve_features(
+  data = df, target_col = "am", task = "classification",
+  allowed_transformers = c("log", "sqrt", "add_five")
+)
 ```
+
+### Stateful (fit-on-train) transformers
+
+If your transformer needs to fit parameters on the training set (e.g., a
+custom normalisation), provide a `fit_func`:
+
+```r
+z_score_trans <- create_transformer(
+  name = "z_score",
+  type = "unary",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    x <- data[[gene$input_cols[1]]]
+    list(mean = mean(x, na.rm = TRUE), sd = sd(x, na.rm = TRUE))
+  },
+  apply_func = function(data, gene, state = NULL) {
+    x <- data[[gene$input_cols[1]]]
+    if (is.null(state) || state$sd == 0) return(rep(0, length(x)))
+    (x - state$mean) / state$sd
+  },
+  name_generator = function(gene) paste0("zscore_", gene$input_cols[1])
+)
+register_transformer("z_score", z_score_trans)
+```
+
+## Custom Evaluator Registration
+
+evoFE is not limited to LightGBM and XGBoost. You can register any ML backend
+using `register_evaluator()`:
+
+```r
+# Register a simple linear model evaluator backed by glmnet
+register_evaluator(
+  "my_lm",
+  train_func = function(x_train, y_train, x_val = NULL,
+                        task = "regression", ...) {
+    model <- lm(y ~ ., data = as.data.frame(cbind(y = y_train, x_train)))
+    preds <- if (!is.null(x_val)) {
+      predict(model, newdata = as.data.frame(x_val))
+    } else {
+      NULL
+    }
+    list(model = model, predictions = preds,
+         importances = setNames(rep(1, ncol(x_train)), colnames(x_train)))
+  },
+  predict_func = function(model, x_new, task, ...) {
+    predict(model, newdata = as.data.frame(x_new))
+  }
+)
+
+# Use it in evolution
+recipe <- evolve_features(
+  data = df, target_col = "y", task = "regression",
+  evaluator = "my_lm"
+)
+```
+
+## Bayesian Hyperparameter Tuning
+
+`make_tunable()` wraps any registered evaluator in a `mlr3mbo` Bayesian
+Optimisation loop that automatically tunes hyperparameters during each
+fitness evaluation:
+
+```r
+# Define parameter search space for XGBoost
+param_ranges <- list(
+  eta         = list(type = "numeric", lower = 0.01, upper = 0.3),
+  max_depth   = list(type = "integer", lower = 3,    upper = 9),
+  subsample   = list(type = "numeric", lower = 0.5,  upper = 1.0)
+)
+
+# Register a tunable version of xgboost
+make_tunable("xgboost", param_ranges, tuner_name = "xgboost_tuned")
+
+# Use it exactly like a regular evaluator
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost_tuned",
+  generations = 5,
+  pop_size = 6,
+  mbo_iters = 5,          # Bayesian optimisation iterations per fitness eval
+  mbo_init_design = 8     # initial LHS design points
+)
+```
+
+evoFE ships two pre-configured tunable evaluators: `lightgbm_mbo` and
+`xgboost_mbo` (registered at package load).
 
 ## Understanding the Output
 
@@ -295,11 +536,13 @@ register_transformer("add_five", add_five_trans)
 
 | Field | Description |
 |:---|:---|
-| `best_individual` | The winning recipe (list of genes, column sets, fitness) |
+| `best_individual` | The winning recipe (list of genes, active column sets, fitness) |
 | `best_model` | The final LightGBM/XGBoost model trained on all data |
 | `history` | Full final-generation population (for inspection) |
+| `fitness_history` | Best fitness per generation (for `plot()`) |
 | `task` | The task type used |
 | `evaluator` | The evaluator used |
+| `metric` | The optimization metric used |
 | `classes` | Class labels (multiclass only) |
 
 ### Inspecting the recipe
@@ -313,7 +556,7 @@ cat(individual_to_recipe_string(ind), "\n")
 # Number of evolved genes
 cat("Evolved genes:", length(ind$genes), "\n")
 
-# Original columns retained
+# Original columns retained (active feature mask)
 cat("Numeric cols: ", paste(ind$numeric_cols, collapse = ", "), "\n")
 cat("Categorical cols:", paste(ind$categorical_cols, collapse = ", "), "\n")
 
@@ -330,32 +573,54 @@ for (g in ind$genes) {
 
 `evoFE` supports two evaluation strategies for scoring individuals:
 
-1. **Cross-Validation (`cv`)**: The default strategy. Evaluates the fitness of individuals using $K$-fold cross-validation (`cv_folds` parameter).
-2. **Train/Validation/Holdout Split (`split`)**: Useful for faster evaluation on larger datasets. You configure it with `evaluation_strategy = "split"` and `split_ratio` (e.g., `c(0.6, 0.2, 0.2)`).
-   - The first two portions of `split_ratio` are used as the **Train** and **Validation** sets to score the candidate recipes during the evolutionary search.
-   - The third portion (if provided) is the **Holdout** set. To prevent data leakage/snooping and optimize computation time, the holdout set is **only evaluated once** at the very end of evolution on the final selected best individual.
+1. **Cross-Validation (`cv`)**: The default strategy. Evaluates fitness using
+   K-fold cross-validation (`cv_folds` parameter).
+2. **Train/Validation/Holdout Split (`split`)**: Useful for faster evaluation
+   on larger datasets.  Configure with `evaluation_strategy = "split"` and
+   `split_ratio` (e.g., `c(0.6, 0.2, 0.2)`).
+   - The first two portions are the **Train** and **Validation** sets used to
+     score candidates during search.
+   - The third portion (if provided) is the **Holdout** set. It is evaluated
+     **only once** on the final best individual to avoid data snooping.
+
+You can also supply your own split assignments:
+
+```r
+split_ids <- sample(
+  c("train", "val", "holdout"),
+  nrow(df),
+  replace = TRUE,
+  prob = c(0.6, 0.2, 0.2)
+)
+
+recipe <- evolve_features(
+  data = df, target_col = "am", task = "classification",
+  split_ids = split_ids   # overrides evaluation_strategy → "split" automatically
+)
+```
 
 ## Alternative and Custom Metrics
 
-By default, `evoFE` optimizes for LogLoss on classification tasks and RMSE on regression tasks. However, you can optimize for other metrics by passing the `metric` parameter to `evolve_features()`:
+By default, evoFE optimises LogLoss (classification) and RMSE (regression).
+Pass the `metric` parameter to change this:
 
-- **Binary Classification:** `"default"` (LogLoss), `"auc"` (Area Under the ROC Curve), or `"f1"` (F1-score at a 0.5 probability threshold).
-- **Multiclass Classification:** `"default"` (Multiclass LogLoss) or `"auc"` (One-vs-Rest macro-averaged AUC).
-- **Regression:** `"default"` (RMSE) or `"mae"` (Mean Absolute Error).
-- **Custom Metrics:** You can pass any custom function of the form `function(y_true, y_pred)` that returns a numeric value. **Note:** Since the genetic algorithm always *maximizes* fitness, ensure your custom metric returns a value where higher is better (e.g., negate error metrics).
-
-For example:
+| Task | Supported metrics |
+|:---|:---|
+| `classification` | `"default"` (LogLoss), `"auc"`, `"f1"`, `"ts-refinement"` |
+| `multiclass` | `"default"` (Multiclass LogLoss), `"auc"`, `"ts-refinement"` |
+| `regression` | `"default"` (neg RMSE), `"mae"` |
+| Any | Custom function `function(y_true, y_pred)` returning numeric (higher = better) |
 
 ```r
-# Evolve features optimizing for Area Under the ROC Curve (AUC)
+# Optimize AUC
 recipe_auc <- evolve_features(
   data = df, target_col = "am", task = "classification",
   metric = "auc", generations = 5, pop_size = 8
 )
 
-# Evolve features using a custom regression metric (e.g. Mean Absolute Percentage Error, negated)
+# Custom metric (MAPE, negated because evoFE maximises)
 mape_metric <- function(y_true, y_pred) {
-  -mean(abs((y_true - y_pred) / y_true))
+  -mean(abs((y_true - y_pred) / (y_true + 1e-8)))
 }
 
 recipe_mape <- evolve_features(
@@ -364,76 +629,97 @@ recipe_mape <- evolve_features(
 )
 ```
 
-## Tuning Parameters
+### TS-Refinement metric
 
-### Key parameters for `evolve_features()`
+TS-Refinement is a calibration-aware classification metric that finds the
+temperature $T$ minimizing the log-loss of temperature-scaled prediction
+margins, then reports the unsmoothed log-loss at that temperature:
+
+$$\mathcal{L}_\text{TS} = \min_{T > 0} \, \text{LogLoss}\!\left(\sigma\!\left(\frac{z}{T}\right),\, y\right)$$
+
+It is more discriminating than raw log-loss when models differ mainly in
+calibration rather than ranking quality. Enable it with:
+
+```r
+recipe <- evolve_features(
+  data = df, target_col = "am", task = "classification",
+  metric = "ts-refinement"
+)
+```
+
+You can also call `compute_ts_refinement()` directly on your own predictions:
+
+```r
+score <- compute_ts_refinement(
+  y_true = c(0, 1, 1, 0),
+  y_pred = c(0.2, 0.8, 0.7, 0.3),
+  task   = "classification"
+)
+cat("TS-Refinement log-loss:", score, "\n")
+```
+
+## Parameter Reference
+
+### `evolve_features()` — full parameter table
 
 | Parameter | Default | Description |
 |:---|:---:|:---|
-| `generations` | 10 | Maximum number of evolutionary generations |
-| `pop_size` | 10 | Number of individuals per generation |
-| `evaluation_strategy` | `"cv"` | Evaluation method: `"cv"` (cross-validation) or `"split"` (train/val/holdout split) |
-| `cv_folds` | 3 | Cross-validation folds for fitness evaluation (only used if strategy is `"cv"`) |
-| `split_ratio` | `c(0.6, 0.2, 0.2)` | Proportions for Train/Val/Holdout split (only used if strategy is `"split"`) |
-| `split_ids` | `NULL` | Optional user-defined vector of split assignments (`"train"`, `"val"`, `"holdout"`) |
-| `early_stopping_generations` | 3 | Stop if no improvement for *n* generations |
-| `evaluator` | `"lightgbm"` | Model backend: `"lightgbm"` or `"xgboost"` |
+| `data` | — | Input data.frame or data.table |
+| `target_col` | — | Name of the target column |
+| `task` | `"classification"` | `"classification"`, `"multiclass"`, or `"regression"` |
+| `generations` | 10 | Maximum evolutionary generations |
+| `pop_size` | 10 | Individuals per generation |
+| `cv_folds` | 3 | CV folds (only with `evaluation_strategy = "cv"`) |
+| `evaluation_strategy` | `"cv"` | `"cv"` or `"split"` |
+| `split_ratio` | `c(0.6, 0.2, 0.2)` | Train/Val/Holdout proportions for `"split"` |
+| `split_ids` | `NULL` | User-supplied split assignments (`"train"`, `"val"`, `"holdout"`) |
+| `early_stopping_generations` | 3 | Stop after N generations without improvement |
+| `evaluator` | `"lightgbm"` | ML backend: `"lightgbm"`, `"xgboost"`, `"catboost"`, `"lm"`, `"keras3"`, or a registered custom name |
 | `dynamic_population` | `TRUE` | Expand population during stagnation |
-| `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` |
-| `threads` | 2 | Parallelism for model training |
-| `metric` | `"default"` | Optimization metric: `"default"`, `"auc"`, `"f1"`, `"mae"`, or a custom function |
-| `allowed_transformers` | `"all"` | Transformer pool: `"all"`, `"basic"`, `"robust"`, `"clustering"`, or a character vector of names |
-| `complexity_penalty` | `0` | Per-gene fitness penalty — subtracts `penalty × n_genes` from raw fitness to favour shorter recipes |
+| `dynamic_population_growth_rate` | 1.5 | Growth multiplier during stagnation |
+| `dynamic_population_decay_rate` | 0.7 | Decay multiplier when improvement resumes |
+| `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` (50/50 mix) |
+| `threads` | 2 | Threads for model training and clustering |
+| `max_clustering_size` | 5000 | Max unique rows passed to clustering transformers |
+| `verbose` | `TRUE` | Print progress to console |
+| `metric` | `"default"` | Optimisation metric |
+| `model_all_final_genes` | `FALSE` | Train final model on union of all genes in final population |
+| `model_all_historical_genes` | `FALSE` | Train final model on union of all genes across all generations |
+| `allowed_transformers` | `"all"` | Transformer pool: `"all"`, `"basic"`, `"robust"`, `"clustering"`, or a character vector |
+| `complexity_penalty` | 0 | Subtract `penalty × n_genes` from raw fitness to favour shorter recipes |
+| `islands` | 1 | Number of independent sub-populations |
+| `migration_interval` | 5 | Generations between island migrations |
+| `migration_rate` | 1 | Top-N individuals migrated from each island |
+| `gene_migration_prob` | 0.2 | Probability of injecting a migrated gene during mutation |
+| `row_split_islands` | `FALSE` | Split training rows across islands |
+| `per_island_validation` | `FALSE` | Use per-island local validation split (requires `row_split_islands = TRUE`) |
+| `raw_toggle_prob` | 0.15 | Probability of toggling raw feature(s) in the active mask during mutation |
+| `recalculate_mask_prob` | 0.05 | Probability of redrawing the entire active mask from importances |
+| `mask_temp_factor` | 0.5 | Temperature for importance-guided mask sampling (higher = more uniform) |
+| `record` | `FALSE` | Enable live evolution viewer |
+| `port` | `NULL` | Port for the live viewer server |
+| `...` | — | Extra arguments passed to the evaluator's `train_func` |
 
-### Practical advice
+### Transformer presets for `allowed_transformers`
 
-- **Start small**: `generations = 5, pop_size = 8` is enough to validate the
-  pipeline. Scale up once you confirm the setup works.
-- **Increase `pop_size`** for wider exploration. Useful when you have many
-  columns (> 20) and diverse transformer options.
-- **Increase `generations`** for deeper search. Works best when combined with
-  `dynamic_population = TRUE` so stagnation triggers population expansion.
-- **Use `set.seed()`** before calling `evolve_features()` for reproducible experiments and benchmarking.
-- **`crossover_type = "union"`** tends to produce larger recipes (more features).
-  `"random"` keeps recipes leaner.
-- **Use `complexity_penalty`** on small datasets (e.g. `0.001`) to discourage
-  long recipes and reduce overfitting.
-- **Use `allowed_transformers = "robust"`** when you want the search restricted
-  to statistically stable, outlier-resistant transformers without the heavier
-  clustering or manifold-learning ops.
+| Preset | # Transformers | When to use |
+|:---|:---:|:---|
+| `"all"` | 42 | Default — full search space |
+| `"basic"` | ~18 | Fast runs; arithmetic + key encodings only |
+| `"robust"` | ~24 | Outlier-resistant ops (rank, power, groupby median/quantile, WOE…) without heavy clustering |
+| `"clustering"` | ~10 | Manifold & graph features only (UMAP, Genie, Lumbermark, MST…) |
 
 ## Advanced Options
-
-### Transformer Presets
-
-The `allowed_transformers` parameter controls which transformers the genetic
-algorithm can select. Beside a custom character vector of transformer names,
-four named presets are available:
-
-| Preset | Transformers | When to use |
-|:---|:---:|:---|
-| `"all"` | 39 | Default — full search space |
-| `"basic"` | 18 | Fast runs; arithmetic + key encodings only |
-| `"robust"` | 24 | Outlier-resistant ops (rank, power, groupby median/quantile, WOE…) without heavy clustering |
-| `"clustering"` | 10 | Manifold & graph features only (UMAP, Genie, MST…) |
-
-```r
-# Restrict to the robust preset
-recipe <- evolve_features(
-  data = df, target_col = "y", task = "classification",
-  allowed_transformers = "robust"
-)
-```
 
 ### Complexity Penalty
 
 By default, a recipe with 10 genes that scores 0.821 beats a 1-gene recipe
 that scores 0.820 — even though the longer recipe is more likely to overfit.
-The `complexity_penalty` parameter adds a parsimony pressure:
+The `complexity_penalty` parameter adds parsimony pressure:
 
 $$\text{adjusted fitness} = \text{raw fitness} - \alpha \times n_{\text{genes}}$$
 
-A value of `0.001` is a good starting point for most datasets:
+A value of `0.001` is a good starting point:
 
 ```r
 recipe <- evolve_features(
@@ -442,17 +728,13 @@ recipe <- evolve_features(
 )
 ```
 
-Set to `0` (default) to disable. Has no effect on the baseline individual
-(0 genes) or individuals whose raw fitness is already `-Inf`.
-
 ### Redundancy Pruning
 
 During evolution, evoFE automatically rejects any new feature whose absolute
 Pearson correlation with an existing feature exceeds a threshold (default
-`0.95`). This prevents the search from wasting evaluations on near-duplicate
-columns.
+`0.95`). This prevents wasting evaluations on near-duplicate columns.
 
-The threshold is tunable via an option:
+The threshold is tunable:
 
 ```r
 # Tighten to 0.90 — reject anything correlated above 90%
@@ -462,19 +744,43 @@ options(evoFE.redundancy_cor_threshold = 0.90)
 options(evoFE.redundancy_cor_threshold = 1.0)
 ```
 
-### Convergence Plot
+### Gene Pooling for the Final Model
 
-`plot(recipe)` (or `plot(recipe, type = "fitness")`) produces a
-generation-by-generation fitness curve with:
-
-- A **shaded region** showing improvement over the generation-1 baseline
-- A **dashed reference line** at the generation-1 fitness
-- A **gold marker** on the best generation
-- A subtitle reporting total generations, best fitness, and total gain
+By default the final model is trained only on the **best individual's** genes.
+Two flags expand this:
 
 ```r
-plot(recipe, type = "fitness")
-plot(recipe, type = "importance")  # top feature importances
+# Model trains on the union of all unique genes in the final population
+recipe <- evolve_features(
+  ..., model_all_final_genes = TRUE
+)
+
+# Model trains on the union of all unique genes across all generations
+recipe <- evolve_features(
+  ..., model_all_historical_genes = TRUE
+)
+```
+
+This can help recover useful genes eliminated by stochastic noise.
+
+### Convergence Plot
+
+`plot(recipe)` produces a generation-by-generation fitness curve:
+
+```r
+plot(recipe, type = "fitness")    # fitness trajectory
+plot(recipe, type = "importance") # top feature importances of winning model
+```
+
+### Live Evolution Viewer
+
+Enable the real-time browser dashboard:
+
+```r
+recipe <- evolve_features(
+  data = df, target_col = "am", task = "classification",
+  record = TRUE  # opens a browser tab with live streaming updates
+)
 ```
 
 ## Reproducibility

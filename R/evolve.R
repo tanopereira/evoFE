@@ -284,6 +284,20 @@ tournament_select <- function(pop, k = 3) {
 #' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
 #' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
 #' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
+#' @param raw_toggle_prob Numeric in \code{[0, 1]}. Probability that a mutation
+#'   event toggles one or more raw input features in an individual's active mask
+#'   rather than adding/modifying/removing a gene.  A dynamic geometric
+#'   distribution determines how many features are toggled per event.  Default
+#'   \code{0.15}.
+#' @param recalculate_mask_prob Numeric in \code{[0, 1]}. Probability that a
+#'   mutation event completely recalculates the individual's active raw feature
+#'   mask from scratch using feature importances and a sigmoid inclusion
+#'   probability.  Default \code{0.05}.
+#' @param mask_temp_factor Numeric > 0. Temperature scaling factor applied to
+#'   feature importances during active mask initialization and recalculation.
+#'   Higher values flatten the importance distribution (more uniform sampling);
+#'   lower values concentrate sampling on the highest-importance features.
+#'   Default \code{0.5}.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @importFrom utils tail

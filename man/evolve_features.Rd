@@ -119,6 +119,23 @@ overfitting on small datasets.  Default \code{0} disables the penalty.}
 
 \item{gene_migration_prob}{Numeric. Probability of injecting a migrated gene during mutation (default 0.2).}
 
+\item{raw_toggle_prob}{Numeric in \code{[0, 1]}. Probability that a mutation
+event toggles one or more raw input features in an individual's active mask
+rather than adding/modifying/removing a gene.  A dynamic geometric
+distribution determines how many features are toggled per event.  Default
+\code{0.15}.}
+
+\item{recalculate_mask_prob}{Numeric in \code{[0, 1]}. Probability that a
+mutation event completely recalculates the individual's active raw feature
+mask from scratch using feature importances and a sigmoid inclusion
+probability.  Default \code{0.05}.}
+
+\item{mask_temp_factor}{Numeric > 0. Temperature scaling factor applied to
+feature importances during active mask initialization and recalculation.
+Higher values flatten the importance distribution (more uniform sampling);
+lower values concentrate sampling on the highest-importance features.
+Default \code{0.5}.}
+
 \item{row_split_islands}{Logical. If TRUE, splits data rows across islands (default FALSE).}
 
 \item{per_island_validation}{Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).}

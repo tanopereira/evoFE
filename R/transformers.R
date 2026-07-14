@@ -127,7 +127,10 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     \pkg{genieclust}).}
 #'   \item{\code{genie_centroid_dist}}{Distance to each Genie cluster centroid.}
 #'   \item{\code{umap_genie}}{Genie cluster label computed on low-dimensional UMAP embedding (requires \pkg{uwot} and \pkg{genieclust}).}
-#'   \item{\code{umap_lumbermark}}{Lumbermark cluster label computed on low-dimensional UMAP embedding (requires \pkg{uwot} and \pkg{lumbermark}).}
+#'   \item{\code{umap_lumbermark}}{Lumbermark cluster label computed on a
+#'     low-dimensional UMAP embedding.  Combines the non-linear structure
+#'     discovery of UMAP with the minimum-spanning-tree-based hierarchical
+#'     clustering of Lumbermark (requires \pkg{uwot} and \pkg{lumbermark}).}
 #'   \item{\code{lumbermark}}{Lumbermark hierarchical cluster label (requires
 #'     \pkg{lumbermark}).}
 #'   \item{\code{lumbermark_centroid_dist}}{Distance to each Lumbermark cluster
