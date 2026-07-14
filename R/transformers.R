@@ -1873,3 +1873,391 @@ evo_transformers$concat <- create_transformer(
   allow_replace = FALSE
 )
 
+# Feature Hashing
+evo_transformers$feature_hash <- create_transformer(
+  name = "feature_hash",
+  type = "unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    num_bins <- if (!is.null(gene$params$num_bins)) gene$params$num_bins else 8
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    
+    # Pre-allocate output
+    res <- rep(NA_real_, length(x))
+    
+    non_na_mask <- !is.na(x)
+    if (any(non_na_mask)) {
+      v_hash <- digest::getVDigest(algo = "xxhash32")
+      hex_vals <- v_hash(x[non_na_mask])
+      int_vals <- strtoi(substr(hex_vals, 1, 7), 16L)
+      bin_indices <- (int_vals %% num_bins) + 1
+      res[non_na_mask] <- as.numeric(bin_indices == comp_idx)
+    }
+    
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "fh")
+)
+
+# Multiple Correspondence Analysis (MCA)
+evo_transformers$mca <- create_transformer(
+  name = "mca",
+  type = "multivariate",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    D <- length(input_cols)
+    N <- nrow(data)
+    
+    training_levels <- list()
+    for (col in input_cols) {
+      training_levels[[col]] <- sort(unique(as.character(data[[col]])))
+    }
+    
+    cols_list <- list()
+    for (col in input_cols) {
+      x <- as.character(data[[col]])
+      levels <- training_levels[[col]]
+      mat <- matrix(0, nrow = N, ncol = length(levels))
+      colnames(mat) <- paste0(col, "_", levels)
+      valid_idx <- which(!is.na(x) & x %in% levels)
+      if (length(valid_idx) > 0) {
+        x_fact <- factor(x, levels = levels)
+        mat[cbind(valid_idx, as.integer(x_fact[valid_idx]))] <- 1
+      }
+      cols_list[[col]] <- mat
+    }
+    Z <- do.call(cbind, cols_list)
+    
+    C_col <- colSums(Z)
+    valid_cols <- C_col > 0
+    if (sum(valid_cols) == 0) {
+      return(list(valid = FALSE))
+    }
+    
+    Z <- Z[, valid_cols, drop = FALSE]
+    C_col <- C_col[valid_cols]
+    
+    training_levels_filtered <- list()
+    for (col in input_cols) {
+      levels <- training_levels[[col]]
+      sub_cols <- paste0(col, "_", levels)
+      keep_levels <- levels[sub_cols %in% colnames(Z)]
+      training_levels_filtered[[col]] <- keep_levels
+    }
+    
+    Z_centered <- sweep(Z, 2, C_col / N, "-")
+    A <- sweep(Z_centered, 2, sqrt(C_col), "/")
+    
+    tryCatch({
+      C <- max(2L, as.integer(round(log2(ncol(Z)))))
+      nv <- min(C, ncol(Z) - D)
+      if (nv < 2) nv <- 2
+      nv <- min(nv, ncol(Z))
+      
+      res <- svd(A, nu = 0, nv = nv)
+      list(
+        v = res$v,
+        training_levels = training_levels_filtered,
+        C_col = C_col,
+        N = N,
+        D = D,
+        valid = TRUE,
+        preds_cache = new.env(hash = TRUE, parent = emptyenv())
+      )
+    }, error = function(e) {
+      list(valid = FALSE)
+    })
+  },
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
+    
+    N_new <- nrow(data)
+    cols_list <- list()
+    for (col in input_cols) {
+      x <- as.character(data[[col]])
+      levels <- state$training_levels[[col]]
+      mat <- matrix(0, nrow = N_new, ncol = length(levels))
+      colnames(mat) <- paste0(col, "_", levels)
+      valid_idx <- which(!is.na(x) & x %in% levels)
+      if (length(valid_idx) > 0) {
+        x_fact <- factor(x, levels = levels)
+        mat[cbind(valid_idx, as.integer(x_fact[valid_idx]))] <- 1
+      }
+      cols_list[[col]] <- mat
+    }
+    Z <- do.call(cbind, cols_list)
+    
+    compute <- function() {
+      Z_centered <- sweep(Z, 2, state$C_col / state$N, "-")
+      A <- sweep(Z_centered, 2, sqrt(state$C_col), "/")
+      (1 / sqrt(state$D)) * (A %*% state$v)
+    }
+    
+    if (is.null(state$preds_cache)) {
+      preds <- compute()
+    } else {
+      x_key <- digest::digest(Z, algo = "xxhash64")
+      if (exists(x_key, envir = state$preds_cache)) {
+        preds <- get(x_key, envir = state$preds_cache)
+      } else {
+        preds <- compute()
+        assign(x_key, preds, envir = state$preds_cache)
+      }
+    }
+    
+    if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
+    as.vector(preds[, comp_idx])
+  },
+  name_generator = function(gene) .gene_col_name(gene, "mca")
+)
+
+# Factor Analysis of Mixed Data (FAMD)
+evo_transformers$famd <- create_transformer(
+  name = "famd",
+  type = "multivariate",
+  input_type = "mixed",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    N <- nrow(data)
+    
+    is_num <- sapply(input_cols, function(col) is.numeric(data[[col]]))
+    num_cols <- input_cols[is_num]
+    cat_cols <- input_cols[!is_num]
+    
+    if (length(num_cols) == 0 && length(cat_cols) == 0) {
+      return(list(valid = FALSE))
+    }
+    
+    mu <- numeric(0)
+    sigma <- numeric(0)
+    Z_num <- matrix(0, nrow = N, ncol = 0)
+    if (length(num_cols) > 0) {
+      X_num <- as.matrix(data[, num_cols, with = FALSE])
+      mu <- colMeans(X_num, na.rm = TRUE)
+      sigma <- apply(X_num, 2, stats::sd, na.rm = TRUE)
+      sigma[sigma == 0 | is.na(sigma)] <- 1
+      X_num_imp <- X_num
+      for (j in seq_len(ncol(X_num_imp))) {
+        X_num_imp[is.na(X_num_imp[, j]), j] <- mu[j]
+      }
+      Z_num <- scale(X_num_imp, center = mu, scale = sigma)
+    }
+    
+    training_levels <- list()
+    Z_cat <- matrix(0, nrow = N, ncol = 0)
+    C_col <- numeric(0)
+    p_col <- numeric(0)
+    
+    if (length(cat_cols) > 0) {
+      for (col in cat_cols) {
+        training_levels[[col]] <- sort(unique(as.character(data[[col]])))
+      }
+      
+      cols_list <- list()
+      for (col in cat_cols) {
+        x <- as.character(data[[col]])
+        levels <- training_levels[[col]]
+        mat <- matrix(0, nrow = N, ncol = length(levels))
+        colnames(mat) <- paste0(col, "_", levels)
+        valid_idx <- which(!is.na(x) & x %in% levels)
+        if (length(valid_idx) > 0) {
+          x_fact <- factor(x, levels = levels)
+          mat[cbind(valid_idx, as.integer(x_fact[valid_idx]))] <- 1
+        }
+        cols_list[[col]] <- mat
+      }
+      Z_cat_raw <- do.call(cbind, cols_list)
+      C_col <- colSums(Z_cat_raw)
+      valid_cat_cols <- C_col > 0
+      
+      if (sum(valid_cat_cols) > 0) {
+        Z_cat_raw <- Z_cat_raw[, valid_cat_cols, drop = FALSE]
+        C_col <- C_col[valid_cat_cols]
+        p_col <- C_col / N
+        
+        Z_cat_centered <- sweep(Z_cat_raw, 2, p_col, "-")
+        Z_cat <- sweep(Z_cat_centered, 2, sqrt(p_col), "/")
+        
+        for (col in cat_cols) {
+          levels <- training_levels[[col]]
+          sub_cols <- paste0(col, "_", levels)
+          keep_levels <- levels[sub_cols %in% colnames(Z_cat_raw)]
+          training_levels[[col]] <- keep_levels
+        }
+      }
+    }
+    
+    Z <- cbind(Z_num, Z_cat)
+    if (ncol(Z) == 0) return(list(valid = FALSE))
+    
+    tryCatch({
+      C <- max(2L, as.integer(round(log2(ncol(Z)))))
+      nv <- min(C, ncol(Z))
+      res <- svd(Z, nu = 0, nv = nv)
+      list(
+        v = res$v,
+        mu = mu,
+        sigma = sigma,
+        training_levels = training_levels,
+        p_col = p_col,
+        num_cols = num_cols,
+        cat_cols = cat_cols,
+        valid = TRUE,
+        preds_cache = new.env(hash = TRUE, parent = emptyenv())
+      )
+    }, error = function(e) {
+      list(valid = FALSE)
+    })
+  },
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
+    
+    N_new <- nrow(data)
+    
+    Z_num <- matrix(0, nrow = N_new, ncol = 0)
+    if (length(state$num_cols) > 0) {
+      X_num <- as.matrix(data[, state$num_cols, with = FALSE])
+      for (j in seq_len(ncol(X_num))) {
+        X_num[is.na(X_num[, j]), j] <- state$mu[j]
+      }
+      Z_num <- scale(X_num, center = state$mu, scale = state$sigma)
+    }
+    
+    Z_cat <- matrix(0, nrow = N_new, ncol = 0)
+    if (length(state$cat_cols) > 0 && length(state$p_col) > 0) {
+      cols_list <- list()
+      for (col in state$cat_cols) {
+        x <- as.character(data[[col]])
+        levels <- state$training_levels[[col]]
+        mat <- matrix(0, nrow = N_new, ncol = length(levels))
+        valid_idx <- which(!is.na(x) & x %in% levels)
+        if (length(valid_idx) > 0) {
+          x_fact <- factor(x, levels = levels)
+          mat[cbind(valid_idx, as.integer(x_fact[valid_idx]))] <- 1
+        }
+        cols_list[[col]] <- mat
+      }
+      Z_cat_raw <- do.call(cbind, cols_list)
+      Z_cat_centered <- sweep(Z_cat_raw, 2, state$p_col, "-")
+      Z_cat <- sweep(Z_cat_centered, 2, sqrt(state$p_col), "/")
+    }
+    
+    Z <- cbind(Z_num, Z_cat)
+    
+    compute <- function() {
+      Z %*% state$v
+    }
+    
+    if (is.null(state$preds_cache)) {
+      preds <- compute()
+    } else {
+      x_key <- digest::digest(Z, algo = "xxhash64")
+      if (exists(x_key, envir = state$preds_cache)) {
+        preds <- get(x_key, envir = state$preds_cache)
+      } else {
+        preds <- compute()
+        assign(x_key, preds, envir = state$preds_cache)
+      }
+    }
+    
+    if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
+    as.vector(preds[, comp_idx])
+  },
+  name_generator = function(gene) .gene_col_name(gene, "famd")
+)
+
+# Between-Class PCA (BCA)
+evo_transformers$between_group_pca <- create_transformer(
+  name = "between_group_pca",
+  type = "multivariate",
+  input_type = "mixed",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    cat_col <- input_cols[1]
+    num_cols <- input_cols[-1]
+    N <- nrow(data)
+    
+    if (length(num_cols) == 0) return(list(valid = FALSE))
+    
+    X_num <- as.matrix(data[, num_cols, with = FALSE])
+    mu <- colMeans(X_num, na.rm = TRUE)
+    sigma <- apply(X_num, 2, stats::sd, na.rm = TRUE)
+    sigma[sigma == 0 | is.na(sigma)] <- 1
+    
+    X_num_imp <- X_num
+    for (j in seq_len(ncol(X_num_imp))) {
+      X_num_imp[is.na(X_num_imp[, j]), j] <- mu[j]
+    }
+    Z_num <- scale(X_num_imp, center = mu, scale = sigma)
+    
+    cat_vals <- as.character(data[[cat_col]])
+    cat_vals[is.na(cat_vals)] <- "NA"
+    
+    dt <- data.table::data.table(cat = cat_vals, Z_num)
+    group_means <- dt[, lapply(.SD, mean), by = cat]
+    
+    dt_mean <- group_means[dt[, .(cat)], on = "cat"]
+    Z_mean <- as.matrix(dt_mean[, -1, with = FALSE])
+    
+    tryCatch({
+      C <- max(2L, as.integer(round(log2(ncol(Z_mean)))))
+      nv <- min(C, ncol(Z_mean))
+      res <- svd(Z_mean, nu = 0, nv = nv)
+      list(
+        v = res$v,
+        mu = mu,
+        sigma = sigma,
+        num_cols = num_cols,
+        valid = TRUE,
+        preds_cache = new.env(hash = TRUE, parent = emptyenv())
+      )
+    }, error = function(e) {
+      list(valid = FALSE)
+    })
+  },
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    num_cols <- input_cols[-1]
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
+    
+    X_num <- as.matrix(data[, state$num_cols, with = FALSE])
+    for (j in seq_len(ncol(X_num))) {
+      X_num[is.na(X_num[, j]), j] <- state$mu[j]
+    }
+    Z_num <- scale(X_num, center = state$mu, scale = state$sigma)
+    
+    compute <- function() {
+      Z_num %*% state$v
+    }
+    
+    if (is.null(state$preds_cache)) {
+      preds <- compute()
+    } else {
+      x_key <- digest::digest(Z_num, algo = "xxhash64")
+      if (exists(x_key, envir = state$preds_cache)) {
+        preds <- get(x_key, envir = state$preds_cache)
+      } else {
+        preds <- compute()
+        assign(x_key, preds, envir = state$preds_cache)
+      }
+    }
+    
+    if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
+    as.vector(preds[, comp_idx])
+  },
+  name_generator = function(gene) .gene_col_name(gene, "bgpca")
+)
+
+

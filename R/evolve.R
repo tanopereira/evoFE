@@ -401,20 +401,26 @@ dynamic_population_decay_rate = 0.7,
           "log", "sqrt", "reciprocal", "power", "displaced_log",
           "normalized_difference", "frequency_encode",
           "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
+          "feature_hash",
           "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
         ))
       } else if (at == "clustering") {
-        at <- intersect(all_t, c("genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist", "mst_score", "deadwood", "umap", "random_projection", "truncated_svd", "pca", "umap_genie", "umap_lumbermark"))
+        at <- intersect(all_t, c(
+          "genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist",
+          "mst_score", "deadwood", "umap", "random_projection", "truncated_svd",
+          "pca", "umap_genie", "umap_lumbermark", "mca", "famd", "between_group_pca"
+        ))
       } else if (at == "robust") {
         at <- intersect(all_t, c(
           "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
           "add", "subtract", "multiply", "divide",
           "normalized_difference", "log_ratio",
           "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",
+          "feature_hash",
           "groupby_mean", "groupby_median", "groupby_sd",
           "groupby_zscore", "groupby_ratio", "groupby_quantile",
           "groupby_min", "groupby_max",
-          "quantile_binning", "pca", "concat"
+          "quantile_binning", "pca", "concat", "mca", "famd", "between_group_pca"
         ))
       }
     }

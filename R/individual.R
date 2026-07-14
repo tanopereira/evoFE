@@ -16,6 +16,11 @@ create_gene <- function(transformer_name, input_cols) {
       params$n_neighbors <- max(2L, stats::rpois(1, 15))
       params$dens_scale <- round(stats::runif(1, 0, 1), 2)
     }
+  } else if (transformer_name %in% c("mca", "famd", "between_group_pca")) {
+    params$comp_idx <- sample(1:5, 1)
+  } else if (transformer_name == "feature_hash") {
+    params$num_bins <- sample(c(4, 8, 16, 32), 1)
+    params$comp_idx <- sample(1:params$num_bins, 1)
   } else if (transformer_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
     params$k <- sample(2:5, 1)
     params$comp_idx <- sample(1:params$k, 1)
@@ -93,6 +98,15 @@ gene_to_formula <- function(gene, truncate = TRUE) {
       nn_str <- if (!is.null(gene$params$n_neighbors)) paste0("_nn", gene$params$n_neighbors) else ""
       dens_str <- if (!is.null(gene$params$dens_scale)) paste0("_d", gene$params$dens_scale) else ""
       sprintf("umap%d%s%s(%s)", gene$params$comp_idx, nn_str, dens_str, cols_str)
+    } else if (gene$transformer_name == "feature_hash") {
+      sprintf("fh%d_bin%d(%s)", gene$params$comp_idx, gene$params$num_bins, cols_str)
+    } else if (gene$transformer_name == "between_group_pca") {
+      num_cols_str <- if (truncate && length(cols) - 1 > 3) {
+        paste0(paste(cols[2:4], collapse = ", "), ", ... + ", length(cols) - 4, " more")
+      } else {
+        paste(cols[-1], collapse = ", ")
+      }
+      sprintf("bgpca%d(%s | %s)", gene$params$comp_idx, num_cols_str, cols[1])
     } else {
       sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, cols_str)
     }
@@ -133,7 +147,7 @@ gene_to_formula <- function(gene, truncate = TRUE) {
 #'   component index is omitted so that all components share one cache key.
 #' @export
 gene_to_state_formula <- function(gene) {
-  if (gene$transformer_name %in% c("pca", "truncated_svd")) {
+  if (gene$transformer_name %in% c("pca", "truncated_svd", "mca", "famd", "between_group_pca")) {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   } else if (gene$transformer_name == "umap") {
     nn <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
@@ -861,18 +875,29 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
       }
     } else if (t_def$input_type == "mixed") {
-      # Mixed takes 1 categorical and 1 numeric
-      col_cat <- weighted_sample(avail_cat, 1)
-      col_num <- weighted_sample(avail_num, 1)
-      cols <- c(col_cat, col_num)
+      if (t_name == "famd") {
+        num_cat <- min(sample(1:3, 1), length(avail_cat))
+        num_num <- min(sample(1:5, 1), length(avail_num))
+        cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
+      } else if (t_name == "between_group_pca") {
+        if (length(avail_num) < 2) return(ind)
+        num_num <- min(sample(2:5, 1), length(avail_num))
+        cols <- c(weighted_sample(avail_cat, 1), weighted_sample(avail_num, num_num))
+      } else {
+        col_cat <- weighted_sample(avail_cat, 1)
+        col_num <- weighted_sample(avail_num, 1)
+        cols <- c(col_cat, col_num)
+      }
     } else {
       cols <- weighted_sample(available_cols, 1)
     }
     
     # If the transformer is multi-component, add all components
     new_genes_to_add <- list()
-    if (t_name %in% c("pca", "truncated_svd", "umap", "genie_centroid_dist", "lumbermark_centroid_dist")) {
+    if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist")) {
       C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+        sample(2:5, 1)
+      } else if (t_name %in% c("mca", "famd", "between_group_pca")) {
         sample(2:5, 1)
       } else {
         max(2L, as.integer(round(log2(length(cols)))))
