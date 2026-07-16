@@ -849,7 +849,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     # Select random columns
     if (t_def$input_type == "mixed") {
-      if (t_name == "famd") {
+      if (t_name %in% c("famd", "supervised_famd")) {
         num_cat <- min(sample(1:3, 1), length(avail_cat))
         num_num <- min(sample(1:5, 1), length(avail_num))
         cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
@@ -894,10 +894,10 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     # If the transformer is multi-component, add all components
     new_genes_to_add <- list()
-    if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist")) {
+    if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
       C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
         sample(2:5, 1)
-      } else if (t_name %in% c("mca", "famd", "between_group_pca")) {
+      } else if (t_name %in% c("mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
         sample(2:5, 1)
       } else {
         max(2L, as.integer(round(log2(length(cols)))))
