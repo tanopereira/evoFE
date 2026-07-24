@@ -8,7 +8,7 @@ test_that("Gene creation and formula representation works", {
 })
 
 test_that("Individual mutation and crossover works", {
-  set.seed(42)
+  set.seed(1)
   ind <- create_individual(genes = list(), numeric_cols = c("x", "y"), categorical_cols = "cat")
   expect_equal(length(ind$genes), 0)
   

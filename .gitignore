@@ -13,3 +13,5 @@
 catboost_info/
 /doc/
 /Meta/
+
+.gemini/

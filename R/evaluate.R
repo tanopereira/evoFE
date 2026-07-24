@@ -24,6 +24,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   
   state <- NULL
   has_cached_state <- FALSE
+  cache_key <- NULL
   if (!is.null(state_cache) && !is.null(target_col)) {
     if (is.null(data_hash)) {
       data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
@@ -47,11 +48,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       } else {
         state <- t_def$fit_func(train_data, gene, target_col)
         gene$state <- state
-        if (!is.null(state_cache) && !is.null(target_col)) {
-          if (is.null(data_hash)) {
-            data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
-          }
-          cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
+        if (!is.null(cache_key)) {
           assign(cache_key, state, envir = state_cache)
         }
       }
@@ -78,9 +75,11 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     # a different data split must never prune a gene the model depends on.
     cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.95)
     if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
-      existing_num_cols <- names(train_data)[sapply(names(train_data), function(cn) {
-        is.numeric(train_data[[cn]]) && cn != gene$output_col
-      })]
+      num_mask <- vapply(train_data, is.numeric, logical(1))
+      existing_num_cols <- names(train_data)[num_mask]
+      if (gene$output_col %in% existing_num_cols) {
+        existing_num_cols <- existing_num_cols[existing_num_cols != gene$output_col]
+      }
       if (length(existing_num_cols) > 0) {
       new_is_finite <- is.finite(new_col_train)
       if (sum(new_is_finite) > 2 && stats::sd(new_col_train[new_is_finite]) > 0) {
@@ -180,7 +179,7 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
     
     dt_train <- res$train
     dt_val <- res$val
-    new_genes <- c(new_genes, list(res$gene))
+    new_genes[[length(new_genes) + 1L]] <- res$gene
   }
   
   ind$genes <- new_genes
@@ -313,8 +312,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
     
     # Convert features to numeric matrix
-    x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
-    x_val <- data.matrix(val_fold_feat[, features, with = FALSE])
+    has_cat <- length(res$ind$categorical_cols) > 0 || length(res$ind$datetime_cols) > 0 ||
+      any(vapply(res$ind$genes, function(g) {
+        t_def <- evo_transformers[[g$transformer_name]]
+        !is.null(t_def$output_type) && t_def$output_type == "categorical"
+      }, logical(1)))
+    dt_sub_tr <- train_fold_feat[, features, with = FALSE]
+    dt_sub_va <- val_fold_feat[, features, with = FALSE]
+    x_train <- if (!has_cat) as.matrix(dt_sub_tr) else data.matrix(dt_sub_tr)
+    x_val <- if (!has_cat) as.matrix(dt_sub_va) else data.matrix(dt_sub_va)
     x_train[!is.finite(x_train)] <- NA
     x_val[!is.finite(x_val)] <- NA
     y_train <- train_fold_feat[[target_col]]
@@ -416,8 +422,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
       
       # Convert features to numeric matrix
-      x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
-      x_val <- data.matrix(val_fold_feat[, features, with = FALSE])
+      has_cat <- length(res$ind$categorical_cols) > 0 || length(res$ind$datetime_cols) > 0 ||
+        any(vapply(res$ind$genes, function(g) {
+          t_def <- evo_transformers[[g$transformer_name]]
+          !is.null(t_def$output_type) && t_def$output_type == "categorical"
+        }, logical(1)))
+      dt_sub_tr <- train_fold_feat[, features, with = FALSE]
+      dt_sub_va <- val_fold_feat[, features, with = FALSE]
+      x_train <- if (!has_cat) as.matrix(dt_sub_tr) else data.matrix(dt_sub_tr)
+      x_val <- if (!has_cat) as.matrix(dt_sub_va) else data.matrix(dt_sub_va)
       x_train[!is.finite(x_train)] <- NA
       x_val[!is.finite(x_val)] <- NA
       y_train <- train_fold_feat[[target_col]]

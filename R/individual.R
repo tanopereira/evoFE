@@ -196,7 +196,7 @@ individual_to_recipe_string <- function(ind) {
   features_str <- if (n_genes == 0) {
     "[Original features only]"
   } else {
-    formulas <- sapply(ind$genes, gene_to_formula)
+    formulas <- vapply(ind$genes, gene_to_formula, character(1))
     paste0("[", paste(formulas, collapse = ", "), "]")
   }
   
@@ -289,11 +289,9 @@ sample_gene_inputs <- function(cols, n, importances = numeric(0), temperature = 
   
   has_imps <- length(importances) > 0 && any(importances > 0)
   if (has_imps) {
-    weights <- sapply(cols, function(c) {
-      val <- if (c %in% names(importances)) importances[[c]] else 0.0
-      if (is.na(val) || !is.finite(val)) val <- 0.0
-      exp(val / temperature)
-    })
+    vals <- importances[cols]
+    vals[is.na(vals) | !is.finite(vals)] <- 0.0
+    weights <- exp(vals / temperature)
     if (sum(weights) == 0 || any(is.na(weights))) {
       weights <- NULL
     }
@@ -317,11 +315,9 @@ recalculate_mask <- function(ind, importances = numeric(0), temperature = 1.0, v
   
   sample_sigmoid <- function(cols) {
     if (length(cols) == 0) return(character(0))
-    probs <- sapply(cols, function(c) {
-      val <- if (c %in% names(importances)) importances[[c]] else 0.0
-      if (is.na(val) || !is.finite(val)) val <- 0.0
-      1.0 / (1.0 + exp(-(val - threshold) / temperature))
-    })
+    vals <- importances[cols]
+    vals[is.na(vals) | !is.finite(vals)] <- 0.0
+    probs <- 1.0 / (1.0 + exp(-(vals - threshold) / temperature))
     keep <- stats::runif(length(cols)) < probs
     cols[keep]
   }

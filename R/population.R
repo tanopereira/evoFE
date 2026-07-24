@@ -5,11 +5,9 @@ sample_active_mask <- function(cols, importances, temperature, fallback_rate = 0
   
   if (has_imps) {
     threshold <- 1.0 / length(cols)
-    probs <- sapply(cols, function(c) {
-      val <- if (c %in% names(importances)) importances[[c]] else 0.0
-      if (is.na(val) || !is.finite(val)) val <- 0.0
-      1.0 / (1.0 + exp(-(val - threshold) / temperature))
-    })
+    vals <- importances[cols]
+    vals[is.na(vals) | !is.finite(vals)] <- 0.0
+    probs <- 1.0 / (1.0 + exp(-(vals - threshold) / temperature))
     keep <- stats::runif(length(cols)) < probs
   } else {
     keep <- stats::runif(length(cols)) < fallback_rate
