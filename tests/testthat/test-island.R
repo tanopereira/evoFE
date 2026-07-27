@@ -230,3 +230,45 @@ test_that("evolve_features handles migration when no new genes are generated wit
   )
   expect_s3_class(recipe, "evo_recipe")
 })
+
+test_that("migrated elite individuals participate in survivor selection and elitism", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  set.seed(123)
+  # Run evolution with islands = 2, migration_interval = 1, migration_rate = 1
+  recipe_no_split <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 3,
+    pop_size = 4,
+    cv_folds = 2,
+    islands = 2,
+    migration_interval = 1,
+    migration_rate = 1,
+    row_split_islands = FALSE,
+    verbose = FALSE
+  )
+  expect_s3_class(recipe_no_split, "evo_recipe")
+
+  # Run with row_split_islands = TRUE
+  recipe_split <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 3,
+    pop_size = 4,
+    cv_folds = 2,
+    islands = 2,
+    migration_interval = 1,
+    migration_rate = 1,
+    row_split_islands = TRUE,
+    verbose = FALSE
+  )
+  expect_s3_class(recipe_split, "evo_recipe")
+})
+

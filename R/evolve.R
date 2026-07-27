@@ -1380,9 +1380,22 @@ dynamic_population_decay_rate = 0.7,
           if (effective_rate > 0) {
             migrant_inds <- old_pop_list[[j]][1:effective_rate]
 
-            if (per_island_validation) {
-              # Fitness was evaluated on Island j's local val — must re-evaluate on dest's local val
+            if (row_split_islands || per_island_validation) {
+              # Fitness was evaluated on Island j's local dataset/split — must re-evaluate on dest's local split
               migrant_inds <- lapply(migrant_inds, function(ind) { ind$fitness <- NA_real_; ind })
+              eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
+                split_ids_val,
+                if (row_split_islands) island_shared_splits[[dest]] else shared_splits,
+                evaluator,
+                fold_ids,
+                if (row_split_islands) island_shared_folds[[dest]] else shared_folds,
+                shared_full,
+                if (row_split_islands) island_state_caches[[dest]] else state_cache,
+                if (row_split_islands) island_fitness_caches[[dest]] else fitness_cache,
+                threads, verbose, island_best_fitness[dest],
+                metric = metric, complexity_penalty = complexity_penalty, island = dest, ...
+              )
+              migrant_inds <- eval_migrant$pop
             }
 
             # Replace the worst individuals of the target population
@@ -1482,6 +1495,12 @@ dynamic_population_decay_rate = 0.7,
             )
             viewer$send(list(type = "migration", data = migration_event))
           }
+        }
+
+        # Re-sort all island populations descending by fitness so migrated elites participate in survivor selection & elitism
+        for (k in 1:islands) {
+          fitness_vals <- sapply(pop_list[[k]], function(ind) ind$fitness)
+          pop_list[[k]] <- pop_list[[k]][order(fitness_vals, decreasing = TRUE)]
         }
       }
 
