@@ -115,6 +115,15 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          fitness_cache, threads, verbose, running_best_fitness,
                          metric = "default", allow_prune = TRUE,
                          complexity_penalty = 0, island = NULL, ...) {
+  # Initialize running_best_fitness taking into account any already evaluated individuals in pop
+  existing_fits <- vapply(pop, function(ind) if (is.null(ind$fitness) || is.na(ind$fitness)) -Inf else ind$fitness, double(1))
+  if (length(existing_fits) > 0 && any(!is.infinite(existing_fits))) {
+    max_existing <- max(existing_fits[!is.infinite(existing_fits)])
+    if (is.null(running_best_fitness) || is.na(running_best_fitness) || max_existing > running_best_fitness) {
+      running_best_fitness <- max_existing
+    }
+  }
+
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) next
 
@@ -1501,6 +1510,19 @@ dynamic_population_decay_rate = 0.7,
         for (k in 1:islands) {
           fitness_vals <- sapply(pop_list[[k]], function(ind) ind$fitness)
           pop_list[[k]] <- pop_list[[k]][order(fitness_vals, decreasing = TRUE)]
+          top_fit <- pop_list[[k]][[1]]$fitness
+          if (!is.na(top_fit)) {
+            if (is.na(island_best_fitness[k]) || top_fit > island_best_fitness[k]) {
+              island_best_fitness[k] <- top_fit
+              island_best_individual[[k]] <- pop_list[[k]][[1]]
+              island_gens_without_improvement[k] <- 0
+            }
+            if (top_fit > global_best_fitness) {
+              global_best_fitness <- top_fit
+              global_best_individual <- pop_list[[k]][[1]]
+              best_ind_source <- paste0("Island ", k)
+            }
+          }
         }
       }
 
