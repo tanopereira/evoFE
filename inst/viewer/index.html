@@ -318,6 +318,26 @@
             filter: drop-shadow(0 0 4px var(--secondary));
         }
 
+        @keyframes stagnationGlow {
+            0% { filter: drop-shadow(0 0 4px #f59e0b); stroke: #f59e0b; }
+            50% { filter: drop-shadow(0 0 16px #ef4444); stroke: #ef4444; }
+            100% { filter: drop-shadow(0 0 4px #f59e0b); stroke: #f59e0b; }
+        }
+
+        .node-circle.stagnated {
+            animation: stagnationGlow 1.8s ease-in-out infinite;
+            stroke-width: 4px !important;
+        }
+
+        @keyframes sonarRipple {
+            0% { r: 45; stroke-opacity: 1; stroke: #ec4899; stroke-width: 4px; }
+            100% { r: 75; stroke-opacity: 0; stroke: #ec4899; stroke-width: 1px; }
+        }
+
+        .pulling-ripple {
+            animation: sonarRipple 1.5s ease-out;
+        }
+
         .chart-container {
             position: relative;
             width: 100%;
@@ -1202,39 +1222,56 @@
                 });
             }
 
-            // Create Ring migration paths
+            // Create migration paths (all pairs for dynamic Gibbs/Pull or ring)
             if (activeIslands > 1) {
-                islandPositions.forEach((pos, idx) => {
-                    const nextPos = islandPositions[(idx + 1) % activeIslands];
-                    
-                    // Main path line
-                    const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                    const d = `M ${pos.x} ${pos.y} L ${nextPos.x} ${nextPos.y}`;
-                    line.setAttribute("d", d);
-                    line.setAttribute("class", "migration-path");
-                    line.style.cursor = "pointer";
+                islandPositions.forEach((posA) => {
+                    islandPositions.forEach((posB) => {
+                        if (posA.id === posB.id) return;
+                        
+                        // Curved arc calculation between posA and posB
+                        const dx = posB.x - posA.x;
+                        const dy = posB.y - posA.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const mx = (posA.x + posB.x) / 2;
+                        const my = (posA.y + posB.y) / 2;
+                        
+                        const offset = Math.min(35, dist * 0.2);
+                        const nx = -dy / dist;
+                        const ny = dx / dist;
+                        const cx = mx + nx * offset;
+                        const cy = my + ny * offset;
+                        
+                        const d = `M ${posA.x} ${posA.y} Q ${cx} ${cy} ${posB.x} ${posB.y}`;
 
-                    // Hover events for migration link tooltip
-                    line.addEventListener("mouseenter", (e) => {
-                        showMigrationTooltip(e, pos.id, nextPos.id);
-                        line.style.stroke = "var(--primary)";
-                        line.style.strokeWidth = "4px";
-                    });
-                    line.addEventListener("mousemove", moveTooltip);
-                    line.addEventListener("mouseleave", () => {
-                        hideTooltip();
-                        line.style.stroke = "";
-                        line.style.strokeWidth = "";
-                    });
-                    topologySvg.appendChild(line);
+                        // Main path line
+                        const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                        line.setAttribute("d", d);
+                        line.setAttribute("class", "migration-path");
+                        line.setAttribute("id", `path-from-${posA.id}-to-${posB.id}`);
+                        line.style.cursor = "pointer";
 
-                    // Pulse overlay line
-                    const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                    pulse.setAttribute("d", d);
-                    pulse.setAttribute("class", "migration-pulse");
-                    pulse.setAttribute("id", `pulse-from-${pos.id}`);
-                    pulse.style.display = "none";
-                    topologySvg.appendChild(pulse);
+                        // Hover events for migration link tooltip
+                        line.addEventListener("mouseenter", (e) => {
+                            showMigrationTooltip(e, posA.id, posB.id);
+                            line.style.stroke = "var(--primary)";
+                            line.style.strokeWidth = "4px";
+                        });
+                        line.addEventListener("mousemove", moveTooltip);
+                        line.addEventListener("mouseleave", () => {
+                            hideTooltip();
+                            line.style.stroke = "";
+                            line.style.strokeWidth = "";
+                        });
+                        topologySvg.appendChild(line);
+
+                        // Pulse overlay line
+                        const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                        pulse.setAttribute("d", d);
+                        pulse.setAttribute("class", "migration-pulse");
+                        pulse.setAttribute("id", `pulse-from-${posA.id}-to-${posB.id}`);
+                        pulse.style.display = "none";
+                        topologySvg.appendChild(pulse);
+                    });
                 });
             }
 
@@ -1485,9 +1522,15 @@
                 }
 
                 // Node color based on stagnation and fitness
-                if (isl.stagnation > config.early_stopping_generations / 2) {
-                    nodeCircle.setAttribute("fill", "rgba(100, 30, 30, 0.4)"); // Warning state
+                const stagThreshold = config.pull_stagnation_threshold || 3;
+                if (isl.stagnation >= stagThreshold) {
+                    nodeCircle.classList.add("stagnated");
+                    nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)"); // Stagnation warning state
+                } else if (isl.stagnation > 0) {
+                    nodeCircle.classList.remove("stagnated");
+                    nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
                 } else {
+                    nodeCircle.classList.remove("stagnated");
                     nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
                 }
 
@@ -1645,7 +1688,7 @@
 
         // Trigger pulse on the migration paths in SVG
         function triggerMigrationAnimation(data) {
-            const pulse = document.getElementById(`pulse-from-${data.from}`);
+            const pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`) || document.getElementById(`pulse-from-${data.from}`);
             if (pulse) {
                 pulse.style.display = "block";
                 setTimeout(() => {
@@ -1653,18 +1696,29 @@
                 }, 2000);
             }
 
+            if (data.is_pull) {
+                const destCircle = document.getElementById(`island-circle-${data.to}`);
+                if (destCircle) {
+                    destCircle.classList.add("pulling-ripple");
+                    setTimeout(() => destCircle.classList.remove("pulling-ripple"), 2000);
+                }
+            }
+
             const key = `${data.from}-${data.to}`;
             const count = `${data.n_recipes} recipes, ${data.n_genes} genes`;
-            const type = "Ring Network Migration";
+            const topo = data.topology || (config ? config.migration_topology : "ring") || "ring";
+            const typeName = data.is_pull ? "Dual-Gibbs Pull Request" : (topo === "gibbs_stagnation" ? "Gibbs Stagnation Push" : (topo === "gibbs_fitness" ? "Gibbs Fitness Push" : "Island Migration"));
 
             lastMigrationInfo[key] = {
                 generation: data.generation || (latestGenSnapshot ? latestGenSnapshot.generation : 0),
                 count: count,
-                type: type,
+                type: typeName,
+                is_pull: data.is_pull,
                 migrated_genes: data.migrated_genes || []
             };
 
-            logToTerminal(`⇄ Migration: Island ${data.from} ➔ Island ${data.to} | Injected: ${data.n_recipes} recipes, ${data.n_genes} genes`, "migration");
+            const actionText = data.is_pull ? "Pulled Elite into" : "Migrated to";
+            logToTerminal(`⇄ [${typeName}] Island ${data.from} ➔ ${actionText} Island ${data.to} | ${data.n_recipes} recipes, ${data.n_genes} genes`, "migration");
         }
 
         // Show/hide tournament results overlay

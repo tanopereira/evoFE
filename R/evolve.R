@@ -285,10 +285,12 @@ tournament_select <- function(pop, k = 3) {
 #'   individual's raw fitness as \code{complexity_penalty * n_genes}.  A small
 #'   value (e.g. \code{0.001}) encourages parsimonious recipes and reduces
 #'   overfitting on small datasets.  Default \code{0} disables the penalty.
-#' @param islands Integer. Number of independent subpopulations (islands) to evolve (default 1).
 #' @param migration_interval Integer. Number of generations between migrations (default 5).
 #' @param migration_rate Integer. Number of top individuals to migrate from each island to its neighbor (default 1).
 #' @param gene_migration_prob Numeric. Probability of injecting a migrated gene during mutation (default 0.2).
+#' @param migration_topology Character string specifying the island migration scheme: \code{"ring"} (default unidirectional ring), \code{"gibbs_stagnation"} (probabilistic push targeting stagnated islands), \code{"gibbs_fitness"} (probabilistic push targeting lower-fitness islands), \code{"dual_gibbs_pull"} (demand-driven pull where stagnated islands request migrants from high-fitness donors), or \code{"random"} (uniform random destination).
+#' @param migration_temperature Numeric > 0. Temperature parameter for Gibbs softmax migration probability distributions (default 1.0).
+#' @param pull_stagnation_threshold Integer >= 1. Stagnation generation threshold used as sigmoid midpoint for pull requests in \code{"dual_gibbs_pull"} (default 3).
 #' @param row_split_islands Logical. If TRUE, splits data rows across islands (default FALSE).
 #' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
 #' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
@@ -357,6 +359,9 @@ dynamic_population_decay_rate = 0.7,
                             migration_interval = 5,
                             migration_rate = 1,
                             gene_migration_prob = 0.2,
+                            migration_topology = "ring",
+                            migration_temperature = 1.0,
+                            pull_stagnation_threshold = 3,
                             raw_toggle_prob = 0.15,
                             recalculate_mask_prob = 0.05,
                             mask_temp_factor = 0.5,
@@ -581,6 +586,20 @@ dynamic_population_decay_rate = 0.7,
     if (!is.numeric(gene_migration_prob) || gene_migration_prob < 0 || gene_migration_prob > 1) {
       stop("gene_migration_prob must be a numeric value between 0 and 1.")
     }
+
+    if (!is.character(migration_topology) || length(migration_topology) != 1 ||
+        !migration_topology %in% c("ring", "gibbs_stagnation", "gibbs_fitness", "dual_gibbs_pull", "random")) {
+      stop("migration_topology must be one of 'ring', 'gibbs_stagnation', 'gibbs_fitness', 'dual_gibbs_pull', or 'random'.")
+    }
+
+    if (!is.numeric(migration_temperature) || migration_temperature <= 0) {
+      stop("migration_temperature must be a positive numeric value > 0.")
+    }
+
+    if (!is.numeric(pull_stagnation_threshold) || pull_stagnation_threshold < 1) {
+      stop("pull_stagnation_threshold must be a positive integer >= 1.")
+    }
+    pull_stagnation_threshold <- as.integer(pull_stagnation_threshold)
   }
 
   original_cols <- setdiff(names(data), target_col)
@@ -769,6 +788,8 @@ dynamic_population_decay_rate = 0.7,
         task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
+        migration_topology = migration_topology, migration_temperature = migration_temperature,
+        pull_stagnation_threshold = pull_stagnation_threshold,
         early_stopping_generations = early_stopping_generations,
         numeric_cols = numeric_cols,
         categorical_cols = categorical_cols,
@@ -1369,28 +1390,89 @@ dynamic_population_decay_rate = 0.7,
       # --- MIGRATION PHASE ---
       if (g %% migration_interval == 0) {
         if (verbose) {
-          message(sprintf("\n*** [Migration Phase] Triggering migration at Generation %d ***", g))
+          message(sprintf("\n*** [Migration Phase] Triggering migration at Generation %d (Topology: %s) ***", g, migration_topology))
         }
 
         # Temp copy of populations to avoid using updated destination populations within the same step
         old_pop_list <- pop_list
 
-        for (j in 1:islands) {
-          dest <- (j %% islands) + 1
+        # Build migration transactions list: list of list(from, to, is_pull)
+        migration_txs <- list()
+
+        if (migration_topology == "dual_gibbs_pull") {
+          for (j in 1:islands) {
+            s_j <- island_gens_without_improvement[j]
+            p_pull <- 1 / (1 + exp(-(s_j - pull_stagnation_threshold) / migration_temperature))
+            if (stats::runif(1) < p_pull) {
+              candidates <- setdiff(1:islands, j)
+              if (length(candidates) > 0) {
+                donor_fits <- island_best_fitness[candidates]
+                donor_fits[is.na(donor_fits)] <- -Inf
+                max_f <- max(donor_fits)
+                if (is.finite(max_f)) {
+                  logits <- (donor_fits - max_f) / migration_temperature
+                  probs <- exp(logits) / sum(exp(logits))
+                } else {
+                  probs <- rep(1 / length(candidates), length(candidates))
+                }
+                donor <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
+                migration_txs[[length(migration_txs) + 1]] <- list(from = donor, to = j, is_pull = TRUE)
+              }
+            }
+          }
+        } else {
+          for (j in 1:islands) {
+            dest <- j
+            if (migration_topology == "ring") {
+              dest <- (j %% islands) + 1
+            } else if (migration_topology == "random") {
+              candidates <- setdiff(1:islands, j)
+              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1)
+            } else if (migration_topology == "gibbs_stagnation") {
+              candidates <- setdiff(1:islands, j)
+              stags <- island_gens_without_improvement[candidates]
+              max_s <- max(stags)
+              logits <- (stags - max_s) / migration_temperature
+              probs <- exp(logits) / sum(exp(logits))
+              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
+            } else if (migration_topology == "gibbs_fitness") {
+              candidates <- setdiff(1:islands, j)
+              fits <- island_best_fitness[candidates]
+              valid_fits <- fits[!is.na(fits)]
+              if (length(valid_fits) > 0) {
+                fits[is.na(fits)] <- min(valid_fits)
+              } else {
+                fits[] <- 0
+              }
+              max_f <- max(fits)
+              diffs <- max_f - fits
+              max_d <- max(diffs)
+              logits <- (diffs - max_d) / migration_temperature
+              probs <- exp(logits) / sum(exp(logits))
+              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
+            }
+            migration_txs[[length(migration_txs) + 1]] <- list(from = j, to = dest, is_pull = FALSE)
+          }
+        }
+
+        # Process each migration transaction
+        for (tx in migration_txs) {
+          src <- tx$from
+          dest <- tx$to
           n_injected <- 0L
           effective_rate <- 0L
           new_genes <- list()
 
           # 1. Recipe-level migration (guarded for dynamic population sizes)
-          if (length(old_pop_list[[j]]) > 0) {
-            effective_rate <- min(migration_rate, length(old_pop_list[[j]]),
+          if (length(old_pop_list[[src]]) > 0) {
+            effective_rate <- min(migration_rate, length(old_pop_list[[src]]),
                                   length(pop_list[[dest]]) - 1L)
           }
           if (effective_rate > 0) {
-            migrant_inds <- old_pop_list[[j]][1:effective_rate]
+            migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
             if (row_split_islands || per_island_validation) {
-              # Fitness was evaluated on Island j's local dataset/split — must re-evaluate on dest's local split
+              # Fitness was evaluated on src local split — must re-evaluate on dest local split
               migrant_inds <- lapply(migrant_inds, function(ind) { ind$fitness <- NA_real_; ind })
               eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
                 split_ids_val,
@@ -1413,16 +1495,14 @@ dynamic_population_decay_rate = 0.7,
             pop_list[[dest]][worst_start:worst_end] <- migrant_inds
 
             if (verbose) {
-              message(sprintf("  Migrating top %d recipe(s) from Island %d to Island %d", effective_rate, j, dest))
+              msg_prefix <- if (tx$is_pull) "Pulling" else "Migrating"
+              message(sprintf("  %s top %d recipe(s) from Island %d to Island %d", msg_prefix, effective_rate, src, dest))
             }
           }
 
-          # 2. Gene-level migration — ring topology
-          # Genes diffuse naturally through the ring over successive migrations,
-          # creating a gradient of innovation: each island builds hierarchically
-          # on its neighbor's genes rather than all islands converging immediately.
-          if (length(old_pop_list[[j]]) > 0) {
-            best_ind <- old_pop_list[[j]][[1]]
+          # 2. Gene-level migration
+          if (length(old_pop_list[[src]]) > 0) {
+            best_ind <- old_pop_list[[src]][[1]]
             best_genes <- best_ind$genes
             if (length(best_genes) > 0) {
               existing_formulas <- vapply(migrated_genes_pool[[dest]], gene_to_formula, character(1))
@@ -1465,9 +1545,14 @@ dynamic_population_decay_rate = 0.7,
               }
               if (verbose && n_injected > 0) {
                 actual_injected <- min(n_injected, 20L)
-                message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", actual_injected, dest, j))
+                message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", actual_injected, dest, src))
               }
             }
+          }
+
+          # If pull migration was performed, reset local stagnation counter on recipient island dest
+          if (tx$is_pull) {
+            island_gens_without_improvement[dest] <- 0
           }
 
           if (record) {
@@ -1489,8 +1574,10 @@ dynamic_population_decay_rate = 0.7,
             }
 
             migration_event <- list(
-              from = j,
+              from = src,
               to = dest,
+              topology = migration_topology,
+              is_pull = tx$is_pull,
               n_recipes = effective_rate,
               n_genes = n_injected,
               migrated_genes = migrated_gene_details

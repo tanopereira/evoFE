@@ -29,6 +29,21 @@ test_that("evolve_features throws errors for invalid island parameters", {
   )
 
   expect_error(
+    evolve_features(df, "am", task = "classification", islands = 2, migration_topology = "invalid_topo", verbose = FALSE),
+    "migration_topology must be one of"
+  )
+
+  expect_error(
+    evolve_features(df, "am", task = "classification", islands = 2, migration_temperature = -0.5, verbose = FALSE),
+    "migration_temperature must be a positive numeric value"
+  )
+
+  expect_error(
+    evolve_features(df, "am", task = "classification", islands = 2, pull_stagnation_threshold = 0, verbose = FALSE),
+    "pull_stagnation_threshold must be a positive integer"
+  )
+
+  expect_error(
     evolve_features(df, "am", task = "classification", islands = 1, allowed_transformers = list("basic", "robust"), verbose = FALSE),
     "length must match the number of islands"
   )
@@ -270,5 +285,43 @@ test_that("migrated elite individuals participate in survivor selection and elit
     verbose = FALSE
   )
   expect_s3_class(recipe_split, "evo_recipe")
+})
+
+test_that("evolve_features executes successfully with gibbs_stagnation, gibbs_fitness, dual_gibbs_pull, and random topologies", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  set.seed(42)
+  for (topo in c("gibbs_stagnation", "gibbs_fitness", "dual_gibbs_pull", "random")) {
+    logs <- character(0)
+    withCallingHandlers(
+      {
+        recipe <- evolve_features(
+          data = df,
+          target_col = "am",
+          task = "classification",
+          evaluator = "lightgbm",
+          generations = 3,
+          pop_size = 4,
+          cv_folds = 2,
+          islands = 3,
+          migration_interval = 1,
+          migration_rate = 1,
+          migration_topology = topo,
+          migration_temperature = 0.5,
+          pull_stagnation_threshold = 1,
+          verbose = TRUE
+        )
+      },
+      message = function(m) {
+        logs <<- c(logs, m$message)
+        invokeRestart("muffleMessage")
+      }
+    )
+
+    expect_s3_class(recipe, "evo_recipe")
+    expect_true(any(grepl("\\[Migration Phase\\] Triggering migration", logs)))
+  }
 })
 
