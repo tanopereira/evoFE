@@ -94,23 +94,35 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     for binary / regression tasks using dynamic shrinkage based on target variance.}
 #'   \item{\code{target_encode_multiclass}}{Class-wise smoothed target encoding
 #'     for multiclass tasks.}
+#'   \item{\code{target_quantile_encode}}{Category target encoding using smoothed target
+#'     quantiles (\code{q} sampled from \{0.25, 0.50, 0.75\}).}
+#'   \item{\code{cat_interaction_target_encode}}{Smoothed mean-target encoding for joint
+#'     Cartesian interaction of two categorical columns.}
 #'   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
 #'     classification: \code{ln(P(event|cat) / P(non-event|cat))} with Laplace
 #'     smoothing.  Falls back to 0 for non-binary targets.}
 #' }
 #'
-#' \strong{Unsupervised categorical / binning}
+#' \strong{Unsupervised categorical / text / datetime}
 #' \describe{
 #'   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
 #'   \item{\code{frequency_encode}}{Count of each category level in training data.}
 #'   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
 #'     an "other" bucket (\code{comp_idx} 1–6).}
+#'   \item{\code{similarity_encode}}{Character 3-gram Jaccard similarity between string
+#'     levels and top-K prototype categories (inspired by \pkg{skrub}).}
+#'   \item{\code{minhash_encode}}{Fast sub-string MinHash hashing for high-cardinality strings
+#'     (inspired by \pkg{skrub}).}
+#'   \item{\code{gap_encode}}{Character 3-gram TF-IDF projection via SVD to extract latent
+#'     sub-string topics (inspired by \pkg{skrub}).}
 #'   \item{\code{quantile_binning}}{Assigns quantile-based bin index (numeric output).}
 #'   \item{\code{quantile_binning_cat}}{Same, with categorical output.}
 #'   \item{\code{log_binning}}{Log-scale bin index (numeric output).}
 #'   \item{\code{log_binning_cat}}{Same, with categorical output.}
 #'   \item{\code{datetime_extract}}{Extracts year, month, day, hour, day-of-week,
 #'     or weekend indicator from date/datetime columns.}
+#'   \item{\code{datetime_cyclic}}{Sine and cosine cyclic encoding for periodic date/time
+#'     components (hour, day of week, month, day of year).}
 #' }
 #'
 #' \strong{Dimensionality reduction (numeric → numeric, stateful)}
@@ -194,6 +206,12 @@ is_verbose <- function() {
     1, 6
   )
   paste0(prefix, "_", h)
+}
+
+.to_numeric <- function(x) {
+  if (is.null(x)) return(numeric(0))
+  if (is.numeric(x)) return(as.numeric(x))
+  suppressWarnings(as.numeric(as.character(x)))
 }
 
 .is_datetime_col <- function(x) {
@@ -624,8 +642,16 @@ evo_transformers$frequency_encode <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt <- data.table::data.table(x = x)
     res <- state$mapping[dt, on = "x"]$N
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -642,7 +668,7 @@ evo_transformers$groupby_mean <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = mean(n, na.rm = TRUE)), by = c]
     data.table::setkey(mapping, c)
     list(mapping = mapping, default_val = mean(dt$n, na.rm = TRUE))
@@ -650,8 +676,16 @@ evo_transformers$groupby_mean <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt <- data.table::data.table(c = x)
     res <- state$mapping[dt, on = "c"]$val
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -666,7 +700,7 @@ evo_transformers$groupby_sd <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = stats::sd(n, na.rm = TRUE)), by = c]
     mapping[is.na(val), val := 0]
     data.table::setkey(mapping, c)
@@ -677,8 +711,16 @@ evo_transformers$groupby_sd <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt <- data.table::data.table(c = x)
     res <- state$mapping[dt, on = "c"]$val
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -692,19 +734,27 @@ evo_transformers$groupby_max <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
-    num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
-    mapping <- dt[, .(val = max(n, na.rm = TRUE)), by = c]
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    valid_n <- dt$n[!is.na(dt$n)]
+    global_max <- if (length(valid_n) > 0) max(valid_n) else 0
+    mapping <- dt[, .(val = if (all(is.na(n))) NA_real_ else max(n, na.rm = TRUE)), by = c]
     mapping[is.infinite(val), val := NA]
     data.table::setkey(mapping, c)
-    global_max <- max(dt$n, na.rm = TRUE)
     list(mapping = mapping, default_val = global_max)
   },
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt <- data.table::data.table(c = x)
     res <- state$mapping[dt, on = "c"]$val
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -719,18 +769,27 @@ evo_transformers$groupby_min <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
-    mapping <- dt[, .(val = min(n, na.rm = TRUE)), by = c]
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    valid_n <- dt$n[!is.na(dt$n)]
+    global_min <- if (length(valid_n) > 0) min(valid_n) else 0
+    mapping <- dt[, .(val = if (all(is.na(n))) NA_real_ else min(n, na.rm = TRUE)), by = c]
     mapping[is.infinite(val), val := NA]
     data.table::setkey(mapping, c)
-    global_min <- min(dt$n, na.rm = TRUE)
     list(mapping = mapping, default_val = global_min)
   },
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt <- data.table::data.table(c = x)
     res <- state$mapping[dt, on = "c"]$val
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -1157,7 +1216,7 @@ evo_transformers$groupby_ratio <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = mean(n, na.rm = TRUE)), by = c]
     data.table::setkey(mapping, c)
     list(mapping = mapping, default_val = mean(dt$n, na.rm = TRUE))
@@ -1165,7 +1224,7 @@ evo_transformers$groupby_ratio <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x_cat <- data[[input_cols[1]]]
-    x_num <- as.numeric(data[[input_cols[2]]])
+    x_num <- .to_numeric(data[[input_cols[2]]])
     dt <- data.table::data.table(c = x_cat)
     means <- state$mapping[dt, on = "c"]$val
     means[is.na(means)] <- state$default_val
@@ -1185,7 +1244,7 @@ evo_transformers$groupby_zscore <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(mean_val = mean(n, na.rm = TRUE), sd_val = stats::sd(n, na.rm = TRUE)), by = c]
     mapping[is.na(sd_val), sd_val := 0]
     data.table::setkey(mapping, c)
@@ -1197,7 +1256,7 @@ evo_transformers$groupby_zscore <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x_cat <- data[[input_cols[1]]]
-    x_num <- as.numeric(data[[input_cols[2]]])
+    x_num <- .to_numeric(data[[input_cols[2]]])
     dt <- data.table::data.table(c = x_cat)
     mapped <- state$mapping[dt, on = "c"]
     means <- mapped$mean_val
@@ -1812,7 +1871,7 @@ evo_transformers$groupby_median <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = stats::median(n, na.rm = TRUE)), by = c]
     data.table::setkey(mapping, c)
     global_med <- stats::median(dt$n, na.rm = TRUE)
@@ -1822,8 +1881,16 @@ evo_transformers$groupby_median <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt  <- data.table::data.table(c = x)
     res <- state$mapping[dt, on = "c"]$val
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -1840,7 +1907,7 @@ evo_transformers$groupby_quantile <- create_transformer(
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
     q <- if (!is.null(gene$params$q)) gene$params$q else 0.25
-    dt <- data.table::data.table(c = data[[cat_col]], n = as.numeric(data[[num_col]]))
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = stats::quantile(n, probs = q, na.rm = TRUE, names = FALSE)), by = c]
     data.table::setkey(mapping, c)
     global_q <- stats::quantile(dt$n, probs = q, na.rm = TRUE, names = FALSE)
@@ -1850,8 +1917,16 @@ evo_transformers$groupby_quantile <- create_transformer(
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
+    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     dt  <- data.table::data.table(c = x)
     res <- state$mapping[dt, on = "c"]$val
+    if (is.null(res)) {
+      def_val <- if (!is.null(state$default_val)) state$default_val else 0
+      return(rep(def_val, nrow(data)))
+    }
     res[is.na(res)] <- state$default_val
     res
   },
@@ -2567,4 +2642,352 @@ evo_transformers$supervised_famd <- create_transformer(
     as.vector(preds[, comp_idx])
   },
   name_generator = function(gene) .gene_col_name(gene, "sfamd")
+)
+
+# --- SKRUB-INSPIRED ENCODERS ---
+
+# String Similarity Encoder (Jaccard similarity of 3-grams to prototype categories)
+evo_transformers$similarity_encode <- create_transformer(
+  name = "similarity_encode",
+  type = "unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    valid_x <- x[!is.na(x) & x != ""]
+    if (length(valid_x) == 0) return(list(valid = FALSE))
+
+    counts <- sort(table(valid_x), decreasing = TRUE)
+    prototypes <- names(counts)[1:min(5L, length(counts))]
+
+    get_3grams <- function(s) {
+      if (is.na(s) || nchar(s) == 0) return(character(0))
+      s_clean <- paste0("^", tolower(s), "$")
+      n <- nchar(s_clean)
+      if (n < 3) return(s_clean)
+      substring(s_clean, 1:(n - 2), 3:n)
+    }
+
+    proto_3grams <- lapply(prototypes, get_3grams)
+    list(
+      prototypes = prototypes,
+      proto_3grams = proto_3grams,
+      valid = TRUE,
+      preds_cache = new.env(hash = TRUE, parent = emptyenv())
+    )
+  },
+  apply_func = function(data, gene, state = NULL) {
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    if (is.null(state) || !isTRUE(state$valid) || comp_idx > length(state$prototypes)) {
+      return(rep(0, nrow(data)))
+    }
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    proto_grams <- state$proto_3grams[[comp_idx]]
+    proto_len <- length(proto_grams)
+
+    compute_sim <- function(str_vec) {
+      get_3grams <- function(s) {
+        if (is.na(s) || nchar(s) == 0) return(character(0))
+        s_clean <- paste0("^", tolower(s), "$")
+        n <- nchar(s_clean)
+        if (n < 3) return(s_clean)
+        substring(s_clean, 1:(n - 2), 3:n)
+      }
+      sapply(str_vec, function(s) {
+        if (is.na(s) || nchar(s) == 0) return(0)
+        g <- get_3grams(s)
+        if (length(g) == 0 && proto_len == 0) return(1)
+        if (length(g) == 0 || proto_len == 0) return(0)
+        intersection <- length(intersect(g, proto_grams))
+        union_len <- length(union(g, proto_grams))
+        if (union_len == 0) 0 else intersection / union_len
+      }, USE.NAMES = FALSE)
+    }
+
+    if (is.null(state$preds_cache)) {
+      compute_sim(x)
+    } else {
+      x_key <- paste0("comp_", comp_idx, "_", digest::digest(x, algo = "xxhash64"))
+      if (exists(x_key, envir = state$preds_cache)) {
+        get(x_key, envir = state$preds_cache)
+      } else {
+        res <- compute_sim(x)
+        assign(x_key, res, envir = state$preds_cache)
+        res
+      }
+    }
+  },
+  name_generator = function(gene) .gene_col_name(gene, "sim")
+)
+
+# MinHash Sub-string Encoder
+evo_transformers$minhash_encode <- create_transformer(
+  name = "minhash_encode",
+  type = "unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    seeds <- c(1013L, 2017L, 3089L, 4099L, 5023L, 6037L, 7053L, 8081L)
+    list(seeds = seeds, valid = TRUE, preds_cache = new.env(hash = TRUE, parent = emptyenv()))
+  },
+  apply_func = function(data, gene, state = NULL) {
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
+    seeds <- state$seeds
+    if (comp_idx > length(seeds)) comp_idx <- ((comp_idx - 1) %% length(seeds)) + 1
+    seed <- seeds[comp_idx]
+
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+
+    compute_minhash <- function(str_vec) {
+      sapply(str_vec, function(s) {
+        if (is.na(s) || nchar(s) == 0) return(0)
+        s_clean <- paste0("^", tolower(s), "$")
+        n <- nchar(s_clean)
+        grams <- if (n < 3) s_clean else substring(s_clean, 1:(n - 2), 3:n)
+        hashes <- sapply(grams, function(g) {
+          h_hex <- digest::digest(paste0(g, "_", seed), algo = "xxhash32")
+          strtoi(substr(h_hex, 1, 7), base = 16L)
+        }, USE.NAMES = FALSE)
+        min(hashes) / 268435455
+      }, USE.NAMES = FALSE)
+    }
+
+    if (is.null(state$preds_cache)) {
+      compute_minhash(x)
+    } else {
+      x_key <- paste0("comp_", comp_idx, "_", digest::digest(x, algo = "xxhash64"))
+      if (exists(x_key, envir = state$preds_cache)) {
+        get(x_key, envir = state$preds_cache)
+      } else {
+        res <- compute_minhash(x)
+        assign(x_key, res, envir = state$preds_cache)
+        res
+      }
+    }
+  },
+  name_generator = function(gene) .gene_col_name(gene, "minhash")
+)
+
+# Sub-string N-gram Topic Encoder (inspired by skrub GapEncoder)
+evo_transformers$gap_encode <- create_transformer(
+  name = "gap_encode",
+  type = "unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    valid_x <- x[!is.na(x) & x != ""]
+    if (length(valid_x) == 0) return(list(valid = FALSE))
+
+    get_3grams <- function(s) {
+      if (is.na(s) || nchar(s) == 0) return(character(0))
+      s_clean <- paste0("^", tolower(s), "$")
+      n <- nchar(s_clean)
+      if (n < 3) return(s_clean)
+      substring(s_clean, 1:(n - 2), 3:n)
+    }
+
+    all_grams <- unlist(lapply(valid_x, get_3grams))
+    if (length(all_grams) == 0) return(list(valid = FALSE))
+
+    gram_counts <- sort(table(all_grams), decreasing = TRUE)
+    top_grams <- names(gram_counts)[1:min(30L, length(gram_counts))]
+
+    mat <- matrix(0, nrow = length(x), ncol = length(top_grams))
+    colnames(mat) <- top_grams
+    for (i in seq_along(x)) {
+      g <- get_3grams(x[i])
+      if (length(g) > 0) {
+        tab <- table(g)
+        match_idx <- match(names(tab), top_grams)
+        valid_m <- !is.na(match_idx)
+        if (any(valid_m)) {
+          mat[i, match_idx[valid_m]] <- as.numeric(tab[valid_m])
+        }
+      }
+    }
+
+    col_means <- colMeans(mat)
+    mat_centered <- sweep(mat, 2, col_means, "-")
+
+    tryCatch({
+      nv <- min(4L, ncol(mat))
+      res <- svd(mat_centered, nu = 0, nv = nv)
+      list(
+        top_grams = top_grams,
+        col_means = col_means,
+        v = res$v,
+        valid = TRUE,
+        preds_cache = new.env(hash = TRUE, parent = emptyenv())
+      )
+    }, error = function(e) list(valid = FALSE))
+  },
+  apply_func = function(data, gene, state = NULL) {
+    comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
+    if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    top_grams <- state$top_grams
+
+    compute_proj <- function() {
+      get_3grams <- function(s) {
+        if (is.na(s) || nchar(s) == 0) return(character(0))
+        s_clean <- paste0("^", tolower(s), "$")
+        n <- nchar(s_clean)
+        if (n < 3) return(s_clean)
+        substring(s_clean, 1:(n - 2), 3:n)
+      }
+      mat <- matrix(0, nrow = length(x), ncol = length(top_grams))
+      for (i in seq_along(x)) {
+        g <- get_3grams(x[i])
+        if (length(g) > 0) {
+          tab <- table(g)
+          match_idx <- match(names(tab), top_grams)
+          valid_m <- !is.na(match_idx)
+          if (any(valid_m)) {
+            mat[i, match_idx[valid_m]] <- as.numeric(tab[valid_m])
+          }
+        }
+      }
+      mat_centered <- sweep(mat, 2, state$col_means, "-")
+      mat_centered %*% state$v
+    }
+
+    preds <- if (is.null(state$preds_cache)) {
+      compute_proj()
+    } else {
+      x_key <- digest::digest(x, algo = "xxhash64")
+      if (exists(x_key, envir = state$preds_cache)) {
+        get(x_key, envir = state$preds_cache)
+      } else {
+        res <- compute_proj()
+        assign(x_key, res, envir = state$preds_cache)
+        res
+      }
+    }
+    if (comp_idx > ncol(preds)) comp_idx <- ncol(preds)
+    as.vector(preds[, comp_idx])
+  },
+  name_generator = function(gene) .gene_col_name(gene, "gap")
+)
+
+# Datetime Cyclic Features (sine/cosine periodicity)
+evo_transformers$datetime_cyclic <- create_transformer(
+  name = "datetime_cyclic",
+  type = "unary",
+  input_type = "datetime",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    dt_parsed <- tryCatch({
+      if (inherits(x, c("POSIXct", "POSIXlt", "Date"))) {
+        as.POSIXct(x)
+      } else {
+        as.POSIXct(as.character(x), tryFormats = c("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"))
+      }
+    }, error = function(e) {
+      as.POSIXct(rep(NA, length(x)))
+    })
+    comp <- if (!is.null(gene$params$component)) gene$params$component else "hour_sin"
+
+    res <- switch(comp,
+      hour_sin = sin(2 * pi * as.numeric(format(dt_parsed, "%H")) / 24),
+      hour_cos = cos(2 * pi * as.numeric(format(dt_parsed, "%H")) / 24),
+      wday_sin = sin(2 * pi * (as.numeric(format(dt_parsed, "%u")) - 1) / 7),
+      wday_cos = cos(2 * pi * (as.numeric(format(dt_parsed, "%u")) - 1) / 7),
+      month_sin = sin(2 * pi * (as.numeric(format(dt_parsed, "%m")) - 1) / 12),
+      month_cos = cos(2 * pi * (as.numeric(format(dt_parsed, "%m")) - 1) / 12),
+      yday_sin = sin(2 * pi * (as.numeric(format(dt_parsed, "%j")) - 1) / 365.25),
+      yday_cos = cos(2 * pi * (as.numeric(format(dt_parsed, "%j")) - 1) / 365.25),
+      rep(0, length(x))
+    )
+    res[is.na(res)] <- 0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "dt_cyc")
+)
+
+# Target Quantile Encoding
+evo_transformers$target_quantile_encode <- create_transformer(
+  name = "target_quantile_encode",
+  type = "supervised_unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    y <- data[[target_col]]
+    q <- if (!is.null(gene$params$q)) gene$params$q else 0.5
+
+    global_q <- as.numeric(stats::quantile(y, probs = q, na.rm = TRUE))
+
+    dt <- data.table::data.table(x = x, y = y)
+    stats_dt <- dt[, .(cat_q = as.numeric(stats::quantile(y, probs = q, na.rm = TRUE)), n = .N), by = x]
+
+    smoothing <- 10
+    stats_dt[, smoothed := (n * cat_q + smoothing * global_q) / (n + smoothing)]
+
+    mapping <- stats_dt[, .(x, smoothed)]
+    data.table::setkey(mapping, x)
+
+    list(mapping = mapping, global_q = global_q)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x <- as.character(data[[input_cols[1]]])
+    dt <- data.table::data.table(x = x)
+    mapping <- state$mapping
+
+    res <- mapping[dt, on = "x"]$smoothed
+    res[is.na(res)] <- state$global_q
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "tqe")
+)
+
+# Categorical Interaction Target Encoding
+evo_transformers$cat_interaction_target_encode <- create_transformer(
+  name = "cat_interaction_target_encode",
+  type = "supervised_binary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    x1 <- as.character(data[[input_cols[1]]])
+    x2 <- as.character(data[[input_cols[2]]])
+    x_joint <- paste0(x1, "___", x2)
+    y <- data[[target_col]]
+
+    global_mean <- mean(y, na.rm = TRUE)
+    dt <- data.table::data.table(x_joint = x_joint, y = y)
+    stats_dt <- dt[, .(mean_y = mean(y, na.rm = TRUE), n = .N), by = x_joint]
+
+    smoothing <- 10
+    stats_dt[, smoothed := (n * mean_y + smoothing * global_mean) / (n + smoothing)]
+
+    mapping <- stats_dt[, .(x_joint, smoothed)]
+    data.table::setkey(mapping, x_joint)
+
+    list(mapping = mapping, global_mean = global_mean)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x1 <- as.character(data[[input_cols[1]]])
+    x2 <- as.character(data[[input_cols[2]]])
+    x_joint <- paste0(x1, "___", x2)
+
+    dt <- data.table::data.table(x_joint = x_joint)
+    mapping <- state$mapping
+
+    res <- mapping[dt, on = "x_joint"]$smoothed
+    res[is.na(res)] <- state$global_mean
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "cite")
 )
