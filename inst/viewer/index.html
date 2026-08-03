@@ -2178,7 +2178,33 @@
             }
 
             const healthStatus = document.getElementById(`health-status-${islandId}`);
-            if (healthStatus) {
+            const stagThreshold = (config && config.pull_stagnation_threshold) || 3;
+            const stagBadge = document.getElementById(`stagnation-badge-${islandId}`);
+
+            if (data.stagnation !== undefined) {
+                if (data.stagnation >= stagThreshold) {
+                    if (healthStatus) healthStatus.className = "health-status stagnated";
+                    if (nodeCircle) {
+                        nodeCircle.classList.add("stagnated");
+                        nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)");
+                    }
+                    if (stagBadge) stagBadge.style.display = "block";
+                } else if (data.stagnation > 0) {
+                    if (healthStatus) healthStatus.className = "health-status";
+                    if (nodeCircle) {
+                        nodeCircle.classList.remove("stagnated");
+                        nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
+                    }
+                    if (stagBadge) stagBadge.style.display = "none";
+                } else {
+                    if (healthStatus) healthStatus.className = "health-status active";
+                    if (nodeCircle) {
+                        nodeCircle.classList.remove("stagnated");
+                        nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
+                    }
+                    if (stagBadge) stagBadge.style.display = "none";
+                }
+            } else if (healthStatus) {
                 healthStatus.className = "health-status";
             }
 

@@ -962,25 +962,13 @@ dynamic_population_decay_rate = 0.7,
       fitness_vals <- sapply(pop, function(ind) ind$fitness)
       pop <- pop[order(fitness_vals, decreasing = TRUE)]
 
-      if (record) {
-        viewer$send(list(type = "island_evaluated", data = list(
-          island = 1,
-          generation = g,
-          best_fitness = pop[[1]]$fitness,
-          all_fitness = fitness_vals
-        )))
-      }
-
       # Track historical best genes from this generation
       historical_best_genes <- c(historical_best_genes, pop[[1]]$genes)
 
       best_fitness <- pop[[1]]$fitness
       fitness_history[g] <- best_fitness
       if (verbose) message(sprintf("  Gen %d Best Fitness: %.4f", g, best_fitness))
-
-      if (verbose) {
-        message(sprintf("  Gen %d Best Recipe: %s", g, individual_to_recipe_string(pop[[1]])))
-      }
+      if (verbose) message(sprintf("  Gen %d Best Recipe: %s", g, individual_to_recipe_string(pop[[1]])))
 
       # Early stopping check
       if (g == 1 || (!is.na(best_fitness) && (is.na(global_best_fitness) || best_fitness > global_best_fitness))) {
@@ -988,6 +976,16 @@ dynamic_population_decay_rate = 0.7,
         generations_without_improvement <- 0
       } else {
         generations_without_improvement <- generations_without_improvement + 1
+      }
+
+      if (record) {
+        viewer$send(list(type = "island_evaluated", data = list(
+          island = 1,
+          generation = g,
+          best_fitness = pop[[1]]$fitness,
+          stagnation = generations_without_improvement,
+          all_fitness = fitness_vals
+        )))
       }
 
       if (record) {
@@ -1263,15 +1261,6 @@ dynamic_population_decay_rate = 0.7,
         fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
         pop_list[[j]] <- pop_list[[j]][order(fitness_vals, decreasing = TRUE)]
 
-        if (record) {
-          viewer$send(list(type = "island_evaluated", data = list(
-            island = j,
-            generation = g,
-            best_fitness = pop_list[[j]][[1]]$fitness,
-            all_fitness = fitness_vals
-          )))
-        }
-
         # Track historical best genes from this generation
         historical_best_genes <- c(historical_best_genes, pop_list[[j]][[1]]$genes)
 
@@ -1288,6 +1277,16 @@ dynamic_population_decay_rate = 0.7,
           island_gens_without_improvement[j] <- 0
         } else {
           island_gens_without_improvement[j] <- island_gens_without_improvement[j] + 1
+        }
+
+        if (record) {
+          viewer$send(list(type = "island_evaluated", data = list(
+            island = j,
+            generation = g,
+            best_fitness = pop_list[[j]][[1]]$fitness,
+            stagnation = island_gens_without_improvement[j],
+            all_fitness = fitness_vals
+          )))
         }
 
         # Track global best across all islands
