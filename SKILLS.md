@@ -370,7 +370,7 @@ tryCatch(
 ## 6. NEWS.md Entry
 
 ```markdown
-# evoFE 0.3.0
+# evoFE 1.0.0
 
 ## Breaking Changes
 
