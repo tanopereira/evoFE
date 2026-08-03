@@ -355,6 +355,7 @@ dynamic_population_decay_rate = 0.7,
                             model_all_historical_genes = FALSE,
                             allowed_transformers = "all",
                             complexity_penalty = 0,
+                            migration = NULL,
                             islands = 1,
                             migration_interval = 5,
                             migration_rate = 1,
@@ -369,6 +370,11 @@ dynamic_population_decay_rate = 0.7,
                             per_island_validation = FALSE,
                             record = FALSE,
                             port = NULL, ...) {
+
+  # If custom migration config is provided, sync islands count from migration$topology$islands
+  if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+    islands <- migration$topology$islands
+  }
 
   # Validate island parameters early to support list allowed_transformers validation
   if (!is.numeric(islands) || islands < 1) {

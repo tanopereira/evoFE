@@ -81,6 +81,41 @@ topology_hypercube <- function(islands = 10, dimension = NULL) {
   )
 }
 
+#' Partition N islands into 3 HFC tiers (Entry 50%, Intermediate 25%, Apex 25%)
+#' @param islands Integer. Total number of active islands.
+#' @return List with components \code{tier0}, \code{tier1}, and \code{tier2}.
+#' @keywords internal
+.partition_hfc_tiers <- function(islands) {
+  if (islands <= 1) {
+    return(list(tier0 = 1:islands, tier1 = integer(0), tier2 = integer(0)))
+  } else if (islands == 2) {
+    return(list(tier0 = 1L, tier1 = integer(0), tier2 = 2L))
+  } else if (islands == 3) {
+    return(list(tier0 = 1L, tier1 = 2L, tier2 = 3L))
+  } else if (islands == 4) {
+    return(list(tier0 = 1:2, tier1 = 3L, tier2 = 4L))
+  } else {
+    n_tier0 <- max(1L, as.integer(ceiling(0.50 * islands)))
+    rem <- islands - n_tier0
+    n_tier1 <- max(1L, as.integer(ceiling(0.60 * rem)))
+    n_tier2 <- max(1L, islands - (n_tier0 + n_tier1))
+
+    while (n_tier1 < n_tier2 && n_tier1 > 1) {
+      n_tier1 <- n_tier1 + 1L
+      n_tier2 <- n_tier2 - 1L
+    }
+    while (n_tier0 < n_tier1 && n_tier0 > 1) {
+      n_tier0 <- n_tier0 + 1L
+      n_tier1 <- n_tier1 - 1L
+    }
+
+    t0 <- 1:n_tier0
+    t1 <- (n_tier0 + 1):(n_tier0 + n_tier1)
+    t2 <- (n_tier0 + n_tier1 + 1):islands
+    list(tier0 = t0, tier1 = t1, tier2 = t2)
+  }
+}
+
 #' Partition N islands into K tiers with geometric decay & monotonicity constraint
 #' @param islands Integer. Number of active islands.
 #' @param tiers Integer. Number of tiers requested.

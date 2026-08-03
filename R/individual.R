@@ -16,8 +16,16 @@ create_gene <- function(transformer_name, input_cols) {
       params$n_neighbors <- max(2L, stats::rpois(1, 15))
       params$dens_scale <- round(stats::runif(1, 0, 1), 2)
     }
-  } else if (transformer_name %in% c("mca", "famd", "between_group_pca")) {
+  } else if (transformer_name %in% c("similarity_encode", "mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
     params$comp_idx <- sample(1:5, 1)
+  } else if (transformer_name == "minhash_encode") {
+    params$comp_idx <- sample(1:8, 1)
+  } else if (transformer_name == "gap_encode") {
+    params$comp_idx <- sample(1:4, 1)
+  } else if (transformer_name == "datetime_cyclic") {
+    params$component <- sample(c("hour_sin", "hour_cos", "wday_sin", "wday_cos", "month_sin", "month_cos", "yday_sin", "yday_cos"), 1)
+  } else if (transformer_name == "target_quantile_encode") {
+    params$q <- sample(c(0.25, 0.5, 0.75), 1)
   } else if (transformer_name == "feature_hash") {
     params$num_bins <- sample(c(4, 8, 16, 32), 1)
     params$comp_idx <- sample(1:params$num_bins, 1)
