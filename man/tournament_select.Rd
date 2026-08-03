@@ -2,21 +2,27 @@
 % Please edit documentation in R/evolve.R
 \name{tournament_select}
 \alias{tournament_select}
-\title{Tournament selection}
+\title{Select an individual using tournament selection}
 \usage{
 tournament_select(pop, k = 3)
 }
+\arguments{
+\item{pop}{A list of \code{evo_individual} objects.}
+
+\item{k}{Integer. Tournament size. Default 3.}
+}
+\value{
+The selected \code{evo_individual}.
+}
 \description{
-Tournament selection
+Select an individual using tournament selection
 }
 \examples{
 \donttest{
 pop <- list(
-  list(fitness = 0.5),
   list(fitness = 0.8),
   list(fitness = 0.2)
 )
 best <- tournament_select(pop, k = 2)
 }
 }
-\keyword{internal}

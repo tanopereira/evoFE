@@ -10,7 +10,8 @@ apply_gene(
   val_data = NULL,
   target_col = NULL,
   state_cache = NULL,
-  data_hash = NULL
+  data_hash = NULL,
+  skip_filtering = FALSE
 )
 }
 \arguments{

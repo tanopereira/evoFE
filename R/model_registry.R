@@ -432,6 +432,29 @@ register_evaluator(
     }
     
     x_mat <- as.matrix(x_train)
+    col_means <- colMeans(x_mat, na.rm = TRUE)
+    col_means[is.na(col_means) | !is.finite(col_means)] <- 0
+    for (j in seq_len(ncol(x_mat))) {
+      na_idx <- is.na(x_mat[, j]) | !is.finite(x_mat[, j])
+      if (any(na_idx)) {
+        x_mat[na_idx, j] <- col_means[j]
+      }
+    }
+
+    impute_mat <- function(x_data) {
+      if (is.null(x_data)) return(NULL)
+      xm <- as.matrix(x_data)
+      for (j in seq_len(ncol(xm))) {
+        col_name <- colnames(xm)[j]
+        c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) col_means[[col_name]] else 0
+        na_idx <- is.na(xm[, j]) | !is.finite(xm[, j])
+        if (any(na_idx)) {
+          xm[na_idx, j] <- c_mean
+        }
+      }
+      xm
+    }
+
     all_feats <- colnames(x_train)
     nfolds <- min(5, nrow(x_mat))
     
@@ -444,7 +467,7 @@ register_evaluator(
       
       preds <- NULL
       if (!is.null(x_val)) {
-        preds <- as.numeric(stats::predict(model, newx = as.matrix(x_val), s = "lambda.min"))
+        preds <- as.numeric(stats::predict(model, newx = impute_mat(x_val), s = "lambda.min"))
       }
       
       coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
@@ -457,7 +480,7 @@ register_evaluator(
       
       preds <- NULL
       if (!is.null(x_val)) {
-        preds <- as.numeric(stats::predict(model, newx = as.matrix(x_val), s = "lambda.min", type = "response"))
+        preds <- as.numeric(stats::predict(model, newx = impute_mat(x_val), s = "lambda.min", type = "response"))
       }
       
       coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
@@ -470,7 +493,7 @@ register_evaluator(
       
       preds <- NULL
       if (!is.null(x_val)) {
-        p_array <- stats::predict(model, newx = as.matrix(x_val), s = "lambda.min", type = "response")
+        p_array <- stats::predict(model, newx = impute_mat(x_val), s = "lambda.min", type = "response")
         preds <- p_array[, , 1]
       }
       
@@ -490,10 +513,20 @@ register_evaluator(
       importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
     }
     
-    list(model = model, predictions = preds, importances = importances)
+    list(model = model, predictions = preds, importances = importances, col_means = col_means)
   },
   predict_func = function(model, x_new, task, ...) {
     x_mat <- as.matrix(x_new)
+    col_means <- if (!is.null(model$col_means)) model$col_means else colMeans(x_mat, na.rm = TRUE)
+    col_means[is.na(col_means) | !is.finite(col_means)] <- 0
+    for (j in seq_len(ncol(x_mat))) {
+      col_name <- colnames(x_mat)[j]
+      c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) col_means[[col_name]] else 0
+      na_idx <- is.na(x_mat[, j]) | !is.finite(x_mat[, j])
+      if (any(na_idx)) {
+        x_mat[na_idx, j] <- c_mean
+      }
+    }
     if (task == "regression") {
       as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min"))
     } else if (task == "classification") {
