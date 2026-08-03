@@ -329,6 +329,19 @@
             stroke-width: 4px !important;
         }
 
+        .stagnation-badge {
+            animation: stagnationGlow 1.8s ease-in-out infinite;
+            cursor: pointer;
+            filter: drop-shadow(0 0 6px #ef4444);
+        }
+
+        .health-status.stagnated {
+            background: #ef4444 !important;
+            box-shadow: 0 0 8px #ef4444;
+            border-radius: 2px;
+            position: relative;
+        }
+
         @keyframes sonarRipple {
             0% { r: 45; stroke-opacity: 1; stroke: #ec4899; stroke-width: 4px; }
             100% { r: 75; stroke-opacity: 0; stroke: #ec4899; stroke-width: 1px; }
@@ -1313,6 +1326,29 @@
                 subtxt.textContent = "0.0000";
                 g.appendChild(subtxt);
 
+                // Create SVG stagnation cross badge (hidden by default)
+                const badgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                badgeG.setAttribute("id", `stagnation-badge-${pos.id}`);
+                badgeG.setAttribute("class", "stagnation-badge");
+                badgeG.setAttribute("transform", `translate(${pos.x + 30}, ${pos.y - 30})`);
+                badgeG.setAttribute("style", "display: none;");
+
+                const badgeBg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                badgeBg.setAttribute("r", "11");
+                badgeBg.setAttribute("fill", "#ef4444");
+                badgeBg.setAttribute("stroke", "#ffffff");
+                badgeBg.setAttribute("stroke-width", "1.5");
+                badgeG.appendChild(badgeBg);
+
+                const crossPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                crossPath.setAttribute("d", "M -4 -4 L 4 4 M 4 -4 L -4 4");
+                crossPath.setAttribute("stroke", "#ffffff");
+                crossPath.setAttribute("stroke-width", "2.2");
+                crossPath.setAttribute("stroke-linecap", "round");
+                badgeG.appendChild(crossPath);
+
+                g.appendChild(badgeG);
+
                 // Tooltip events
                 g.addEventListener("mouseenter", (e) => showIslandTooltip(e, pos.id));
                 g.addEventListener("mousemove", moveTooltip);
@@ -1512,26 +1548,26 @@
                 // Update health bar width
                 healthBar.style.width = `${getHealthBarPercentage(fitnessVal)}%`;
 
-                // Update stagnation dot (improving = active, stale = warning/inactive)
-                if (isl.stagnation === 0) {
+                // Node color and stagnation cross badge based on stagnation count
+                const stagThreshold = (config && config.pull_stagnation_threshold) || 3;
+                const stagBadge = document.getElementById(`stagnation-badge-${isl.island}`);
+                if (isl.stagnation >= stagThreshold) {
+                    healthStatus.className = "health-status stagnated";
+                    nodeCircle.classList.add("stagnated");
+                    nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)"); // Stagnation warning state
+                    if (stagBadge) stagBadge.style.display = "block";
+                } else if (isl.stagnation > 0) {
+                    healthStatus.className = "health-status";
+                    nodeCircle.classList.remove("stagnated");
+                    nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
+                    if (stagBadge) stagBadge.style.display = "none";
+                } else {
                     healthStatus.className = "health-status active";
                     nodeCircle.classList.add("improving");
                     setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
-                } else {
-                    healthStatus.className = "health-status";
-                }
-
-                // Node color based on stagnation and fitness
-                const stagThreshold = config.pull_stagnation_threshold || 3;
-                if (isl.stagnation >= stagThreshold) {
-                    nodeCircle.classList.add("stagnated");
-                    nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)"); // Stagnation warning state
-                } else if (isl.stagnation > 0) {
-                    nodeCircle.classList.remove("stagnated");
-                    nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
-                } else {
                     nodeCircle.classList.remove("stagnated");
                     nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
+                    if (stagBadge) stagBadge.style.display = "none";
                 }
 
                 // Render population swarm inside node circle
