@@ -82,7 +82,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       }
       if (length(existing_num_cols) > 0) {
       new_is_finite <- is.finite(new_col_train)
-      if (sum(new_is_finite) > 2 && stats::sd(new_col_train[new_is_finite]) > 0) {
+      if (sum(new_is_finite) > 2 && suppressWarnings(stats::sd(new_col_train[new_is_finite])) > 0) {
         for (ecol in existing_num_cols) {
           ev <- train_data[[ecol]]
           # Find indices where both vectors are finite to preserve row alignment

@@ -194,6 +194,14 @@ is_verbose <- function() {
   isTRUE(val) || val >= 2
 }
 
+.safe_sd <- function(x, na.rm = TRUE) {
+  if (is.null(x)) return(0)
+  x_clean <- if (na.rm) x[!is.na(x) & is.finite(x)] else x
+  if (length(x_clean) <= 1) return(0)
+  s <- suppressWarnings(stats::sd(x_clean, na.rm = na.rm))
+  if (is.na(s) || !is.finite(s)) 0 else s
+}
+
 # Produce a short, stable column name for a gene: "{prefix}_{6-char hash}".
 # The hash covers transformer name + input columns + params, so identical
 # genes always get identical names (deduplication) and different genes
@@ -701,10 +709,10 @@ evo_transformers$groupby_sd <- create_transformer(
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
     dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
-    mapping <- dt[, .(val = stats::sd(n, na.rm = TRUE)), by = c]
+    mapping <- dt[, .(val = .safe_sd(n)), by = c]
     mapping[is.na(val), val := 0]
     data.table::setkey(mapping, c)
-    global_sd <- stats::sd(dt$n, na.rm = TRUE)
+    global_sd <- .safe_sd(dt$n)
     if (is.na(global_sd)) global_sd <- 0
     list(mapping = mapping, default_val = global_sd)
   },
@@ -1245,12 +1253,11 @@ evo_transformers$groupby_zscore <- create_transformer(
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
     dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
-    mapping <- dt[, .(mean_val = mean(n, na.rm = TRUE), sd_val = stats::sd(n, na.rm = TRUE)), by = c]
+    mapping <- dt[, .(mean_val = mean(n, na.rm = TRUE), sd_val = .safe_sd(n)), by = c]
     mapping[is.na(sd_val), sd_val := 0]
     data.table::setkey(mapping, c)
     global_mean <- mean(dt$n, na.rm = TRUE)
-    global_sd <- stats::sd(dt$n, na.rm = TRUE)
-    if (is.na(global_sd)) global_sd <- 0
+    global_sd <- .safe_sd(dt$n)
     list(mapping = mapping, default_mean = global_mean, default_sd = global_sd)
   },
   apply_func = function(data, gene, state) {
