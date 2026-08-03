@@ -1211,75 +1211,218 @@
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
             topologySvg.innerHTML = "";
-            const width = topologySvg.clientWidth || 600;
+            const width  = topologySvg.clientWidth  || 600;
             const height = topologySvg.clientHeight || 450;
-            const cx = width / 2;
-            const cy = height / 2;
-            const r = Math.min(width, height) * 0.33;
+            const N = activeIslands;
+            const topo = config && config.migration_topology || "ring";
 
-            // Generate island node positions
             islandPositions = [];
-            for (let i = 0; i < activeIslands; i++) {
-                const angle = (2 * Math.PI * i / activeIslands) - (Math.PI / 2);
-                islandPositions.push({
-                    id: i + 1,
-                    x: cx + r * Math.cos(angle),
-                    y: cy + r * Math.sin(angle)
-                });
+
+            // ── helpers ────────────────────────────────────────────────
+            function circlePositions(n, cx, cy, r) {
+                const pos = [];
+                for (let i = 0; i < n; i++) {
+                    const angle = (2 * Math.PI * i / n) - Math.PI / 2;
+                    pos.push({ id: i + 1, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+                }
+                return pos;
             }
 
-            // Create migration paths (all pairs for dynamic Gibbs/Pull or ring)
-            if (activeIslands > 1) {
-                islandPositions.forEach((posA) => {
-                    islandPositions.forEach((posB) => {
-                        if (posA.id === posB.id) return;
-                        
-                        // Curved arc calculation between posA and posB
-                        const dx = posB.x - posA.x;
-                        const dy = posB.y - posA.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        const mx = (posA.x + posB.x) / 2;
-                        const my = (posA.y + posB.y) / 2;
-                        
-                        const offset = Math.min(35, dist * 0.2);
-                        const nx = -dy / dist;
-                        const ny = dx / dist;
-                        const cx = mx + nx * offset;
-                        const cy = my + ny * offset;
-                        
-                        const d = `M ${posA.x} ${posA.y} Q ${cx} ${cy} ${posB.x} ${posB.y}`;
+            function drawEdge(posA, posB, curved) {
+                const dx = posB.x - posA.x, dy = posB.y - posA.y;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                let d;
+                if (curved) {
+                    const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
+                    const offset = Math.min(35, dist * 0.2);
+                    d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
+                } else {
+                    d = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
+                }
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                line.setAttribute("d", d);
+                line.setAttribute("class", "migration-path");
+                line.setAttribute("id", `path-from-${posA.id}-to-${posB.id}`);
+                line.style.cursor = "pointer";
+                line.addEventListener("mouseenter", (e) => { showMigrationTooltip(e, posA.id, posB.id); line.style.stroke = "var(--primary)"; line.style.strokeWidth = "4px"; });
+                line.addEventListener("mousemove", moveTooltip);
+                line.addEventListener("mouseleave", () => { hideTooltip(); line.style.stroke = ""; line.style.strokeWidth = ""; });
+                topologySvg.appendChild(line);
 
-                        // Main path line
-                        const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                        line.setAttribute("d", d);
-                        line.setAttribute("class", "migration-path");
-                        line.setAttribute("id", `path-from-${posA.id}-to-${posB.id}`);
-                        line.style.cursor = "pointer";
+                const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                pulse.setAttribute("d", d);
+                pulse.setAttribute("class", "migration-pulse");
+                pulse.setAttribute("id", `pulse-from-${posA.id}-to-${posB.id}`);
+                pulse.style.display = "none";
+                topologySvg.appendChild(pulse);
+            }
 
-                        // Hover events for migration link tooltip
-                        line.addEventListener("mouseenter", (e) => {
-                            showMigrationTooltip(e, posA.id, posB.id);
-                            line.style.stroke = "var(--primary)";
-                            line.style.strokeWidth = "4px";
+            // ── layout by topology ─────────────────────────────────────
+
+            if (topo === "tiered") {
+                // Compute tier partition (mirrors R's .partition_k_tiers, 3 tiers default)
+                const nTiers = 3;
+                const tierSizes = [];
+                let rem = N;
+                const weights = [0.5, 0.25, 0.25];
+                for (let t = 0; t < nTiers; t++) {
+                    tierSizes.push(Math.max(1, t < nTiers - 1 ? Math.round(weights[t] * N) : rem));
+                    rem -= tierSizes[t];
+                }
+                tierSizes[0] = Math.max(1, N - tierSizes[1] - tierSizes[2]);
+
+                const tierLabels = ["Entry", "Intermediate", "Apex"];
+                const tierColors = ["rgba(52,211,153,0.08)", "rgba(99,102,241,0.08)", "rgba(245,158,11,0.08)"];
+                const tierBorderColors = ["rgba(52,211,153,0.25)", "rgba(99,102,241,0.25)", "rgba(245,158,11,0.25)"];
+                const pad = { top: 40, bottom: 40, left: 60, right: 20 };
+                const usableH = height - pad.top - pad.bottom;
+                const tierH = usableH / nTiers;
+
+                let islandIdx = 0;
+                for (let t = 0; t < nTiers; t++) {
+                    const tierIslands = tierSizes[t];
+                    const tierY = pad.top + t * tierH; // t=0 is Apex at top
+
+                    // Background band
+                    const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    band.setAttribute("x", pad.left - 10);
+                    band.setAttribute("y", tierY);
+                    band.setAttribute("width", width - pad.left - pad.right + 10);
+                    band.setAttribute("height", tierH);
+                    band.setAttribute("fill", tierColors[nTiers - 1 - t]);
+                    band.setAttribute("rx", 6);
+                    topologySvg.appendChild(band);
+
+                    // Tier label
+                    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                    lbl.setAttribute("x", pad.left - 14);
+                    lbl.setAttribute("y", tierY + tierH / 2);
+                    lbl.setAttribute("fill", tierBorderColors[nTiers - 1 - t].replace("0.25", "0.8"));
+                    lbl.setAttribute("font-size", 10);
+                    lbl.setAttribute("font-family", "monospace");
+                    lbl.setAttribute("text-anchor", "end");
+                    lbl.setAttribute("dominant-baseline", "middle");
+                    lbl.textContent = tierLabels[nTiers - 1 - t];
+                    topologySvg.appendChild(lbl);
+
+                    // Node positions within this tier row
+                    const xStep = (width - pad.left - pad.right) / Math.max(tierIslands, 1);
+                    for (let i = 0; i < tierIslands; i++) {
+                        const nx = pad.left + xStep * (i + 0.5);
+                        const ny = tierY + tierH / 2;
+                        islandPositions.push({ id: islandIdx + 1, x: nx, y: ny, tier: nTiers - 1 - t });
+                        islandIdx++;
+                    }
+                }
+
+                // Threshold lines between tiers (updated live) — draw placeholders now
+                for (let t = 1; t < nTiers; t++) {
+                    const lineY = pad.top + t * tierH;
+                    const tl = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    tl.setAttribute("x1", pad.left - 10);
+                    tl.setAttribute("x2", width - pad.right);
+                    tl.setAttribute("y1", lineY);
+                    tl.setAttribute("y2", lineY);
+                    tl.setAttribute("stroke", tierBorderColors[t - 1]);
+                    tl.setAttribute("stroke-width", 1.5);
+                    tl.setAttribute("stroke-dasharray", "6 4");
+                    tl.setAttribute("id", `tier-line-${t}`);
+                    topologySvg.appendChild(tl);
+
+                    // Threshold label (fitness value — updated live)
+                    const tlt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                    tlt.setAttribute("x", width - pad.right + 4);
+                    tlt.setAttribute("y", lineY - 3);
+                    tlt.setAttribute("fill", "var(--text-muted)");
+                    tlt.setAttribute("font-size", 9);
+                    tlt.setAttribute("font-family", "monospace");
+                    tlt.setAttribute("id", `tier-threshold-label-${t}`);
+                    tlt.textContent = "—";
+                    topologySvg.appendChild(tlt);
+                }
+
+                // Edges: each island connects upward to next tier
+                if (N > 1) {
+                    islandPositions.forEach(posA => {
+                        islandPositions.forEach(posB => {
+                            if (posA.id === posB.id) return;
+                            // Only draw within-tier peer edges and upward cross-tier edges
+                            if (posB.tier === posA.tier || posB.tier === posA.tier + 1) {
+                                drawEdge(posA, posB, false);
+                            }
                         });
-                        line.addEventListener("mousemove", moveTooltip);
-                        line.addEventListener("mouseleave", () => {
-                            hideTooltip();
-                            line.style.stroke = "";
-                            line.style.strokeWidth = "";
-                        });
-                        topologySvg.appendChild(line);
-
-                        // Pulse overlay line
-                        const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                        pulse.setAttribute("d", d);
-                        pulse.setAttribute("class", "migration-pulse");
-                        pulse.setAttribute("id", `pulse-from-${posA.id}-to-${posB.id}`);
-                        pulse.style.display = "none";
-                        topologySvg.appendChild(pulse);
                     });
-                });
+                }
+
+            } else if (topo === "grid" || topo === "gibbs_fitness") {
+                // Grid layout: rows x cols
+                const cols = Math.ceil(Math.sqrt(N));
+                const rows = Math.ceil(N / cols);
+                const xStep = (width - 120) / Math.max(cols, 1);
+                const yStep = (height - 80)  / Math.max(rows, 1);
+                for (let i = 0; i < N; i++) {
+                    const r = Math.floor(i / cols), c = i % cols;
+                    islandPositions.push({ id: i + 1, x: 60 + xStep * (c + 0.5), y: 40 + yStep * (r + 0.5) });
+                }
+                // N/S/E/W edges only
+                if (N > 1) {
+                    islandPositions.forEach(posA => {
+                        const r = Math.floor((posA.id - 1) / cols), c = (posA.id - 1) % cols;
+                        [[r-1,c],[r+1,c],[r,c-1],[r,c+1]].forEach(([nr, nc]) => {
+                            if (nr < 0 || nc < 0 || nr >= rows || nc >= cols) return;
+                            const nid = nr * cols + nc + 1;
+                            if (nid < 1 || nid > N || nid <= posA.id) return;
+                            const posB = islandPositions[nid - 1];
+                            drawEdge(posA, posB, false);
+                        });
+                    });
+                }
+
+            } else if (topo === "hypercube") {
+                // Hypercube: circle layout, bit-flip neighbor edges
+                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
+                islandPositions = circlePositions(N, cx, cy, r);
+                const dim = Math.max(1, Math.floor(Math.log2(N)));
+                const drawn = new Set();
+                if (N > 1) {
+                    islandPositions.forEach(posA => {
+                        for (let b = 0; b < dim; b++) {
+                            const nid = ((posA.id - 1) ^ (1 << b)) % N + 1;
+                            if (nid === posA.id) return;
+                            const key = [Math.min(posA.id, nid), Math.max(posA.id, nid)].join("-");
+                            if (drawn.has(key)) return;
+                            drawn.add(key);
+                            drawEdge(posA, islandPositions[nid - 1], false);
+                        }
+                    });
+                }
+
+            } else if (topo === "ring") {
+                // Ring: circle, directed arc from i → i+1
+                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
+                islandPositions = circlePositions(N, cx, cy, r);
+                if (N > 1) {
+                    for (let i = 0; i < N; i++) {
+                        const posA = islandPositions[i];
+                        const posB = islandPositions[(i + 1) % N];
+                        drawEdge(posA, posB, true);
+                    }
+                }
+
+            } else {
+                // complete / gibbs_stagnation / dual_gibbs_pull / random / feature_distance: circle + all pairs
+                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
+                islandPositions = circlePositions(N, cx, cy, r);
+                if (N > 1) {
+                    islandPositions.forEach(posA => {
+                        islandPositions.forEach(posB => {
+                            if (posB.id <= posA.id) return;
+                            drawEdge(posA, posB, true);
+                        });
+                    });
+                }
             }
+
 
             // Create Node elements
             islandPositions.forEach((pos, idx) => {
@@ -1353,7 +1496,7 @@
         // Re-evaluate coordinates and draw SVGs for line chart
         let chartWidth = 500;
         let chartHeight = 200;
-        const padding = { top: 15, right: 15, bottom: 20, left: 45 };
+        const padding = { top: 15, right: 15, bottom: 20, left: 62 };
         let historyData = []; // list of gen updates
         let yMin = 0.0;
         let yMax = 1.0;
@@ -1419,14 +1562,24 @@
                 chartSvg.appendChild(line);
 
                 const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                txt.setAttribute("x", padding.left - 10);
+                txt.setAttribute("x", padding.left - 5);
                 txt.setAttribute("y", y + 3.5);
                 txt.setAttribute("fill", "var(--text-muted)");
                 txt.setAttribute("font-size", 9);
                 txt.setAttribute("font-family", "monospace");
                 txt.setAttribute("text-anchor", "end");
                 txt.setAttribute("class", "axis-label");
-                txt.textContent = val.toFixed(4);
+                // Compact label: 3 sig figs, switch to exponential for very large/small values
+                const absVal = Math.abs(val);
+                let label;
+                if (absVal === 0) {
+                    label = "0";
+                } else if (absVal >= 1e4 || (absVal < 0.001 && absVal > 0)) {
+                    label = val.toExponential(1);
+                } else {
+                    label = parseFloat(val.toPrecision(3)).toString();
+                }
+                txt.textContent = label;
                 chartSvg.appendChild(txt);
             }
         }
@@ -1574,7 +1727,39 @@
                 renderSwarm(isl.island, isl.all_fitness || []);
             });
 
-            // Update overall global best info
+            // Update tiered topology threshold lines with live per-tier best fitness
+            if (config && config.migration_topology === "tiered" && data.islands) {
+                // Group island best_fitness by tier (from islandPositions)
+                const tierBest = {};
+                islandPositions.forEach(pos => {
+                    if (pos.tier === undefined) return;
+                    const isl = data.islands.find(i => i.island === pos.id);
+                    if (!isl) return;
+                    const f = isl.best_fitness;
+                    if (f === null || f === undefined || isNaN(f)) return;
+                    if (tierBest[pos.tier] === undefined || f > tierBest[pos.tier]) tierBest[pos.tier] = f;
+                });
+                // tier-threshold-label-1 sits between tier 0 (entry) and tier 1 (intermediate)
+                // → threshold = best fitness of tier 0 (entry tier)
+                // tier-threshold-label-2 sits between tier 1 and tier 2 (apex)
+                // → threshold = best fitness of tier 1 (intermediate tier)
+                for (let t = 1; t <= 2; t++) {
+                    const lbl = document.getElementById(`tier-threshold-label-${t}`);
+                    if (!lbl) continue;
+                    const entryTierIdx = t - 1; // tier below the line
+                    const val = tierBest[entryTierIdx];
+                    if (val !== undefined) {
+                        const absVal = Math.abs(val);
+                        let text;
+                        if (absVal === 0) text = "0";
+                        else if (absVal >= 1e4 || (absVal < 0.001 && absVal > 0)) text = val.toExponential(2);
+                        else text = parseFloat(val.toPrecision(4)).toString();
+                        lbl.textContent = "▶ " + text;
+                    }
+                }
+            }
+
+
             updateBestInfo(
                 data.global_best_island || "-",
                 data.global_best_fitness,
@@ -2179,7 +2364,6 @@
 
             const healthStatus = document.getElementById(`health-status-${islandId}`);
             const stagThreshold = (config && config.pull_stagnation_threshold) || 3;
-            const stagBadge = document.getElementById(`stagnation-badge-${islandId}`);
 
             if (data.stagnation !== undefined) {
                 if (data.stagnation >= stagThreshold) {
@@ -2188,21 +2372,44 @@
                         nodeCircle.classList.add("stagnated");
                         nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)");
                     }
-                    if (stagBadge) stagBadge.style.display = "block";
                 } else if (data.stagnation > 0) {
                     if (healthStatus) healthStatus.className = "health-status";
                     if (nodeCircle) {
                         nodeCircle.classList.remove("stagnated");
                         nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
                     }
-                    if (stagBadge) stagBadge.style.display = "none";
                 } else {
                     if (healthStatus) healthStatus.className = "health-status active";
                     if (nodeCircle) {
                         nodeCircle.classList.remove("stagnated");
                         nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
                     }
-                    if (stagBadge) stagBadge.style.display = "none";
+                }
+                // Redraw tally crosses in tooltip handler too
+                const ticksG = document.getElementById(`stagnation-ticks-${islandId}`);
+                if (ticksG) {
+                    ticksG.innerHTML = "";
+                    const pos = islandPositions[islandId - 1];
+                    if (pos) {
+                        const n = Math.min(data.stagnation, 12);
+                        const crossColor = data.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
+                        const arcRadius = 52;
+                        const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
+                        const arcMid = Math.PI / 2;
+                        for (let ci = 0; ci < n; ci++) {
+                            const frac = n === 1 ? 0.5 : ci / (n - 1);
+                            const angle = arcMid - spread / 2 + frac * spread;
+                            const cx = pos.x + arcRadius * Math.sin(angle);
+                            const cy = pos.y + arcRadius * Math.cos(angle);
+                            const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                            cross.setAttribute("d", `M ${cx-3} ${cy-3} L ${cx+3} ${cy+3} M ${cx+3} ${cy-3} L ${cx-3} ${cy+3}`);
+                            cross.setAttribute("stroke", crossColor);
+                            cross.setAttribute("stroke-width", "1.8");
+                            cross.setAttribute("stroke-linecap", "round");
+                            cross.setAttribute("opacity", "0.9");
+                            ticksG.appendChild(cross);
+                        }
+                    }
                 }
             } else if (healthStatus) {
                 healthStatus.className = "health-status";
