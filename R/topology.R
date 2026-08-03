@@ -84,7 +84,7 @@ topology_hypercube <- function(islands = 10, dimension = NULL) {
 #' Partition N islands into 3 HFC tiers (Entry 50%, Intermediate 25%, Apex 25%)
 #' @param islands Integer. Total number of active islands.
 #' @return List with components \code{tier0}, \code{tier1}, and \code{tier2}.
-#' @keywords internal
+#' @noRd
 .partition_hfc_tiers <- function(islands) {
   if (islands <= 1) {
     return(list(tier0 = 1:islands, tier1 = integer(0), tier2 = integer(0)))
