@@ -329,17 +329,10 @@
             stroke-width: 4px !important;
         }
 
-        .stagnation-badge {
-            animation: stagnationGlow 1.8s ease-in-out infinite;
-            cursor: pointer;
-            filter: drop-shadow(0 0 6px #ef4444);
-        }
-
         .health-status.stagnated {
             background: #ef4444 !important;
             box-shadow: 0 0 8px #ef4444;
             border-radius: 2px;
-            position: relative;
         }
 
         @keyframes sonarRipple {
@@ -1326,28 +1319,10 @@
                 subtxt.textContent = "0.0000";
                 g.appendChild(subtxt);
 
-                // Create SVG stagnation cross badge (hidden by default)
-                const badgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-                badgeG.setAttribute("id", `stagnation-badge-${pos.id}`);
-                badgeG.setAttribute("class", "stagnation-badge");
-                badgeG.setAttribute("transform", `translate(${pos.x + 30}, ${pos.y - 30})`);
-                badgeG.setAttribute("style", "display: none;");
-
-                const badgeBg = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-                badgeBg.setAttribute("r", "11");
-                badgeBg.setAttribute("fill", "#ef4444");
-                badgeBg.setAttribute("stroke", "#ffffff");
-                badgeBg.setAttribute("stroke-width", "1.5");
-                badgeG.appendChild(badgeBg);
-
-                const crossPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                crossPath.setAttribute("d", "M -4 -4 L 4 4 M 4 -4 L -4 4");
-                crossPath.setAttribute("stroke", "#ffffff");
-                crossPath.setAttribute("stroke-width", "2.2");
-                crossPath.setAttribute("stroke-linecap", "round");
-                badgeG.appendChild(crossPath);
-
-                g.appendChild(badgeG);
+                // Container for per-generation stagnation tally crosses (populated at runtime)
+                const ticksG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                ticksG.setAttribute("id", `stagnation-ticks-${pos.id}`);
+                g.appendChild(ticksG);
 
                 // Tooltip events
                 g.addEventListener("mouseenter", (e) => showIslandTooltip(e, pos.id));
@@ -1548,26 +1523,51 @@
                 // Update health bar width
                 healthBar.style.width = `${getHealthBarPercentage(fitnessVal)}%`;
 
-                // Node color and stagnation cross badge based on stagnation count
+                // Node color based on stagnation count
                 const stagThreshold = (config && config.pull_stagnation_threshold) || 3;
-                const stagBadge = document.getElementById(`stagnation-badge-${isl.island}`);
                 if (isl.stagnation >= stagThreshold) {
                     healthStatus.className = "health-status stagnated";
                     nodeCircle.classList.add("stagnated");
-                    nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)"); // Stagnation warning state
-                    if (stagBadge) stagBadge.style.display = "block";
+                    nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)");
                 } else if (isl.stagnation > 0) {
                     healthStatus.className = "health-status";
                     nodeCircle.classList.remove("stagnated");
                     nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
-                    if (stagBadge) stagBadge.style.display = "none";
                 } else {
                     healthStatus.className = "health-status active";
                     nodeCircle.classList.add("improving");
                     setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
                     nodeCircle.classList.remove("stagnated");
                     nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
-                    if (stagBadge) stagBadge.style.display = "none";
+                }
+
+                // Draw one small × cross per stagnated generation along the bottom arc of the node
+                const ticksG = document.getElementById(`stagnation-ticks-${isl.island}`);
+                if (ticksG) {
+                    ticksG.innerHTML = "";
+                    const pos = islandPositions[isl.island - 1];
+                    const n = Math.min(isl.stagnation, 12); // cap display at 12
+                    const crossColor = isl.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
+                    const arcRadius = 52;
+                    // Spread crosses along the bottom 120° arc of the node
+                    const arcStart = Math.PI / 2 + Math.PI / 3;  // 150°
+                    const arcEnd   = Math.PI / 2 + (2 * Math.PI) / 3; // ~210° → bottom
+                    // Use full bottom half: 120° spread when n>=2, else centre
+                    const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
+                    const arcMid  = Math.PI / 2; // 90° = bottom
+                    for (let ci = 0; ci < n; ci++) {
+                        const frac = n === 1 ? 0.5 : ci / (n - 1);
+                        const angle = arcMid - spread / 2 + frac * spread; // bottom arc
+                        const cx = pos.x + arcRadius * Math.sin(angle);
+                        const cy = pos.y + arcRadius * Math.cos(angle);
+                        const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                        cross.setAttribute("d", `M ${cx-3} ${cy-3} L ${cx+3} ${cy+3} M ${cx+3} ${cy-3} L ${cx-3} ${cy+3}`);
+                        cross.setAttribute("stroke", crossColor);
+                        cross.setAttribute("stroke-width", "1.8");
+                        cross.setAttribute("stroke-linecap", "round");
+                        cross.setAttribute("opacity", "0.9");
+                        ticksG.appendChild(cross);
+                    }
                 }
 
                 // Render population swarm inside node circle
