@@ -56,23 +56,35 @@ for the evolutionary feature-engineering search.  Every entry is an
     for binary / regression tasks using dynamic shrinkage based on target variance.}
   \item{\code{target_encode_multiclass}}{Class-wise smoothed target encoding
     for multiclass tasks.}
+  \item{\code{target_quantile_encode}}{Category target encoding using smoothed target
+    quantiles (\code{q} sampled from \{0.25, 0.50, 0.75\}).}
+  \item{\code{cat_interaction_target_encode}}{Smoothed mean-target encoding for joint
+    Cartesian interaction of two categorical columns.}
   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
     classification: \code{ln(P(event|cat) / P(non-event|cat))} with Laplace
     smoothing.  Falls back to 0 for non-binary targets.}
 }
 
-\strong{Unsupervised categorical / binning}
+\strong{Unsupervised categorical / text / datetime}
 \describe{
   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
   \item{\code{frequency_encode}}{Count of each category level in training data.}
   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
     an "other" bucket (\code{comp_idx} 1–6).}
+  \item{\code{similarity_encode}}{Character 3-gram Jaccard similarity between string
+    levels and top-K prototype categories (inspired by \pkg{skrub}).}
+  \item{\code{minhash_encode}}{Fast sub-string MinHash hashing for high-cardinality strings
+    (inspired by \pkg{skrub}).}
+  \item{\code{gap_encode}}{Character 3-gram TF-IDF projection via SVD to extract latent
+    sub-string topics (inspired by \pkg{skrub}).}
   \item{\code{quantile_binning}}{Assigns quantile-based bin index (numeric output).}
   \item{\code{quantile_binning_cat}}{Same, with categorical output.}
   \item{\code{log_binning}}{Log-scale bin index (numeric output).}
   \item{\code{log_binning_cat}}{Same, with categorical output.}
   \item{\code{datetime_extract}}{Extracts year, month, day, hour, day-of-week,
     or weekend indicator from date/datetime columns.}
+  \item{\code{datetime_cyclic}}{Sine and cosine cyclic encoding for periodic date/time
+    components (hour, day of week, month, day of year).}
 }
 
 \strong{Dimensionality reduction (numeric → numeric, stateful)}

@@ -10,8 +10,7 @@ apply_individual(
   val_data = NULL,
   target_col = NULL,
   state_cache = NULL,
-  allow_prune = TRUE,
-  skip_filtering = FALSE
+  allow_prune = TRUE
 )
 }
 \arguments{
@@ -26,8 +25,6 @@ apply_individual(
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 
 \item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
-
-\item{skip_filtering}{Logical. If TRUE, candidate mutation filtering (constant/redundancy checks) is bypassed. Defaults to \code{!allow_prune}.}
 }
 \value{
 A list with three elements: \code{train} (the transformed training

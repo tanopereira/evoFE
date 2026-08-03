@@ -28,10 +28,14 @@ evolve_features(
   model_all_historical_genes = FALSE,
   allowed_transformers = "all",
   complexity_penalty = 0,
+  migration = NULL,
   islands = 1,
   migration_interval = 5,
   migration_rate = 1,
   gene_migration_prob = 0.2,
+  migration_topology = "ring",
+  migration_temperature = 1,
+  pull_stagnation_threshold = 3,
   raw_toggle_prob = 0.15,
   recalculate_mask_prob = 0.05,
   mask_temp_factor = 0.5,
@@ -111,13 +115,17 @@ individual's raw fitness as \code{complexity_penalty * n_genes}.  A small
 value (e.g. \code{0.001}) encourages parsimonious recipes and reduces
 overfitting on small datasets.  Default \code{0} disables the penalty.}
 
-\item{islands}{Integer. Number of independent subpopulations (islands) to evolve (default 1).}
-
 \item{migration_interval}{Integer. Number of generations between migrations (default 5).}
 
 \item{migration_rate}{Integer. Number of top individuals to migrate from each island to its neighbor (default 1).}
 
 \item{gene_migration_prob}{Numeric. Probability of injecting a migrated gene during mutation (default 0.2).}
+
+\item{migration_topology}{Character string specifying the island migration scheme: \code{"ring"} (default unidirectional ring), \code{"gibbs_stagnation"} (probabilistic push targeting stagnated islands), \code{"gibbs_fitness"} (probabilistic push targeting lower-fitness islands), \code{"dual_gibbs_pull"} (demand-driven pull where stagnated islands request migrants from high-fitness donors), or \code{"random"} (uniform random destination).}
+
+\item{migration_temperature}{Numeric > 0. Temperature parameter for Gibbs softmax migration probability distributions (default 1.0).}
+
+\item{pull_stagnation_threshold}{Integer >= 1. Stagnation generation threshold used as sigmoid midpoint for pull requests in \code{"dual_gibbs_pull"} (default 3).}
 
 \item{raw_toggle_prob}{Numeric in \code{[0, 1]}. Probability that a mutation
 event toggles one or more raw input features in an individual's active mask
