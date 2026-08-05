@@ -1425,13 +1425,18 @@
                 }
 
                 if (N > 1) {
+                    // 1. Intra-tier peer edges (all pairs of islands within same tier)
                     for (let t = 0; t < nTiers; t++) {
                         const tierNodes = islandPositions.filter(p => p.tier === t);
-                        for (let i = 0; i < tierNodes.length - 1; i++) {
-                            drawEdge(tierNodes[i], tierNodes[i + 1], true);
-                            drawEdge(tierNodes[i + 1], tierNodes[i], true);
+                        for (let i = 0; i < tierNodes.length; i++) {
+                            for (let j = 0; j < tierNodes.length; j++) {
+                                if (i !== j) {
+                                    drawEdge(tierNodes[i], tierNodes[j], true);
+                                }
+                            }
                         }
                     }
+                    // 2. Binary tree promotion edges (each island in Tier t connects to its binary tree parent in Tier t+1)
                     for (let t = 0; t < nTiers - 1; t++) {
                         const currTierNodes = islandPositions.filter(p => p.tier === t);
                         const nextTierNodes = islandPositions.filter(p => p.tier === t + 1);
@@ -2036,8 +2041,15 @@
             pathUsageCounts[routeKey] = (pathUsageCounts[routeKey] || 0) + 1;
             const useCount = pathUsageCounts[routeKey];
 
-            // Dynamically increase underlying path opacity & stroke width as route is used
-            const pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`) || document.getElementById(`path-from-${data.to}-to-${data.from}`);
+            let pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`);
+            let pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`);
+
+            if (!pathLine && islandPositions[data.from - 1] && islandPositions[data.to - 1]) {
+                drawEdge(islandPositions[data.from - 1], islandPositions[data.to - 1], true);
+                pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`);
+                pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`);
+            }
+
             if (pathLine) {
                 const targetOpacity = Math.min(0.85, 0.20 + (useCount * 0.12));
                 const targetWidth = Math.min(4, 2 + (useCount * 0.3));
@@ -2046,7 +2058,6 @@
                 pathLine.style.strokeWidth = `${targetWidth}px`;
             }
 
-            const pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`) || document.getElementById(`pulse-from-${data.to}-to-${data.from}`);
             if (pulse) {
                 pulse.style.display = "block";
                 setTimeout(() => {
