@@ -16,6 +16,18 @@
 #' @name migration_policy
 NULL
 
+.calc_feature_distance <- function(ind_j, ind_k) {
+  if (is.null(ind_j) || is.null(ind_k) || length(ind_j$genes) == 0L || length(ind_k$genes) == 0L) {
+    return(1.0)
+  }
+  f_j <- vapply(ind_j$genes, gene_to_formula, character(1))
+  f_k <- vapply(ind_k$genes, gene_to_formula, character(1))
+  union_len <- length(union(f_j, f_k))
+  if (union_len == 0L) return(1.0)
+  intersect_len <- length(intersect(f_j, f_k))
+  1.0 - (intersect_len / union_len)
+}
+
 #' @rdname migration_policy
 #' @export
 policy_push_uniform <- function() {
@@ -27,7 +39,7 @@ policy_push_uniform <- function() {
 
 #' @rdname migration_policy
 #' @export
-policy_gibbs_push <- function(temperature = 0.5, weight_by = c("stagnation", "fitness")) {
+policy_gibbs_push <- function(temperature = 0.5, weight_by = c("stagnation", "fitness", "feature_distance")) {
   temperature <- as.numeric(temperature)
   if (is.na(temperature) || temperature <= 0) stop("temperature must be a positive numeric value")
   weight_by <- match.arg(weight_by)
@@ -69,11 +81,12 @@ migration_config <- function(topology = topology_ring(), policy = policy_push_un
     topology <- switch(topology,
       "ring" = topology_ring(),
       "grid" = topology_grid(),
+      "torus" = topology_torus(),
       "hypercube" = topology_hypercube(),
       "tiered" = topology_tiered(),
       "hfc" = topology_tiered(),
       "complete" = topology_complete(),
-      "feature_distance" = topology_feature_distance(),
+      "feature_distance" = topology_complete(),
       topology_ring()
     )
   }
@@ -83,6 +96,8 @@ migration_config <- function(topology = topology_ring(), policy = policy_push_un
       "push_uniform" = policy_push_uniform(),
       "gibbs_stagnation" = policy_gibbs_push(weight_by = "stagnation"),
       "gibbs_fitness" = policy_gibbs_push(weight_by = "fitness"),
+      "gibbs_feature_distance" = policy_gibbs_push(weight_by = "feature_distance"),
+      "feature_distance" = policy_gibbs_push(weight_by = "feature_distance"),
       "dual_gibbs_pull" = policy_gibbs_pull(),
       "tiered_admission" = policy_tiered_admission(),
       policy_push_uniform()
@@ -91,6 +106,9 @@ migration_config <- function(topology = topology_ring(), policy = policy_push_un
 
   if (!inherits(topology, "evo_topology")) stop("topology must inherit from evo_topology")
   if (!inherits(policy, "evo_policy")) stop("policy must inherit from evo_policy")
+  if (inherits(policy, "evo_policy_tiered_admission") && !inherits(topology, "evo_topology_tiered")) {
+    stop("policy_tiered_admission can only be used with tiered topologies (topology_tiered).")
+  }
   if (!payload %in% c("gene_only", "full_individual")) stop("payload must be 'gene_only' or 'full_individual'")
 
   structure(
@@ -105,12 +123,62 @@ resolve_migration_transactions <- function(policy, topology, state, ...) {
   UseMethod("resolve_migration_transactions")
 }
 
+# Helper to resolve vertical promotion in tiered topologies
+.resolve_tiered_promotions <- function(topology, state) {
+  txs <- list()
+  if (!inherits(topology, "evo_topology_tiered")) return(txs)
+  t_all <- topology$tier_partition
+  t_all <- t_all[vapply(t_all, function(x) length(x) > 0, logical(1))]
+  N <- topology$islands
+
+  for (j in 1:N) {
+    tier_matches <- which(vapply(t_all, function(t_islands) j %in% t_islands, logical(1)))
+    if (length(tier_matches) == 0L) next
+    tier_idx <- tier_matches[1]
+    if (tier_idx >= length(t_all)) next
+
+    curr_tier_islands <- t_all[[tier_idx]]
+    local_pos <- which(curr_tier_islands == j)
+    from_t <- tier_idx - 1L
+
+    next_tier_islands <- t_all[[tier_idx + 1L]]
+    next_tier_fits <- state$island_best_fitness[next_tier_islands]
+    min_next_fit <- if (all(is.na(next_tier_fits))) -Inf else min(next_tier_fits, na.rm = TRUE)
+
+    j_fit <- state$island_best_fitness[j]
+    if (!is.na(j_fit) && j_fit > min_next_fit) {
+      parent_idx <- min(length(next_tier_islands), ((local_pos - 1L) %/% 2L) + 1L)
+      dest <- next_tier_islands[parent_idx]
+      txs[[length(txs) + 1L]] <- list(
+        from = j, to = dest, is_pull = FALSE, is_promotion = TRUE,
+        from_tier = from_t, to_tier = from_t + 1L
+      )
+    }
+  }
+  txs
+}
+
 #' @rdname migration_policy
 #' @export
 resolve_migration_transactions.evo_policy_push_uniform <- function(policy, topology, state, ...) {
   txs <- list()
   N <- topology$islands
   if (N <= 1L) return(txs)
+
+  if (inherits(topology, "evo_topology_tiered")) {
+    txs <- c(txs, .resolve_tiered_promotions(topology, state))
+    t_all <- topology$tier_partition
+    for (t_islands in t_all) {
+      if (length(t_islands) > 1L) {
+        for (j in t_islands) {
+          peers <- setdiff(t_islands, j)
+          dest <- if (length(peers) == 1L) peers[1] else sample(peers, 1L)
+          txs[[length(txs) + 1L]] <- list(from = j, to = dest, is_pull = FALSE)
+        }
+      }
+    }
+    return(txs)
+  }
 
   for (j in 1:N) {
     neighbors <- get_neighbors(topology, j, state)
@@ -132,34 +200,53 @@ resolve_migration_transactions.evo_policy_gibbs_push <- function(policy, topolog
   temp <- policy$temperature
   weight_by <- policy$weight_by
 
+  calc_weights <- function(j, nbrs) {
+    if (weight_by == "stagnation") {
+      stags <- state$island_gens_without_improvement[nbrs]
+      stags[is.na(stags)] <- 0
+      max_s <- max(stags)
+      logits <- (stags - max_s) / temp
+      exp(logits) / sum(exp(logits))
+    } else if (weight_by == "feature_distance") {
+      ind_j <- if (!is.null(state$pop_list[[j]]) && length(state$pop_list[[j]]) > 0L) state$pop_list[[j]][[1]] else NULL
+      dists <- vapply(nbrs, function(k) {
+        ind_k <- if (!is.null(state$pop_list[[k]]) && length(state$pop_list[[k]]) > 0L) state$pop_list[[k]][[1]] else NULL
+        .calc_feature_distance(ind_j, ind_k)
+      }, numeric(1))
+      max_d <- max(dists)
+      logits <- (dists - max_d) / temp
+      exp(logits) / sum(exp(logits))
+    } else { # fitness
+      fits <- state$island_best_fitness[nbrs]
+      valid_fits <- fits[!is.na(fits)]
+      fits[is.na(fits)] <- if (length(valid_fits) > 0L) min(valid_fits) else 0
+      diffs <- max(fits) - fits
+      logits <- (diffs - max(diffs)) / temp
+      exp(logits) / sum(exp(logits))
+    }
+  }
+
+  if (inherits(topology, "evo_topology_tiered")) {
+    txs <- c(txs, .resolve_tiered_promotions(topology, state))
+    t_all <- topology$tier_partition
+    for (t_islands in t_all) {
+      if (length(t_islands) > 1L) {
+        for (j in t_islands) {
+          neighbors <- setdiff(t_islands, j)
+          probs <- calc_weights(j, neighbors)
+          if (any(is.na(probs)) || sum(probs) == 0) probs <- rep(1 / length(neighbors), length(neighbors))
+          dest <- if (length(neighbors) == 1L) neighbors[1] else sample(neighbors, 1L, prob = probs)
+          txs[[length(txs) + 1L]] <- list(from = j, to = dest, is_pull = FALSE)
+        }
+      }
+    }
+    return(txs)
+  }
+
   for (j in 1:N) {
     neighbors <- get_neighbors(topology, j, state)
     if (length(neighbors) > 0L) {
-      if (weight_by == "stagnation") {
-        stags <- state$island_gens_without_improvement[neighbors]
-        stags[is.na(stags)] <- 0
-        max_s <- max(stags)
-        logits <- (stags - max_s) / temp
-        probs <- exp(logits) / sum(exp(logits))
-      } else { # fitness
-        fits <- state$island_best_fitness[neighbors]
-        valid_fits <- fits[!is.na(fits)]
-        if (length(valid_fits) > 0L) {
-          fits[is.na(fits)] <- min(valid_fits)
-        } else {
-          fits[] <- 0
-        }
-        max_f <- max(fits)
-        diffs <- max_f - fits
-        max_d <- max(diffs)
-        if (all(diffs == 0)) {
-          probs <- rep(1 / length(neighbors), length(neighbors))
-        } else {
-          logits <- (diffs - max_d) / temp
-          probs <- exp(logits) / sum(exp(logits))
-        }
-      }
-      
+      probs <- calc_weights(j, neighbors)
       if (any(is.na(probs)) || sum(probs) == 0) {
         probs <- rep(1 / length(neighbors), length(neighbors))
       }
@@ -212,53 +299,8 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
 #' @rdname migration_policy
 #' @export
 resolve_migration_transactions.evo_policy_tiered_admission <- function(policy, topology, state, ...) {
-  txs <- list()
-  N <- topology$islands
-  if (N <= 1L) return(txs)
-
   if (!inherits(topology, "evo_topology_tiered")) {
-    topology <- topology_tiered(N)
+    stop("policy_tiered_admission can only be used with tiered topologies (topology_tiered).")
   }
-
-  t_all <- topology$tier_partition
-  t_all <- t_all[vapply(t_all, function(x) length(x) > 0, logical(1))]
-
-  for (j in 1:N) {
-    tier_idx <- which(vapply(t_all, function(t_islands) j %in% t_islands, logical(1)))
-    if (length(tier_idx) == 0L) next
-
-    curr_tier_islands <- t_all[[tier_idx]]
-    local_pos <- which(curr_tier_islands == j)
-    from_t <- tier_idx - 1L
-
-    # 1. Vertical Promotion check to next higher tier
-    if (tier_idx < length(t_all)) {
-      next_tier_islands <- t_all[[tier_idx + 1L]]
-      next_tier_fits <- state$island_best_fitness[next_tier_islands]
-      min_next_fit <- if (all(is.na(next_tier_fits))) -Inf else min(next_tier_fits, na.rm = TRUE)
-
-      j_fit <- state$island_best_fitness[j]
-      if (!is.na(j_fit) && j_fit >= min_next_fit) {
-        target_size <- length(next_tier_islands)
-        slot_idx <- ((local_pos - 1L) %/% ceiling(length(curr_tier_islands) / target_size)) + 1L
-        target_slot <- min(slot_idx, target_size)
-        dest <- next_tier_islands[target_slot]
-        txs[[length(txs) + 1L]] <- list(
-          from = j, to = dest, is_pull = FALSE, is_promotion = TRUE,
-          from_tier = from_t, to_tier = from_t + 1L
-        )
-      }
-    }
-
-    # 2. Horizontal Intra-Tier Peer Migration
-    if (length(curr_tier_islands) > 1L) {
-      candidates <- setdiff(curr_tier_islands, j)
-      dest <- if (length(candidates) == 1L) candidates[1] else sample(candidates, 1L)
-      txs[[length(txs) + 1L]] <- list(
-        from = j, to = dest, is_pull = FALSE, is_promotion = FALSE,
-        from_tier = from_t, to_tier = from_t
-      )
-    }
-  }
-  txs
+  resolve_migration_transactions.evo_policy_push_uniform(policy, topology, state, ...)
 }

@@ -371,9 +371,12 @@ dynamic_population_decay_rate = 0.7,
                             record = FALSE,
                             port = NULL, ...) {
 
-  # If custom migration config is provided, sync islands count from migration$topology$islands
+  # If custom migration config is provided, sync islands count and topology from migration$topology
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
     islands <- migration$topology$islands
+    if (!is.null(migration$topology$type)) {
+      migration_topology <- migration$topology$type
+    }
   }
 
   # Validate island parameters early to support list allowed_transformers validation
@@ -593,9 +596,10 @@ dynamic_population_decay_rate = 0.7,
       stop("gene_migration_prob must be a numeric value between 0 and 1.")
     }
 
+    valid_topologies <- c("ring", "grid", "torus", "hypercube", "tiered", "hfc", "complete", "feature_distance", "gibbs_stagnation", "gibbs_fitness", "dual_gibbs_pull", "random")
     if (!is.character(migration_topology) || length(migration_topology) != 1 ||
-        !migration_topology %in% c("ring", "gibbs_stagnation", "gibbs_fitness", "dual_gibbs_pull", "random")) {
-      stop("migration_topology must be one of 'ring', 'gibbs_stagnation', 'gibbs_fitness', 'dual_gibbs_pull', or 'random'.")
+        !migration_topology %in% valid_topologies) {
+      stop(sprintf("migration_topology must be one of: %s", paste(valid_topologies, collapse = ", ")))
     }
 
     if (!is.numeric(migration_temperature) || migration_temperature <= 0) {
@@ -787,10 +791,33 @@ dynamic_population_decay_rate = 0.7,
   viewer <- NULL
   evolution_log <- NULL
 
+  tiers_count <- if (!is.null(migration) && inherits(migration, "evo_migration_config") && !is.null(migration$topology$tiers)) {
+    migration$topology$tiers
+  } else 3L
+
+  topo_obj <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+    migration$topology
+  } else {
+    switch(migration_topology,
+      "grid" = topology_grid(islands),
+      "torus" = topology_torus(islands),
+      "hypercube" = topology_hypercube(islands),
+      "tiered" = topology_tiered(islands, tiers = tiers_count),
+      "hfc" = topology_tiered(islands, tiers = tiers_count),
+      "complete" = topology_complete(islands),
+      "feature_distance" = topology_feature_distance(islands),
+      topology_ring(islands)
+    )
+  }
+
+  adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
+
   if (record) {
     evolution_log <- list(
       config = list(
         islands = islands, pop_size = pop_size, generations = generations,
+        tiers = tiers_count,
+        adj_list = adj_list_payload,
         task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
@@ -1404,7 +1431,15 @@ dynamic_population_decay_rate = 0.7,
         # Build migration transactions list: list of list(from, to, is_pull)
         migration_txs <- list()
 
-        if (migration_topology == "dual_gibbs_pull") {
+        state <- list(
+          pop_list = pop_list,
+          island_best_fitness = island_best_fitness,
+          island_gens_without_improvement = island_gens_without_improvement
+        )
+
+        if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+          migration_txs <- resolve_migration_transactions(migration$policy, migration$topology, state)
+        } else if (migration_topology == "dual_gibbs_pull") {
           for (j in 1:islands) {
             s_j <- island_gens_without_improvement[j]
             p_pull <- 1 / (1 + exp(-(s_j - pull_stagnation_threshold) / migration_temperature))
@@ -1455,8 +1490,26 @@ dynamic_population_decay_rate = 0.7,
               logits <- (diffs - max_d) / migration_temperature
               probs <- exp(logits) / sum(exp(logits))
               dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
+            } else if (migration_topology %in% c("tiered", "hfc")) {
+              topo_obj <- topology_tiered(islands)
+              policy_obj <- policy_tiered_admission()
+              txs <- resolve_migration_transactions(policy_obj, topo_obj, state)
+              migration_txs <- c(migration_txs, txs)
+              break
+            } else {
+              switch(migration_topology,
+                "grid" = topology_grid(islands),
+                "torus" = topology_torus(islands),
+                "hypercube" = topology_hypercube(islands),
+                "complete" = topology_complete(islands),
+                "feature_distance" = topology_feature_distance(islands),
+                topology_ring(islands)
+              )
+              candidates <- get_neighbors(topo_obj, j)
+              if (length(candidates) == 0) candidates <- setdiff(1:islands, j)
+              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1)
+              migration_txs[[length(migration_txs) + 1]] <- list(from = j, to = dest, is_pull = FALSE)
             }
-            migration_txs[[length(migration_txs) + 1]] <- list(from = j, to = dest, is_pull = FALSE)
           }
         }
 
@@ -1468,40 +1521,79 @@ dynamic_population_decay_rate = 0.7,
           effective_rate <- 0L
           new_genes <- list()
 
-          # 1. Recipe-level migration (guarded for dynamic population sizes)
-          if (length(old_pop_list[[src]]) > 0) {
-            effective_rate <- min(migration_rate, length(old_pop_list[[src]]),
-                                  length(pop_list[[dest]]) - 1L)
+          payload_strategy <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+            migration$payload
+          } else {
+            "full_individual"
           }
-          if (effective_rate > 0) {
-            migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
-            if (row_split_islands || per_island_validation) {
-              # Fitness was evaluated on src local split — must re-evaluate on dest local split
-              migrant_inds <- lapply(migrant_inds, function(ind) { ind$fitness <- NA_real_; ind })
-              eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
-                split_ids_val,
-                if (row_split_islands) island_shared_splits[[dest]] else shared_splits,
-                evaluator,
-                fold_ids,
-                if (row_split_islands) island_shared_folds[[dest]] else shared_folds,
-                shared_full,
-                if (row_split_islands) island_state_caches[[dest]] else state_cache,
-                if (row_split_islands) island_fitness_caches[[dest]] else fitness_cache,
-                threads, verbose, island_best_fitness[dest],
-                metric = metric, complexity_penalty = complexity_penalty, island = dest, ...
-              )
-              migrant_inds <- eval_migrant$pop
+          # 1. Recipe-level migration (only if payload_strategy == "full_individual")
+          if (identical(payload_strategy, "full_individual")) {
+            if (length(old_pop_list[[src]]) > 0) {
+              effective_rate <- min(migration_rate, length(old_pop_list[[src]]),
+                                    length(pop_list[[dest]]) - 1L)
             }
+            if (effective_rate > 0) {
+              migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
-            # Replace the worst individuals of the target population
-            worst_start <- length(pop_list[[dest]]) - effective_rate + 1
-            worst_end <- length(pop_list[[dest]])
-            pop_list[[dest]][worst_start:worst_end] <- migrant_inds
+              if (row_split_islands || per_island_validation) {
+                # Fitness was evaluated on src local split — must re-evaluate on dest local split
+                migrant_inds <- lapply(migrant_inds, function(ind) { ind$fitness <- NA_real_; ind })
+                eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
+                  split_ids_val,
+                  if (row_split_islands) island_shared_splits[[dest]] else shared_splits,
+                  evaluator,
+                  fold_ids,
+                  if (row_split_islands) island_shared_folds[[dest]] else shared_folds,
+                  shared_full,
+                  if (row_split_islands) island_state_caches[[dest]] else state_cache,
+                  if (row_split_islands) island_fitness_caches[[dest]] else fitness_cache,
+                  threads, verbose, island_best_fitness[dest],
+                  metric = metric, complexity_penalty = complexity_penalty, island = dest, ...
+                )
+                migrant_inds <- eval_migrant$pop
+              }
 
-            if (verbose) {
-              msg_prefix <- if (tx$is_pull) "Pulling" else "Migrating"
-              message(sprintf("  %s top %d recipe(s) from Island %d to Island %d", msg_prefix, effective_rate, src, dest))
+              # Replace the worst individuals of the target population
+              worst_start <- length(pop_list[[dest]]) - effective_rate + 1
+              worst_end <- length(pop_list[[dest]])
+              pop_list[[dest]][worst_start:worst_end] <- migrant_inds
+
+              # Re-sort destination population immediately by fitness (highest first)
+              dest_fits <- vapply(pop_list[[dest]], function(ind) {
+                if (!is.null(ind$fitness) && !is.na(ind$fitness)) ind$fitness else -Inf
+              }, numeric(1))
+              pop_list[[dest]] <- pop_list[[dest]][order(dest_fits, decreasing = TRUE)]
+
+              # Update best tracking immediately for destination island and global best
+              new_dest_best <- pop_list[[dest]][[1]]
+              is_new_dest_best <- FALSE
+              is_new_global_best <- FALSE
+
+              if (!is.null(new_dest_best$fitness) && !is.na(new_dest_best$fitness)) {
+                if (is.na(island_best_fitness[dest]) || new_dest_best$fitness > island_best_fitness[dest]) {
+                  island_best_fitness[dest] <- new_dest_best$fitness
+                  island_best_individual[[dest]] <- new_dest_best
+                  island_gens_without_improvement[dest] <- 0L
+                  is_new_dest_best <- TRUE
+                }
+                if (is.na(global_best_fitness) || new_dest_best$fitness > global_best_fitness) {
+                  global_best_fitness <- new_dest_best$fitness
+                  global_best_individual <- new_dest_best
+                  best_ind_source <- paste0("Island ", dest)
+                  is_new_global_best <- TRUE
+                }
+              }
+
+              if (verbose) {
+                msg_prefix <- if (tx$is_pull) "Pulling" else "Migrating"
+                message(sprintf("  %s top %d recipe(s) from Island %d to Island %d", msg_prefix, effective_rate, src, dest))
+                if (is_new_global_best) {
+                  message(sprintf("    [Island %d] New Global Best Fitness: %.4f", dest, global_best_fitness))
+                } else if (is_new_dest_best) {
+                  message(sprintf("    [Island %d] New Best Fitness: %.4f", dest, island_best_fitness[dest]))
+                }
+              }
             }
           }
 
@@ -1560,33 +1652,34 @@ dynamic_population_decay_rate = 0.7,
             island_gens_without_improvement[dest] <- 0
           }
 
-          if (record) {
-            migrated_gene_details <- list()
-            if (length(new_genes) > 0) {
-              migrated_gene_details <- lapply(new_genes, function(g_mig) {
-                col <- g_mig$output_col
-                imp_val <- if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
-                  as.numeric(best_ind$importances[[col]])
-                } else {
-                  0.0
-                }
-                list(
-                  formula = gene_to_formula(g_mig),
-                  output_col = col,
-                  importance = imp_val
-                )
-              })
-            }
+          migrated_gene_details <- list()
+          if (length(new_genes) > 0) {
+            migrated_gene_details <- lapply(new_genes, function(g_mig) {
+              col <- g_mig$output_col
+              imp_val <- if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
+                as.numeric(best_ind$importances[[col]])
+              } else {
+                0.0
+              }
+              list(
+                formula = gene_to_formula(g_mig),
+                output_col = col,
+                importance = imp_val
+              )
+            })
+          }
 
-            migration_event <- list(
-              from = src,
-              to = dest,
-              topology = migration_topology,
-              is_pull = tx$is_pull,
-              n_recipes = effective_rate,
-              n_genes = n_injected,
-              migrated_genes = migrated_gene_details
-            )
+          migration_event <- list(
+            from = src,
+            to = dest,
+            topology = migration_topology,
+            is_pull = tx$is_pull,
+            n_recipes = effective_rate,
+            n_genes = n_injected,
+            migrated_genes = migrated_gene_details
+          )
+
+          if (record) {
             if (is.null(evolution_log$generations[[g]]$migrations)) {
               evolution_log$generations[[g]]$migrations <- list()
             }
@@ -1594,6 +1687,9 @@ dynamic_population_decay_rate = 0.7,
               evolution_log$generations[[g]]$migrations,
               list(migration_event)
             )
+          }
+
+          if (!is.null(viewer)) {
             viewer$send(list(type = "migration", data = migration_event))
           }
         }

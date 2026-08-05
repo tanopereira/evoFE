@@ -89,8 +89,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
           valid_idx <- new_is_finite & is.finite(ev)
           if (sum(valid_idx) > 2) {
             r <- tryCatch(
-              abs(stats::cor(new_col_train[valid_idx], ev[valid_idx],
-                             use = "complete.obs")),
+              suppressWarnings(abs(stats::cor(new_col_train[valid_idx], ev[valid_idx],
+                             use = "complete.obs"))),
               error = function(e) 0
             )
             if (!is.na(r) && r >= cor_threshold) stop("Redundant column")

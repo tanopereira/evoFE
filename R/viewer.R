@@ -39,7 +39,9 @@ start_evolution_viewer <- function(port = NULL) {
     port <- httpuv::randomPort()
   }
 
-  ws_connection <- NULL
+  ws_connections <- list()
+  history_buffer <- list()
+
   html_path <- system.file("viewer", "index.html", package = "evoFE")
   if (html_path == "") {
     # Fallback/development path
@@ -74,7 +76,15 @@ start_evolution_viewer <- function(port = NULL) {
             )
           },
           onWSOpen = function(ws) {
-            ws_connection <<- ws
+            ws_connections[[length(ws_connections) + 1]] <<- ws
+            # Instantly replay all buffered history to reconnected client
+            for (msg in history_buffer) {
+              tryCatch({
+                ws$send(msg)
+              }, error = function(e) {
+                # Ignore transient send error during replay
+              })
+            }
           }
         )
       )
@@ -98,14 +108,25 @@ start_evolution_viewer <- function(port = NULL) {
     url = url,
     server = server,
     get_connection = function() {
-      ws_connection
+      if (length(ws_connections) > 0) ws_connections[[1]] else NULL
     },
     send = function(data) {
-      if (!is.null(ws_connection)) {
-        json <- jsonlite::toJSON(data, auto_unbox = TRUE)
-        ws_connection$send(json)
+      json <- jsonlite::toJSON(data, auto_unbox = TRUE)
+      history_buffer[[length(history_buffer) + 1]] <<- json
+
+      alive_conns <- list()
+      for (ws in ws_connections) {
+        err <- tryCatch({
+          ws$send(json)
+          FALSE
+        }, error = function(e) TRUE)
+        if (!err) {
+          alive_conns[[length(alive_conns) + 1]] <- ws
+        }
       }
-      # service httpuv loops to process websocket buffer
+      ws_connections <<- alive_conns
+
+      # Service httpuv event loop
       httpuv::service(100)
     },
     stop = function() {

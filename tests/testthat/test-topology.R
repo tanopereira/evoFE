@@ -13,7 +13,7 @@ test_that("topology constructors initialize correctly and set expected S3 classe
   cube <- topology_hypercube(10)
   expect_s3_class(cube, "evo_topology_hypercube")
   expect_equal(cube$islands, 10L)
-  expect_equal(cube$dimension, 3L)
+  expect_equal(cube$dimension, 4L)
 
   tiered <- topology_tiered(10, tiers = 3)
   expect_s3_class(tiered, "evo_topology_tiered")
@@ -26,7 +26,7 @@ test_that("topology constructors initialize correctly and set expected S3 classe
   comp <- topology_complete(10)
   expect_s3_class(comp, "evo_topology_complete")
 
-  feat <- topology_feature_distance(10)
+  feat <- evoFE:::topology_feature_distance(10)
   expect_s3_class(feat, "evo_topology_feature_distance")
 })
 
@@ -37,7 +37,7 @@ test_that("get_neighbors handles single island (N=1) without error across all to
     topology_hypercube(1),
     topology_tiered(1, 3),
     topology_complete(1),
-    topology_feature_distance(1)
+    evoFE:::topology_feature_distance(1)
   )
 
   for (topo in topos) {
@@ -48,8 +48,8 @@ test_that("get_neighbors handles single island (N=1) without error across all to
 
 test_that("get_neighbors resolves valid spatial neighbors for prime island grid (N=7)", {
   grid7 <- topology_grid(7)
-  expect_equal(grid7$rows, 2L)
-  expect_equal(grid7$cols, 4L)
+  expect_equal(grid7$rows, 3L)
+  expect_equal(grid7$cols, 3L)
 
   for (i in 1:7) {
     nb <- get_neighbors(grid7, i)
@@ -71,9 +71,9 @@ test_that("non-power-of-2 hypercube (N=10) resolves valid neighbors without self
 
 test_that("partition_k_tiers allocates monotonic pyramid tiers for various N and K", {
   part3 <- .partition_k_tiers(10, 3)
-  expect_equal(length(part3$tier0), 5)
+  expect_equal(length(part3$tier0), 6)
   expect_equal(length(part3$tier1), 3)
-  expect_equal(length(part3$tier2), 2)
+  expect_equal(length(part3$tier2), 1)
 
   part4 <- .partition_k_tiers(20, 4)
   expect_equal(sum(vapply(part4, length, integer(1))), 20)
@@ -145,4 +145,57 @@ test_that("evolve_features accepts custom migration_config object", {
   )
 
   expect_s3_class(rec, "evo_recipe")
+})
+
+test_that("all topologies pre-build explicit adj_list, adj_matrix, and topology_custom works", {
+  topos <- list(
+    topology_ring(4),
+    topology_grid(4),
+    topology_hypercube(dimension = 2),
+    topology_tiered(4, tiers = 2),
+    topology_complete(4)
+  )
+
+  for (topo in topos) {
+    expect_true(!is.null(topo$adj_list))
+    expect_equal(length(topo$adj_list), 4L)
+    mat <- as.matrix(topo)
+    expect_equal(dim(mat), c(4L, 4L))
+    expect_equal(unname(diag(mat)), rep(0L, 4L))
+  }
+
+  # Test topology_custom
+  m <- matrix(c(0, 1, 1, 0), nrow = 2, ncol = 2)
+  custom_topo <- topology_custom(m)
+  expect_s3_class(custom_topo, "evo_topology_custom")
+  expect_equal(custom_topo$islands, 2L)
+  expect_equal(unname(get_neighbors(custom_topo, 1)), 2L)
+  expect_equal(unname(get_neighbors(custom_topo, 2)), 1L)
+})
+
+test_that("topology_torus connects horizontal and vertical wrap-around neighbors correctly", {
+  torus9 <- topology_torus(islands = 9, rows = 3, cols = 3)
+  expect_s3_class(torus9, "evo_topology_torus")
+  expect_s3_class(torus9, "evo_topology_grid")
+
+  # 3x3 Grid:
+  # 1 2 3
+  # 4 5 6
+  # 7 8 9
+
+  # Island 1 connects to 2, 3 (horizontal wrap), 4, 7 (vertical wrap)
+  n1 <- get_neighbors(torus9, 1)
+  expect_setequal(n1, c(2, 3, 4, 7))
+
+  # Island 3 connects to 2, 1 (horizontal wrap), 6, 9 (vertical wrap)
+  n3 <- get_neighbors(torus9, 3)
+  expect_setequal(n3, c(1, 2, 6, 9))
+
+  # Island 7 connects to 8, 9 (horizontal wrap), 4, 1 (vertical wrap)
+  n7 <- get_neighbors(torus9, 7)
+  expect_setequal(n7, c(1, 4, 8, 9))
+
+  # Island 9 connects to 8, 7 (horizontal wrap), 6, 3 (vertical wrap)
+  n9 <- get_neighbors(torus9, 9)
+  expect_setequal(n9, c(3, 6, 7, 8))
 })

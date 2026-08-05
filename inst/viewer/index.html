@@ -301,10 +301,12 @@
         }
 
         .migration-path {
-            stroke: transparent;
+            stroke: var(--primary);
             stroke-width: 2px;
             fill: none;
             stroke-dasharray: 6 4;
+            opacity: 0;
+            transition: opacity 0.5s ease, stroke-width 0.5s ease, stroke 0.3s ease;
         }
 
         .migration-pulse {
@@ -1129,29 +1131,57 @@
             play();
         }
 
-        // Set up real-time live streaming mode via WebSockets
+        // Set up real-time live streaming mode via WebSockets with auto-reconnect
+        let isEvolutionFinished = false;
+        let wsReconnectTimer = null;
+
         function setupLiveWSMode() {
             statusBadge.innerText = "Connecting";
             statusBadge.className = "status-badge status-replay";
             document.getElementById("controls").style.display = "none"; // Hide playback controls in live mode
 
-            const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-            const ws = new WebSocket(`${wsProto}//${window.location.host}`);
+            function connectWS() {
+                const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const ws = new WebSocket(`${wsProto}//${window.location.host}`);
 
-            ws.onopen = () => {
-                statusBadge.innerText = "Live";
-                statusBadge.className = "status-badge status-live";
-            };
+                ws.onopen = () => {
+                    if (isEvolutionFinished) {
+                        statusBadge.innerText = "Completed";
+                        statusBadge.className = "status-badge status-finished";
+                    } else {
+                        statusBadge.innerText = "Live";
+                        statusBadge.className = "status-badge status-live";
+                    }
+                };
 
-            ws.onclose = () => {
-                statusBadge.innerText = "Completed";
-                statusBadge.className = "status-badge status-finished";
-            };
+                ws.onclose = () => {
+                    if (!isEvolutionFinished) {
+                        statusBadge.innerText = "Reconnecting...";
+                        statusBadge.className = "status-badge status-replay";
+                        clearTimeout(wsReconnectTimer);
+                        wsReconnectTimer = setTimeout(connectWS, 1500);
+                    } else {
+                        statusBadge.innerText = "Completed";
+                        statusBadge.className = "status-badge status-finished";
+                    }
+                };
 
-            ws.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                handleLiveUpdate(msg);
-            };
+                ws.onerror = () => {
+                    try { ws.close(); } catch(e) {}
+                };
+
+                ws.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === "complete") {
+                        isEvolutionFinished = true;
+                        statusBadge.innerText = "Completed";
+                        statusBadge.className = "status-badge status-finished";
+                    }
+                    handleLiveUpdate(msg);
+                };
+            }
+
+            connectWS();
         }
 
         // Live Mode event handler
@@ -1208,6 +1238,9 @@
             }
         }
 
+        let pathUsageCounts = {};
+        let islandBestFitnessMap = {};
+
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
             topologySvg.innerHTML = "";
@@ -1217,6 +1250,7 @@
             const topo = config && config.migration_topology || "ring";
 
             islandPositions = [];
+            pathUsageCounts = {};
 
             // ── helpers ────────────────────────────────────────────────
             function circlePositions(n, cx, cy, r) {
@@ -1228,13 +1262,13 @@
                 return pos;
             }
 
-            function drawEdge(posA, posB, curved) {
+            function drawEdge(posA, posB, curved = true) {
                 const dx = posB.x - posA.x, dy = posB.y - posA.y;
                 const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                 let d;
-                if (curved) {
+                if (curved !== false) {
                     const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
-                    const offset = Math.min(35, dist * 0.2);
+                    const offset = Math.min(25, Math.max(10, dist * 0.15));
                     d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
                 } else {
                     d = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
@@ -1244,9 +1278,21 @@
                 line.setAttribute("class", "migration-path");
                 line.setAttribute("id", `path-from-${posA.id}-to-${posB.id}`);
                 line.style.cursor = "pointer";
-                line.addEventListener("mouseenter", (e) => { showMigrationTooltip(e, posA.id, posB.id); line.style.stroke = "var(--primary)"; line.style.strokeWidth = "4px"; });
+                line.addEventListener("mouseenter", (e) => {
+                    showMigrationTooltip(e, posA.id, posB.id);
+                    line.style.stroke = "var(--secondary)";
+                    line.style.opacity = "1";
+                    line.style.strokeWidth = "4px";
+                });
                 line.addEventListener("mousemove", moveTooltip);
-                line.addEventListener("mouseleave", () => { hideTooltip(); line.style.stroke = ""; line.style.strokeWidth = ""; });
+                line.addEventListener("mouseleave", () => {
+                    hideTooltip();
+                    const routeKey = `${posA.id}-${posB.id}`;
+                    const useCount = pathUsageCounts[routeKey] || 0;
+                    line.style.stroke = "var(--primary)";
+                    line.style.opacity = useCount > 0 ? Math.min(0.85, 0.20 + (useCount * 0.12)) : "0";
+                    line.style.strokeWidth = useCount > 0 ? `${Math.min(4, 2 + (useCount * 0.3))}px` : "2px";
+                });
                 topologySvg.appendChild(line);
 
                 const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1259,29 +1305,63 @@
 
             // ── layout by topology ─────────────────────────────────────
 
-            if (topo === "tiered") {
-                // Compute tier partition (mirrors R's .partition_k_tiers, 3 tiers default)
-                const nTiers = 3;
-                const tierSizes = [];
-                let rem = N;
-                const weights = [0.5, 0.25, 0.25];
-                for (let t = 0; t < nTiers; t++) {
-                    tierSizes.push(Math.max(1, t < nTiers - 1 ? Math.round(weights[t] * N) : rem));
-                    rem -= tierSizes[t];
+            if (topo === "tiered" || topo === "hfc") {
+                const nTiers = Math.max(2, (config && (config.tiers || config.topology_tiers)) || 3);
+                
+                function partitionKTiers(islands, tiers) {
+                    const n = Math.max(1, islands);
+                    const k = Math.max(2, Math.min(tiers, n));
+                    const weights = [];
+                    let wSum = 0;
+                    for (let i = 0; i < k; i++) {
+                        const w = Math.pow(0.5, i);
+                        weights.push(w);
+                        wSum += w;
+                    }
+                    const counts = weights.map(w => Math.max(1, Math.round((w / wSum) * n)));
+                    let diff = n - counts.reduce((a, b) => a + b, 0);
+                    if (diff > 0) {
+                        counts[0] += diff;
+                    } else if (diff < 0) {
+                        for (let i = k - 1; i >= 0; i--) {
+                            const reduce = Math.min(counts[i] - 1, -diff);
+                            counts[i] -= reduce;
+                            diff += reduce;
+                        }
+                    }
+                    const res = [];
+                    let currStart = 1;
+                    for (let i = 0; i < k; i++) {
+                        const count = counts[i];
+                        if (count > 0 && currStart <= n) {
+                            const currEnd = Math.min(n, currStart + count - 1);
+                            const tierArr = [];
+                            for (let j = currStart; j <= currEnd; j++) tierArr.push(j);
+                            res.push(tierArr);
+                            currStart = currEnd + 1;
+                        } else {
+                            res.push([]);
+                        }
+                    }
+                    return res;
                 }
-                tierSizes[0] = Math.max(1, N - tierSizes[1] - tierSizes[2]);
 
-                const tierLabels = ["Entry", "Intermediate", "Apex"];
-                const tierColors = ["rgba(52,211,153,0.08)", "rgba(99,102,241,0.08)", "rgba(245,158,11,0.08)"];
-                const tierBorderColors = ["rgba(52,211,153,0.25)", "rgba(99,102,241,0.25)", "rgba(245,158,11,0.25)"];
+                const tierPartition = partitionKTiers(N, nTiers);
                 const pad = { top: 40, bottom: 40, left: 60, right: 20 };
-                const usableH = height - pad.top - pad.bottom;
-                const tierH = usableH / nTiers;
+                const tierH = (height - pad.top - pad.bottom) / nTiers;
+                const tierLabels = Array.from({length: nTiers}, (_, i) => `Tier ${i}`);
+                const baseColors = [
+                    { bg: "rgba(0, 255, 102, 0.05)", border: "rgba(0, 255, 102, 0.25)", accent: "var(--primary)" },
+                    { bg: "rgba(59, 130, 246, 0.05)", border: "rgba(59, 130, 246, 0.25)", accent: "var(--secondary)" },
+                    { bg: "rgba(168, 85, 247, 0.05)", border: "rgba(168, 85, 247, 0.25)", accent: "#a855f7" },
+                    { bg: "rgba(245, 158, 11, 0.05)", border: "rgba(245, 158, 11, 0.25)", accent: "#f59e0b" }
+                ];
 
                 let islandIdx = 0;
                 for (let t = 0; t < nTiers; t++) {
-                    const tierIslands = tierSizes[t];
-                    const tierY = pad.top + t * tierH; // t=0 is Apex at top
+                    const tierIslands = tierPartition[t] ? tierPartition[t].length : 0;
+                    const tierY = pad.top + (nTiers - 1 - t) * tierH;
+                    const colorStyle = baseColors[Math.min(t, baseColors.length - 1)];
 
                     // Background band
                     const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -1289,7 +1369,7 @@
                     band.setAttribute("y", tierY);
                     band.setAttribute("width", width - pad.left - pad.right + 10);
                     band.setAttribute("height", tierH);
-                    band.setAttribute("fill", tierColors[nTiers - 1 - t]);
+                    band.setAttribute("fill", colorStyle.bg);
                     band.setAttribute("rx", 6);
                     topologySvg.appendChild(band);
 
@@ -1297,108 +1377,165 @@
                     const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
                     lbl.setAttribute("x", pad.left - 14);
                     lbl.setAttribute("y", tierY + tierH / 2);
-                    lbl.setAttribute("fill", tierBorderColors[nTiers - 1 - t].replace("0.25", "0.8"));
+                    lbl.setAttribute("fill", colorStyle.border.replace("0.25", "0.8"));
                     lbl.setAttribute("font-size", 10);
                     lbl.setAttribute("font-family", "monospace");
                     lbl.setAttribute("text-anchor", "end");
                     lbl.setAttribute("dominant-baseline", "middle");
-                    lbl.textContent = tierLabels[nTiers - 1 - t];
+                    lbl.textContent = tierLabels[t];
                     topologySvg.appendChild(lbl);
 
-                    // Node positions within this tier row
+                    // Nodes
                     const xStep = (width - pad.left - pad.right) / Math.max(tierIslands, 1);
                     for (let i = 0; i < tierIslands; i++) {
                         const nx = pad.left + xStep * (i + 0.5);
                         const ny = tierY + tierH / 2;
-                        islandPositions.push({ id: islandIdx + 1, x: nx, y: ny, tier: nTiers - 1 - t });
+                        islandPositions.push({ id: islandIdx + 1, x: nx, y: ny, tier: t });
                         islandIdx++;
                     }
                 }
 
-                // Threshold lines between tiers (updated live) — draw placeholders now
+                // Threshold lines between ALL adjacent tier boundaries (line t is between Tier t-1 below and Tier t above)
                 for (let t = 1; t < nTiers; t++) {
-                    const lineY = pad.top + t * tierH;
+                    const lineY = pad.top + (nTiers - t) * tierH;
+                    const borderCol = baseColors[Math.min(t - 1, baseColors.length - 1)].border;
                     const tl = document.createElementNS("http://www.w3.org/2000/svg", "line");
                     tl.setAttribute("x1", pad.left - 10);
                     tl.setAttribute("x2", width - pad.right);
                     tl.setAttribute("y1", lineY);
                     tl.setAttribute("y2", lineY);
-                    tl.setAttribute("stroke", tierBorderColors[t - 1]);
+                    tl.setAttribute("stroke", borderCol);
                     tl.setAttribute("stroke-width", 1.5);
                     tl.setAttribute("stroke-dasharray", "6 4");
                     tl.setAttribute("id", `tier-line-${t}`);
                     topologySvg.appendChild(tl);
 
-                    // Threshold label (fitness value — updated live)
+                    // Threshold label (fitness value — placed on the left, precisely above the threshold line)
                     const tlt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                    tlt.setAttribute("x", width - pad.right + 4);
-                    tlt.setAttribute("y", lineY - 3);
-                    tlt.setAttribute("fill", "var(--text-muted)");
-                    tlt.setAttribute("font-size", 9);
+                    tlt.setAttribute("x", pad.left + 5);
+                    tlt.setAttribute("y", lineY - 4);
+                    tlt.setAttribute("fill", "var(--secondary)");
+                    tlt.setAttribute("font-size", 9.5);
+                    tlt.setAttribute("font-weight", "bold");
                     tlt.setAttribute("font-family", "monospace");
+                    tlt.setAttribute("text-anchor", "start");
                     tlt.setAttribute("id", `tier-threshold-label-${t}`);
                     tlt.textContent = "—";
                     topologySvg.appendChild(tlt);
                 }
 
-                // Edges: each island connects upward to next tier
                 if (N > 1) {
-                    islandPositions.forEach(posA => {
-                        islandPositions.forEach(posB => {
-                            if (posA.id === posB.id) return;
-                            // Only draw within-tier peer edges and upward cross-tier edges
-                            if (posB.tier === posA.tier || posB.tier === posA.tier + 1) {
-                                drawEdge(posA, posB, false);
+                    for (let t = 0; t < nTiers; t++) {
+                        const tierNodes = islandPositions.filter(p => p.tier === t);
+                        for (let i = 0; i < tierNodes.length - 1; i++) {
+                            drawEdge(tierNodes[i], tierNodes[i + 1], true);
+                            drawEdge(tierNodes[i + 1], tierNodes[i], true);
+                        }
+                    }
+                    for (let t = 0; t < nTiers - 1; t++) {
+                        const currTierNodes = islandPositions.filter(p => p.tier === t);
+                        const nextTierNodes = islandPositions.filter(p => p.tier === t + 1);
+                        currTierNodes.forEach((posA, pIdx) => {
+                            const parentIdx = Math.min(nextTierNodes.length - 1, Math.floor(pIdx / 2));
+                            const posB = nextTierNodes[parentIdx];
+                            if (posB) {
+                                drawEdge(posA, posB, true);
                             }
                         });
-                    });
+                    }
                 }
 
-            } else if (topo === "grid" || topo === "gibbs_fitness") {
-                // Grid layout: rows x cols
-                const cols = Math.ceil(Math.sqrt(N));
-                const rows = Math.ceil(N / cols);
-                const xStep = (width - 120) / Math.max(cols, 1);
-                const yStep = (height - 80)  / Math.max(rows, 1);
-                for (let i = 0; i < N; i++) {
-                    const r = Math.floor(i / cols), c = i % cols;
-                    islandPositions.push({ id: i + 1, x: 60 + xStep * (c + 0.5), y: 40 + yStep * (r + 0.5) });
+            } else if (topo === "grid" || topo === "torus" || topo === "gibbs_fitness") {
+                const rSize = Math.max(1, Math.round(Math.sqrt(N)));
+                const basePerRow = Math.floor(N / rSize);
+                const rem = N % rSize;
+                const rowCounts = new Array(rSize).fill(basePerRow);
+                if (rem > 0) {
+                    const mid = (rSize - 1) / 2;
+                    const indices = Array.from({length: rSize}, (_, i) => i);
+                    indices.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
+                    for (let k = 0; k < rem; k++) {
+                        rowCounts[indices[k]]++;
+                    }
                 }
-                // N/S/E/W edges only
+
+                const rowIslands = [];
+                let islandIdx = 1;
+                const yStep = (height - 80) / Math.max(rSize, 1);
+                for (let r = 0; r < rSize; r++) {
+                    const nRow = rowCounts[r];
+                    const rowNodes = [];
+                    const xStep = (width - 120) / Math.max(nRow, 1);
+                    const ry = 40 + yStep * (r + 0.5);
+                    for (let i = 0; i < nRow; i++) {
+                        const rx = 60 + xStep * (i + 0.5);
+                        const pos = { id: islandIdx, x: rx, y: ry, row: r, colIdx: i, rowLen: nRow };
+                        islandPositions.push(pos);
+                        rowNodes.push(pos);
+                        islandIdx++;
+                    }
+                    rowIslands.push(rowNodes);
+                }
+
                 if (N > 1) {
-                    islandPositions.forEach(posA => {
-                        const r = Math.floor((posA.id - 1) / cols), c = (posA.id - 1) % cols;
-                        [[r-1,c],[r+1,c],[r,c-1],[r,c+1]].forEach(([nr, nc]) => {
-                            if (nr < 0 || nc < 0 || nr >= rows || nc >= cols) return;
-                            const nid = nr * cols + nc + 1;
-                            if (nid < 1 || nid > N || nid <= posA.id) return;
-                            const posB = islandPositions[nid - 1];
-                            drawEdge(posA, posB, false);
-                        });
-                    });
+                    for (let r = 0; r < rSize; r++) {
+                        const currRow = rowIslands[r];
+                        for (let i = 0; i < currRow.length - 1; i++) {
+                            drawEdge(currRow[i], currRow[i + 1], true);
+                            drawEdge(currRow[i + 1], currRow[i], true);
+                        }
+                        if (topo === "torus" && currRow.length > 2) {
+                            drawEdge(currRow[0], currRow[currRow.length - 1], true);
+                            drawEdge(currRow[currRow.length - 1], currRow[0], true);
+                        }
+                        if (r < rSize - 1) {
+                            const nextRow = rowIslands[r + 1];
+                            currRow.forEach(posA => {
+                                const aStart = posA.colIdx / posA.rowLen;
+                                const aEnd = (posA.colIdx + 1) / posA.rowLen;
+                                nextRow.forEach(posB => {
+                                    const bStart = posB.colIdx / posB.rowLen;
+                                    const bEnd = (posB.colIdx + 1) / posB.rowLen;
+                                    if (Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > 1e-9) {
+                                        drawEdge(posA, posB, true);
+                                        drawEdge(posB, posA, true);
+                                    }
+                                });
+                            });
+                        }
+                        if (topo === "torus" && rSize > 2 && r === 0) {
+                            const lastRow = rowIslands[rSize - 1];
+                            currRow.forEach(posA => {
+                                const aStart = posA.colIdx / posA.rowLen;
+                                const aEnd = (posA.colIdx + 1) / posA.rowLen;
+                                lastRow.forEach(posB => {
+                                    const bStart = posB.colIdx / posB.rowLen;
+                                    const bEnd = (posB.colIdx + 1) / posB.rowLen;
+                                    if (Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > 1e-9) {
+                                        drawEdge(posA, posB, true);
+                                        drawEdge(posB, posA, true);
+                                    }
+                                });
+                            });
+                        }
+                    }
                 }
 
             } else if (topo === "hypercube") {
-                // Hypercube: circle layout, bit-flip neighbor edges
                 const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
                 islandPositions = circlePositions(N, cx, cy, r);
-                const dim = Math.max(1, Math.floor(Math.log2(N)));
-                const drawn = new Set();
+                const dim = Math.max(1, Math.ceil(Math.log2(N)));
                 if (N > 1) {
                     islandPositions.forEach(posA => {
                         for (let b = 0; b < dim; b++) {
                             const nid = ((posA.id - 1) ^ (1 << b)) % N + 1;
                             if (nid === posA.id) return;
-                            const key = [Math.min(posA.id, nid), Math.max(posA.id, nid)].join("-");
-                            if (drawn.has(key)) return;
-                            drawn.add(key);
-                            drawEdge(posA, islandPositions[nid - 1], false);
+                            drawEdge(posA, islandPositions[nid - 1], true);
                         }
                     });
                 }
 
             } else if (topo === "ring") {
-                // Ring: circle, directed arc from i → i+1
                 const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
                 islandPositions = circlePositions(N, cx, cy, r);
                 if (N > 1) {
@@ -1410,17 +1547,33 @@
                 }
 
             } else {
-                // complete / gibbs_stagnation / dual_gibbs_pull / random / feature_distance: circle + all pairs
                 const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
                 islandPositions = circlePositions(N, cx, cy, r);
                 if (N > 1) {
                     islandPositions.forEach(posA => {
                         islandPositions.forEach(posB => {
-                            if (posB.id <= posA.id) return;
+                            if (posB.id === posA.id) return;
                             drawEdge(posA, posB, true);
                         });
                     });
                 }
+            }
+
+            // Direct config.adj_list edge rendering (if provided by R, overrides default drawing for 100% precision)
+            if (config && config.adj_list && Array.isArray(config.adj_list) && config.adj_list.length > 0 && topo !== "ring" && topo !== "tiered") {
+                // Clear any fallback edge lines drawn above
+                topologySvg.querySelectorAll(".migration-path, .migration-pulse").forEach(el => el.remove());
+                config.adj_list.forEach((nbrs, idx) => {
+                    const posA = islandPositions[idx];
+                    if (posA && Array.isArray(nbrs)) {
+                        nbrs.forEach(nbrId => {
+                            const posB = islandPositions[nbrId - 1];
+                            if (posB && posA.id !== posB.id) {
+                                drawEdge(posA, posB, true);
+                            }
+                        });
+                    }
+                });
             }
 
 
@@ -1662,6 +1815,8 @@
 
                 // Update text scores
                 const fitnessVal = isl.best_fitness || 0;
+                islandBestFitnessMap[isl.island] = fitnessVal;
+                if (scoreText) scoreText._rawFitness = fitnessVal;
                 const oldText = scoreText.textContent;
                 const newText = fitnessVal.toFixed(3);
                 if (oldText !== newText) {
@@ -1701,24 +1856,21 @@
                     const pos = islandPositions[isl.island - 1];
                     const n = Math.min(isl.stagnation, 12); // cap display at 12
                     const crossColor = isl.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
-                    const arcRadius = 52;
-                    // Spread crosses along the bottom 120° arc of the node
-                    const arcStart = Math.PI / 2 + Math.PI / 3;  // 150°
-                    const arcEnd   = Math.PI / 2 + (2 * Math.PI) / 3; // ~210° → bottom
-                    // Use full bottom half: 120° spread when n>=2, else centre
+                    const arcRadius = 54;
+                    // Spread crosses along the top arc above the node
                     const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
-                    const arcMid  = Math.PI / 2; // 90° = bottom
+                    const startAngle = -Math.PI / 2 - spread / 2;
                     for (let ci = 0; ci < n; ci++) {
                         const frac = n === 1 ? 0.5 : ci / (n - 1);
-                        const angle = arcMid - spread / 2 + frac * spread; // bottom arc
-                        const cx = pos.x + arcRadius * Math.sin(angle);
-                        const cy = pos.y + arcRadius * Math.cos(angle);
+                        const angle = startAngle + frac * spread; // top arc above node
+                        const cx = pos.x + arcRadius * Math.cos(angle);
+                        const cy = pos.y + arcRadius * Math.sin(angle);
                         const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                        cross.setAttribute("d", `M ${cx-3} ${cy-3} L ${cx+3} ${cy+3} M ${cx+3} ${cy-3} L ${cx-3} ${cy+3}`);
+                        cross.setAttribute("d", `M ${cx-3.5} ${cy-3.5} L ${cx+3.5} ${cy+3.5} M ${cx+3.5} ${cy-3.5} L ${cx-3.5} ${cy+3.5}`);
                         cross.setAttribute("stroke", crossColor);
-                        cross.setAttribute("stroke-width", "1.8");
+                        cross.setAttribute("stroke-width", "2");
                         cross.setAttribute("stroke-linecap", "round");
-                        cross.setAttribute("opacity", "0.9");
+                        cross.setAttribute("opacity", "0.95");
                         ticksG.appendChild(cross);
                     }
                 }
@@ -1728,36 +1880,7 @@
             });
 
             // Update tiered topology threshold lines with live per-tier best fitness
-            if (config && config.migration_topology === "tiered" && data.islands) {
-                // Group island best_fitness by tier (from islandPositions)
-                const tierBest = {};
-                islandPositions.forEach(pos => {
-                    if (pos.tier === undefined) return;
-                    const isl = data.islands.find(i => i.island === pos.id);
-                    if (!isl) return;
-                    const f = isl.best_fitness;
-                    if (f === null || f === undefined || isNaN(f)) return;
-                    if (tierBest[pos.tier] === undefined || f > tierBest[pos.tier]) tierBest[pos.tier] = f;
-                });
-                // tier-threshold-label-1 sits between tier 0 (entry) and tier 1 (intermediate)
-                // → threshold = best fitness of tier 0 (entry tier)
-                // tier-threshold-label-2 sits between tier 1 and tier 2 (apex)
-                // → threshold = best fitness of tier 1 (intermediate tier)
-                for (let t = 1; t <= 2; t++) {
-                    const lbl = document.getElementById(`tier-threshold-label-${t}`);
-                    if (!lbl) continue;
-                    const entryTierIdx = t - 1; // tier below the line
-                    const val = tierBest[entryTierIdx];
-                    if (val !== undefined) {
-                        const absVal = Math.abs(val);
-                        let text;
-                        if (absVal === 0) text = "0";
-                        else if (absVal >= 1e4 || (absVal < 0.001 && absVal > 0)) text = val.toExponential(2);
-                        else text = parseFloat(val.toPrecision(4)).toString();
-                        lbl.textContent = "▶ " + text;
-                    }
-                }
-            }
+            updateTierThresholds();
 
 
             updateBestInfo(
@@ -1907,9 +2030,23 @@
             chartSvg.appendChild(globalPath);
         }
 
-        // Trigger pulse on the migration paths in SVG
+        // Trigger pulse and usage-based opacity escalation on migration paths in SVG
         function triggerMigrationAnimation(data) {
-            const pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`) || document.getElementById(`pulse-from-${data.from}`);
+            const routeKey = `${data.from}-${data.to}`;
+            pathUsageCounts[routeKey] = (pathUsageCounts[routeKey] || 0) + 1;
+            const useCount = pathUsageCounts[routeKey];
+
+            // Dynamically increase underlying path opacity & stroke width as route is used
+            const pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`) || document.getElementById(`path-from-${data.to}-to-${data.from}`);
+            if (pathLine) {
+                const targetOpacity = Math.min(0.85, 0.20 + (useCount * 0.12));
+                const targetWidth = Math.min(4, 2 + (useCount * 0.3));
+                pathLine.style.stroke = "var(--primary)";
+                pathLine.style.opacity = targetOpacity;
+                pathLine.style.strokeWidth = `${targetWidth}px`;
+            }
+
+            const pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`) || document.getElementById(`pulse-from-${data.to}-to-${data.from}`);
             if (pulse) {
                 pulse.style.display = "block";
                 setTimeout(() => {
@@ -2044,6 +2181,7 @@
             const stepMs = duration / steps;
             let step = 0;
             const isNum = typeof finalValue === "number";
+            if (isNum) element._rawFitness = finalValue;
             
             const interval = setInterval(() => {
                 if (step >= steps) {
@@ -2052,7 +2190,10 @@
                     element.classList.remove("glitching");
                 } else {
                     if (isNum) {
-                        element.textContent = (Math.random() * 0.99).toFixed(4);
+                        const absF = Math.abs(finalValue) || 1;
+                        const mag = Math.pow(10, Math.floor(Math.log10(absF)));
+                        const jitter = (Math.random() - 0.5) * mag * 0.4;
+                        element.textContent = (finalValue + jitter).toFixed(4);
                     } else {
                         element.textContent = Math.random().toString(36).substring(2, 8).toUpperCase();
                     }
@@ -2323,6 +2464,7 @@
         function handleIslandEvaluatedUpdate(data) {
             const islandId = data.island;
             const fitnessVal = data.best_fitness || 0;
+            islandBestFitnessMap[islandId] = fitnessVal;
 
             // 1. Clear status animations
             const nodeCircle = document.getElementById(`island-circle-${islandId}`);
@@ -2330,7 +2472,7 @@
                 nodeCircle.classList.remove("evaluating", "breeding");
                 // Trigger improving animation if fitness increased
                 const scoreText = document.getElementById(`island-score-${islandId}`);
-                const oldVal = parseFloat(scoreText.textContent) || 0;
+                const oldVal = (scoreText && scoreText._rawFitness !== undefined) ? scoreText._rawFitness : (parseFloat(scoreText ? scoreText.textContent : 0) || 0);
                 if (fitnessVal > oldVal) {
                     nodeCircle.classList.add("improving");
                     setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
@@ -2340,6 +2482,7 @@
             // 2. Update text scores
             const scoreText = document.getElementById(`island-score-${islandId}`);
             if (scoreText) {
+                scoreText._rawFitness = fitnessVal;
                 const oldText = scoreText.textContent;
                 const newText = fitnessVal.toFixed(3);
                 if (oldText !== newText) {
@@ -2393,20 +2536,20 @@
                     if (pos) {
                         const n = Math.min(data.stagnation, 12);
                         const crossColor = data.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
-                        const arcRadius = 52;
+                        const arcRadius = 54;
                         const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
-                        const arcMid = Math.PI / 2;
+                        const startAngle = -Math.PI / 2 - spread / 2;
                         for (let ci = 0; ci < n; ci++) {
                             const frac = n === 1 ? 0.5 : ci / (n - 1);
-                            const angle = arcMid - spread / 2 + frac * spread;
-                            const cx = pos.x + arcRadius * Math.sin(angle);
-                            const cy = pos.y + arcRadius * Math.cos(angle);
+                            const angle = startAngle + frac * spread;
+                            const cx = pos.x + arcRadius * Math.cos(angle);
+                            const cy = pos.y + arcRadius * Math.sin(angle);
                             const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                            cross.setAttribute("d", `M ${cx-3} ${cy-3} L ${cx+3} ${cy+3} M ${cx+3} ${cy-3} L ${cx-3} ${cy+3}`);
+                            cross.setAttribute("d", `M ${cx-3.5} ${cy-3.5} L ${cx+3.5} ${cy+3.5} M ${cx+3.5} ${cy-3.5} L ${cx-3.5} ${cy+3.5}`);
                             cross.setAttribute("stroke", crossColor);
-                            cross.setAttribute("stroke-width", "1.8");
+                            cross.setAttribute("stroke-width", "2");
                             cross.setAttribute("stroke-linecap", "round");
-                            cross.setAttribute("opacity", "0.9");
+                            cross.setAttribute("opacity", "0.95");
                             ticksG.appendChild(cross);
                         }
                     }
@@ -2418,7 +2561,48 @@
             // 3. Render swarm
             renderSwarm(islandId, data.all_fitness || []);
 
+            // 4. Dynamically update tier threshold lines in real-time as island finishes evaluating
+            updateTierThresholds();
+
             logToTerminal(`Island ${islandId} ▸ evaluation complete. Fitness: ${fitnessVal.toFixed(4)}`, "success");
+        }
+
+        // Live real-time update helper for tier threshold line values
+        function updateTierThresholds() {
+            if (!config || (config.migration_topology !== "tiered" && config.migration_topology !== "hfc")) return;
+            const nTiers = Math.max(2, (config && (config.tiers || config.topology_tiers)) || 3);
+            const tierMin = {};
+
+            islandPositions.forEach(pos => {
+                if (pos.tier === undefined) return;
+                let f = islandBestFitnessMap[pos.id];
+                if (f === undefined) {
+                    const scoreText = document.getElementById(`island-score-${pos.id}`);
+                    if (scoreText) {
+                        f = (scoreText._rawFitness !== undefined) ? scoreText._rawFitness : parseFloat(scoreText.textContent);
+                    }
+                }
+                if (f !== undefined && !isNaN(f)) {
+                    if (tierMin[pos.tier] === undefined || f < tierMin[pos.tier]) {
+                        tierMin[pos.tier] = f;
+                    }
+                }
+            });
+
+            for (let t = 1; t < nTiers; t++) {
+                const lbl = document.getElementById(`tier-threshold-label-${t}`);
+                if (!lbl) continue;
+                const aboveTierIdx = t; // Tier above line t
+                const val = tierMin[aboveTierIdx];
+                if (val !== undefined) {
+                    const absVal = Math.abs(val);
+                    let text;
+                    if (absVal === 0) text = "0.0000";
+                    else if (absVal >= 1e4 || (absVal < 0.001 && absVal > 0)) text = val.toExponential(2);
+                    else text = val.toFixed(4);
+                    lbl.textContent = "> " + text;
+                }
+            }
         }
 
         // Migration link details tooltip
