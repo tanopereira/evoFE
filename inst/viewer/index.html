@@ -1241,9 +1241,61 @@
         let pathUsageCounts = {};
         let islandBestFitnessMap = {};
 
+        function drawEdge(posA, posB, curved = true) {
+            if (!posA || !posB) return;
+            const dx = posB.x - posA.x, dy = posB.y - posA.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            let d;
+            if (curved !== false) {
+                const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
+                const offset = Math.min(25, Math.max(10, dist * 0.15));
+                d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
+            } else {
+                d = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
+            }
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            line.setAttribute("d", d);
+            line.setAttribute("class", "migration-path");
+            line.setAttribute("id", `path-from-${posA.id}-to-${posB.id}`);
+            line.style.cursor = "pointer";
+            line.addEventListener("mouseenter", (e) => {
+                showMigrationTooltip(e, posA.id, posB.id);
+                line.style.stroke = "var(--secondary)";
+                line.style.opacity = "1";
+                line.style.strokeWidth = "4px";
+            });
+            line.addEventListener("mousemove", moveTooltip);
+            line.addEventListener("mouseleave", () => {
+                hideTooltip();
+                const routeKey = `${posA.id}-${posB.id}`;
+                const useCount = pathUsageCounts[routeKey] || 0;
+                line.style.stroke = "var(--primary)";
+                line.style.opacity = useCount > 0 ? Math.min(0.85, 0.20 + (useCount * 0.12)) : "0";
+                line.style.strokeWidth = useCount > 0 ? `${Math.min(4, 2 + (useCount * 0.3))}px` : "2px";
+            });
+
+            const container = document.getElementById("paths-group") || topologySvg;
+            container.appendChild(line);
+
+            const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            pulse.setAttribute("d", d);
+            pulse.setAttribute("class", "migration-pulse");
+            pulse.setAttribute("id", `pulse-from-${posA.id}-to-${posB.id}`);
+            pulse.style.display = "none";
+            container.appendChild(pulse);
+        }
+
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
             topologySvg.innerHTML = "";
+            const pathsGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            pathsGroup.setAttribute("id", "paths-group");
+            topologySvg.appendChild(pathsGroup);
+
+            const nodesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            nodesGroup.setAttribute("id", "nodes-group");
+            topologySvg.appendChild(nodesGroup);
+
             const width  = topologySvg.clientWidth  || 600;
             const height = topologySvg.clientHeight || 450;
             const N = activeIslands;
@@ -1251,6 +1303,7 @@
 
             islandPositions = [];
             pathUsageCounts = {};
+            islandBestFitnessMap = {};
 
             // ── helpers ────────────────────────────────────────────────
             function circlePositions(n, cx, cy, r) {
@@ -1260,47 +1313,6 @@
                     pos.push({ id: i + 1, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
                 }
                 return pos;
-            }
-
-            function drawEdge(posA, posB, curved = true) {
-                const dx = posB.x - posA.x, dy = posB.y - posA.y;
-                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                let d;
-                if (curved !== false) {
-                    const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
-                    const offset = Math.min(25, Math.max(10, dist * 0.15));
-                    d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
-                } else {
-                    d = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
-                }
-                const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                line.setAttribute("d", d);
-                line.setAttribute("class", "migration-path");
-                line.setAttribute("id", `path-from-${posA.id}-to-${posB.id}`);
-                line.style.cursor = "pointer";
-                line.addEventListener("mouseenter", (e) => {
-                    showMigrationTooltip(e, posA.id, posB.id);
-                    line.style.stroke = "var(--secondary)";
-                    line.style.opacity = "1";
-                    line.style.strokeWidth = "4px";
-                });
-                line.addEventListener("mousemove", moveTooltip);
-                line.addEventListener("mouseleave", () => {
-                    hideTooltip();
-                    const routeKey = `${posA.id}-${posB.id}`;
-                    const useCount = pathUsageCounts[routeKey] || 0;
-                    line.style.stroke = "var(--primary)";
-                    line.style.opacity = useCount > 0 ? Math.min(0.85, 0.20 + (useCount * 0.12)) : "0";
-                    line.style.strokeWidth = useCount > 0 ? `${Math.min(4, 2 + (useCount * 0.3))}px` : "2px";
-                });
-                topologySvg.appendChild(line);
-
-                const pulse = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                pulse.setAttribute("d", d);
-                pulse.setAttribute("class", "migration-pulse");
-                pulse.setAttribute("id", `pulse-from-${posA.id}-to-${posB.id}`);
-                pulse.style.display = "none";
-                topologySvg.appendChild(pulse);
             }
 
             // ── layout by topology ─────────────────────────────────────
@@ -1424,32 +1436,6 @@
                     topologySvg.appendChild(tlt);
                 }
 
-                if (N > 1) {
-                    // 1. Intra-tier peer edges (all pairs of islands within same tier)
-                    for (let t = 0; t < nTiers; t++) {
-                        const tierNodes = islandPositions.filter(p => p.tier === t);
-                        for (let i = 0; i < tierNodes.length; i++) {
-                            for (let j = 0; j < tierNodes.length; j++) {
-                                if (i !== j) {
-                                    drawEdge(tierNodes[i], tierNodes[j], true);
-                                }
-                            }
-                        }
-                    }
-                    // 2. Binary tree promotion edges (each island in Tier t connects to its binary tree parent in Tier t+1)
-                    for (let t = 0; t < nTiers - 1; t++) {
-                        const currTierNodes = islandPositions.filter(p => p.tier === t);
-                        const nextTierNodes = islandPositions.filter(p => p.tier === t + 1);
-                        currTierNodes.forEach((posA, pIdx) => {
-                            const parentIdx = Math.min(nextTierNodes.length - 1, Math.floor(pIdx / 2));
-                            const posB = nextTierNodes[parentIdx];
-                            if (posB) {
-                                drawEdge(posA, posB, true);
-                            }
-                        });
-                    }
-                }
-
             } else if (topo === "grid" || topo === "torus" || topo === "gibbs_fitness") {
                 const rSize = Math.max(1, Math.round(Math.sqrt(N)));
                 const basePerRow = Math.floor(N / rSize);
@@ -1464,121 +1450,24 @@
                     }
                 }
 
-                const rowIslands = [];
                 let islandIdx = 1;
                 const yStep = (height - 80) / Math.max(rSize, 1);
                 for (let r = 0; r < rSize; r++) {
                     const nRow = rowCounts[r];
-                    const rowNodes = [];
                     const xStep = (width - 120) / Math.max(nRow, 1);
                     const ry = 40 + yStep * (r + 0.5);
                     for (let i = 0; i < nRow; i++) {
                         const rx = 60 + xStep * (i + 0.5);
                         const pos = { id: islandIdx, x: rx, y: ry, row: r, colIdx: i, rowLen: nRow };
                         islandPositions.push(pos);
-                        rowNodes.push(pos);
                         islandIdx++;
-                    }
-                    rowIslands.push(rowNodes);
-                }
-
-                if (N > 1) {
-                    for (let r = 0; r < rSize; r++) {
-                        const currRow = rowIslands[r];
-                        for (let i = 0; i < currRow.length - 1; i++) {
-                            drawEdge(currRow[i], currRow[i + 1], true);
-                            drawEdge(currRow[i + 1], currRow[i], true);
-                        }
-                        if (topo === "torus" && currRow.length > 2) {
-                            drawEdge(currRow[0], currRow[currRow.length - 1], true);
-                            drawEdge(currRow[currRow.length - 1], currRow[0], true);
-                        }
-                        if (r < rSize - 1) {
-                            const nextRow = rowIslands[r + 1];
-                            currRow.forEach(posA => {
-                                const aStart = posA.colIdx / posA.rowLen;
-                                const aEnd = (posA.colIdx + 1) / posA.rowLen;
-                                nextRow.forEach(posB => {
-                                    const bStart = posB.colIdx / posB.rowLen;
-                                    const bEnd = (posB.colIdx + 1) / posB.rowLen;
-                                    if (Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > 1e-9) {
-                                        drawEdge(posA, posB, true);
-                                        drawEdge(posB, posA, true);
-                                    }
-                                });
-                            });
-                        }
-                        if (topo === "torus" && rSize > 2 && r === 0) {
-                            const lastRow = rowIslands[rSize - 1];
-                            currRow.forEach(posA => {
-                                const aStart = posA.colIdx / posA.rowLen;
-                                const aEnd = (posA.colIdx + 1) / posA.rowLen;
-                                lastRow.forEach(posB => {
-                                    const bStart = posB.colIdx / posB.rowLen;
-                                    const bEnd = (posB.colIdx + 1) / posB.rowLen;
-                                    if (Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > 1e-9) {
-                                        drawEdge(posA, posB, true);
-                                        drawEdge(posB, posA, true);
-                                    }
-                                });
-                            });
-                        }
-                    }
-                }
-
-            } else if (topo === "hypercube") {
-                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
-                islandPositions = circlePositions(N, cx, cy, r);
-                const dim = Math.max(1, Math.ceil(Math.log2(N)));
-                if (N > 1) {
-                    islandPositions.forEach(posA => {
-                        for (let b = 0; b < dim; b++) {
-                            const nid = ((posA.id - 1) ^ (1 << b)) % N + 1;
-                            if (nid === posA.id) return;
-                            drawEdge(posA, islandPositions[nid - 1], true);
-                        }
-                    });
-                }
-
-            } else if (topo === "ring") {
-                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
-                islandPositions = circlePositions(N, cx, cy, r);
-                if (N > 1) {
-                    for (let i = 0; i < N; i++) {
-                        const posA = islandPositions[i];
-                        const posB = islandPositions[(i + 1) % N];
-                        drawEdge(posA, posB, true);
                     }
                 }
 
             } else {
+                // Hypercube / Ring / Complete / Custom / Feature Distance: position in circle
                 const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
                 islandPositions = circlePositions(N, cx, cy, r);
-                if (N > 1) {
-                    islandPositions.forEach(posA => {
-                        islandPositions.forEach(posB => {
-                            if (posB.id === posA.id) return;
-                            drawEdge(posA, posB, true);
-                        });
-                    });
-                }
-            }
-
-            // Direct config.adj_list edge rendering (if provided by R, overrides default drawing for 100% precision)
-            if (config && config.adj_list && Array.isArray(config.adj_list) && config.adj_list.length > 0 && topo !== "ring" && topo !== "tiered") {
-                // Clear any fallback edge lines drawn above
-                topologySvg.querySelectorAll(".migration-path, .migration-pulse").forEach(el => el.remove());
-                config.adj_list.forEach((nbrs, idx) => {
-                    const posA = islandPositions[idx];
-                    if (posA && Array.isArray(nbrs)) {
-                        nbrs.forEach(nbrId => {
-                            const posB = islandPositions[nbrId - 1];
-                            if (posB && posA.id !== posB.id) {
-                                drawEdge(posA, posB, true);
-                            }
-                        });
-                    }
-                });
             }
 
 
@@ -1630,7 +1519,7 @@
                 g.addEventListener("mousemove", moveTooltip);
                 g.addEventListener("mouseleave", hideTooltip);
 
-                topologySvg.appendChild(g);
+                nodesGroup.appendChild(g);
             });
 
             // Create health progress bars list
@@ -1886,6 +1775,9 @@
 
             // Update tiered topology threshold lines with live per-tier best fitness
             updateTierThresholds();
+
+            // Update island interior colors based on relative fitness in generation
+            updateIslandFitnessColors();
 
 
             updateBestInfo(
@@ -2575,6 +2467,9 @@
             // 4. Dynamically update tier threshold lines in real-time as island finishes evaluating
             updateTierThresholds();
 
+            // 5. Update island interior colors based on relative fitness in generation
+            updateIslandFitnessColors();
+
             logToTerminal(`Island ${islandId} ▸ evaluation complete. Fitness: ${fitnessVal.toFixed(4)}`, "success");
         }
 
@@ -2614,6 +2509,48 @@
                     lbl.textContent = "> " + text;
                 }
             }
+        }
+
+        // Dynamically color island interiors based on generation-relative fitness
+        function updateIslandFitnessColors() {
+            const N = activeIslands;
+            if (N <= 1) return;
+
+            const fitnesses = [];
+            for (let i = 1; i <= N; i++) {
+                let f = islandBestFitnessMap[i];
+                if (f === undefined) {
+                    const scoreText = document.getElementById(`island-score-${i}`);
+                    if (scoreText) {
+                        f = (scoreText._rawFitness !== undefined) ? scoreText._rawFitness : parseFloat(scoreText.textContent);
+                    }
+                }
+                if (f !== undefined && !isNaN(f)) {
+                    fitnesses.push({ id: i, val: f });
+                }
+            }
+
+            if (fitnesses.length === 0) return;
+
+            const vals = fitnesses.map(x => x.val);
+            const minF = Math.min(...vals);
+            const maxF = Math.max(...vals);
+            const range = maxF - minF;
+
+            fitnesses.forEach(item => {
+                const norm = range === 0 ? 0.5 : (item.val - minF) / range;
+                const nodeCircle = document.getElementById(`island-circle-${item.id}`);
+                if (nodeCircle) {
+                    // Map norm (0.0 to 1.0) to hsla color:
+                    // 0.0 (worst) -> hsla(15, 60%, 25%, 0.45) (warm slate / reddish-orange)
+                    // 1.0 (best)  -> hsla(120, 75%, 35%, 0.6)  (glowing emerald green)
+                    const hue = 15 + (norm * 105);        // 15 -> 120
+                    const sat = 60 + (norm * 15);         // 60% -> 75%
+                    const light = 25 + (norm * 10);       // 25% -> 35%
+                    const opacity = 0.45 + (norm * 0.15); // 0.45 -> 0.60
+                    nodeCircle.style.fill = `hsla(${hue}, ${sat}%, ${light}%, ${opacity})`;
+                }
+            });
         }
 
         // Migration link details tooltip
