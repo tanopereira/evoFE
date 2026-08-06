@@ -288,16 +288,22 @@
             text-anchor: middle;
             dominant-baseline: middle;
             pointer-events: none;
+            paint-order: stroke fill;
+            stroke: rgba(15, 23, 42, 0.95);
+            stroke-width: 3px;
         }
 
         .node-subtext {
             font-family: var(--font-main);
-            font-weight: 400;
-            fill: var(--text-muted);
+            font-weight: 500;
+            fill: #e2e8f0;
             font-size: 10px;
             text-anchor: middle;
             dominant-baseline: middle;
             pointer-events: none;
+            paint-order: stroke fill;
+            stroke: rgba(15, 23, 42, 0.95);
+            stroke-width: 2.5px;
         }
 
         .migration-path {
@@ -320,16 +326,7 @@
             filter: drop-shadow(0 0 4px var(--secondary));
         }
 
-        @keyframes stagnationGlow {
-            0% { filter: drop-shadow(0 0 4px #f59e0b); stroke: #f59e0b; }
-            50% { filter: drop-shadow(0 0 16px #ef4444); stroke: #ef4444; }
-            100% { filter: drop-shadow(0 0 4px #f59e0b); stroke: #f59e0b; }
-        }
 
-        .node-circle.stagnated {
-            animation: stagnationGlow 1.8s ease-in-out infinite;
-            stroke-width: 4px !important;
-        }
 
         .health-status.stagnated {
             background: #ef4444 !important;
@@ -1729,18 +1726,12 @@
                 const stagThreshold = (config && config.pull_stagnation_threshold) || 3;
                 if (isl.stagnation >= stagThreshold) {
                     healthStatus.className = "health-status stagnated";
-                    nodeCircle.classList.add("stagnated");
-                    nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)");
                 } else if (isl.stagnation > 0) {
                     healthStatus.className = "health-status";
-                    nodeCircle.classList.remove("stagnated");
-                    nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
                 } else {
                     healthStatus.className = "health-status active";
                     nodeCircle.classList.add("improving");
                     setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
-                    nodeCircle.classList.remove("stagnated");
-                    nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
                 }
 
                 // Draw one small × cross per stagnated generation along the bottom arc of the node
@@ -2414,22 +2405,10 @@
             if (data.stagnation !== undefined) {
                 if (data.stagnation >= stagThreshold) {
                     if (healthStatus) healthStatus.className = "health-status stagnated";
-                    if (nodeCircle) {
-                        nodeCircle.classList.add("stagnated");
-                        nodeCircle.setAttribute("fill", "rgba(120, 40, 20, 0.5)");
-                    }
                 } else if (data.stagnation > 0) {
                     if (healthStatus) healthStatus.className = "health-status";
-                    if (nodeCircle) {
-                        nodeCircle.classList.remove("stagnated");
-                        nodeCircle.setAttribute("fill", "rgba(60, 40, 40, 0.4)");
-                    }
                 } else {
                     if (healthStatus) healthStatus.className = "health-status active";
-                    if (nodeCircle) {
-                        nodeCircle.classList.remove("stagnated");
-                        nodeCircle.setAttribute("fill", "rgba(30, 41, 59, 0.7)");
-                    }
                 }
                 // Redraw tally crosses in tooltip handler too
                 const ticksG = document.getElementById(`stagnation-ticks-${islandId}`);
@@ -2511,7 +2490,7 @@
             }
         }
 
-        // Dynamically color island interiors based on generation-relative fitness
+        // Dynamically color island interiors based on generation-relative fitness using the Viridis color scale
         function updateIslandFitnessColors() {
             const N = activeIslands;
             if (N <= 1) return;
@@ -2541,14 +2520,36 @@
                 const norm = range === 0 ? 0.5 : (item.val - minF) / range;
                 const nodeCircle = document.getElementById(`island-circle-${item.id}`);
                 if (nodeCircle) {
-                    // Map norm (0.0 to 1.0) to hsla color:
-                    // 0.0 (worst) -> hsla(15, 60%, 25%, 0.45) (warm slate / reddish-orange)
-                    // 1.0 (best)  -> hsla(120, 75%, 35%, 0.6)  (glowing emerald green)
-                    const hue = 15 + (norm * 105);        // 15 -> 120
-                    const sat = 60 + (norm * 15);         // 60% -> 75%
-                    const light = 25 + (norm * 10);       // 25% -> 35%
-                    const opacity = 0.45 + (norm * 0.15); // 0.45 -> 0.60
-                    nodeCircle.style.fill = `hsla(${hue}, ${sat}%, ${light}%, ${opacity})`;
+                    // Interpolate Viridis stops:
+                    // 0.00: #440154 (68, 1, 84)
+                    // 0.25: #31688e (49, 104, 142)
+                    // 0.50: #21918c (33, 145, 140)
+                    // 0.75: #5ec962 (94, 201, 98)
+                    // 1.00: #fde725 (253, 231, 37)
+                    let r, g, b;
+                    if (norm <= 0.25) {
+                        const t = norm / 0.25;
+                        r = Math.round(68 + t * (49 - 68));
+                        g = Math.round(1 + t * (104 - 1));
+                        b = Math.round(84 + t * (142 - 84));
+                    } else if (norm <= 0.5) {
+                        const t = (norm - 0.25) / 0.25;
+                        r = Math.round(49 + t * (33 - 49));
+                        g = Math.round(104 + t * (145 - 104));
+                        b = Math.round(142 + t * (140 - 142));
+                    } else if (norm <= 0.75) {
+                        const t = (norm - 0.5) / 0.25;
+                        r = Math.round(33 + t * (94 - 33));
+                        g = Math.round(145 + t * (201 - 145));
+                        b = Math.round(140 + t * (98 - 140));
+                    } else {
+                        const t = (norm - 0.75) / 0.25;
+                        r = Math.round(94 + t * (253 - 94));
+                        g = Math.round(201 + t * (231 - 201));
+                        b = Math.round(98 + t * (37 - 98));
+                    }
+                    const opacity = 0.55 + (norm * 0.20); // 0.55 -> 0.75
+                    nodeCircle.style.fill = `rgba(${r}, ${g}, ${b}, ${opacity})`;
                 }
             });
         }
