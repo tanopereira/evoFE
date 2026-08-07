@@ -415,6 +415,23 @@ get_neighbors.evo_topology <- function(topology, island_id, state = NULL, ...) {
 
 #' @rdname topology
 #' @export
+get_in_neighbors <- function(topology, island_id, state = NULL, ...) {
+  UseMethod("get_in_neighbors")
+}
+
+#' @rdname topology
+#' @export
+get_in_neighbors.evo_topology <- function(topology, island_id, state = NULL, ...) {
+  mat <- as.matrix(topology)
+  N <- topology$islands
+  if (island_id >= 1L && island_id <= N) {
+    return(unname(which(mat[, island_id] == 1L)))
+  }
+  integer(0)
+}
+
+#' @rdname topology
+#' @export
 get_neighbors.evo_topology_ring <- function(topology, island_id, state = NULL, ...) {
   get_neighbors.evo_topology(topology, island_id, state, ...)
 }

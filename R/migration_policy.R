@@ -320,7 +320,7 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
     s_j <- state$island_gens_without_improvement[j]
     p_pull <- 1 / (1 + exp(-(s_j - stag_thresh) / temp))
     if (stats::runif(1) < p_pull) {
-      candidates <- get_neighbors(topology, j, state)
+      candidates <- get_in_neighbors(topology, j, state)
       if (length(candidates) > 0L) {
         probs <- calc_weights(j, candidates)
         if (any(is.na(probs)) || sum(probs) == 0) {

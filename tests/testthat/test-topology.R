@@ -83,6 +83,16 @@ test_that("partition_k_tiers allocates monotonic pyramid tiers for various N and
   expect_equal(sum(vapply(part_clamp, length, integer(1))), 3)
 })
 
+test_that("get_in_neighbors returns predecessor in ring topology", {
+  ring <- topology_ring(8)
+  # Predecessor of 5 in ring(8) is 4
+  expect_equal(get_in_neighbors(ring, 5), 4)
+  # Predecessor of 1 in ring(8) is 8
+  expect_equal(get_in_neighbors(ring, 1), 8)
+  # Out-neighbor of 5 is 6
+  expect_equal(get_neighbors(ring, 5), 6)
+})
+
 test_that("migration policies and transaction resolution dispatch correctly", {
   state <- list(
     pop_list = vector("list", 10),
