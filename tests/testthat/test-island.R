@@ -419,3 +419,17 @@ test_that("policy_gibbs_pull with feature_distance weighting executes correctly"
   expect_s3_class(rec, "evo_recipe")
 })
 
+test_that("policy_gibbs_pull on tiered topology executes correctly", {
+  data(mtcars)
+  mc_pull_tiered <- migration_config(
+    topology = topology_tiered(islands = 6, tiers = 3),
+    policy = policy_gibbs_pull(weight_by = "fitness", stagnation_threshold = 1)
+  )
+  rec <- evolve_features(
+    mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
+    generations = 3, pop_size = 4, cv_folds = 2, islands = 6, migration_interval = 1,
+    migration = mc_pull_tiered, verbose = FALSE
+  )
+  expect_s3_class(rec, "evo_recipe")
+})
+
