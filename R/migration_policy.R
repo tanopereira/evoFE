@@ -52,7 +52,7 @@ policy_gibbs_push <- function(temperature = 0.5, weight_by = c("stagnation", "fi
 
 #' @rdname migration_policy
 #' @export
-policy_gibbs_pull <- function(temperature = 0.5, stagnation_threshold = 3, weight_by = c("fitness", "feature_distance")) {
+policy_gibbs_pull <- function(temperature = 0.5, stagnation_threshold = 3, weight_by = c("fitness", "feature_distance", "uniform")) {
   temperature <- as.numeric(temperature)
   stagnation_threshold <- as.integer(stagnation_threshold)
   if (is.na(temperature) || temperature <= 0) stop("temperature must be a positive numeric value")
@@ -102,6 +102,7 @@ migration_config <- function(topology = topology_ring(), policy = policy_push_un
       "dual_gibbs_pull" = policy_gibbs_pull(weight_by = "fitness"),
       "gibbs_pull_fitness" = policy_gibbs_pull(weight_by = "fitness"),
       "gibbs_pull_feature_distance" = policy_gibbs_pull(weight_by = "feature_distance"),
+      "gibbs_pull_uniform" = policy_gibbs_pull(weight_by = "uniform"),
       "tiered_admission" = policy_tiered_admission(),
       policy_push_uniform()
     )
@@ -270,7 +271,9 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
   if (is.null(weight_by)) weight_by <- "fitness"
 
   calc_weights <- function(j, nbrs) {
-    if (weight_by == "feature_distance") {
+    if (weight_by == "uniform") {
+      rep(1 / length(nbrs), length(nbrs))
+    } else if (weight_by == "feature_distance") {
       ind_j <- if (!is.null(state$pop_list[[j]]) && length(state$pop_list[[j]]) > 0L) state$pop_list[[j]][[1]] else NULL
       dists <- vapply(nbrs, function(k) {
         ind_k <- if (!is.null(state$pop_list[[k]]) && length(state$pop_list[[k]]) > 0L) state$pop_list[[k]][[1]] else NULL
