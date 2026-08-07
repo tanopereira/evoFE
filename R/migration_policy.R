@@ -52,14 +52,15 @@ policy_gibbs_push <- function(temperature = 0.5, weight_by = c("stagnation", "fi
 
 #' @rdname migration_policy
 #' @export
-policy_gibbs_pull <- function(temperature = 0.5, stagnation_threshold = 3) {
+policy_gibbs_pull <- function(temperature = 0.5, stagnation_threshold = 3, weight_by = c("fitness", "feature_distance")) {
   temperature <- as.numeric(temperature)
   stagnation_threshold <- as.integer(stagnation_threshold)
   if (is.na(temperature) || temperature <= 0) stop("temperature must be a positive numeric value")
   if (is.na(stagnation_threshold) || stagnation_threshold < 1L) stop("stagnation_threshold must be a positive integer")
+  weight_by <- match.arg(weight_by)
 
   structure(
-    list(type = "gibbs_pull", temperature = temperature, stagnation_threshold = stagnation_threshold),
+    list(type = "gibbs_pull", temperature = temperature, stagnation_threshold = stagnation_threshold, weight_by = weight_by),
     class = c("evo_policy_gibbs_pull", "evo_policy")
   )
 }
@@ -98,7 +99,9 @@ migration_config <- function(topology = topology_ring(), policy = policy_push_un
       "gibbs_fitness" = policy_gibbs_push(weight_by = "fitness"),
       "gibbs_feature_distance" = policy_gibbs_push(weight_by = "feature_distance"),
       "feature_distance" = policy_gibbs_push(weight_by = "feature_distance"),
-      "dual_gibbs_pull" = policy_gibbs_pull(),
+      "dual_gibbs_pull" = policy_gibbs_pull(weight_by = "fitness"),
+      "gibbs_pull_fitness" = policy_gibbs_pull(weight_by = "fitness"),
+      "gibbs_pull_feature_distance" = policy_gibbs_pull(weight_by = "feature_distance"),
       "tiered_admission" = policy_tiered_admission(),
       policy_push_uniform()
     )
@@ -267,6 +270,8 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
 
   temp <- policy$temperature
   stag_thresh <- policy$stagnation_threshold
+  weight_by <- policy$weight_by
+  if (is.null(weight_by)) weight_by <- "fitness"
 
   for (j in 1:N) {
     s_j <- state$island_gens_without_improvement[j]
@@ -274,14 +279,25 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
     if (stats::runif(1) < p_pull) {
       candidates <- setdiff(1:N, j)
       if (length(candidates) > 0L) {
-        donor_fits <- state$island_best_fitness[candidates]
-        donor_fits[is.na(donor_fits)] <- -Inf
-        max_f <- max(donor_fits)
-        if (is.finite(max_f)) {
-          logits <- (donor_fits - max_f) / temp
+        if (weight_by == "feature_distance") {
+          ind_j <- if (!is.null(state$pop_list[[j]]) && length(state$pop_list[[j]]) > 0L) state$pop_list[[j]][[1]] else NULL
+          dists <- vapply(candidates, function(k) {
+            ind_k <- if (!is.null(state$pop_list[[k]]) && length(state$pop_list[[k]]) > 0L) state$pop_list[[k]][[1]] else NULL
+            .calc_feature_distance(ind_j, ind_k)
+          }, numeric(1))
+          max_d <- max(dists)
+          logits <- (dists - max_d) / temp
           probs <- exp(logits) / sum(exp(logits))
-        } else {
-          probs <- rep(1 / length(candidates), length(candidates))
+        } else { # fitness
+          donor_fits <- state$island_best_fitness[candidates]
+          donor_fits[is.na(donor_fits)] <- -Inf
+          max_f <- max(donor_fits)
+          if (is.finite(max_f)) {
+            logits <- (donor_fits - max_f) / temp
+            probs <- exp(logits) / sum(exp(logits))
+          } else {
+            probs <- rep(1 / length(candidates), length(candidates))
+          }
         }
         
         if (any(is.na(probs)) || sum(probs) == 0) {
