@@ -39,7 +39,7 @@ policy_push_uniform <- function() {
 
 #' @rdname migration_policy
 #' @export
-policy_gibbs_push <- function(temperature = 0.5, weight_by = c("stagnation", "fitness", "feature_distance")) {
+policy_gibbs_push <- function(temperature = 0.5, weight_by = c("stagnation", "fitness", "feature_distance", "uniform")) {
   temperature <- as.numeric(temperature)
   if (is.na(temperature) || temperature <= 0) stop("temperature must be a positive numeric value")
   weight_by <- match.arg(weight_by)
@@ -182,33 +182,9 @@ resolve_migration_transactions <- function(policy, topology, state, ...) {
 #' @rdname migration_policy
 #' @export
 resolve_migration_transactions.evo_policy_push_uniform <- function(policy, topology, state, ...) {
-  txs <- list()
-  N <- topology$islands
-  if (N <= 1L) return(txs)
-
-  if (inherits(topology, "evo_topology_tiered")) {
-    txs <- c(txs, .resolve_tiered_promotions(topology, state, policy))
-    t_all <- topology$tier_partition
-    for (t_islands in t_all) {
-      if (length(t_islands) > 1L) {
-        for (j in t_islands) {
-          peers <- setdiff(t_islands, j)
-          dest <- if (length(peers) == 1L) peers[1] else sample(peers, 1L)
-          txs[[length(txs) + 1L]] <- list(from = j, to = dest, is_pull = FALSE)
-        }
-      }
-    }
-    return(txs)
-  }
-
-  for (j in 1:N) {
-    neighbors <- get_neighbors(topology, j, state)
-    if (length(neighbors) > 0L) {
-      dest <- if (length(neighbors) == 1L) neighbors[1] else sample(neighbors, 1L)
-      txs[[length(txs) + 1L]] <- list(from = j, to = dest, is_pull = FALSE)
-    }
-  }
-  txs
+  policy_gibbs <- policy_gibbs_push(weight_by = "uniform")
+  # Forward to evo_policy_gibbs_push using uniform weight strategy
+  resolve_migration_transactions.evo_policy_gibbs_push(policy_gibbs, topology, state, ...)
 }
 
 #' @rdname migration_policy
@@ -222,7 +198,9 @@ resolve_migration_transactions.evo_policy_gibbs_push <- function(policy, topolog
   weight_by <- policy$weight_by
 
   calc_weights <- function(j, nbrs) {
-    if (weight_by == "stagnation") {
+    if (weight_by == "uniform") {
+      rep(1 / length(nbrs), length(nbrs))
+    } else if (weight_by == "stagnation") {
       stags <- state$island_gens_without_improvement[nbrs]
       stags[is.na(stags)] <- 0
       max_s <- max(stags)
