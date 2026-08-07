@@ -127,12 +127,17 @@ resolve_migration_transactions <- function(policy, topology, state, ...) {
 }
 
 # Helper to resolve vertical promotion in tiered topologies
-.resolve_tiered_promotions <- function(topology, state) {
+.resolve_tiered_promotions <- function(topology, state, policy = NULL) {
   txs <- list()
   if (!inherits(topology, "evo_topology_tiered")) return(txs)
   t_all <- topology$tier_partition
   t_all <- t_all[vapply(t_all, function(x) length(x) > 0, logical(1))]
   N <- topology$islands
+
+  threshold_mode <- "min_peer"
+  if (!is.null(policy) && !is.null(policy$min_fitness_threshold)) {
+    threshold_mode <- policy$min_fitness_threshold
+  }
 
   for (j in 1:N) {
     tier_matches <- which(vapply(t_all, function(t_islands) j %in% t_islands, logical(1)))
@@ -146,10 +151,23 @@ resolve_migration_transactions <- function(policy, topology, state, ...) {
 
     next_tier_islands <- t_all[[tier_idx + 1L]]
     next_tier_fits <- state$island_best_fitness[next_tier_islands]
-    min_next_fit <- if (all(is.na(next_tier_fits))) -Inf else min(next_tier_fits, na.rm = TRUE)
+    next_tier_fits_clean <- next_tier_fits[!is.na(next_tier_fits)]
+
+    if (length(next_tier_fits_clean) == 0L) {
+      next_tier_thresh <- -Inf
+    } else if (is.numeric(threshold_mode)) {
+      next_tier_thresh <- threshold_mode
+    } else {
+      next_tier_thresh <- switch(threshold_mode,
+        "min_peer"    = min(next_tier_fits_clean),
+        "mean_peer"   = mean(next_tier_fits_clean),
+        "median_peer" = stats::median(next_tier_fits_clean),
+        min(next_tier_fits_clean)
+      )
+    }
 
     j_fit <- state$island_best_fitness[j]
-    if (!is.na(j_fit) && j_fit > min_next_fit) {
+    if (!is.na(j_fit) && j_fit > next_tier_thresh) {
       parent_idx <- min(length(next_tier_islands), ((local_pos - 1L) %/% 2L) + 1L)
       dest <- next_tier_islands[parent_idx]
       txs[[length(txs) + 1L]] <- list(
@@ -169,7 +187,7 @@ resolve_migration_transactions.evo_policy_push_uniform <- function(policy, topol
   if (N <= 1L) return(txs)
 
   if (inherits(topology, "evo_topology_tiered")) {
-    txs <- c(txs, .resolve_tiered_promotions(topology, state))
+    txs <- c(txs, .resolve_tiered_promotions(topology, state, policy))
     t_all <- topology$tier_partition
     for (t_islands in t_all) {
       if (length(t_islands) > 1L) {
@@ -230,7 +248,7 @@ resolve_migration_transactions.evo_policy_gibbs_push <- function(policy, topolog
   }
 
   if (inherits(topology, "evo_topology_tiered")) {
-    txs <- c(txs, .resolve_tiered_promotions(topology, state))
+    txs <- c(txs, .resolve_tiered_promotions(topology, state, policy))
     t_all <- topology$tier_partition
     for (t_islands in t_all) {
       if (length(t_islands) > 1L) {
@@ -297,7 +315,7 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
   }
 
   if (inherits(topology, "evo_topology_tiered")) {
-    txs <- c(txs, .resolve_tiered_promotions(topology, state))
+    txs <- c(txs, .resolve_tiered_promotions(topology, state, policy))
     t_all <- topology$tier_partition
     for (t_islands in t_all) {
       if (length(t_islands) > 1L) {

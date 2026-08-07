@@ -1669,6 +1669,10 @@ dynamic_population_decay_rate = 0.7,
             })
           }
 
+          ind_src <- if (length(pop_list[[src]]) > 0) pop_list[[src]][[1]] else NULL
+          ind_dest <- if (length(pop_list[[dest]]) > 0) pop_list[[dest]][[1]] else NULL
+          feat_dist <- .calc_feature_distance(ind_src, ind_dest)
+
           migration_event <- list(
             from = src,
             to = dest,
@@ -1676,7 +1680,8 @@ dynamic_population_decay_rate = 0.7,
             is_pull = tx$is_pull,
             n_recipes = effective_rate,
             n_genes = n_injected,
-            migrated_genes = migrated_gene_details
+            migrated_genes = migrated_gene_details,
+            feature_distance = feat_dist
           )
 
           if (record) {
