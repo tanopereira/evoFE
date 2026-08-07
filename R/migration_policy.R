@@ -277,7 +277,7 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
     s_j <- state$island_gens_without_improvement[j]
     p_pull <- 1 / (1 + exp(-(s_j - stag_thresh) / temp))
     if (stats::runif(1) < p_pull) {
-      candidates <- setdiff(1:N, j)
+      candidates <- get_neighbors(topology, j, state)
       if (length(candidates) > 0L) {
         if (weight_by == "feature_distance") {
           ind_j <- if (!is.null(state$pop_list[[j]]) && length(state$pop_list[[j]]) > 0L) state$pop_list[[j]][[1]] else NULL
