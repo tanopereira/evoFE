@@ -844,7 +844,7 @@ dynamic_population_decay_rate = 0.7,
     while (is.null(viewer$get_connection()) && slept < max_wait) {
       Sys.sleep(0.1)
       slept <- slept + 0.1
-      httpuv::service(10)
+      suppressWarnings(httpuv::service(10))
     }
     viewer$send(list(type = "config", data = evolution_log$config))
   }

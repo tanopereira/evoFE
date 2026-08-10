@@ -127,10 +127,10 @@ start_evolution_viewer <- function(port = NULL) {
       ws_connections <<- alive_conns
 
       # Service httpuv event loop
-      httpuv::service(100)
+      suppressWarnings(httpuv::service(100))
     },
     stop = function() {
-      httpuv::stopServer(server)
+      suppressWarnings(httpuv::stopServer(server))
       if (exists("active_viewer", envir = .viewer_env) && identical(.viewer_env$active_viewer$server, server)) {
         tryCatch({
           rm("active_viewer", envir = .viewer_env)
