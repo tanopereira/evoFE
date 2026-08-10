@@ -447,3 +447,23 @@ test_that("policy_gibbs_pull with uniform weighting executes correctly", {
   expect_s3_class(rec, "evo_recipe")
 })
 
+test_that("calibrated regression metrics integrate with xgboost and lightgbm in evolve_features", {
+  data(mtcars)
+  
+  # LightGBM with cal_rmse
+  rec_lgb <- evolve_features(
+    mtcars, target_col = "mpg", task = "regression", evaluator = "lightgbm",
+    metric = "cal_rmse", generations = 2, pop_size = 4, cv_folds = 2, islands = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_lgb, "evo_recipe")
+  
+  # XGBoost with cal_mae
+  rec_xgb <- evolve_features(
+    mtcars, target_col = "mpg", task = "regression", evaluator = "xgboost",
+    metric = "cal_mae", generations = 2, pop_size = 4, cv_folds = 2, islands = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_xgb, "evo_recipe")
+})
+

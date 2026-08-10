@@ -102,14 +102,23 @@ register_evaluator(
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
-    use_ts_refinement <- FALSE
+    use_custom_eval <- FALSE
+    custom_eval_type <- NULL
     if (!is.null(metric_arg) && is.character(metric_arg)) {
-      if (tolower(metric_arg) %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
-        use_ts_refinement <- TRUE
+      metric_lower <- tolower(metric_arg)
+      if (metric_lower %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+        use_custom_eval <- TRUE
+        custom_eval_type <- "ts_refinement"
+      } else if (metric_lower %in% c("cal_rmse", "cal-rmse")) {
+        use_custom_eval <- TRUE
+        custom_eval_type <- "cal_rmse"
+      } else if (metric_lower %in% c("cal_mae", "cal-mae")) {
+        use_custom_eval <- TRUE
+        custom_eval_type <- "cal_mae"
       }
     }
 
-    if (use_ts_refinement) {
+    if (use_custom_eval) {
       params$metric <- "None"
     }
 
@@ -127,8 +136,16 @@ register_evaluator(
 
     lgb_eval <- function(preds, dtrain) {
       labels <- lightgbm::get_field(dtrain, "label")
-      score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE)
-      list(name = "ts_refinement", value = score, higher_better = FALSE)
+      if (custom_eval_type == "ts_refinement") {
+        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE)
+        list(name = "ts_refinement", value = score, higher_better = FALSE)
+      } else if (custom_eval_type == "cal_rmse") {
+        score <- compute_calibrated_rmse(labels, preds)
+        list(name = "cal_rmse", value = score, higher_better = FALSE)
+      } else { # cal_mae
+        score <- compute_calibrated_mae(labels, preds)
+        list(name = "cal_mae", value = score, higher_better = FALSE)
+      }
     }
 
     # early_stopping_rounds requires at least one validation dataset
@@ -140,7 +157,7 @@ register_evaluator(
         data = dtrain,
         nrounds = nrounds,
         valids = valids,
-        eval = if (use_ts_refinement) lgb_eval else NULL,
+        eval = if (use_custom_eval) lgb_eval else NULL,
         early_stopping_rounds = esr,
         verbose = -1
       )
@@ -210,14 +227,23 @@ register_evaluator(
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
-    use_ts_refinement <- FALSE
+    use_custom_eval <- FALSE
+    custom_eval_type <- NULL
     if (!is.null(metric_arg) && is.character(metric_arg)) {
-      if (tolower(metric_arg) %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
-        use_ts_refinement <- TRUE
+      metric_lower <- tolower(metric_arg)
+      if (metric_lower %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+        use_custom_eval <- TRUE
+        custom_eval_type <- "ts_refinement"
+      } else if (metric_lower %in% c("cal_rmse", "cal-rmse")) {
+        use_custom_eval <- TRUE
+        custom_eval_type <- "cal_rmse"
+      } else if (metric_lower %in% c("cal_mae", "cal-mae")) {
+        use_custom_eval <- TRUE
+        custom_eval_type <- "cal_mae"
       }
     }
 
-    if (use_ts_refinement) {
+    if (use_custom_eval) {
       params$eval_metric <- NULL
     }
 
@@ -233,17 +259,23 @@ register_evaluator(
 
     evals <- list(train = dtrain)
     dval_metric <- NULL
-    if (use_ts_refinement && !is.null(x_val) && !is.null(y_val)) {
+    if (use_custom_eval && !is.null(x_val) && !is.null(y_val)) {
       dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val)
       evals$val <- dval_metric
     }
 
     xgb_feval <- function(preds, dtrain) {
       labels <- xgboost::getinfo(dtrain, "label")
-      # XGBoost custom_metric always receives raw margins (logits),
-      # unlike LightGBM which passes transformed probabilities.
-      score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE)
-      list(metric = "ts_refinement", value = score)
+      if (custom_eval_type == "ts_refinement") {
+        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE)
+        list(metric = "ts_refinement", value = score)
+      } else if (custom_eval_type == "cal_rmse") {
+        score <- compute_calibrated_rmse(labels, preds)
+        list(metric = "cal_rmse", value = score)
+      } else { # cal_mae
+        score <- compute_calibrated_mae(labels, preds)
+        list(metric = "cal_mae", value = score)
+      }
     }
 
     utils::capture.output({
@@ -252,9 +284,9 @@ register_evaluator(
         data = dtrain,
         nrounds = nrounds,
         evals = evals,
-        custom_metric = if (use_ts_refinement) xgb_feval else NULL,
+        custom_metric = if (use_custom_eval) xgb_feval else NULL,
         early_stopping_rounds = early_stopping_rounds,
-        maximize = if (use_ts_refinement) FALSE else NULL,
+        maximize = if (use_custom_eval) FALSE else NULL,
         verbose = 0
       ))
     })

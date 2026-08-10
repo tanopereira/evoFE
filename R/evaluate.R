@@ -678,6 +678,10 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
   } else {
     val_score <- switch(metric,
       mae = compute_mae(y_true, y_pred),
+      cal_rmse = compute_calibrated_rmse(y_true, y_pred),
+      `cal-rmse` = compute_calibrated_rmse(y_true, y_pred),
+      cal_mae = compute_calibrated_mae(y_true, y_pred),
+      `cal-mae` = compute_calibrated_mae(y_true, y_pred),
       sqrt(mean((y_true - y_pred)^2))
     )
     -val_score
@@ -805,6 +809,86 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     ll_unsmoothed <- -mean(rowSums(y_hard * log(probs_T)))
     return(ll_unsmoothed)
   }
+}
+
+#' Compute Calibrated RMSE
+#'
+#' Computes the Root Mean Squared Error (RMSE) of y_pred after optimal linear post-calibration.
+#' Mathematically equivalent to SD(y_true) * sqrt(1 - R^2) where R is the Pearson correlation.
+#'
+#' @param y_true Numeric vector of true target values.
+#' @param y_pred Numeric vector of predicted values.
+#' @return Numeric calibrated RMSE score.
+#' @export
+compute_calibrated_rmse <- function(y_true, y_pred) {
+  y_true <- as.numeric(y_true)
+  y_pred <- as.numeric(y_pred)
+  
+  if (length(y_true) <= 1L) return(0.0)
+  
+  sd_true <- stats::sd(y_true)
+  sd_pred <- stats::sd(y_pred)
+  
+  if (is.na(sd_true) || sd_true < 1e-9) {
+    return(0.0)
+  }
+  
+  if (is.na(sd_pred) || sd_pred < 1e-9) {
+    return(sqrt(mean((y_true - mean(y_pred, na.rm = TRUE))^2, na.rm = TRUE)))
+  }
+  
+  r <- stats::cor(y_pred, y_true, use = "complete.obs")
+  if (is.na(r)) {
+    return(sqrt(mean((y_true - y_pred)^2, na.rm = TRUE)))
+  }
+  
+  sd_true * sqrt(pmax(0.0, 1.0 - r^2))
+}
+
+#' Compute Calibrated MAE
+#'
+#' Computes the Mean Absolute Error (MAE) of y_pred after optimal L1 linear post-calibration.
+#' Finds intercept 'a' and slope 'b' minimizing Mean(|y_true - (a + b * y_pred)|) via 2D optimization.
+#'
+#' @param y_true Numeric vector of true target values.
+#' @param y_pred Numeric vector of predicted values.
+#' @return Numeric calibrated MAE score.
+#' @export
+compute_calibrated_mae <- function(y_true, y_pred) {
+  y_true <- as.numeric(y_true)
+  y_pred <- as.numeric(y_pred)
+  
+  if (length(y_true) == 0L) return(0.0)
+  
+  valid <- !is.na(y_true) & !is.na(y_pred)
+  y_true <- y_true[valid]
+  y_pred <- y_pred[valid]
+  
+  if (length(y_true) <= 1L) return(0.0)
+  
+  obj_fn <- function(par) {
+    a <- par[1]
+    b <- par[2]
+    mean(abs(y_true - (a + b * y_pred)))
+  }
+  
+  cov_y <- stats::cov(y_true, y_pred)
+  var_pred <- stats::var(y_pred)
+  
+  start_b <- if (!is.na(var_pred) && var_pred > 1e-9) cov_y / var_pred else 1.0
+  start_a <- mean(y_true) - start_b * mean(y_pred)
+  
+  opt <- tryCatch({
+    stats::optim(
+      par = c(start_a, start_b),
+      fn = obj_fn,
+      method = "Nelder-Mead"
+    )
+  }, error = function(e) {
+    list(value = mean(abs(y_true - y_pred)))
+  })
+  
+  opt$value
 }
 
 

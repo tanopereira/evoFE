@@ -271,7 +271,7 @@ tournament_select <- function(pop, k = 3) {
 #' @param max_clustering_size Maximum unique training rows to cluster (default
 #'   5000, 0/NULL for unlimited)
 #' @param verbose Logical. If TRUE, prints progress.
-#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a
+#' @param metric The metric to optimize ("default", "auc", "f1", "mae", "cal_rmse", "cal_mae", or a
 #'   custom function).
 #' @param model_all_final_genes Logical. If TRUE, the final model is trained using
 #'   the union of all unique genes evolved in the final population, rather than
@@ -545,7 +545,7 @@ dynamic_population_decay_rate = 0.7,
     valid_metrics <- list(
       classification = c("default", "auc", "f1", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
       multiclass = c("default", "auc", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
-      regression = c("default", "mae")
+      regression = c("default", "mae", "cal_rmse", "cal-rmse", "cal_mae", "cal-mae")
     )
     if (!metric_lower %in% valid_metrics[[task]]) {
       stop(sprintf(
