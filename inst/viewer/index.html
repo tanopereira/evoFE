@@ -1783,13 +1783,17 @@
                 }));
 
                 forceSimulation = d3.forceSimulation(simNodes)
-                    .force("charge", d3.forceManyBody().strength(-400))
-                    .force("center",  d3.forceCenter(width / 2, height / 2).strength(0.08))
+                    .force("charge", d3.forceManyBody().strength(-180))
+                    .force("center",  d3.forceCenter(width / 2, height / 2).strength(0.18))
                     .force("collide", d3.forceCollide(nodeR + 8).strength(0.9))
                     .force("link",    d3.forceLink([]).id(d => d.id).distance(Math.min(width, height) * 0.28).strength(0))
                     .alphaDecay(0.12)
                     .on("tick", () => {
+                        const pad = nodeR + 10;
                         simNodes.forEach(sn => {
+                            // Hard-clamp: never let a node escape the SVG canvas
+                            sn.x = Math.max(pad, Math.min(width  - pad, sn.x));
+                            sn.y = Math.max(pad, Math.min(height - pad, sn.y));
                             sn._posRef.x = sn.x;
                             sn._posRef.y = sn.y;
                         });
