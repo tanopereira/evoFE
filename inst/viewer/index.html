@@ -48,7 +48,7 @@
                 alphaTarget: function(v) { if (!arguments.length) return alphaTarget; alphaTarget = v; return sim; },
                 velocityDecay: function(v) { if (!arguments.length) return velocityDecay; velocityDecay = v; return sim; },
                 on: function(ev, cb) { listeners[ev] = cb; return sim; },
-                restart: function() { if (!timer) { alpha = Math.max(alpha, 0.1); timer = requestAnimationFrame(step); } return sim; },
+                restart: function() { if (timer) cancelAnimationFrame(timer); timer = requestAnimationFrame(step); return sim; },
                 stop: function() { if (timer) { cancelAnimationFrame(timer); timer = null; } return sim; }
             };
             timer = requestAnimationFrame(step);
@@ -1787,7 +1787,7 @@
                     .force("center",  d3.forceCenter(width / 2, height / 2).strength(0.08))
                     .force("collide", d3.forceCollide(nodeR + 8).strength(0.9))
                     .force("link",    d3.forceLink([]).id(d => d.id).distance(Math.min(width, height) * 0.28).strength(0))
-                    .alphaDecay(0.02)
+                    .alphaDecay(0.12)
                     .on("tick", () => {
                         simNodes.forEach(sn => {
                             sn._posRef.x = sn.x;
@@ -2304,7 +2304,7 @@
                         (topologySvg.clientHeight || 450)
                     ) * 0.28);
                 // Wake the simulation
-                forceSimulation.alpha(0.35).restart();
+                forceSimulation.alpha(0.15).restart();
             }
 
             if (data.is_pull) {
