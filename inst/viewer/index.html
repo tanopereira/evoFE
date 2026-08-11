@@ -1766,11 +1766,15 @@
             isForceLayout = FORCE_TOPOS.has(topo) && typeof d3 !== 'undefined';
 
             if (isForceLayout) {
-                // Start at random positions — structure emerges from migration, not topology label
-                const pad = nodeR + 20;
-                islandPositions.forEach(pos => {
-                    pos.x = pad + Math.random() * (width  - 2 * pad);
-                    pos.y = pad + Math.random() * (height - 2 * pad);
+                // Start nodes in a tight cluster at the centre so the charge
+                // repulsion visibly spreads them apart on load.
+                const cx = width / 2, cy = height / 2;
+                islandPositions.forEach((pos, i) => {
+                    // Small random jitter so no two nodes are exactly co-located
+                    const angle = (2 * Math.PI * i / N);
+                    const r = (nodeR + 4) * (1 + Math.random() * 0.5);
+                    pos.x = cx + r * Math.cos(angle);
+                    pos.y = cy + r * Math.sin(angle);
                     pos._sim = pos;
                 });
 
@@ -1781,18 +1785,20 @@
                     y: pos.y
                 }));
 
+                const svgW = width, svgH = height;
                 forceSimulation = d3.forceSimulation(simNodes)
-                    .force("charge", d3.forceManyBody().strength(-180))
-                    .force("center",  d3.forceCenter(width / 2, height / 2).strength(0.18))
-                    .force("collide", d3.forceCollide(nodeR + 8).strength(0.9))
-                    .force("link",    d3.forceLink([]).id(d => d.id).distance(Math.min(width, height) * 0.28).strength(0))
-                    .alphaDecay(0.12)
+                    .force("charge", d3.forceManyBody().strength(-350))
+                    .force("center",  d3.forceCenter(svgW / 2, svgH / 2).strength(0.12))
+                    .force("collide", d3.forceCollide(nodeR + 8).strength(0.85))
+                    .force("link",    d3.forceLink([]).id(d => d.id)
+                        .distance(Math.min(svgW, svgH) * 0.30)
+                        .strength(0))
+                    .alphaDecay(0.05)
                     .on("tick", () => {
                         const pad = nodeR + 10;
                         simNodes.forEach(sn => {
-                            // Hard-clamp: never let a node escape the SVG canvas
-                            sn.x = Math.max(pad, Math.min(width  - pad, sn.x));
-                            sn.y = Math.max(pad, Math.min(height - pad, sn.y));
+                            sn.x = Math.max(pad, Math.min(svgW - pad, sn.x));
+                            sn.y = Math.max(pad, Math.min(svgH - pad, sn.y));
                             sn._posRef.x = sn.x;
                             sn._posRef.y = sn.y;
                         });
@@ -2297,17 +2303,18 @@
                 const d3Links = forceLinks.map(l => ({
                     source: nodeById[l.source],
                     target: nodeById[l.target],
-                    strength: Math.min(0.6, 0.08 + (l.count - 1) * 0.06)
+                    // First migration gets 0.20 strength, grows with repeated migrations
+                    strength: Math.min(0.7, 0.20 + (l.count - 1) * 0.06)
                 }));
                 forceSimulation.force("link")
                     .links(d3Links)
                     .strength(l => l.strength)
                     .distance(Math.min(
-                        (topologySvg.clientWidth || 600),
+                        (topologySvg.clientWidth  || 600),
                         (topologySvg.clientHeight || 450)
-                    ) * 0.28);
-                // Wake the simulation
-                forceSimulation.alpha(0.15).restart();
+                    ) * 0.30);
+                // Wake the simulation with a strong-enough alpha to be clearly visible
+                forceSimulation.alpha(0.45).restart();
             }
 
             if (data.is_pull) {
