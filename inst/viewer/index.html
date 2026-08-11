@@ -18,6 +18,7 @@
             var forces = {}, alpha = 1, alphaMin = 0.001, alphaDecay = 0.0228,
                 alphaTarget = 0, velocityDecay = 0.4, listeners = {}, timer = null;
             nodes = nodes || [];
+            nodes.forEach(function(n) { if (n.vx == null) n.vx = 0; if (n.vy == null) n.vy = 0; });
 
             function step() {
                 alpha += (alphaTarget - alpha) * alphaDecay;
