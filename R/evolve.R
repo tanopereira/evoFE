@@ -1245,6 +1245,7 @@ dynamic_population_decay_rate = 0.7,
       lapply(1:islands, function(x) baseline_ind)
     }
     island_gens_without_improvement <- rep(0, islands)
+    island_improved_by_migration <- rep(FALSE, islands)
     island_current_pop_size <- rep(pop_size, islands)
 
     if (row_split_islands) {
@@ -1323,6 +1324,10 @@ dynamic_population_decay_rate = 0.7,
           island_best_fitness[j] <- best_fitness_island
           island_best_individual[[j]] <- pop_list[[j]][[1]]
           island_gens_without_improvement[j] <- 0
+          island_improved_by_migration[j] <- FALSE
+        } else if (island_improved_by_migration[j] && !is.na(best_fitness_island) && best_fitness_island == island_best_fitness[j]) {
+          island_gens_without_improvement[j] <- 0
+          island_improved_by_migration[j] <- FALSE
         } else {
           island_gens_without_improvement[j] <- island_gens_without_improvement[j] + 1
         }
@@ -1596,6 +1601,7 @@ dynamic_population_decay_rate = 0.7,
                   island_best_fitness[dest] <- new_dest_best$fitness
                   island_best_individual[[dest]] <- new_dest_best
                   island_gens_without_improvement[dest] <- 0L
+                  island_improved_by_migration[dest] <- TRUE
                   is_new_dest_best <- TRUE
                 }
                 if (is.na(global_best_fitness) || new_dest_best$fitness > global_best_fitness) {
@@ -1727,6 +1733,7 @@ dynamic_population_decay_rate = 0.7,
               island_best_fitness[k] <- top_fit
               island_best_individual[[k]] <- pop_list[[k]][[1]]
               island_gens_without_improvement[k] <- 0
+              island_improved_by_migration[k] <- TRUE
             }
             if (top_fit > global_best_fitness) {
               global_best_fitness <- top_fit

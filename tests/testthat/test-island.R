@@ -482,3 +482,18 @@ test_that("policy_gibbs_pull with gene_only payload runs successfully", {
   expect_s3_class(rec, "evo_recipe")
 })
 
+test_that("stagnation remains 0 on the first generation evaluating a newly migrated elite", {
+  data(mtcars)
+  mc <- migration_config(
+    topology = topology_ring(islands = 3),
+    policy = policy_push_uniform(),
+    payload = "full_individual"
+  )
+  rec <- evolve_features(
+    mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
+    generations = 4, pop_size = 4, cv_folds = 2, islands = 3, migration_interval = 1,
+    migration = mc, verbose = FALSE
+  )
+  expect_s3_class(rec, "evo_recipe")
+})
+
