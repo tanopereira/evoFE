@@ -1418,7 +1418,7 @@
                     return;
                 }
 
-                // 1. Repulsion between node pairs (prevents node overlap)
+                // 1. Repulsion between node pairs (pushes nodes apart)
                 for (let i = 0; i < N; i++) {
                     for (let j = i + 1; j < N; j++) {
                         const p1 = islandPositions[i];
@@ -1430,9 +1430,9 @@
                         const minDist = (p1.nodeR || 35) + (p2.nodeR || 35) + 20;
                         let f = 0;
                         if (dist < minDist) {
-                            f = -1.5 * (minDist - dist);
+                            f = 1.5 * (minDist - dist);
                         } else {
-                            f = -3500 / (dist * dist);
+                            f = 1200 / (dist * dist);
                         }
 
                         const fx = (dx / dist) * f * alpha;
@@ -1501,11 +1501,11 @@
                     if (p.tierY !== undefined) {
                         p.vy += (p.tierY - p.y) * 0.12 * alpha;
                     }
-                    p.vx = (p.vx || 0) + (cx - p.x) * 0.003 * alpha;
-                    p.vy = (p.vy || 0) + (cy - p.y) * 0.003 * alpha;
+                    p.vx = (p.vx || 0) + (cx - p.x) * 0.005 * alpha;
+                    p.vy = (p.vy || 0) + (cy - p.y) * 0.005 * alpha;
 
-                    p.vx *= 0.76;
-                    p.vy *= 0.76;
+                    p.vx *= 0.70;
+                    p.vy *= 0.70;
 
                     p.x = Math.max(margin, Math.min(width - margin, p.x + p.vx));
                     p.y = Math.max(margin, Math.min(height - margin, p.y + p.vy));
