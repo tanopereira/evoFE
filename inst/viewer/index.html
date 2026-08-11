@@ -37,7 +37,7 @@
             var sim = {
                 nodes: function(v) { if (!arguments.length) return nodes; nodes = v; return sim; },
                 force: function(name, f) {
-                    if (!arguments.length) return forces;
+                    if (arguments.length < 2) return forces[name]; // getter
                     if (f == null) { delete forces[name]; return sim; }
                     if (f.initialize) f.initialize(nodes);
                     forces[name] = f;
