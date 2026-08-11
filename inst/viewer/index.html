@@ -1444,7 +1444,6 @@
         let forceSimulation = null;
         let isForceLayout = false;
         let forceLinks = [];     // [{source: id-1, target: id-1, count}] (0-indexed ids)
-        const FORCE_TOPOS = new Set(["ring", "complete", "full", "feature_distance", "hypercube", "random"]);
 
         // Compute edge SVG path 'd' attribute from two position objects
         function edgePathD(posA, posB) {
@@ -1694,36 +1693,9 @@
                     bgGroup.appendChild(tlt);
                 }
 
-            } else if (topo === "grid" || topo === "torus" || topo === "gibbs_fitness") {
-                const rSize = Math.max(1, Math.round(Math.sqrt(N)));
-                const basePerRow = Math.floor(N / rSize);
-                const rem = N % rSize;
-                const rowCounts = new Array(rSize).fill(basePerRow);
-                if (rem > 0) {
-                    const mid = (rSize - 1) / 2;
-                    const indices = Array.from({length: rSize}, (_, i) => i);
-                    indices.sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
-                    for (let k = 0; k < rem; k++) {
-                        rowCounts[indices[k]]++;
-                    }
-                }
-
-                let islandIdx = 1;
-                const yStep = (height - 80) / Math.max(rSize, 1);
-                for (let r = 0; r < rSize; r++) {
-                    const nRow = rowCounts[r];
-                    const xStep = (width - 120) / Math.max(nRow, 1);
-                    const ry = 40 + yStep * (r + 0.5);
-                    for (let i = 0; i < nRow; i++) {
-                        const rx = 60 + xStep * (i + 0.5);
-                        const pos = { id: islandIdx, x: rx, y: ry, row: r, colIdx: i, rowLen: nRow };
-                        islandPositions.push(pos);
-                        islandIdx++;
-                    }
-                }
-
             } else {
-                // Hypercube / Ring / Complete / Custom / Feature Distance: position in circle
+                // All other topologies (Ring / Grid / Torus / Complete / Hypercube / Feature Distance / etc.)
+                // fallback to circlePositions initially before force layout rearranges them.
                 const baseRFrac = N > 20 ? 0.41 : (N > 12 ? 0.39 : (N > 6 ? 0.36 : 0.32));
                 const cx = width / 2, cy = height / 2, r = Math.min(width, height) * baseRFrac;
                 islandPositions = circlePositions(N, cx, cy, r);
@@ -1763,7 +1735,7 @@
             }
 
             // Detect whether we use force-directed layout for this topology
-            isForceLayout = FORCE_TOPOS.has(topo) && typeof d3 !== 'undefined';
+            isForceLayout = (topo !== "tiered" && topo !== "hfc") && typeof d3 !== 'undefined';
 
             if (isForceLayout) {
                 // Start nodes in a tight cluster at the centre so the charge
