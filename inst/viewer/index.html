@@ -1343,6 +1343,144 @@
             el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
         }
 
+        // --- DYNAMIC FORCE-DIRECTED PHYSICS ENGINE ---
+        let physicsAnimationId = null;
+        let migrationConnections = {};
+
+        function updateNodePosition(pos) {
+            const g = document.getElementById(`island-node-${pos.id}`);
+            if (!g) return;
+            const dx = pos.x - pos.initX;
+            const dy = pos.y - pos.initY;
+            g.setAttribute("transform", `translate(${dx}, ${dy})`);
+        }
+
+        function updateEdgePath(posA, posB, curved = true) {
+            if (!posA || !posB) return;
+            const line = document.getElementById(`path-from-${posA.id}-to-${posB.id}`);
+            const pulse = document.getElementById(`pulse-from-${posA.id}-to-${posB.id}`);
+            if (!line && !pulse) return;
+
+            const dx = posB.x - posA.x, dy = posB.y - posA.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            let d;
+            if (curved !== false) {
+                const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
+                const offset = Math.min(25, Math.max(10, dist * 0.15));
+                d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
+            } else {
+                d = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
+            }
+            if (line) line.setAttribute("d", d);
+            if (pulse) pulse.setAttribute("d", d);
+        }
+
+        function stepPhysics() {
+            const N = islandPositions.length;
+            if (N <= 1) return;
+
+            const width = topologySvg.clientWidth || 600;
+            const height = topologySvg.clientHeight || 450;
+            const cx = width / 2;
+            const cy = height / 2;
+            const margin = 45;
+
+            let totalMovement = 0;
+
+            // 1. Repulsion force between all pairs of nodes (prevents node overlap)
+            for (let i = 0; i < N; i++) {
+                for (let j = i + 1; j < N; j++) {
+                    const p1 = islandPositions[i];
+                    const p2 = islandPositions[j];
+                    let dx = p2.x - p1.x;
+                    let dy = p2.y - p1.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                    const minDist = (p1.nodeR || 35) + (p2.nodeR || 35) + 25;
+                    let f = 0;
+                    if (dist < minDist) {
+                        f = -1.2 * (minDist - dist);
+                    } else {
+                        f = -3000 / (dist * dist);
+                    }
+
+                    const fx = (dx / dist) * f;
+                    const fy = (dy / dist) * f;
+
+                    p1.vx = (p1.vx || 0) - fx;
+                    p1.vy = (p1.vy || 0) - fy;
+                    p2.vx = (p2.vx || 0) + fx;
+                    p2.vy = (p2.vy || 0) + fy;
+                }
+            }
+
+            // 2. Dynamic Spring attraction along active migration connections
+            Object.keys(migrationConnections).forEach(key => {
+                const count = migrationConnections[key];
+                const parts = key.split("-").map(Number);
+                const p1 = islandPositions[parts[0] - 1];
+                const p2 = islandPositions[parts[1] - 1];
+                if (!p1 || !p2) return;
+
+                let dx = p2.x - p1.x;
+                let dy = p2.y - p1.y;
+                let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                const targetDist = Math.max(75, 150 - Math.min(count, 10) * 8);
+                const delta = dist - targetDist;
+                const springK = 0.012 * Math.min(3, 0.5 + count * 0.25);
+                const f = delta * springK;
+
+                const fx = (dx / dist) * f;
+                const fy = (dy / dist) * f;
+
+                p1.vx = (p1.vx || 0) + fx;
+                p1.vy = (p1.vy || 0) + fy;
+                p2.vx = (p2.vx || 0) - fx;
+                p2.vy = (p2.vy || 0) - fy;
+            });
+
+            // 3. Center gravity & velocity damping
+            for (let i = 0; i < N; i++) {
+                const p = islandPositions[i];
+                p.vx = (p.vx || 0) + (cx - p.x) * 0.0025;
+                p.vy = (p.vy || 0) + (cy - p.y) * 0.0025;
+
+                p.vx *= 0.80;
+                p.vy *= 0.80;
+
+                const oldX = p.x, oldY = p.y;
+                p.x = Math.max(margin, Math.min(width - margin, p.x + p.vx));
+                p.y = Math.max(margin, Math.min(height - margin, p.y + p.vy));
+
+                totalMovement += Math.abs(p.x - oldX) + Math.abs(p.y - oldY);
+            }
+
+            // 4. Update SVG elements
+            islandPositions.forEach(p => updateNodePosition(p));
+
+            for (let i = 0; i < N; i++) {
+                for (let j = i + 1; j < N; j++) {
+                    const p1 = islandPositions[i];
+                    const p2 = islandPositions[j];
+                    updateEdgePath(p1, p2);
+                    updateEdgePath(p2, p1);
+                }
+            }
+
+            if (totalMovement > 0.05) {
+                physicsAnimationId = requestAnimationFrame(stepPhysics);
+            } else {
+                physicsAnimationId = null;
+            }
+        }
+
+        function triggerPhysicsUpdate() {
+            if (!physicsAnimationId) {
+                physicsAnimationId = requestAnimationFrame(stepPhysics);
+            }
+        }
+
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
             updateConfigText(config);
@@ -1367,6 +1505,11 @@
 
             islandPositions = [];
             pathUsageCounts = {};
+            migrationConnections = {};
+            if (physicsAnimationId) {
+                cancelAnimationFrame(physicsAnimationId);
+                physicsAnimationId = null;
+            }
             islandBestFitnessMap = {};
 
             // ── helpers ────────────────────────────────────────────────
@@ -1575,6 +1718,12 @@
             // Create Node elements
             islandPositions.forEach((pos, idx) => {
                 pos.nodeR = nodeR;
+                pos.fontYOffset = fontYOffset;
+                pos.fontSubYOffset = fontSubYOffset;
+                pos.initX = pos.x;
+                pos.initY = pos.y;
+                pos.vx = 0;
+                pos.vy = 0;
                 const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 g.setAttribute("id", `island-node-${pos.id}`);
                 g.setAttribute("class", "node-group");
@@ -2031,6 +2180,12 @@
             const routeKey = `${data.from}-${data.to}`;
             pathUsageCounts[routeKey] = (pathUsageCounts[routeKey] || 0) + 1;
             const useCount = pathUsageCounts[routeKey];
+
+            // Strengthen dynamic spring connection between migrating islands
+            migrationConnections[routeKey] = (migrationConnections[routeKey] || 0) + 1;
+            const revKey = `${data.to}-${data.from}`;
+            migrationConnections[revKey] = (migrationConnections[revKey] || 0) + 1;
+            triggerPhysicsUpdate();
 
             let pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`);
             let pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`);
