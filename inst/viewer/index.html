@@ -1343,6 +1343,125 @@
             el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
         }
 
+        // --- SINGLE-TRANSITION GRAPH LAYOUT ENGINE (D3/igraph style) ---
+        let hasGraphTransitioned = false;
+        let transitionAnimId = null;
+
+        function animateGraphTransition(durationMs = 1500) {
+            if (hasGraphTransitioned) return;
+            hasGraphTransitioned = true;
+
+            const startTime = performance.now();
+
+            function frame(now) {
+                const elapsed = now - startTime;
+                const progress = Math.min(1.0, elapsed / durationMs);
+                // Cubic ease-out: 1 - (1 - t)^3
+                const ease = 1 - Math.pow(1 - progress, 3);
+
+                islandPositions.forEach(pos => {
+                    pos.x = pos.startX + (pos.targetX - pos.startX) * ease;
+                    pos.y = pos.startY + (pos.targetY - pos.startY) * ease;
+                    updateNodeElement(pos);
+                });
+
+                redrawAllEdges();
+
+                if (progress < 1.0) {
+                    transitionAnimId = requestAnimationFrame(frame);
+                } else {
+                    islandPositions.forEach(pos => {
+                        pos.x = pos.targetX;
+                        pos.y = pos.targetY;
+                        updateNodeElement(pos);
+                    });
+                    redrawAllEdges();
+                    transitionAnimId = null;
+                }
+            }
+
+            if (transitionAnimId) cancelAnimationFrame(transitionAnimId);
+            transitionAnimId = requestAnimationFrame(frame);
+        }
+
+        function updateNodeElement(pos) {
+            const circle = document.getElementById(`island-circle-${pos.id}`);
+            if (circle) {
+                circle.setAttribute("cx", pos.x);
+                circle.setAttribute("cy", pos.y);
+            }
+            const g = document.getElementById(`island-node-${pos.id}`);
+            if (g) {
+                g.style.transformOrigin = `${pos.x}px ${pos.y}px`;
+                const mainTxt = g.querySelector(".node-text");
+                if (mainTxt) {
+                    mainTxt.setAttribute("x", pos.x);
+                    mainTxt.setAttribute("y", pos.y - (pos.fontYOffset || 5.5));
+                }
+            }
+            const subtxt = document.getElementById(`island-score-${pos.id}`);
+            if (subtxt) {
+                subtxt.setAttribute("x", pos.x);
+                subtxt.setAttribute("y", pos.y + (pos.fontSubYOffset || 11.5));
+            }
+
+            // Update swarm container offset
+            const swarmG = document.getElementById(`swarm-${pos.id}`);
+            if (swarmG) {
+                const oldX = swarmG._cx !== undefined ? swarmG._cx : pos.startX;
+                const oldY = swarmG._cy !== undefined ? swarmG._cy : pos.startY;
+                const dx = pos.x - oldX;
+                const dy = pos.y - oldY;
+                if (dx !== 0 || dy !== 0) {
+                    swarmG.querySelectorAll("circle").forEach(dot => {
+                        dot.setAttribute("cx", parseFloat(dot.getAttribute("cx")) + dx);
+                        dot.setAttribute("cy", parseFloat(dot.getAttribute("cy")) + dy);
+                    });
+                    swarmG._cx = pos.x;
+                    swarmG._cy = pos.y;
+                }
+            }
+
+            // Update stagnation ticks container offset
+            const ticksG = document.getElementById(`stagnation-ticks-${pos.id}`);
+            if (ticksG) {
+                const oldX = ticksG._cx !== undefined ? ticksG._cx : pos.startX;
+                const oldY = ticksG._cy !== undefined ? ticksG._cy : pos.startY;
+                const dx = pos.x - oldX;
+                const dy = pos.y - oldY;
+                if (dx !== 0 || dy !== 0) {
+                    const transform = ticksG.getAttribute("transform") || "";
+                    const match = transform.match(/translate\(([^,]+),?\s*([^)]+)\)/);
+                    const curTx = match ? parseFloat(match[1]) : 0;
+                    const curTy = match ? parseFloat(match[2]) : 0;
+                    ticksG.setAttribute("transform", `translate(${curTx + dx}, ${curTy + dy})`);
+                    ticksG._cx = pos.x;
+                    ticksG._cy = pos.y;
+                }
+            }
+        }
+
+        function redrawAllEdges() {
+            const lines = topologySvg.querySelectorAll(".migration-path, .migration-pulse");
+            lines.forEach(line => {
+                const id = line.getAttribute("id");
+                if (!id) return;
+                const parts = id.split("-");
+                const fromId = parseInt(parts[2]);
+                const toId = parseInt(parts[4]);
+                const posA = islandPositions[fromId - 1];
+                const posB = islandPositions[toId - 1];
+                if (posA && posB) {
+                    const dx = posB.x - posA.x, dy = posB.y - posA.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                    const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
+                    const offset = Math.min(25, Math.max(10, dist * 0.15));
+                    const d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
+                    line.setAttribute("d", d);
+                }
+            });
+        }
+
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
             updateConfigText(config);
@@ -1367,7 +1486,12 @@
 
             islandPositions = [];
             pathUsageCounts = {};
-            migrationConnections = {};
+            hasGraphTransitioned = false;
+            if (transitionAnimId) {
+                cancelAnimationFrame(transitionAnimId);
+                transitionAnimId = null;
+            }
+            islandBestFitnessMap = {};
             if (physicsAnimationId) {
                 cancelAnimationFrame(physicsAnimationId);
                 physicsAnimationId = null;
@@ -1579,13 +1703,21 @@
 
             // Create Node elements
             islandPositions.forEach((pos, idx) => {
+                pos.targetX = pos.x;
+                pos.targetY = pos.y;
+
+                // Random initial scatter position for Gen 0
+                const margin = 60;
+                pos.startX = margin + Math.random() * (width - margin * 2);
+                pos.startY = margin + Math.random() * (height - margin * 2);
+
+                // Start node at random scatter position
+                pos.x = pos.startX;
+                pos.y = pos.startY;
+
                 pos.nodeR = nodeR;
                 pos.fontYOffset = fontYOffset;
                 pos.fontSubYOffset = fontSubYOffset;
-                pos.initX = pos.x;
-                pos.initY = pos.y;
-                pos.vx = 0;
-                pos.vy = 0;
                 const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 g.setAttribute("id", `island-node-${pos.id}`);
                 g.setAttribute("class", "node-group");
@@ -1787,6 +1919,9 @@
 
         // Draw live/replay generation details
         function renderGeneration(data) {
+            if (!hasGraphTransitioned) {
+                animateGraphTransition(1500);
+            }
             latestGenSnapshot = data;
             const gen = data.generation;
             let genText = `Gen ${gen}`;
@@ -2039,6 +2174,10 @@
 
         // Trigger pulse and usage-based opacity escalation on migration paths in SVG
         function triggerMigrationAnimation(data) {
+            if (!hasGraphTransitioned) {
+                animateGraphTransition(1500);
+            }
+
             const routeKey = `${data.from}-${data.to}`;
             pathUsageCounts[routeKey] = (pathUsageCounts[routeKey] || 0) + 1;
             const useCount = pathUsageCounts[routeKey];
