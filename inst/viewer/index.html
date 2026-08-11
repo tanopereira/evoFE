@@ -6,7 +6,163 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/d3-force@3/dist/d3-force.min.js"></script>
+    <script>
+    // Minimal self-contained force simulation (no CDN dependency).
+    // Implements the d3.forceSimulation / forceManyBody / forceCenter /
+    // forceCollide / forceLink API surface used by the viewer.
+    (function(global) {
+        var d3 = {};
+
+        // ── simulation ──────────────────────────────────────────────────
+        d3.forceSimulation = function(nodes) {
+            var forces = {}, alpha = 1, alphaMin = 0.001, alphaDecay = 0.0228,
+                alphaTarget = 0, velocityDecay = 0.4, listeners = {}, timer = null;
+            nodes = nodes || [];
+
+            function step() {
+                alpha += (alphaTarget - alpha) * alphaDecay;
+                for (var key in forces) forces[key](alpha);
+                nodes.forEach(function(n) {
+                    if (n.fx != null) { n.x = n.fx; n.vx = 0; }
+                    else { n.vx *= (1 - velocityDecay); n.x += n.vx; }
+                    if (n.fy != null) { n.y = n.fy; n.vy = 0; }
+                    else { n.vy *= (1 - velocityDecay); n.y += n.vy; }
+                });
+                if (listeners.tick) listeners.tick();
+                if (alpha < alphaMin) { sim.stop(); return; }
+                timer = requestAnimationFrame(step);
+            }
+
+            var sim = {
+                nodes: function(v) { if (!arguments.length) return nodes; nodes = v; return sim; },
+                force: function(name, f) {
+                    if (!arguments.length) return forces;
+                    if (f == null) { delete forces[name]; return sim; }
+                    if (f.initialize) f.initialize(nodes);
+                    forces[name] = f;
+                    return sim;
+                },
+                alpha: function(v) { if (!arguments.length) return alpha; alpha = v; return sim; },
+                alphaDecay: function(v) { if (!arguments.length) return alphaDecay; alphaDecay = v; return sim; },
+                alphaTarget: function(v) { if (!arguments.length) return alphaTarget; alphaTarget = v; return sim; },
+                velocityDecay: function(v) { if (!arguments.length) return velocityDecay; velocityDecay = v; return sim; },
+                on: function(ev, cb) { listeners[ev] = cb; return sim; },
+                restart: function() { if (!timer) { alpha = Math.max(alpha, 0.1); timer = requestAnimationFrame(step); } return sim; },
+                stop: function() { if (timer) { cancelAnimationFrame(timer); timer = null; } return sim; }
+            };
+            timer = requestAnimationFrame(step);
+            return sim;
+        };
+
+        // ── many-body (charge) ───────────────────────────────────────────
+        d3.forceManyBody = function() {
+            var strength = -30, nodes;
+            function force(alpha) {
+                var n = nodes.length;
+                for (var i = 0; i < n; i++) {
+                    var a = nodes[i];
+                    for (var j = 0; j < n; j++) {
+                        if (i === j) continue;
+                        var b = nodes[j];
+                        var dx = b.x - a.x, dy = b.y - a.y;
+                        var d2 = dx*dx + dy*dy || 1;
+                        var f = (typeof strength === 'function' ? strength(b, j, nodes) : strength) * alpha / d2;
+                        a.vx += dx * f;
+                        a.vy += dy * f;
+                    }
+                }
+            }
+            force.initialize = function(n) { nodes = n; };
+            force.strength = function(v) { strength = v; return force; };
+            return force;
+        };
+
+        // ── center ───────────────────────────────────────────────────────
+        d3.forceCenter = function(cx, cy) {
+            var nodes, s = 1;
+            function force() {
+                var n = nodes.length, mx = 0, my = 0;
+                nodes.forEach(function(n) { mx += n.x; my += n.y; });
+                mx = mx/n - cx; my = my/n - cy;
+                nodes.forEach(function(nd) { nd.x -= mx * s; nd.y -= my * s; });
+            }
+            force.initialize = function(n) { nodes = n; };
+            force.x = function(v) { cx = v; return force; };
+            force.y = function(v) { cy = v; return force; };
+            force.strength = function(v) { s = v; return force; };
+            return force;
+        };
+
+        // ── collision ────────────────────────────────────────────────────
+        d3.forceCollide = function(r) {
+            var nodes, radius = typeof r === 'function' ? r : function() { return r; }, s = 0.7, iters = 1;
+            function force() {
+                for (var k = 0; k < iters; k++) {
+                    var n = nodes.length;
+                    for (var i = 0; i < n; i++) {
+                        var a = nodes[i], ra = radius(a, i, nodes);
+                        for (var j = i+1; j < n; j++) {
+                            var b = nodes[j], rb = radius(b, j, nodes);
+                            var dx = b.x - a.x, dy = b.y - a.y;
+                            var minD = ra + rb, d2 = dx*dx + dy*dy;
+                            if (d2 < minD * minD) {
+                                var d = Math.sqrt(d2) || 1, overlap = (minD - d) / d * s * 0.5;
+                                a.x -= dx * overlap; a.y -= dy * overlap;
+                                b.x += dx * overlap; b.y += dy * overlap;
+                            }
+                        }
+                    }
+                }
+            }
+            force.initialize = function(n) { nodes = n; };
+            force.radius = function(v) { radius = typeof v === 'function' ? v : function() { return v; }; return force; };
+            force.strength = function(v) { s = v; return force; };
+            force.iterations = function(v) { iters = v; return force; };
+            return force;
+        };
+
+        // ── link ─────────────────────────────────────────────────────────
+        d3.forceLink = function(links) {
+            var nodes, id = function(d) { return d.index; }, dist = 30, str = null, iters = 1;
+            links = links || [];
+
+            function resolve() {
+                var nodeById = {};
+                nodes.forEach(function(n, i) { nodeById[id(n, i, nodes)] = n; });
+                links.forEach(function(l) {
+                    if (typeof l.source !== 'object') l.source = nodeById[l.source] || l.source;
+                    if (typeof l.target !== 'object') l.target = nodeById[l.target] || l.target;
+                });
+            }
+
+            function force(alpha) {
+                for (var k = 0; k < iters; k++) {
+                    links.forEach(function(l) {
+                        var a = l.source, b = l.target;
+                        if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return;
+                        var dx = (b.x + b.vx) - (a.x + a.vx),
+                            dy = (b.y + b.vy) - (a.y + a.vy);
+                        var d = Math.sqrt(dx*dx + dy*dy) || 1;
+                        var d0 = typeof dist === 'function' ? dist(l) : dist;
+                        var s = (d - d0) / d * alpha * (typeof str === 'function' ? str(l) : (str !== null ? str : 1));
+                        dx *= s; dy *= s;
+                        a.vx += dx; a.vy += dy;
+                        b.vx -= dx; b.vy -= dy;
+                    });
+                }
+            }
+            force.initialize = function(n) { nodes = n; resolve(); };
+            force.links = function(v) { links = v; if (nodes) resolve(); return force; };
+            force.id = function(v) { id = v; return force; };
+            force.distance = function(v) { dist = v; return force; };
+            force.strength = function(v) { str = v; return force; };
+            force.iterations = function(v) { iters = v; return force; };
+            return force;
+        };
+
+        global.d3 = d3;
+    })(window);
+    </script>
     <style>
         :root {
             --bg-color: #090b10;
