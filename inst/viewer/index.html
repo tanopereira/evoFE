@@ -2321,7 +2321,7 @@
                 // Small random velocity jitter to break wedge/collinear configurations
                 // before the link force applies — nodes that are stuck in a line
                 // between two others can now escape.
-                const jitter = 12;
+                const jitter = 45;
                 forceSimulation.nodes().forEach(sn => {
                     sn.vx += (Math.random() - 0.5) * jitter;
                     sn.vy += (Math.random() - 0.5) * jitter;
