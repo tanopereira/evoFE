@@ -438,7 +438,10 @@ evo_transformers$target_encode <- create_transformer(
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
-    y <- data[[target_col]]
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(mapping = NULL, global_mean = 0, valid = FALSE))
+    }
     
     # Calculate global mean
     global_mean <- mean(y, na.rm = TRUE)
@@ -461,6 +464,9 @@ evo_transformers$target_encode <- create_transformer(
     list(mapping = mapping, global_mean = global_mean)
   },
   apply_func = function(data, gene, state) {
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
+      return(rep(0, nrow(data)))
+    }
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
     
@@ -484,7 +490,10 @@ evo_transformers$pooled_target_encode <- create_transformer(
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
-    y <- as.numeric(data[[target_col]])
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(mapping = NULL, global_mean = 0, valid = FALSE))
+    }
     
     # Calculate global mean and total variance of the target
     global_mean <- mean(y, na.rm = TRUE)
@@ -522,6 +531,9 @@ evo_transformers$pooled_target_encode <- create_transformer(
     list(mapping = mapping, global_mean = global_mean)
   },
   apply_func = function(data, gene, state) {
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
+      return(rep(0, nrow(data)))
+    }
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
     
@@ -2342,6 +2354,22 @@ evo_transformers$between_group_pca <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "bgpca")
 )
 
+# Helper: normalize target y into a mathematically valid numeric vector for single-column target encoding
+.normalize_target_for_encoding <- function(y) {
+  if (is.null(y)) return(NULL)
+  if (is.numeric(y)) return(y)
+  y_clean <- y[!is.na(y)]
+  u_vals <- sort(unique(y_clean))
+  
+  if (length(u_vals) == 2) {
+    return(as.numeric(y == u_vals[2]))
+  } else if (length(u_vals) == 1) {
+    return(as.numeric(y == u_vals[1]))
+  } else {
+    return(NULL)
+  }
+}
+
 # Helper: discretize a target vector into group labels
 .target_to_groups <- function(y) {
   if (is.numeric(y)) {
@@ -2929,7 +2957,10 @@ evo_transformers$target_quantile_encode <- create_transformer(
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
     x <- as.character(data[[input_cols[1]]])
-    y <- data[[target_col]]
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(mapping = NULL, global_q = 0, valid = FALSE))
+    }
     q <- if (!is.null(gene$params$q)) gene$params$q else 0.5
 
     global_q <- as.numeric(stats::quantile(y, probs = q, na.rm = TRUE))
@@ -2946,6 +2977,9 @@ evo_transformers$target_quantile_encode <- create_transformer(
     list(mapping = mapping, global_q = global_q)
   },
   apply_func = function(data, gene, state) {
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
+      return(rep(0, nrow(data)))
+    }
     input_cols <- gene$input_cols
     x <- as.character(data[[input_cols[1]]])
     dt <- data.table::data.table(x = x)
@@ -2969,7 +3003,10 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     x1 <- as.character(data[[input_cols[1]]])
     x2 <- as.character(data[[input_cols[2]]])
     x_joint <- paste0(x1, "___", x2)
-    y <- data[[target_col]]
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(mapping = NULL, global_mean = 0, valid = FALSE))
+    }
 
     global_mean <- mean(y, na.rm = TRUE)
     dt <- data.table::data.table(x_joint = x_joint, y = y)
@@ -2984,6 +3021,9 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     list(mapping = mapping, global_mean = global_mean)
   },
   apply_func = function(data, gene, state) {
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
+      return(rep(0, nrow(data)))
+    }
     input_cols <- gene$input_cols
     x1 <- as.character(data[[input_cols[1]]])
     x2 <- as.character(data[[input_cols[2]]])

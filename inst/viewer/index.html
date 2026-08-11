@@ -255,6 +255,43 @@
             font-weight: 400;
         }
 
+        .config-badges {
+            display: flex;
+            gap: 0.35rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .cfg-badge {
+            font-size: 0.7rem;
+            font-family: var(--font-header);
+            padding: 0.15rem 0.5rem;
+            border-radius: 0.3rem;
+            font-weight: 600;
+            text-transform: capitalize;
+            letter-spacing: 0.02em;
+            backdrop-filter: blur(4px);
+            white-space: nowrap;
+        }
+
+        .cfg-topo {
+            background: rgba(59, 130, 246, 0.15);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.35);
+        }
+
+        .cfg-policy {
+            background: rgba(168, 85, 247, 0.15);
+            color: #c084fc;
+            border: 1px solid rgba(168, 85, 247, 0.35);
+        }
+
+        .cfg-payload {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.35);
+        }
+
         .topology-card {
             grid-row: span 2;
             display: flex;
@@ -955,7 +992,14 @@
 
     <main>
         <div class="card topology-card">
-            <div class="card-title">Island Network</div>
+            <div class="card-title" style="display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; width: 100%;">
+                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                    <span>Island Network</span>
+                </div>
+                <div id="migration-config-text" style="font-size: 0.82rem; font-family: var(--font-main); font-weight: 400; color: #cbd5e1; letter-spacing: 0.01em;">
+                    Topology: <strong style="color:#ffffff;">Ring</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">Push Uniform</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">Full Individual</strong>
+                </div>
+            </div>
             <svg id="topology-svg"></svg>
 
             <!-- Overlay for Tournament Phase -->
@@ -1282,8 +1326,27 @@
             container.appendChild(pulse);
         }
 
+        function updateConfigText(cfg) {
+            if (!cfg) return;
+            const el = document.getElementById("migration-config-text");
+            if (!el) return;
+
+            const topo = (cfg.migration_topology || cfg.topology || "ring").replace(/_/g, ' ');
+            const topoStr = topo.replace(/\b\w/g, l => l.toUpperCase());
+
+            let pol = (cfg.migration_policy || cfg.policy || "push_uniform").replace(/_/g, ' ');
+            const polStr = pol.replace(/\b\w/g, l => l.toUpperCase());
+
+            let pay = (cfg.migration_payload || cfg.payload || "full_individual").replace(/_/g, ' ');
+            const payStr = pay.replace(/\b\w/g, l => l.toUpperCase());
+
+            el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
+        }
+
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
+            updateConfigText(config);
+
             topologySvg.innerHTML = "";
             const bgGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
             bgGroup.setAttribute("id", "background-group");
@@ -1471,13 +1534,47 @@
 
             } else {
                 // Hypercube / Ring / Complete / Custom / Feature Distance: position in circle
-                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * 0.33;
+                const baseRFrac = N > 20 ? 0.41 : (N > 12 ? 0.39 : (N > 6 ? 0.36 : 0.32));
+                const cx = width / 2, cy = height / 2, r = Math.min(width, height) * baseRFrac;
                 islandPositions = circlePositions(N, cx, cy, r);
             }
 
+            // Compute adaptive node dimensions based on total island count N
+            let nodeR = 40;
+            let fontMainSize = 13.5;
+            let fontSubSize = 9.5;
+            let fontYOffset = 5.5;
+            let fontSubYOffset = 11.5;
+
+            if (N > 24) {
+                nodeR = 20;
+                fontMainSize = 8;
+                fontSubSize = 6.5;
+                fontYOffset = 2.5;
+                fontSubYOffset = 6;
+            } else if (N > 16) {
+                nodeR = 25;
+                fontMainSize = 9.5;
+                fontSubSize = 7.5;
+                fontYOffset = 3.5;
+                fontSubYOffset = 7.5;
+            } else if (N > 10) {
+                nodeR = 30;
+                fontMainSize = 11;
+                fontSubSize = 8.5;
+                fontYOffset = 4;
+                fontSubYOffset = 9;
+            } else if (N > 6) {
+                nodeR = 35;
+                fontMainSize = 12;
+                fontSubSize = 9;
+                fontYOffset = 4.5;
+                fontSubYOffset = 10;
+            }
 
             // Create Node elements
             islandPositions.forEach((pos, idx) => {
+                pos.nodeR = nodeR;
                 const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 g.setAttribute("id", `island-node-${pos.id}`);
                 g.setAttribute("class", "node-group");
@@ -1487,7 +1584,7 @@
                 const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 circle.setAttribute("cx", pos.x);
                 circle.setAttribute("cy", pos.y);
-                circle.setAttribute("r", 45); // Increased radius to 45 for better legibility
+                circle.setAttribute("r", nodeR);
                 circle.setAttribute("class", "node-circle");
                 circle.setAttribute("id", `island-circle-${pos.id}`);
                 circle.style.setProperty("--stroke-col", islandColors[idx % islandColors.length]);
@@ -1501,15 +1598,17 @@
 
                 const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 txt.setAttribute("x", pos.x);
-                txt.setAttribute("y", pos.y - 6);
+                txt.setAttribute("y", pos.y - fontYOffset);
                 txt.setAttribute("class", "node-text");
+                txt.style.fontSize = `${fontMainSize}px`;
                 txt.textContent = `ISL ${pos.id}`;
                 g.appendChild(txt);
 
                 const subtxt = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 subtxt.setAttribute("x", pos.x);
-                subtxt.setAttribute("y", pos.y + 12);
+                subtxt.setAttribute("y", pos.y + fontSubYOffset);
                 subtxt.setAttribute("class", "node-subtext");
+                subtxt.style.fontSize = `${fontSubSize}px`;
                 subtxt.setAttribute("id", `island-score-${pos.id}`);
                 subtxt.textContent = "0.0000";
                 g.appendChild(subtxt);
@@ -1749,7 +1848,8 @@
                     const pos = islandPositions[isl.island - 1];
                     const n = Math.min(isl.stagnation, 12); // cap display at 12
                     const crossColor = isl.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
-                    const arcRadius = 54;
+                    const arcRadius = (pos && pos.nodeR ? pos.nodeR : 40) + 7;
+                    const cSize = (pos && pos.nodeR < 30) ? 2.5 : 3.5;
                     // Spread crosses along the top arc above the node
                     const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
                     const startAngle = -Math.PI / 2 - spread / 2;
@@ -1759,7 +1859,7 @@
                         const cx = pos.x + arcRadius * Math.cos(angle);
                         const cy = pos.y + arcRadius * Math.sin(angle);
                         const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                        cross.setAttribute("d", `M ${cx-3.5} ${cy-3.5} L ${cx+3.5} ${cy+3.5} M ${cx+3.5} ${cy-3.5} L ${cx-3.5} ${cy+3.5}`);
+                        cross.setAttribute("d", `M ${cx-cSize} ${cy-cSize} L ${cx+cSize} ${cy+cSize} M ${cx+cSize} ${cy-cSize} L ${cx-cSize} ${cy+cSize}`);
                         cross.setAttribute("stroke", crossColor);
                         cross.setAttribute("stroke-width", "2");
                         cross.setAttribute("stroke-linecap", "round");
@@ -1806,7 +1906,7 @@
             for (let i = 0; i < maxSubpoints; i++) {
                 const fit = fitnesses[i];
                 const angle = (2 * Math.PI * i / maxSubpoints);
-                const r = 29; // layout radius (increased to clear center text)
+                const r = (pos && pos.nodeR ? pos.nodeR * 0.65 : 25); // layout radius adapted to node size
                 const px = pos.x + r * Math.cos(angle);
                 const py = pos.y + r * Math.sin(angle);
 
@@ -2426,7 +2526,8 @@
                     if (pos) {
                         const n = Math.min(data.stagnation, 12);
                         const crossColor = data.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
-                        const arcRadius = 54;
+                        const arcRadius = (pos && pos.nodeR ? pos.nodeR : 40) + 7;
+                        const cSize = (pos && pos.nodeR < 30) ? 2.5 : 3.5;
                         const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
                         const startAngle = -Math.PI / 2 - spread / 2;
                         for (let ci = 0; ci < n; ci++) {
@@ -2435,7 +2536,7 @@
                             const cx = pos.x + arcRadius * Math.cos(angle);
                             const cy = pos.y + arcRadius * Math.sin(angle);
                             const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                            cross.setAttribute("d", `M ${cx-3.5} ${cy-3.5} L ${cx+3.5} ${cy+3.5} M ${cx+3.5} ${cy-3.5} L ${cx-3.5} ${cy+3.5}`);
+                            cross.setAttribute("d", `M ${cx-cSize} ${cy-cSize} L ${cx+cSize} ${cy+cSize} M ${cx+cSize} ${cy-cSize} L ${cx-cSize} ${cy+cSize}`);
                             cross.setAttribute("stroke", crossColor);
                             cross.setAttribute("stroke-width", "2");
                             cross.setAttribute("stroke-linecap", "round");

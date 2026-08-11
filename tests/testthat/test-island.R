@@ -467,3 +467,18 @@ test_that("calibrated regression metrics integrate with xgboost and lightgbm in 
   expect_s3_class(rec_xgb, "evo_recipe")
 })
 
+test_that("policy_gibbs_pull with gene_only payload runs successfully", {
+  data(mtcars)
+  mc_pull_gene <- migration_config(
+    topology = topology_ring(islands = 3),
+    policy = policy_gibbs_pull(weight_by = "uniform", stagnation_threshold = 1),
+    payload = "gene_only"
+  )
+  rec <- evolve_features(
+    mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
+    generations = 3, pop_size = 4, cv_folds = 2, islands = 3, migration_interval = 1,
+    migration = mc_pull_gene, verbose = FALSE
+  )
+  expect_s3_class(rec, "evo_recipe")
+})
+

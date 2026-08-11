@@ -812,6 +812,26 @@ dynamic_population_decay_rate = 0.7,
 
   adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
 
+  policy_str <- "push_uniform"
+  payload_str <- "full_individual"
+  if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+    if (!is.null(migration$payload)) {
+      payload_str <- migration$payload
+    }
+    if (!is.null(migration$policy)) {
+      pol <- migration$policy
+      if (inherits(pol, "evo_policy_push_uniform")) {
+        policy_str <- "push_uniform"
+      } else if (inherits(pol, "evo_policy_gibbs_push")) {
+        policy_str <- paste0("gibbs_push_", pol$weight_by)
+      } else if (inherits(pol, "evo_policy_gibbs_pull")) {
+        policy_str <- paste0("gibbs_pull_", pol$weight_by)
+      } else if (inherits(pol, "evo_policy_tiered_admission")) {
+        policy_str <- "tiered_admission"
+      }
+    }
+  }
+
   if (record) {
     evolution_log <- list(
       config = list(
@@ -821,7 +841,8 @@ dynamic_population_decay_rate = 0.7,
         task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
-        migration_topology = migration_topology, migration_temperature = migration_temperature,
+        migration_topology = migration_topology, migration_policy = policy_str,
+        migration_payload = payload_str, migration_temperature = migration_temperature,
         pull_stagnation_threshold = pull_stagnation_threshold,
         early_stopping_generations = early_stopping_generations,
         numeric_cols = numeric_cols,
@@ -1647,10 +1668,7 @@ dynamic_population_decay_rate = 0.7,
             }
           }
 
-          # If pull migration was performed, reset local stagnation counter on recipient island dest
-          if (tx$is_pull) {
-            island_gens_without_improvement[dest] <- 0
-          }
+
 
           migrated_gene_details <- list()
           if (length(new_genes) > 0) {
