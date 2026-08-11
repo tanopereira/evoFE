@@ -1343,45 +1343,185 @@
             el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
         }
 
-        // --- SINGLE-TRANSITION GRAPH LAYOUT ENGINE (D3/igraph style) ---
-        let hasGraphTransitioned = false;
-        let transitionAnimId = null;
+        // --- DAMPED TOPOLOGY-EMERGENT FORCE ENGINE (Freezes Solid) ---
+        let topologyLinks = [];
+        let migrationCounts = {};
+        let convergenceAnimId = null;
 
-        function animateGraphTransition(durationMs = 1500) {
-            if (hasGraphTransitioned) return;
-            hasGraphTransitioned = true;
-
-            const startTime = performance.now();
-
-            function frame(now) {
-                const elapsed = now - startTime;
-                const progress = Math.min(1.0, elapsed / durationMs);
-                // Cubic ease-out: 1 - (1 - t)^3
-                const ease = 1 - Math.pow(1 - progress, 3);
-
-                islandPositions.forEach(pos => {
-                    pos.x = pos.startX + (pos.targetX - pos.startX) * ease;
-                    pos.y = pos.startY + (pos.targetY - pos.startY) * ease;
-                    updateNodeElement(pos);
-                });
-
-                redrawAllEdges();
-
-                if (progress < 1.0) {
-                    transitionAnimId = requestAnimationFrame(frame);
-                } else {
-                    islandPositions.forEach(pos => {
-                        pos.x = pos.targetX;
-                        pos.y = pos.targetY;
-                        updateNodeElement(pos);
-                    });
-                    redrawAllEdges();
-                    transitionAnimId = null;
+        function buildTopologyLinks(N, topo, islandPositions) {
+            const links = [];
+            const keySet = new Set();
+            function addLink(i, j) {
+                if (i < 1 || j < 1 || i > N || j > N || i === j) return;
+                const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+                if (!keySet.has(key)) {
+                    keySet.add(key);
+                    links.push({ u: i, v: j, key: key });
                 }
             }
 
-            if (transitionAnimId) cancelAnimationFrame(transitionAnimId);
-            transitionAnimId = requestAnimationFrame(frame);
+            if (topo === "grid" || topo === "torus") {
+                islandPositions.forEach(p1 => {
+                    islandPositions.forEach(p2 => {
+                        if (p1.id < p2.id) {
+                            if ((p1.row === p2.row && Math.abs(p1.colIdx - p2.colIdx) === 1) ||
+                                (Math.abs(p1.row - p2.row) === 1 && p1.colIdx === p2.colIdx)) {
+                                addLink(p1.id, p2.id);
+                            }
+                        }
+                    });
+                });
+            } else if (topo === "hypercube") {
+                for (let i = 1; i <= N; i++) {
+                    for (let j = i + 1; j <= N; j++) {
+                        const xor = (i - 1) ^ (j - 1);
+                        if ((xor & (xor - 1)) === 0) {
+                            addLink(i, j);
+                        }
+                    }
+                }
+            } else if (topo === "tiered" || topo === "hfc") {
+                islandPositions.forEach(p1 => {
+                    islandPositions.forEach(p2 => {
+                        if (p1.id < p2.id && Math.abs((p1.tier || 0) - (p2.tier || 0)) === 1) {
+                            addLink(p1.id, p2.id);
+                        }
+                    });
+                });
+            } else {
+                for (let i = 1; i <= N; i++) {
+                    const next = (i % N) + 1;
+                    addLink(i, next);
+                }
+            }
+            return links;
+        }
+
+        function convergeLayout(maxTicks = 45, initialAlpha = 1.0) {
+            const N = islandPositions.length;
+            if (N <= 1) return;
+
+            const width = topologySvg.clientWidth || 600;
+            const height = topologySvg.clientHeight || 450;
+            const cx = width / 2;
+            const cy = height / 2;
+            const margin = 45;
+
+            let alpha = initialAlpha;
+            let currentTick = 0;
+
+            function step() {
+                if (currentTick >= maxTicks || alpha < 0.005) {
+                    islandPositions.forEach(p => updateNodeElement(p));
+                    redrawAllEdges();
+                    convergenceAnimId = null;
+                    return;
+                }
+
+                // 1. Repulsion between node pairs (prevents node overlap)
+                for (let i = 0; i < N; i++) {
+                    for (let j = i + 1; j < N; j++) {
+                        const p1 = islandPositions[i];
+                        const p2 = islandPositions[j];
+                        let dx = p2.x - p1.x;
+                        let dy = p2.y - p1.y;
+                        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                        const minDist = (p1.nodeR || 35) + (p2.nodeR || 35) + 20;
+                        let f = 0;
+                        if (dist < minDist) {
+                            f = -1.5 * (minDist - dist);
+                        } else {
+                            f = -3500 / (dist * dist);
+                        }
+
+                        const fx = (dx / dist) * f * alpha;
+                        const fy = (dy / dist) * f * alpha;
+
+                        p1.vx = (p1.vx || 0) - fx;
+                        p1.vy = (p1.vy || 0) - fy;
+                        p2.vx = (p2.vx || 0) + fx;
+                        p2.vy = (p2.vy || 0) + fy;
+                    }
+                }
+
+                // 2. Topology Spring Links & Migration Pull Attraction
+                topologyLinks.forEach(link => {
+                    const p1 = islandPositions[link.u - 1];
+                    const p2 = islandPositions[link.v - 1];
+                    if (!p1 || !p2) return;
+
+                    let dx = p2.x - p1.x;
+                    let dy = p2.y - p1.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                    const migCount = (migrationCounts[link.key] || 0) + (migrationCounts[`${link.v}-${link.u}`] || 0);
+                    const targetDist = Math.max(65, 120 - Math.min(migCount, 8) * 8);
+                    const delta = dist - targetDist;
+                    const springK = 0.04 * Math.min(3, 1.0 + migCount * 0.3);
+                    const f = delta * springK * alpha;
+
+                    const fx = (dx / dist) * f;
+                    const fy = (dy / dist) * f;
+
+                    p1.vx = (p1.vx || 0) + fx;
+                    p1.vy = (p1.vy || 0) + fy;
+                    p2.vx = (p2.vx || 0) - fx;
+                    p2.vy = (p2.vy || 0) - fy;
+                });
+
+                // 3. Extra pull springs for non-topology migration pairs (e.g. Gibbs pull across ring)
+                Object.keys(migrationCounts).forEach(key => {
+                    const parts = key.split("-").map(Number);
+                    const p1 = islandPositions[parts[0] - 1];
+                    const p2 = islandPositions[parts[1] - 1];
+                    if (!p1 || !p2) return;
+
+                    let dx = p2.x - p1.x;
+                    let dy = p2.y - p1.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                    const migCount = migrationCounts[key];
+                    const targetDist = Math.max(60, 110 - Math.min(migCount, 8) * 7);
+                    const delta = dist - targetDist;
+                    const f = delta * 0.03 * alpha;
+
+                    const fx = (dx / dist) * f;
+                    const fy = (dy / dist) * f;
+
+                    p1.vx = (p1.vx || 0) + fx;
+                    p1.vy = (p1.vy || 0) + fy;
+                    p2.vx = (p2.vx || 0) - fx;
+                    p2.vy = (p2.vy || 0) - fy;
+                });
+
+                // 4. Tier Y-constraint for Tiered topology & Center Gravity for all
+                for (let i = 0; i < N; i++) {
+                    const p = islandPositions[i];
+                    if (p.tierY !== undefined) {
+                        p.vy += (p.tierY - p.y) * 0.12 * alpha;
+                    }
+                    p.vx = (p.vx || 0) + (cx - p.x) * 0.003 * alpha;
+                    p.vy = (p.vy || 0) + (cy - p.y) * 0.003 * alpha;
+
+                    p.vx *= 0.76;
+                    p.vy *= 0.76;
+
+                    p.x = Math.max(margin, Math.min(width - margin, p.x + p.vx));
+                    p.y = Math.max(margin, Math.min(height - margin, p.y + p.vy));
+                }
+
+                // 5. Update SVG elements
+                islandPositions.forEach(p => updateNodeElement(p));
+                redrawAllEdges();
+
+                alpha *= 0.90;
+                currentTick++;
+                convergenceAnimId = requestAnimationFrame(step);
+            }
+
+            if (convergenceAnimId) cancelAnimationFrame(convergenceAnimId);
+            convergenceAnimId = requestAnimationFrame(step);
         }
 
         function updateNodeElement(pos) {
@@ -1405,7 +1545,6 @@
                 subtxt.setAttribute("y", pos.y + (pos.fontSubYOffset || 11.5));
             }
 
-            // Update swarm container offset
             const swarmG = document.getElementById(`swarm-${pos.id}`);
             if (swarmG) {
                 const oldX = swarmG._cx !== undefined ? swarmG._cx : pos.startX;
@@ -1422,7 +1561,6 @@
                 }
             }
 
-            // Update stagnation ticks container offset
             const ticksG = document.getElementById(`stagnation-ticks-${pos.id}`);
             if (ticksG) {
                 const oldX = ticksG._cx !== undefined ? ticksG._cx : pos.startX;
@@ -1668,6 +1806,9 @@
                 islandPositions = circlePositions(N, cx, cy, r);
             }
 
+            topologyLinks = buildTopologyLinks(N, topo, islandPositions);
+            migrationCounts = {};
+
             // Compute adaptive node dimensions based on total island count N
             let nodeR = 40;
             let fontMainSize = 13.5;
@@ -1711,9 +1852,15 @@
                 pos.startX = margin + Math.random() * (width - margin * 2);
                 pos.startY = margin + Math.random() * (height - margin * 2);
 
-                // Start node at random scatter position
+                if (pos.tier !== undefined) {
+                    pos.tierY = pos.targetY;
+                    pos.startY = pos.tierY + (Math.random() - 0.5) * 35;
+                }
+
                 pos.x = pos.startX;
                 pos.y = pos.startY;
+                pos.vx = 0;
+                pos.vy = 0;
 
                 pos.nodeR = nodeR;
                 pos.fontYOffset = fontYOffset;
@@ -1785,6 +1932,9 @@
                 `;
                 healthList.appendChild(row);
             }
+
+            // Trigger initial damped layout convergence into organic topology (freezes solid)
+            convergeLayout(50, 1.0);
         }
 
         // Re-evaluate coordinates and draw SVGs for line chart
@@ -2174,13 +2324,13 @@
 
         // Trigger pulse and usage-based opacity escalation on migration paths in SVG
         function triggerMigrationAnimation(data) {
-            if (!hasGraphTransitioned) {
-                animateGraphTransition(1500);
-            }
-
             const routeKey = `${data.from}-${data.to}`;
+            migrationCounts[routeKey] = (migrationCounts[routeKey] || 0) + 1;
             pathUsageCounts[routeKey] = (pathUsageCounts[routeKey] || 0) + 1;
             const useCount = pathUsageCounts[routeKey];
+
+            // Re-pulse damped layout convergence to adjust organic cluster balance, then freeze solid!
+            convergeLayout(25, 0.40);
 
             let pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`);
             let pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`);
