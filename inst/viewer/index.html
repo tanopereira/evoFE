@@ -1766,13 +1766,12 @@
             isForceLayout = FORCE_TOPOS.has(topo) && typeof d3 !== 'undefined';
 
             if (isForceLayout) {
-                // Scatter nodes around center as starting positions
-                const scatterR = Math.min(width, height) * 0.28;
+                // Start at random positions — structure emerges from migration, not topology label
+                const pad = nodeR + 20;
                 islandPositions.forEach(pos => {
-                    const angle = (2 * Math.PI * (pos.id - 1) / N) - Math.PI / 2;
-                    pos.x = width / 2 + scatterR * Math.cos(angle);
-                    pos.y = height / 2 + scatterR * Math.sin(angle);
-                    pos._sim = pos; // will be updated by simulation
+                    pos.x = pad + Math.random() * (width  - 2 * pad);
+                    pos.y = pad + Math.random() * (height - 2 * pad);
+                    pos._sim = pos;
                 });
 
                 const simNodes = islandPositions.map(pos => ({
