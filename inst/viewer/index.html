@@ -1786,12 +1786,15 @@
                 }));
 
                 const svgW = width, svgH = height;
+                const chargeStrength = N > 16 ? -100 : (N > 8 ? -180 : -250);
+                const baseDistanceFrac = N > 16 ? 0.16 : (N > 8 ? 0.20 : 0.24);
+
                 forceSimulation = d3.forceSimulation(simNodes)
-                    .force("charge", d3.forceManyBody().strength(-350))
+                    .force("charge", d3.forceManyBody().strength(chargeStrength))
                     .force("center",  d3.forceCenter(svgW / 2, svgH / 2).strength(0.12))
-                    .force("collide", d3.forceCollide(nodeR + 8).strength(0.85))
+                    .force("collide", d3.forceCollide(nodeR + 4).strength(0.85))
                     .force("link",    d3.forceLink([]).id(d => d.id)
-                        .distance(Math.min(svgW, svgH) * 0.30)
+                        .distance(Math.min(svgW, svgH) * baseDistanceFrac)
                         .strength(0))
                     .alphaDecay(0.05)
                     .on("tick", () => {
@@ -2311,13 +2314,15 @@
                     // First migration gets 0.20 strength, grows with repeated migrations
                     strength: Math.min(0.7, 0.20 + (l.count - 1) * 0.06)
                 }));
+                const N = activeIslands;
+                const baseDistanceFrac = N > 16 ? 0.16 : (N > 8 ? 0.20 : 0.24);
                 forceSimulation.force("link")
                     .links(d3Links)
                     .strength(l => l.strength)
                     .distance(Math.min(
                         (topologySvg.clientWidth  || 600),
                         (topologySvg.clientHeight || 450)
-                    ) * 0.30);
+                    ) * baseDistanceFrac);
                 // Small random velocity jitter to break wedge/collinear configurations
                 // before the link force applies — nodes that are stuck in a line
                 // between two others can now escape.
