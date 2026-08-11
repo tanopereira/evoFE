@@ -6,6 +6,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/d3-force@3/dist/d3-force.min.js"></script>
     <style>
         :root {
             --bg-color: #090b10;
@@ -1282,18 +1283,36 @@
         let pathUsageCounts = {};
         let islandBestFitnessMap = {};
 
-        function drawEdge(posA, posB, curved = true) {
-            if (!posA || !posB) return;
+        // ── Force-directed layout state ─────────────────────────────────
+        let forceSimulation = null;
+        let isForceLayout = false;
+        let forceLinks = [];     // [{source: id-1, target: id-1, count}] (0-indexed ids)
+        const FORCE_TOPOS = new Set(["ring", "complete", "full", "feature_distance", "hypercube", "random"]);
+
+        // Compute edge SVG path 'd' attribute from two position objects
+        function edgePathD(posA, posB) {
             const dx = posB.x - posA.x, dy = posB.y - posA.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            let d;
-            if (curved !== false) {
-                const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
-                const offset = Math.min(25, Math.max(10, dist * 0.15));
-                d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
-            } else {
-                d = `M ${posA.x} ${posA.y} L ${posB.x} ${posB.y}`;
-            }
+            const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
+            const offset = Math.min(25, Math.max(10, dist * 0.15));
+            return `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
+        }
+
+        // Update all drawn edge paths from current islandPositions (called on force tick)
+        function updateEdges() {
+            document.querySelectorAll(".migration-path, .migration-pulse").forEach(el => {
+                const id = el.id; // e.g. "path-from-2-to-5"
+                const m = id.match(/from-(\d+)-to-(\d+)/);
+                if (!m) return;
+                const posA = islandPositions[parseInt(m[1]) - 1];
+                const posB = islandPositions[parseInt(m[2]) - 1];
+                if (posA && posB) el.setAttribute("d", edgePathD(posA, posB));
+            });
+        }
+
+        function drawEdge(posA, posB) {
+            if (!posA || !posB) return;
+            const d = edgePathD(posA, posB);
             const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
             line.setAttribute("d", d);
             line.setAttribute("class", "migration-path");
@@ -1343,266 +1362,23 @@
             el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
         }
 
-        // --- DAMPED TOPOLOGY-EMERGENT FORCE ENGINE (Freezes Solid) ---
-        let topologyLinks = [];
-        let migrationCounts = {};
-        let convergenceAnimId = null;
-
-        function buildTopologyLinks(N, topo, islandPositions) {
-            const links = [];
-            const keySet = new Set();
-            function addLink(i, j) {
-                if (i < 1 || j < 1 || i > N || j > N || i === j) return;
-                const key = i < j ? `${i}-${j}` : `${j}-${i}`;
-                if (!keySet.has(key)) {
-                    keySet.add(key);
-                    links.push({ u: i, v: j, key: key });
-                }
-            }
-
-            if (topo === "grid" || topo === "torus") {
-                islandPositions.forEach(p1 => {
-                    islandPositions.forEach(p2 => {
-                        if (p1.id < p2.id) {
-                            if ((p1.row === p2.row && Math.abs(p1.colIdx - p2.colIdx) === 1) ||
-                                (Math.abs(p1.row - p2.row) === 1 && p1.colIdx === p2.colIdx)) {
-                                addLink(p1.id, p2.id);
-                            }
-                        }
-                    });
-                });
-            } else if (topo === "hypercube") {
-                for (let i = 1; i <= N; i++) {
-                    for (let j = i + 1; j <= N; j++) {
-                        const xor = (i - 1) ^ (j - 1);
-                        if ((xor & (xor - 1)) === 0) {
-                            addLink(i, j);
-                        }
-                    }
-                }
-            } else if (topo === "tiered" || topo === "hfc") {
-                islandPositions.forEach(p1 => {
-                    islandPositions.forEach(p2 => {
-                        if (p1.id < p2.id && Math.abs((p1.tier || 0) - (p2.tier || 0)) === 1) {
-                            addLink(p1.id, p2.id);
-                        }
-                    });
-                });
-            } else {
-                for (let i = 1; i <= N; i++) {
-                    const next = (i % N) + 1;
-                    addLink(i, next);
-                }
-            }
-            return links;
-        }
-
-        function convergeLayout(maxTicks = 45, initialAlpha = 1.0) {
-            const N = islandPositions.length;
-            if (N <= 1) return;
-
-            const width = topologySvg.clientWidth || 600;
-            const height = topologySvg.clientHeight || 450;
-            const cx = width / 2;
-            const cy = height / 2;
-            const margin = 45;
-
-            let alpha = initialAlpha;
-            let currentTick = 0;
-
-            function step() {
-                if (currentTick >= maxTicks || alpha < 0.005) {
-                    islandPositions.forEach(p => updateNodeElement(p));
-                    redrawAllEdges();
-                    convergenceAnimId = null;
-                    return;
-                }
-
-                // 1. Repulsion between node pairs (pushes nodes apart)
-                for (let i = 0; i < N; i++) {
-                    for (let j = i + 1; j < N; j++) {
-                        const p1 = islandPositions[i];
-                        const p2 = islandPositions[j];
-                        let dx = p2.x - p1.x;
-                        let dy = p2.y - p1.y;
-                        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-                        const minDist = (p1.nodeR || 35) + (p2.nodeR || 35) + 20;
-                        let f = 0;
-                        if (dist < minDist) {
-                            f = 1.5 * (minDist - dist);
-                        } else {
-                            f = 1200 / (dist * dist);
-                        }
-
-                        const fx = (dx / dist) * f * alpha;
-                        const fy = (dy / dist) * f * alpha;
-
-                        p1.vx = (p1.vx || 0) - fx;
-                        p1.vy = (p1.vy || 0) - fy;
-                        p2.vx = (p2.vx || 0) + fx;
-                        p2.vy = (p2.vy || 0) + fy;
-                    }
-                }
-
-                // 2. Topology Spring Links & Migration Pull Attraction
-                topologyLinks.forEach(link => {
-                    const p1 = islandPositions[link.u - 1];
-                    const p2 = islandPositions[link.v - 1];
-                    if (!p1 || !p2) return;
-
-                    let dx = p2.x - p1.x;
-                    let dy = p2.y - p1.y;
-                    let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-                    const migCount = (migrationCounts[link.key] || 0) + (migrationCounts[`${link.v}-${link.u}`] || 0);
-                    const targetDist = Math.max(65, 120 - Math.min(migCount, 8) * 8);
-                    const delta = dist - targetDist;
-                    const springK = 0.04 * Math.min(3, 1.0 + migCount * 0.3);
-                    const f = delta * springK * alpha;
-
-                    const fx = (dx / dist) * f;
-                    const fy = (dy / dist) * f;
-
-                    p1.vx = (p1.vx || 0) + fx;
-                    p1.vy = (p1.vy || 0) + fy;
-                    p2.vx = (p2.vx || 0) - fx;
-                    p2.vy = (p2.vy || 0) - fy;
-                });
-
-                // 3. Extra pull springs for non-topology migration pairs (e.g. Gibbs pull across ring)
-                Object.keys(migrationCounts).forEach(key => {
-                    const parts = key.split("-").map(Number);
-                    const p1 = islandPositions[parts[0] - 1];
-                    const p2 = islandPositions[parts[1] - 1];
-                    if (!p1 || !p2) return;
-
-                    let dx = p2.x - p1.x;
-                    let dy = p2.y - p1.y;
-                    let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-
-                    const migCount = migrationCounts[key];
-                    const targetDist = Math.max(60, 110 - Math.min(migCount, 8) * 7);
-                    const delta = dist - targetDist;
-                    const f = delta * 0.03 * alpha;
-
-                    const fx = (dx / dist) * f;
-                    const fy = (dy / dist) * f;
-
-                    p1.vx = (p1.vx || 0) + fx;
-                    p1.vy = (p1.vy || 0) + fy;
-                    p2.vx = (p2.vx || 0) - fx;
-                    p2.vy = (p2.vy || 0) - fy;
-                });
-
-                // 4. Tier Y-constraint for Tiered topology & Center Gravity for all
-                for (let i = 0; i < N; i++) {
-                    const p = islandPositions[i];
-                    if (p.tierY !== undefined) {
-                        p.vy += (p.tierY - p.y) * 0.12 * alpha;
-                    }
-                    p.vx = (p.vx || 0) + (cx - p.x) * 0.005 * alpha;
-                    p.vy = (p.vy || 0) + (cy - p.y) * 0.005 * alpha;
-
-                    p.vx *= 0.70;
-                    p.vy *= 0.70;
-
-                    p.x = Math.max(margin, Math.min(width - margin, p.x + p.vx));
-                    p.y = Math.max(margin, Math.min(height - margin, p.y + p.vy));
-                }
-
-                // 5. Update SVG elements
-                islandPositions.forEach(p => updateNodeElement(p));
-                redrawAllEdges();
-
-                alpha *= 0.90;
-                currentTick++;
-                convergenceAnimId = requestAnimationFrame(step);
-            }
-
-            if (convergenceAnimId) cancelAnimationFrame(convergenceAnimId);
-            convergenceAnimId = requestAnimationFrame(step);
-        }
-
-        function updateNodeElement(pos) {
-            const circle = document.getElementById(`island-circle-${pos.id}`);
-            if (circle) {
-                circle.setAttribute("cx", pos.x);
-                circle.setAttribute("cy", pos.y);
-            }
-            const g = document.getElementById(`island-node-${pos.id}`);
-            if (g) {
-                g.style.transformOrigin = `${pos.x}px ${pos.y}px`;
-                const mainTxt = g.querySelector(".node-text");
-                if (mainTxt) {
-                    mainTxt.setAttribute("x", pos.x);
-                    mainTxt.setAttribute("y", pos.y - (pos.fontYOffset || 5.5));
-                }
-            }
-            const subtxt = document.getElementById(`island-score-${pos.id}`);
-            if (subtxt) {
-                subtxt.setAttribute("x", pos.x);
-                subtxt.setAttribute("y", pos.y + (pos.fontSubYOffset || 11.5));
-            }
-
-            const swarmG = document.getElementById(`swarm-${pos.id}`);
-            if (swarmG) {
-                const oldX = swarmG._cx !== undefined ? swarmG._cx : pos.startX;
-                const oldY = swarmG._cy !== undefined ? swarmG._cy : pos.startY;
-                const dx = pos.x - oldX;
-                const dy = pos.y - oldY;
-                if (dx !== 0 || dy !== 0) {
-                    swarmG.querySelectorAll("circle").forEach(dot => {
-                        dot.setAttribute("cx", parseFloat(dot.getAttribute("cx")) + dx);
-                        dot.setAttribute("cy", parseFloat(dot.getAttribute("cy")) + dy);
-                    });
-                    swarmG._cx = pos.x;
-                    swarmG._cy = pos.y;
-                }
-            }
-
-            const ticksG = document.getElementById(`stagnation-ticks-${pos.id}`);
-            if (ticksG) {
-                const oldX = ticksG._cx !== undefined ? ticksG._cx : pos.startX;
-                const oldY = ticksG._cy !== undefined ? ticksG._cy : pos.startY;
-                const dx = pos.x - oldX;
-                const dy = pos.y - oldY;
-                if (dx !== 0 || dy !== 0) {
-                    const transform = ticksG.getAttribute("transform") || "";
-                    const match = transform.match(/translate\(([^,]+),?\s*([^)]+)\)/);
-                    const curTx = match ? parseFloat(match[1]) : 0;
-                    const curTy = match ? parseFloat(match[2]) : 0;
-                    ticksG.setAttribute("transform", `translate(${curTx + dx}, ${curTy + dy})`);
-                    ticksG._cx = pos.x;
-                    ticksG._cy = pos.y;
-                }
-            }
-        }
-
-        function redrawAllEdges() {
-            const lines = topologySvg.querySelectorAll(".migration-path, .migration-pulse");
-            lines.forEach(line => {
-                const id = line.getAttribute("id");
-                if (!id) return;
-                const parts = id.split("-");
-                const fromId = parseInt(parts[2]);
-                const toId = parseInt(parts[4]);
-                const posA = islandPositions[fromId - 1];
-                const posB = islandPositions[toId - 1];
-                if (posA && posB) {
-                    const dx = posB.x - posA.x, dy = posB.y - posA.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                    const mx = (posA.x + posB.x) / 2, my = (posA.y + posB.y) / 2;
-                    const offset = Math.min(25, Math.max(10, dist * 0.15));
-                    const d = `M ${posA.x} ${posA.y} Q ${mx + (-dy/dist)*offset} ${my + (dx/dist)*offset} ${posB.x} ${posB.y}`;
-                    line.setAttribute("d", d);
-                }
+        // ── Force simulation tick: move node <g>s and redraw edges ──────
+        // pos.x/y are already updated by the simulation's tick callback via _posRef.
+        function forceTick() {
+            islandPositions.forEach(pos => {
+                const g = document.getElementById(`island-node-${pos.id}`);
+                if (g) g.setAttribute("transform", `translate(${pos.x}, ${pos.y})`);
             });
+            updateEdges();
         }
 
         // Draw static SVG nodes/structure based on layout
         function setupLayout() {
             updateConfigText(config);
+
+            // Stop any existing simulation
+            if (forceSimulation) { forceSimulation.stop(); forceSimulation = null; }
+            forceLinks = [];
 
             topologySvg.innerHTML = "";
             const bgGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -1624,16 +1400,6 @@
 
             islandPositions = [];
             pathUsageCounts = {};
-            hasGraphTransitioned = false;
-            if (transitionAnimId) {
-                cancelAnimationFrame(transitionAnimId);
-                transitionAnimId = null;
-            }
-            islandBestFitnessMap = {};
-            if (physicsAnimationId) {
-                cancelAnimationFrame(physicsAnimationId);
-                physicsAnimationId = null;
-            }
             islandBestFitnessMap = {};
 
             // ── helpers ────────────────────────────────────────────────
@@ -1806,9 +1572,6 @@
                 islandPositions = circlePositions(N, cx, cy, r);
             }
 
-            topologyLinks = buildTopologyLinks(N, topo, islandPositions);
-            migrationCounts = {};
-
             // Compute adaptive node dimensions based on total island count N
             let nodeR = 40;
             let fontMainSize = 13.5;
@@ -1842,38 +1605,55 @@
                 fontSubYOffset = 10;
             }
 
-            // Create Node elements
+            // Detect whether we use force-directed layout for this topology
+            isForceLayout = FORCE_TOPOS.has(topo) && typeof d3 !== 'undefined';
+
+            if (isForceLayout) {
+                // Scatter nodes around center as starting positions
+                const scatterR = Math.min(width, height) * 0.28;
+                islandPositions.forEach(pos => {
+                    const angle = (2 * Math.PI * (pos.id - 1) / N) - Math.PI / 2;
+                    pos.x = width / 2 + scatterR * Math.cos(angle);
+                    pos.y = height / 2 + scatterR * Math.sin(angle);
+                    pos._sim = pos; // will be updated by simulation
+                });
+
+                const simNodes = islandPositions.map(pos => ({
+                    id: pos.id,
+                    _posRef: pos,
+                    x: pos.x,
+                    y: pos.y
+                }));
+
+                forceSimulation = d3.forceSimulation(simNodes)
+                    .force("charge", d3.forceManyBody().strength(-400))
+                    .force("center",  d3.forceCenter(width / 2, height / 2).strength(0.08))
+                    .force("collide", d3.forceCollide(nodeR + 8).strength(0.9))
+                    .force("link",    d3.forceLink([]).id(d => d.id).distance(Math.min(width, height) * 0.28).strength(0))
+                    .alphaDecay(0.02)
+                    .on("tick", () => {
+                        simNodes.forEach(sn => {
+                            sn._posRef.x = sn.x;
+                            sn._posRef.y = sn.y;
+                        });
+                        forceTick();
+                    });
+            }
+
+            // Create Node elements — all child coords are RELATIVE (0,0 = node centre)
+            // The <g> is positioned via transform="translate(x,y)" so the force tick
+            // only needs to update the transform, not every child element.
             islandPositions.forEach((pos, idx) => {
-                pos.targetX = pos.x;
-                pos.targetY = pos.y;
-
-                // Random initial scatter position for Gen 0
-                const margin = 60;
-                pos.startX = margin + Math.random() * (width - margin * 2);
-                pos.startY = margin + Math.random() * (height - margin * 2);
-
-                if (pos.tier !== undefined) {
-                    pos.tierY = pos.targetY;
-                    pos.startY = pos.tierY + (Math.random() - 0.5) * 35;
-                }
-
-                pos.x = pos.startX;
-                pos.y = pos.startY;
-                pos.vx = 0;
-                pos.vy = 0;
-
                 pos.nodeR = nodeR;
-                pos.fontYOffset = fontYOffset;
-                pos.fontSubYOffset = fontSubYOffset;
                 const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 g.setAttribute("id", `island-node-${pos.id}`);
                 g.setAttribute("class", "node-group");
+                g.setAttribute("transform", `translate(${pos.x}, ${pos.y})`);
                 g.style.cursor = "pointer";
-                g.style.transformOrigin = `${pos.x}px ${pos.y}px`;
 
                 const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-                circle.setAttribute("cx", pos.x);
-                circle.setAttribute("cy", pos.y);
+                circle.setAttribute("cx", 0);
+                circle.setAttribute("cy", 0);
                 circle.setAttribute("r", nodeR);
                 circle.setAttribute("class", "node-circle");
                 circle.setAttribute("id", `island-circle-${pos.id}`);
@@ -1881,34 +1661,33 @@
                 circle.setAttribute("stroke", islandColors[idx % islandColors.length]);
                 g.appendChild(circle);
 
-                // Add Swarm points container inside Node circle
+                // Swarm points (relative to node centre)
                 const swarmG = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 swarmG.setAttribute("id", `swarm-${pos.id}`);
                 g.appendChild(swarmG);
 
                 const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                txt.setAttribute("x", pos.x);
-                txt.setAttribute("y", pos.y - fontYOffset);
+                txt.setAttribute("x", 0);
+                txt.setAttribute("y", -fontYOffset);
                 txt.setAttribute("class", "node-text");
                 txt.style.fontSize = `${fontMainSize}px`;
                 txt.textContent = `ISL ${pos.id}`;
                 g.appendChild(txt);
 
                 const subtxt = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                subtxt.setAttribute("x", pos.x);
-                subtxt.setAttribute("y", pos.y + fontSubYOffset);
+                subtxt.setAttribute("x", 0);
+                subtxt.setAttribute("y", fontSubYOffset);
                 subtxt.setAttribute("class", "node-subtext");
                 subtxt.style.fontSize = `${fontSubSize}px`;
                 subtxt.setAttribute("id", `island-score-${pos.id}`);
                 subtxt.textContent = "0.0000";
                 g.appendChild(subtxt);
 
-                // Container for per-generation stagnation tally crosses (populated at runtime)
+                // Stagnation ticks container (relative)
                 const ticksG = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 ticksG.setAttribute("id", `stagnation-ticks-${pos.id}`);
                 g.appendChild(ticksG);
 
-                // Tooltip events
                 g.addEventListener("mouseenter", (e) => showIslandTooltip(e, pos.id));
                 g.addEventListener("mousemove", moveTooltip);
                 g.addEventListener("mouseleave", hideTooltip);
@@ -1932,9 +1711,6 @@
                 `;
                 healthList.appendChild(row);
             }
-
-            // Trigger initial damped layout convergence into organic topology (freezes solid)
-            convergeLayout(50, 1.0);
         }
 
         // Re-evaluate coordinates and draw SVGs for line chart
@@ -2069,9 +1845,6 @@
 
         // Draw live/replay generation details
         function renderGeneration(data) {
-            if (!hasGraphTransitioned) {
-                animateGraphTransition(1500);
-            }
             latestGenSnapshot = data;
             const gen = data.generation;
             let genText = `Gen ${gen}`;
@@ -2137,23 +1910,22 @@
                     setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
                 }
 
-                // Draw one small × cross per stagnated generation along the bottom arc of the node
+                // Draw stagnation × crosses — coords relative to node centre (0,0)
                 const ticksG = document.getElementById(`stagnation-ticks-${isl.island}`);
                 if (ticksG) {
                     ticksG.innerHTML = "";
                     const pos = islandPositions[isl.island - 1];
-                    const n = Math.min(isl.stagnation, 12); // cap display at 12
+                    const n = Math.min(isl.stagnation, 12);
                     const crossColor = isl.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
                     const arcRadius = (pos && pos.nodeR ? pos.nodeR : 40) + 7;
                     const cSize = (pos && pos.nodeR < 30) ? 2.5 : 3.5;
-                    // Spread crosses along the top arc above the node
                     const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
                     const startAngle = -Math.PI / 2 - spread / 2;
                     for (let ci = 0; ci < n; ci++) {
                         const frac = n === 1 ? 0.5 : ci / (n - 1);
-                        const angle = startAngle + frac * spread; // top arc above node
-                        const cx = pos.x + arcRadius * Math.cos(angle);
-                        const cy = pos.y + arcRadius * Math.sin(angle);
+                        const angle = startAngle + frac * spread;
+                        const cx = arcRadius * Math.cos(angle);   // relative
+                        const cy = arcRadius * Math.sin(angle);   // relative
                         const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
                         cross.setAttribute("d", `M ${cx-cSize} ${cy-cSize} L ${cx+cSize} ${cy+cSize} M ${cx+cSize} ${cy-cSize} L ${cx-cSize} ${cy+cSize}`);
                         cross.setAttribute("stroke", crossColor);
@@ -2189,7 +1961,7 @@
             logToTerminal(`★ Generation ${gen} complete. Global Best: ${data.global_best_fitness.toFixed(4)} (Island ${data.global_best_island || "-"})`, "success");
         }
 
-        // Draws circles representing individuals inside the island's node circle
+        // Draws swarm dots — all coords RELATIVE to node centre (0,0)
         function renderSwarm(islandId, fitnesses) {
             const swarmG = document.getElementById(`swarm-${islandId}`);
             if (!swarmG) return;
@@ -2197,18 +1969,14 @@
 
             const pos = islandPositions[islandId - 1];
             const maxSubpoints = Math.min(fitnesses.length, 12);
-            
-            // Draw radial layout of points inside node circle
+            const r = (pos && pos.nodeR ? pos.nodeR * 0.65 : 25);
+
             for (let i = 0; i < maxSubpoints; i++) {
                 const fit = fitnesses[i];
                 const angle = (2 * Math.PI * i / maxSubpoints);
-                const r = (pos && pos.nodeR ? pos.nodeR * 0.65 : 25); // layout radius adapted to node size
-                const px = pos.x + r * Math.cos(angle);
-                const py = pos.y + r * Math.sin(angle);
-
                 const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-                dot.setAttribute("cx", px);
-                dot.setAttribute("cy", py);
+                dot.setAttribute("cx", r * Math.cos(angle));   // relative
+                dot.setAttribute("cy", r * Math.sin(angle));   // relative
                 dot.setAttribute("r", 2.5);
                 dot.setAttribute("fill", fit > baselineFitness ? "var(--success)" : "var(--text-muted)");
                 dot.setAttribute("opacity", 0.75);
@@ -2325,18 +2093,14 @@
         // Trigger pulse and usage-based opacity escalation on migration paths in SVG
         function triggerMigrationAnimation(data) {
             const routeKey = `${data.from}-${data.to}`;
-            migrationCounts[routeKey] = (migrationCounts[routeKey] || 0) + 1;
             pathUsageCounts[routeKey] = (pathUsageCounts[routeKey] || 0) + 1;
             const useCount = pathUsageCounts[routeKey];
-
-            // Re-pulse damped layout convergence to adjust organic cluster balance, then freeze solid!
-            convergeLayout(25, 0.40);
 
             let pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`);
             let pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`);
 
             if (!pathLine && islandPositions[data.from - 1] && islandPositions[data.to - 1]) {
-                drawEdge(islandPositions[data.from - 1], islandPositions[data.to - 1], true);
+                drawEdge(islandPositions[data.from - 1], islandPositions[data.to - 1]);
                 pathLine = document.getElementById(`path-from-${data.from}-to-${data.to}`);
                 pulse = document.getElementById(`pulse-from-${data.from}-to-${data.to}`);
             }
@@ -2351,9 +2115,39 @@
 
             if (pulse) {
                 pulse.style.display = "block";
-                setTimeout(() => {
-                    pulse.style.display = "none";
-                }, 2000);
+                setTimeout(() => { pulse.style.display = "none"; }, 2000);
+            }
+
+            // ── Update force-directed layout ─────────────────────────────
+            if (isForceLayout && forceSimulation) {
+                const srcId = data.from, dstId = data.to;
+                const existing = forceLinks.find(l =>
+                    (l.source === srcId && l.target === dstId) ||
+                    (l.source === dstId && l.target === srcId)
+                );
+                if (existing) {
+                    existing.count = (existing.count || 1) + 1;
+                } else {
+                    forceLinks.push({ source: srcId, target: dstId, count: 1 });
+                }
+                // Convert to simulation node references
+                const simNodes = forceSimulation.nodes();
+                const nodeById = {};
+                simNodes.forEach(sn => nodeById[sn.id] = sn);
+                const d3Links = forceLinks.map(l => ({
+                    source: nodeById[l.source],
+                    target: nodeById[l.target],
+                    strength: Math.min(0.6, 0.08 + (l.count - 1) * 0.06)
+                }));
+                forceSimulation.force("link")
+                    .links(d3Links)
+                    .strength(l => l.strength)
+                    .distance(Math.min(
+                        (topologySvg.clientWidth || 600),
+                        (topologySvg.clientHeight || 450)
+                    ) * 0.28);
+                // Wake the simulation
+                forceSimulation.alpha(0.35).restart();
             }
 
             if (data.is_pull) {
@@ -2826,15 +2620,15 @@
                     if (pos) {
                         const n = Math.min(data.stagnation, 12);
                         const crossColor = data.stagnation >= stagThreshold ? "#ef4444" : "#f59e0b";
-                        const arcRadius = (pos && pos.nodeR ? pos.nodeR : 40) + 7;
-                        const cSize = (pos && pos.nodeR < 30) ? 2.5 : 3.5;
+                        const arcRadius = (pos.nodeR || 40) + 7;
+                        const cSize = (pos.nodeR < 30) ? 2.5 : 3.5;
                         const spread = n <= 1 ? 0 : (Math.PI * 2 / 3);
                         const startAngle = -Math.PI / 2 - spread / 2;
                         for (let ci = 0; ci < n; ci++) {
                             const frac = n === 1 ? 0.5 : ci / (n - 1);
                             const angle = startAngle + frac * spread;
-                            const cx = pos.x + arcRadius * Math.cos(angle);
-                            const cy = pos.y + arcRadius * Math.sin(angle);
+                            const cx = arcRadius * Math.cos(angle);   // relative
+                            const cy = arcRadius * Math.sin(angle);   // relative
                             const cross = document.createElementNS("http://www.w3.org/2000/svg", "path");
                             cross.setAttribute("d", `M ${cx-cSize} ${cy-cSize} L ${cx+cSize} ${cy+cSize} M ${cx+cSize} ${cy-cSize} L ${cx-cSize} ${cy+cSize}`);
                             cross.setAttribute("stroke", crossColor);
