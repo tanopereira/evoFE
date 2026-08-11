@@ -17,14 +17,17 @@
 NULL
 
 .calc_feature_distance <- function(ind_j, ind_k) {
-  if (is.null(ind_j) || is.null(ind_k) || length(ind_j$genes) == 0L || length(ind_k$genes) == 0L) {
-    return(1.0)
-  }
-  f_j <- vapply(ind_j$genes, gene_to_formula, character(1))
-  f_k <- vapply(ind_k$genes, gene_to_formula, character(1))
-  union_len <- length(union(f_j, f_k))
-  if (union_len == 0L) return(1.0)
-  intersect_len <- length(intersect(f_j, f_k))
+  if (is.null(ind_j) && is.null(ind_k)) return(0.0)
+  if (is.null(ind_j) || is.null(ind_k)) return(1.0)
+  
+  sig_j <- c(ind_j$numeric_cols, ind_j$categorical_cols, ind_j$datetime_cols,
+             vapply(ind_j$genes, gene_to_formula, character(1)))
+  sig_k <- c(ind_k$numeric_cols, ind_k$categorical_cols, ind_k$datetime_cols,
+             vapply(ind_k$genes, gene_to_formula, character(1)))
+  
+  union_len <- length(union(sig_j, sig_k))
+  if (union_len == 0L) return(0.0)
+  intersect_len <- length(intersect(sig_j, sig_k))
   1.0 - (intersect_len / union_len)
 }
 
