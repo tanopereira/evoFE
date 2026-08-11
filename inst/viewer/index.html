@@ -1797,8 +1797,13 @@
                     .on("tick", () => {
                         const pad = nodeR + 10;
                         simNodes.forEach(sn => {
-                            sn.x = Math.max(pad, Math.min(svgW - pad, sn.x));
-                            sn.y = Math.max(pad, Math.min(svgH - pad, sn.y));
+                            // Elastic wall: clamp position AND zero the velocity
+                            // component pointing into the wall so nodes bounce
+                            // rather than sticking to the edge.
+                            if (sn.x < pad)        { sn.x = pad;        sn.vx = Math.max(0, sn.vx); }
+                            if (sn.x > svgW - pad) { sn.x = svgW - pad; sn.vx = Math.min(0, sn.vx); }
+                            if (sn.y < pad)        { sn.y = pad;        sn.vy = Math.max(0, sn.vy); }
+                            if (sn.y > svgH - pad) { sn.y = svgH - pad; sn.vy = Math.min(0, sn.vy); }
                             sn._posRef.x = sn.x;
                             sn._posRef.y = sn.y;
                         });
@@ -2313,6 +2318,14 @@
                         (topologySvg.clientWidth  || 600),
                         (topologySvg.clientHeight || 450)
                     ) * 0.30);
+                // Small random velocity jitter to break wedge/collinear configurations
+                // before the link force applies — nodes that are stuck in a line
+                // between two others can now escape.
+                const jitter = 12;
+                forceSimulation.nodes().forEach(sn => {
+                    sn.vx += (Math.random() - 0.5) * jitter;
+                    sn.vy += (Math.random() - 0.5) * jitter;
+                });
                 // Wake the simulation with a strong-enough alpha to be clearly visible
                 forceSimulation.alpha(0.45).restart();
             }
