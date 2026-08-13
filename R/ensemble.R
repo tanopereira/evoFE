@@ -130,6 +130,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     y_val <- data[[target_col]]
   }
 
+  if (verbose) {
+    message(sprintf("\nStarting Caruana Ensemble Selection across %d islands (%d rounds)...", length(val_preds_list), caruana_rounds))
+  }
+
   # Perform Caruana greedy ensemble selection
   selection_res <- caruana_select(
     y_true = y_val,
@@ -140,17 +144,21 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     bag_samples = bag_samples,
     sample_ratio = sample_ratio,
     seed = seed,
-    num_class = num_class
+    num_class = num_class,
+    verbose = verbose
   )
 
   weights <- selection_res$weights
   active_names <- names(weights[weights > 0])
 
+  single_best_fitness <- recipe$best_individual$fitness
+  if (is.null(single_best_fitness) || is.na(single_best_fitness)) {
+    single_best_fitness <- max(vapply(islands, function(x) if (is.null(x$fitness)) -Inf else x$fitness, double(1)))
+  }
+
   if (verbose) {
-    message(sprintf(
-      "Caruana Selection Complete (%d rounds): %d / %d islands selected.",
-      caruana_rounds, length(active_names), length(val_preds_list)
-    ))
+    message(sprintf("\nCaruana Selection Complete: %d / %d islands active.", length(active_names), length(val_preds_list)))
+    message(sprintf("  Single Best Fitness: %.4f  |  Ensemble Fitness: %.4f", single_best_fitness, selection_res$final_fitness))
   }
 
   # Identify global best individual matching index
@@ -172,13 +180,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     # Check if this island's individual matches recipe$best_individual & recipe$best_model is available
     if (ind_str == best_ind_str && !is.null(recipe$best_model)) {
       if (verbose) {
-        message(sprintf("  [%s] Reusing existing global best model (zero retraining).", name))
+        message(sprintf("  [%s] Weight: %5.1f%% | Reusing existing global best model (zero retraining).", name, weights[[name]] * 100))
       }
       active_recipes[[name]] <- recipe$best_individual
       active_models[[name]] <- recipe$best_model
     } else {
       if (verbose) {
-        message(sprintf("  [%s] Lazily training final model on full dataset...", name))
+        message(sprintf("  [%s] Weight: %5.1f%% | Lazily training final model on full dataset...", name, weights[[name]] * 100))
       }
 
       res_full <- apply_individual(ind_i, dt_full, NULL, target_col, state_cache = state_cache, allow_prune = TRUE)
@@ -207,11 +215,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
   }
 
-  single_best_fitness <- recipe$best_individual$fitness
-  if (is.null(single_best_fitness) || is.na(single_best_fitness)) {
-    single_best_fitness <- max(vapply(islands, function(x) if (is.null(x$fitness)) -Inf else x$fitness, double(1)))
-  }
-
   structure(
     list(
       active_recipes = active_recipes,
@@ -233,11 +236,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 #' Internal Caruana Greedy Selection Engine
 #' @keywords internal
 caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
-                           bag_samples = TRUE, sample_ratio = 0.8, seed = NULL, num_class = NULL) {
+                           bag_samples = TRUE, sample_ratio = 0.8, seed = NULL,
+                           num_class = NULL, verbose = FALSE) {
 
   n_candidates <- length(val_preds_list)
   candidate_names <- names(val_preds_list)
   n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
+  w_fmt <- nchar(as.character(rounds))
 
   # Helper for safe metric evaluation (higher is better for fitness)
   eval_fitness <- function(y, p) {
@@ -294,6 +299,10 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   current_blend <- val_preds_list[[best_init_name]]
   current_score <- initial_scores[best_init_idx]
 
+  if (verbose) {
+    message(sprintf("  [Round %*d/%d] Initialized with %s -> Fitness: %.4f", w_fmt, 1, rounds, best_init_name, current_score))
+  }
+
   history <- data.frame(
     round = 1:rounds,
     selected_model = character(rounds),
@@ -336,7 +345,13 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
         if (!is.null(best_cand_name)) {
           selected_counts[best_cand_name] <<- selected_counts[best_cand_name] + 1L
           current_blend <<- best_cand_blend
+          prev_score <- current_score
           current_score <<- eval_fitness(y_true, current_blend)
+
+          if (verbose) {
+            imp_tag <- if (!is.na(current_score) && !is.na(prev_score) && current_score > prev_score) " (Improved!)" else ""
+            message(sprintf("  [Round %*d/%d] Selected %s -> Ensemble Fitness: %.4f%s", w_fmt, r, rounds, best_cand_name, current_score, imp_tag))
+          }
         }
 
         history$selected_model[r] <<- best_cand_name
