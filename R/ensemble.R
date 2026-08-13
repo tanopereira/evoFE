@@ -63,18 +63,18 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              seed = NULL,
                              threads = 2,
                              verbose = TRUE, ...) {
-  if (!inherits(recipe, "evo_recipe")) {
-    stop("Input 'recipe' must be an object of class 'evo_recipe'.")
-  }
-  if (is.null(recipe$island_bests) || length(recipe$island_bests) == 0) {
-    stop("The recipe object does not contain island prediction history ('island_bests').")
-  }
-
-  islands <- recipe$island_bests
-  n_islands <- length(islands)
-
-  if (n_islands < 2) {
-    warning("Only 1 island prediction vector available. Ensembling requires >= 2 islands.")
+  # Normalize recipe input: single evo_recipe or list of evo_recipe objects
+  if (inherits(recipe, "evo_recipe")) {
+    recipe_list <- list(recipe1 = recipe)
+  } else if (is.list(recipe)) {
+    recipe_list <- recipe
+    for (idx in seq_along(recipe_list)) {
+      if (!inherits(recipe_list[[idx]], "evo_recipe")) {
+        stop(sprintf("Element %d in 'recipe' list is not an object of class 'evo_recipe'.", idx))
+      }
+    }
+  } else {
+    stop("Input 'recipe' must be an object of class 'evo_recipe' or a list of 'evo_recipe' objects.")
   }
 
   if (!is.numeric(caruana_rounds) || caruana_rounds < 1) {
@@ -86,13 +86,14 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     stop("Argument 'data' (full training dataset) is required for lazy final model fitting.")
   }
 
+  first_recipe <- recipe_list[[1]]
+
   # Infer target_col
   if (is.null(target_col)) {
-    if (!is.null(recipe$target_col)) {
-      target_col <- recipe$target_col
+    if (!is.null(first_recipe$target_col)) {
+      target_col <- first_recipe$target_col
     } else {
-      # Try to infer target_col from data comparing to numeric/categorical cols of best_individual
-      ind <- recipe$best_individual
+      ind <- first_recipe$best_individual
       all_known <- unique(c(ind$all_numeric_cols, ind$all_categorical_cols, ind$all_datetime_cols))
       cand <- setdiff(names(data), all_known)
       if (length(cand) == 1) {
@@ -103,35 +104,60 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
   }
 
-  task <- recipe$task
-  evaluator <- recipe$evaluator
-  metric <- recipe$metric
-  classes <- recipe$classes
+  task <- first_recipe$task
+  metric <- first_recipe$metric
+  classes <- first_recipe$classes
   num_class <- if (!is.null(classes)) length(classes) else NULL
 
-  # Collect validation prediction vectors and targets from all islands
+  # Collect validation prediction vectors, targets, and evaluators across all recipes
   val_preds_list <- list()
-  valid_island_indices <- integer(0)
+  cand_metadata <- list()
 
-  for (i in seq_along(islands)) {
-    ind_i <- islands[[i]]
-    if (!is.null(ind_i) && !is.null(ind_i$val_preds)) {
-      val_preds_list[[paste0("island_", i)]] <- ind_i$val_preds
-      valid_island_indices <- c(valid_island_indices, i)
+  for (r_idx in seq_along(recipe_list)) {
+    rec <- recipe_list[[r_idx]]
+    rec_prefix <- if (!is.null(names(recipe_list)) && names(recipe_list)[r_idx] != "") {
+      names(recipe_list)[r_idx]
+    } else if (length(recipe_list) > 1) {
+      paste0("recipe_", r_idx)
+    } else {
+      ""
+    }
+
+    if (is.null(rec$island_bests) || length(rec$island_bests) == 0) {
+      next
+    }
+
+    for (i in seq_along(rec$island_bests)) {
+      ind_i <- rec$island_bests[[i]]
+      if (!is.null(ind_i) && !is.null(ind_i$val_preds)) {
+        cand_name <- if (nchar(rec_prefix) > 0) paste0(rec_prefix, "_island_", i) else paste0("island_", i)
+        cand_eval <- if (!is.null(ind_i$evaluator)) ind_i$evaluator else rec$evaluator
+
+        val_preds_list[[cand_name]] <- ind_i$val_preds
+        cand_metadata[[cand_name]] <- list(
+          recipe = rec,
+          ind = ind_i,
+          evaluator = cand_eval
+        )
+      }
     }
   }
 
   if (length(val_preds_list) == 0) {
-    stop("No valid validation prediction vectors found in recipe$island_bests.")
+    stop("No valid validation prediction vectors found across the provided recipe(s).")
   }
 
-  y_val <- islands[[valid_island_indices[1]]]$y_val
+  if (length(val_preds_list) < 2) {
+    warning("Only 1 candidate island prediction vector available. Ensembling requires >= 2 candidate islands.")
+  }
+
+  y_val <- cand_metadata[[1]]$ind$y_val
   if (is.null(y_val)) {
     y_val <- data[[target_col]]
   }
 
   if (verbose) {
-    message(sprintf("\nStarting Caruana Ensemble Selection across %d islands (%d rounds)...", length(val_preds_list), caruana_rounds))
+    message(sprintf("\nStarting Caruana Ensemble Selection across %d candidate island models (%d rounds)...", length(val_preds_list), caruana_rounds))
   }
 
   # Perform Caruana greedy ensemble selection
@@ -151,42 +177,44 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   weights <- selection_res$weights
   active_names <- names(weights[weights > 0])
 
-  single_best_fitness <- recipe$best_individual$fitness
-  if (is.null(single_best_fitness) || is.na(single_best_fitness)) {
-    single_best_fitness <- max(vapply(islands, function(x) if (is.null(x$fitness)) -Inf else x$fitness, double(1)))
-  }
+  single_best_fitness <- max(vapply(recipe_list, function(r) {
+    if (!is.null(r$best_individual) && !is.null(r$best_individual$fitness)) r$best_individual$fitness else -Inf
+  }, double(1)))
 
   if (verbose) {
-    message(sprintf("\nCaruana Selection Complete: %d / %d islands active.", length(active_names), length(val_preds_list)))
+    message(sprintf("\nCaruana Selection Complete: %d / %d island models active.", length(active_names), length(val_preds_list)))
     message(sprintf("  Single Best Fitness: %.4f  |  Ensemble Fitness: %.4f", single_best_fitness, selection_res$final_fitness))
   }
 
-  # Identify global best individual matching index
-  best_ind_str <- individual_to_recipe_string(recipe$best_individual)
-
   active_recipes <- list()
   active_models <- list()
+  active_evaluators <- list()
 
   # Shared state cache for dataset transformation
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   dt_full <- data.table::as.data.table(data)
 
-  # Lazy training: Reuse best_model for global best island, fit remaining active islands
+  # Lazy training: Reuse best_model for matching global best island, fit remaining active islands
   for (name in active_names) {
-    idx <- as.integer(gsub("island_", "", name))
-    ind_i <- islands[[idx]]
+    meta <- cand_metadata[[name]]
+    ind_i <- meta$ind
+    rec_i <- meta$recipe
+    eval_i <- meta$evaluator
     ind_str <- individual_to_recipe_string(ind_i)
+    best_ind_str <- individual_to_recipe_string(rec_i$best_individual)
 
-    # Check if this island's individual matches recipe$best_individual & recipe$best_model is available
-    if (ind_str == best_ind_str && !is.null(recipe$best_model)) {
+    active_evaluators[[name]] <- eval_i
+
+    # Check if this candidate matches rec_i$best_individual & rec_i$best_model is available
+    if (ind_str == best_ind_str && !is.null(rec_i$best_model)) {
       if (verbose) {
-        message(sprintf("  [%s] Weight: %5.1f%% | Reusing existing global best model (zero retraining).", name, weights[[name]] * 100))
+        message(sprintf("  [%s] Evaluator: %s | Weight: %5.1f%% | Reusing existing global best model (zero retraining).", name, eval_i, weights[[name]] * 100))
       }
-      active_recipes[[name]] <- recipe$best_individual
-      active_models[[name]] <- recipe$best_model
+      active_recipes[[name]] <- rec_i$best_individual
+      active_models[[name]] <- rec_i$best_model
     } else {
       if (verbose) {
-        message(sprintf("  [%s] Weight: %5.1f%% | Lazily training final model on full dataset...", name, weights[[name]] * 100))
+        message(sprintf("  [%s] Evaluator: %s | Weight: %5.1f%% | Lazily training final model on full dataset...", name, eval_i, weights[[name]] * 100))
       }
 
       res_full <- apply_individual(ind_i, dt_full, NULL, target_col, state_cache = state_cache, allow_prune = TRUE)
@@ -204,10 +232,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         y_full <- as.integer(factor(y_full, levels = classes)) - 1
       }
 
-      # Train model using island's best params
+      # Train model using candidate's specific evaluator and best params
       res_m <- train_model(
         x_full, y_full,
-        task = task, evaluator = evaluator,
+        task = task, evaluator = eval_i,
         threads = threads, num_class = num_class, metric = metric,
         verbose = verbose, best_params = ind_i$best_params, ...
       )
@@ -219,12 +247,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     list(
       active_recipes = active_recipes,
       active_models = active_models,
+      active_evaluators = active_evaluators,
       weights = weights,
       caruana_history = selection_res$history,
       single_best_fitness = single_best_fitness,
       ensemble_val_fitness = selection_res$final_fitness,
       task = task,
-      evaluator = evaluator,
+      evaluator = first_recipe$evaluator,
       target_col = target_col,
       classes = classes,
       metric = metric

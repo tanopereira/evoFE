@@ -34,10 +34,10 @@ test_that("ensemble_islands validates inputs correctly", {
   )
 
   # Fake recipe without island_bests
-  fake_recipe <- structure(list(best_individual = list()), class = "evo_recipe")
+  fake_recipe <- structure(list(best_individual = list(all_numeric_cols = "mpg")), class = "evo_recipe")
   expect_error(
-    ensemble_islands(fake_recipe, data = mtcars),
-    "does not contain island prediction history"
+    ensemble_islands(fake_recipe, data = mtcars, target_col = "mpg"),
+    "No valid validation prediction vectors found"
   )
 })
 
@@ -103,6 +103,66 @@ test_that("ensemble_islands works for regression tasks", {
 
   expect_s3_class(ens, "evo_ensemble")
   preds <- predict_model(ens, mtcars[1:5, ])
+  expect_true(is.numeric(preds))
+  expect_equal(length(preds), 5)
+})
+
+test_that("evolve_features supports per-island evaluators vector and ensemble_islands ensembles them", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  recipe <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = c("xgboost", "lightgbm", "lm"),
+    generations = 2,
+    pop_size = 2,
+    islands = 3,
+    cv_folds = 2,
+    verbose = FALSE
+  )
+
+  expect_equal(length(recipe$island_bests), 3)
+  expect_equal(recipe$island_bests[[1]]$evaluator, "xgboost")
+  expect_equal(recipe$island_bests[[2]]$evaluator, "lightgbm")
+  expect_equal(recipe$island_bests[[3]]$evaluator, "lm")
+
+  ens <- ensemble_islands(recipe, data = df, caruana_rounds = 10, verbose = FALSE)
+
+  expect_s3_class(ens, "evo_ensemble")
+  preds <- predict_model(ens, df[1:5, ])
+  expect_true(is.numeric(preds))
+  expect_equal(length(preds), 5)
+})
+
+test_that("ensemble_islands supports cross-recipe ensembling from a list of evo_recipe objects", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  recipe_xgb <- evolve_features(
+    data = df, target_col = "am", task = "classification", evaluator = "xgboost",
+    generations = 2, pop_size = 2, islands = 2, cv_folds = 2, verbose = FALSE
+  )
+
+  recipe_lgb <- evolve_features(
+    data = df, target_col = "am", task = "classification", evaluator = "lightgbm",
+    generations = 2, pop_size = 2, islands = 2, cv_folds = 2, verbose = FALSE
+  )
+
+  ens <- ensemble_islands(
+    recipe = list(xgb = recipe_xgb, lgb = recipe_lgb),
+    data = df,
+    caruana_rounds = 15,
+    verbose = FALSE
+  )
+
+  expect_s3_class(ens, "evo_ensemble")
+  expect_true(length(ens$active_models) > 0)
+
+  preds <- predict_model(ens, df[1:5, ])
   expect_true(is.numeric(preds))
   expect_equal(length(preds), 5)
 })

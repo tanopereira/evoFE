@@ -410,6 +410,29 @@ dynamic_population_decay_rate = 0.7,
     stop("record must be a logical scalar (TRUE or FALSE).")
   }
 
+  # Parse & validate evaluator (supports single evaluator or vector/list per island)
+  if (is.list(evaluator)) {
+    evaluator <- unlist(evaluator)
+  }
+  if (!is.character(evaluator)) {
+    stop("evaluator must be a character string or vector of evaluator names.")
+  }
+  if (length(evaluator) == 1) {
+    island_evaluators <- rep(evaluator, islands)
+  } else if (length(evaluator) == islands) {
+    island_evaluators <- evaluator
+  } else {
+    stop(sprintf("Length of evaluator (%d) must be 1 or match the number of islands (%d).", length(evaluator), islands))
+  }
+
+  for (ev in island_evaluators) {
+    if (!exists(ev, envir = evo_evaluators)) {
+      stop(sprintf("Evaluator '%s' is not registered in evo_evaluators. Registered evaluators: %s",
+                   ev, paste(names(evo_evaluators), collapse = ", ")))
+    }
+  }
+  evaluator_main <- island_evaluators[1]
+
   # Parse allowed_transformers
   all_trans <- names(evo_transformers)
 
@@ -893,7 +916,7 @@ dynamic_population_decay_rate = 0.7,
     task = task, cv_folds = cv_folds,
     evaluation_strategy = evaluation_strategy,
     split_ids = split_ids_val, shared_splits = shared_splits,
-    evaluator = evaluator, fold_ids = fold_ids,
+    evaluator = evaluator_main, fold_ids = fold_ids,
     shared_folds = shared_folds,
     shared_full = shared_full, state_cache = state_cache,
     threads = threads, metric = metric, verbose = verbose,
@@ -1239,11 +1262,11 @@ dynamic_population_decay_rate = 0.7,
     } else {
       rep(baseline_ind$fitness, islands)
     }
-    island_best_individual <- if (row_split_islands) {
-      island_baseline_inds
-    } else {
-      lapply(1:islands, function(x) baseline_ind)
-    }
+    island_best_individual <- lapply(1:islands, function(j) {
+      ind <- if (row_split_islands) island_baseline_inds[[j]] else baseline_ind
+      ind$evaluator <- island_evaluators[j]
+      ind
+    })
     island_gens_without_improvement <- rep(0, islands)
     island_improved_by_migration <- rep(FALSE, islands)
     island_current_pop_size <- rep(pop_size, islands)
@@ -1295,7 +1318,7 @@ dynamic_population_decay_rate = 0.7,
         eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
           split_ids_val,
           if (row_split_islands) island_shared_splits[[j]] else shared_splits,
-          evaluator,
+          island_evaluators[j],
           fold_ids,
           if (row_split_islands) island_shared_folds[[j]] else shared_folds,
           shared_full,
@@ -1322,6 +1345,7 @@ dynamic_population_decay_rate = 0.7,
         # Local early stopping/progress track for island-specific stagnation
         if (best_fitness_island > island_best_fitness[j]) {
           island_best_fitness[j] <- best_fitness_island
+          pop_list[[j]][[1]]$evaluator <- island_evaluators[j]
           island_best_individual[[j]] <- pop_list[[j]][[1]]
           island_gens_without_improvement[j] <- 0
           island_improved_by_migration[j] <- FALSE
@@ -1878,7 +1902,7 @@ dynamic_population_decay_rate = 0.7,
       eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
         split_ids_val,
         if (row_split_islands) island_shared_splits[[j]] else shared_splits,
-        evaluator,
+        island_evaluators[j],
         fold_ids,
         if (row_split_islands) island_shared_folds[[j]] else shared_folds,
         shared_full,
@@ -2193,8 +2217,9 @@ dynamic_population_decay_rate = 0.7,
   # Train the final model on the full dataset. Since we are using all data, we use the original
   # tuner evaluator (e.g., lightgbm_mbo) so that it performs hyperparameter tuning on the full
   # dataset, using the best parameters found during evolution as a seed.
+  best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
   res_model <- train_model(x_full, y_full,
-    task = task, evaluator = evaluator,
+    task = task, evaluator = best_evaluator,
     threads = threads, num_class = num_class, metric = metric,
     verbose = verbose, best_params = best_params, ...
   )
@@ -2252,7 +2277,7 @@ dynamic_population_decay_rate = 0.7,
       fitness_history = fitness_history,
       task = task,
       best_model = best_model,
-      evaluator = evaluator,
+      evaluator = best_evaluator,
       classes = classes,
       metric = metric,
       island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),

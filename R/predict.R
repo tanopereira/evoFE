@@ -153,19 +153,19 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
 
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   dt_new <- data.table::as.data.table(newdata)
-
-  evaluator_entry <- evo_evaluators[[object$evaluator]]
-  if (is.null(evaluator_entry)) {
-    stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s",
-                 object$evaluator, paste(names(evo_evaluators), collapse = ", ")))
-  }
-
   weighted_preds <- NULL
 
   for (name in active_names) {
     w <- weights[[name]]
     ind_i <- object$active_recipes[[name]]
     mod_i <- object$active_models[[name]]
+    eval_i <- if (!is.null(object$active_evaluators[[name]])) object$active_evaluators[[name]] else object$evaluator
+
+    evaluator_entry <- evo_evaluators[[eval_i]]
+    if (is.null(evaluator_entry)) {
+      stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s",
+                   eval_i, paste(names(evo_evaluators), collapse = ", ")))
+    }
 
     res_i <- apply_individual(ind_i, dt_new, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
     applied_ind <- res_i$ind
