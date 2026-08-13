@@ -128,7 +128,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
     if (!is.na(pop[[i]]$fitness)) next
 
     recipe_str <- individual_to_recipe_string(pop[[i]])
-    cache_key <- digest::digest(recipe_str, algo = "md5", serialize = FALSE)
+    cache_key <- digest::digest(paste0(evaluator, "::", recipe_str), algo = "md5", serialize = FALSE)
     cached <- exists(cache_key, envir = fitness_cache, inherits = FALSE)
 
     if (cached) {
@@ -180,7 +180,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
 
 #' Check whether a candidate individual is a duplicate or known-inferior
 #' @keywords internal
-is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
+is_invalid_individual <- function(c_ind, pop_list, cache, best_fit, evaluator = NULL) {
   # Check 1: Duplicate in current generation
   get_out <- function(ind) {
     if (length(ind$genes) == 0) {
@@ -199,7 +199,8 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit) {
   # Check 2: Taboo search — reject recipes that are clearly inferior to the best.
   # Use a meaningful epsilon so borderline recipes aren't permanently banned.
   recipe_str <- individual_to_recipe_string(c_ind)
-  cache_key <- digest::digest(recipe_str, algo = "md5", serialize = FALSE)
+  cand_eval <- if (!is.null(evaluator)) evaluator else if (!is.null(c_ind$evaluator)) c_ind$evaluator else ""
+  cache_key <- digest::digest(paste0(cand_eval, "::", recipe_str), algo = "md5", serialize = FALSE)
   if (exists(cache_key, envir = cache, inherits = FALSE)) {
     cached_ind <- get(cache_key, envir = cache)
     known_fit <- cached_ind$fitness
@@ -928,7 +929,7 @@ dynamic_population_decay_rate = 0.7,
 
   # Cache the baseline individual's fitness
   recipe_str <- individual_to_recipe_string(baseline_ind)
-  cache_key <- digest::digest(recipe_str, algo = "md5", serialize = FALSE)
+  cache_key <- digest::digest(paste0(evaluator_main, "::", recipe_str), algo = "md5", serialize = FALSE)
   assign(cache_key, baseline_ind, envir = fitness_cache)
 
   if (row_split_islands) {
@@ -961,7 +962,7 @@ dynamic_population_decay_rate = 0.7,
       island_baseline_inds[[j]] <- local_baseline
       # Pre-populate this island's local fitness cache to prevent global cache hit
       local_recipe_str <- individual_to_recipe_string(local_baseline)
-      local_cache_key <- digest::digest(local_recipe_str, algo = "md5", serialize = FALSE)
+      local_cache_key <- digest::digest(paste0(island_evaluators[j], "::", local_recipe_str), algo = "md5", serialize = FALSE)
       assign(local_cache_key, local_baseline, envir = island_fitness_caches[[j]])
     }
   }
