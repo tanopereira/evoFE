@@ -987,7 +987,14 @@ dynamic_population_decay_rate = 0.7,
       fitness = baseline_ind$fitness,
       recipe = individual_to_recipe_string(baseline_ind),
       sample = baseline_list,
-      importances = if (!is.null(baseline_ind$importances)) as.list(baseline_ind$importances) else list()
+      importances = if (!is.null(baseline_ind$importances)) as.list(baseline_ind$importances) else list(),
+      islands = if (islands > 1) {
+        lapply(1:islands, function(j) list(
+          island = j,
+          evaluator = island_evaluators[j],
+          fitness = island_baseline_inds[[j]]$fitness
+        ))
+      } else NULL
     )
     viewer$send(list(type = "baseline", data = evolution_log$baseline))
   }
@@ -1258,20 +1265,12 @@ dynamic_population_decay_rate = 0.7,
         allowed_transformers = get_island_transformers(j),
         mask_temp_factor = mask_temp_factor
       )
-      pop_list[[j]][[1]] <- if (row_split_islands) island_baseline_inds[[j]] else baseline_ind
+      pop_list[[j]][[1]] <- island_baseline_inds[[j]]
     }
 
     # Local trackers for each island
-    island_best_fitness <- if (row_split_islands) {
-      sapply(island_baseline_inds, function(ind) ind$fitness)
-    } else {
-      rep(baseline_ind$fitness, islands)
-    }
-    island_best_individual <- lapply(1:islands, function(j) {
-      ind <- if (row_split_islands) island_baseline_inds[[j]] else baseline_ind
-      ind$evaluator <- island_evaluators[j]
-      ind
-    })
+    island_best_fitness <- vapply(island_baseline_inds, function(ind) ind$fitness, numeric(1))
+    island_best_individual <- lapply(1:islands, function(j) island_baseline_inds[[j]])
     island_gens_without_improvement <- rep(0, islands)
     island_improved_by_migration <- rep(FALSE, islands)
     island_current_pop_size <- rep(pop_size, islands)
