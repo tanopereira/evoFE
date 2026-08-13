@@ -1547,7 +1547,7 @@ dynamic_population_decay_rate = 0.7,
               migration_txs <- c(migration_txs, txs)
               break
             } else {
-              switch(migration_topology,
+              topo_obj <- switch(migration_topology,
                 "grid" = topology_grid(islands),
                 "torus" = topology_torus(islands),
                 "hypercube" = topology_hypercube(islands),
@@ -1558,8 +1558,9 @@ dynamic_population_decay_rate = 0.7,
               candidates <- get_neighbors(topo_obj, j)
               if (length(candidates) == 0) candidates <- setdiff(1:islands, j)
               dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1)
-              migration_txs[[length(migration_txs) + 1]] <- list(from = j, to = dest, is_pull = FALSE)
             }
+
+            migration_txs[[length(migration_txs) + 1]] <- list(from = j, to = dest, is_pull = FALSE)
           }
         }
 
@@ -1638,7 +1639,13 @@ dynamic_population_decay_rate = 0.7,
 
               if (verbose) {
                 msg_prefix <- if (tx$is_pull) "Pulling" else "Migrating"
-                message(sprintf("  %s top %d recipe(s) from Island %d to Island %d", msg_prefix, effective_rate, src, dest))
+                message(sprintf("  %s top %d recipe(s) from Island %d (%s) to Island %d (%s)",
+                                msg_prefix, effective_rate, src, island_evaluators[src], dest, island_evaluators[dest]))
+                migrant_fit <- if (length(migrant_inds) > 0 && !is.null(migrant_inds[[1]]$fitness)) migrant_inds[[1]]$fitness else NA
+                if (!is.na(migrant_fit)) {
+                  message(sprintf("    Evaluated Migrant Fitness on Island %d: %.4f (Current Destination Best: %.4f)",
+                                  dest, migrant_fit, island_best_fitness[dest]))
+                }
                 if (is_new_global_best) {
                   message(sprintf("    [Island %d] New Global Best Fitness: %.4f", dest, global_best_fitness))
                 } else if (is_new_dest_best) {
