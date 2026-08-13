@@ -654,7 +654,7 @@ dynamic_population_decay_rate = 0.7,
   if (verbose) {
     message("Starting Evolutionary Feature Engineering...")
     message(sprintf("  Task: %s", task))
-    message(sprintf("  Evaluator: %s", evaluator))
+    message(sprintf("  Evaluators (%d islands): %s", islands, paste(island_evaluators, collapse = ", ")))
 
     if (evaluation_strategy == "cv") {
       message(sprintf("  Generations: %d, Population Size: %d, CV Folds: %d", generations, pop_size, cv_folds))
@@ -950,7 +950,7 @@ dynamic_population_decay_rate = 0.7,
         evaluation_strategy = evaluation_strategy,
         split_ids = split_ids_val,
         shared_splits = island_shared_splits[[j]],
-        evaluator = evaluator,
+        evaluator = island_evaluators[j],
         fold_ids = fold_ids,
         shared_folds = island_shared_folds[[j]],
         shared_full = shared_full,
@@ -1586,13 +1586,13 @@ dynamic_population_decay_rate = 0.7,
             if (effective_rate > 0) {
               migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
-              if (row_split_islands || per_island_validation) {
-                # Fitness was evaluated on src local split — must re-evaluate on dest local split
+              if (row_split_islands || per_island_validation || island_evaluators[src] != island_evaluators[dest]) {
+                # Fitness was evaluated on src local split or evaluator — must re-evaluate on dest local split/evaluator
                 migrant_inds <- lapply(migrant_inds, function(ind) { ind$fitness <- NA_real_; ind })
                 eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
                   split_ids_val,
                   if (row_split_islands) island_shared_splits[[dest]] else shared_splits,
-                  evaluator,
+                  island_evaluators[dest],
                   fold_ids,
                   if (row_split_islands) island_shared_folds[[dest]] else shared_folds,
                   shared_full,
@@ -1938,12 +1938,13 @@ dynamic_population_decay_rate = 0.7,
       candidates <- lapply(seq_len(islands), function(j) {
         ind <- island_best_individual[[j]]
         ind$fitness <- NA_real_
+        cand_eval <- if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
         ind <- evaluate_fitness(
           ind, data, target_col,
           task = task, cv_folds = cv_folds,
           evaluation_strategy = evaluation_strategy,
           split_ids = split_ids_val, shared_splits = shared_splits,
-          evaluator = evaluator, fold_ids = fold_ids,
+          evaluator = cand_eval, fold_ids = fold_ids,
           shared_folds = shared_folds,
           shared_full = shared_full, state_cache = state_cache,
           threads = threads, metric = metric, verbose = FALSE,
@@ -1967,12 +1968,13 @@ dynamic_population_decay_rate = 0.7,
         message("\nRe-evaluating best individual on full training dataset...")
       }
       best_ind$fitness <- NA_real_
+      best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
       best_ind <- evaluate_fitness(
         best_ind, data, target_col,
         task = task, cv_folds = cv_folds,
         evaluation_strategy = evaluation_strategy,
         split_ids = split_ids_val, shared_splits = shared_splits,
-        evaluator = evaluator, fold_ids = fold_ids,
+        evaluator = best_eval_curr, fold_ids = fold_ids,
         shared_folds = shared_folds,
         shared_full = shared_full, state_cache = state_cache,
         threads = threads, metric = metric, verbose = FALSE,
@@ -2050,13 +2052,15 @@ dynamic_population_decay_rate = 0.7,
       all_datetime_cols = best_ind$all_datetime_cols
     )
 
+    best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+
     # 4. Evaluate the super-individual's fitness
     super_ind <- evaluate_fitness(
       super_ind, data, target_col,
       task = task, cv_folds = cv_folds,
       evaluation_strategy = evaluation_strategy,
       split_ids = split_ids_val, shared_splits = shared_splits,
-      evaluator = evaluator, fold_ids = fold_ids,
+      evaluator = best_eval_curr, fold_ids = fold_ids,
       shared_folds = shared_folds,
       shared_full = shared_full, state_cache = state_cache,
       threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
@@ -2075,6 +2079,7 @@ dynamic_population_decay_rate = 0.7,
         ))
       }
       best_ind <- super_ind
+      best_ind$evaluator <- best_eval_curr
       best_ind_source <- "Adopted (Pooled)"
     } else {
       if (verbose) {
@@ -2126,13 +2131,14 @@ dynamic_population_decay_rate = 0.7,
         all_datetime_cols = best_ind$all_datetime_cols
       )
 
+      best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
       # Evaluate the historical super-individual's fitness
       super_ind_hist <- evaluate_fitness(
         super_ind_hist, data, target_col,
         task = task, cv_folds = cv_folds,
         evaluation_strategy = evaluation_strategy,
         split_ids = split_ids_val, shared_splits = shared_splits,
-        evaluator = evaluator, fold_ids = fold_ids,
+        evaluator = best_eval_curr, fold_ids = fold_ids,
         shared_folds = shared_folds,
         shared_full = shared_full, state_cache = state_cache,
         threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
@@ -2151,6 +2157,7 @@ dynamic_population_decay_rate = 0.7,
           ))
         }
         best_ind <- super_ind_hist
+        best_ind$evaluator <- best_eval_curr
         best_ind_source <- "Adopted (Historical)"
       } else {
         if (verbose) {
@@ -2177,8 +2184,9 @@ dynamic_population_decay_rate = 0.7,
   }
 
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
+    best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
     best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
-      target_col, task, evaluator, threads, state_cache,
+      target_col, task, best_eval_curr, threads, state_cache,
       classes, num_class,
       metric = metric, verbose = verbose, ...
     )
