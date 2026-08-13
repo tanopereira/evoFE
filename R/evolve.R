@@ -933,7 +933,7 @@ dynamic_population_decay_rate = 0.7,
         shared_full = shared_full,
         state_cache = island_state_caches[[j]],
         threads = threads, metric = metric,
-        verbose = FALSE, allow_prune = FALSE, ...
+        verbose = FALSE, allow_prune = TRUE, ...
       )
       island_baseline_inds[[j]] <- local_baseline
       # Pre-populate this island's local fitness cache to prevent global cache hit
@@ -2255,6 +2255,7 @@ dynamic_population_decay_rate = 0.7,
       evaluator = evaluator,
       classes = classes,
       metric = metric,
+      island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),
       evolution_log = if (record) evolution_log else NULL
     ),
     class = "evo_recipe"

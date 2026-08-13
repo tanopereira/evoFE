@@ -358,8 +358,12 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
       ind$fitness <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+      ind$val_preds <- preds
+      ind$y_val <- y_val_encoded
     } else {
       ind$fitness <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
+      ind$val_preds <- preds
+      ind$y_val <- val_fold_feat[[target_col]]
     }
 
     # Complexity penalty: discourage long recipes (parsimony pressure)
@@ -391,10 +395,20 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     metrics <- rep(NA_real_, cv_folds)
     fold_importances <- list()
     
+    n_total <- nrow(dt)
+    if (task == "multiclass") {
+      oof_preds <- matrix(NA_real_, nrow = n_total, ncol = num_class)
+      oof_y <- integer(n_total)
+    } else {
+      oof_preds <- rep(NA_real_, n_total)
+      oof_y <- vector(mode = typeof(dt[[target_col]]), length = n_total)
+    }
+
     for (f in 1:cv_folds) {
       if (use_shared) {
         train_fold <- data.table::copy(shared_folds[[f]]$train)
         val_fold <- data.table::copy(shared_folds[[f]]$val)
+        val_idx <- if (!is.null(fold_ids)) which(fold_ids == f) else seq_len(nrow(val_fold))
       } else {
         train_idx <- which(folds != f)
         val_idx <- which(folds == f)
@@ -455,8 +469,20 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       if (task == "multiclass") {
         y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
         metrics[f] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+        if (length(val_idx) == length(y_val_encoded)) {
+          if (is.matrix(preds)) {
+            oof_preds[val_idx, ] <- preds
+          } else {
+            oof_preds[val_idx, ] <- matrix(preds, ncol = num_class, byrow = TRUE)
+          }
+          oof_y[val_idx] <- y_val_encoded
+        }
       } else {
         metrics[f] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
+        if (length(val_idx) == length(preds)) {
+          oof_preds[val_idx] <- preds
+          oof_y[val_idx] <- val_fold_feat[[target_col]]
+        }
       }
       
       # Clean up the model if the evaluator provides a cleanup function (e.g. to prevent TF memory leaks)
@@ -468,6 +494,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Fitness: average over successful folds only; -Inf only when every fold failed.
     finite_metrics <- metrics[!is.na(metrics)]
     ind$fitness <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
+
+    ind$val_preds <- oof_preds
+    ind$y_val <- oof_y
 
     # Complexity penalty: discourage long recipes (parsimony pressure)
     if (complexity_penalty > 0 && is.finite(ind$fitness)) {

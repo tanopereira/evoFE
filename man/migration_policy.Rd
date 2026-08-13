@@ -16,9 +16,16 @@
 \usage{
 policy_push_uniform()
 
-policy_gibbs_push(temperature = 0.5, weight_by = c("stagnation", "fitness"))
+policy_gibbs_push(
+  temperature = 0.5,
+  weight_by = c("stagnation", "fitness", "feature_distance", "uniform")
+)
 
-policy_gibbs_pull(temperature = 0.5, stagnation_threshold = 3)
+policy_gibbs_pull(
+  temperature = 0.5,
+  stagnation_threshold = 3,
+  weight_by = c("fitness", "feature_distance", "uniform")
+)
 
 policy_tiered_admission(min_fitness_threshold = "min_peer")
 

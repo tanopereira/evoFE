@@ -1,0 +1,356 @@
+#' Caruana Island Ensemble Selection
+#'
+#' Performs Caruana ensemble selection (greedy forward selection with replacement)
+#' over the validation/out-of-fold predictions from evolved islands, creating an
+#' optimal multi-model ensemble.
+#'
+#' @param recipe An \code{evo_recipe} object produced by \code{\link{evolve_features}}.
+#' @param data A data.frame or data.table containing the original training data used
+#'   during evolution. Required for lazy final model training of surviving islands.
+#' @param target_col Character string. Name of the target column. If \code{NULL},
+#'   it is inferred from the recipe or data.
+#' @param caruana_rounds Positive integer. Number of greedy selection rounds (default: 50).
+#' @param bag_samples Logical. If \code{TRUE} (default), uses bootstrap sampling of validation
+#'   predictions during selection rounds to prevent validation set overfitting.
+#' @param sample_ratio Numeric between 0 and 1. Fraction of validation samples used when
+#'   \code{bag_samples = TRUE} (default: 0.8).
+#' @param seed Optional integer seed for reproducible bagged sampling. Does not mutate
+#'   the user's global RNG state.
+#' @param threads Integer. Number of threads to use for model training.
+#' @param verbose Logical. Whether to print progress messages.
+#' @param ... Additional arguments passed to \code{\link{train_model}}.
+#'
+#' @return An \code{evo_ensemble} object containing:
+#'   \item{active_recipes}{Named list of feature engineering recipes for surviving islands.}
+#'   \item{active_models}{Named list of trained models for surviving islands.}
+#'   \item{weights}{Named numeric vector of Caruana ensemble weights (summing to 1).}
+#'   \item{caruana_history}{Data frame of validation loss trajectory across selection rounds.}
+#'   \item{single_best_fitness}{Fitness of the single best island model.}
+#'   \item{ensemble_val_fitness}{Validation fitness achieved by the Caruana ensemble.}
+#'   \item{task}{The learning task ("classification", "regression", or "multiclass").}
+#'   \item{evaluator}{The evaluator model engine used.}
+#'   \item{classes}{Target class levels (for multiclass classification).}
+#'   \item{metric}{Evaluation metric used.}
+#'
+#' @examples
+#' \donttest{
+#' data(mtcars)
+#' df <- mtcars
+#' df$am <- as.integer(df$am)
+#'
+#' # Evolve features across 3 islands
+#' recipe <- evolve_features(
+#'   data = df,
+#'   target_col = "am",
+#'   task = "classification",
+#'   evaluator = "xgboost",
+#'   generations = 2,
+#'   pop_size = 2,
+#'   islands = 3,
+#'   cv_folds = 2,
+#'   verbose = FALSE
+#' )
+#'
+#' # Build Caruana ensemble from island predictions
+#' ens <- ensemble_islands(recipe, data = df, caruana_rounds = 20, verbose = FALSE)
+#' print(ens)
+#' }
+#' @export
+ensemble_islands <- function(recipe, data, target_col = NULL,
+                             caruana_rounds = 50,
+                             bag_samples = TRUE,
+                             sample_ratio = 0.8,
+                             seed = NULL,
+                             threads = 2,
+                             verbose = TRUE, ...) {
+  if (!inherits(recipe, "evo_recipe")) {
+    stop("Input 'recipe' must be an object of class 'evo_recipe'.")
+  }
+  if (is.null(recipe$island_bests) || length(recipe$island_bests) == 0) {
+    stop("The recipe object does not contain island prediction history ('island_bests').")
+  }
+
+  islands <- recipe$island_bests
+  n_islands <- length(islands)
+
+  if (n_islands < 2) {
+    warning("Only 1 island prediction vector available. Ensembling requires >= 2 islands.")
+  }
+
+  if (!is.numeric(caruana_rounds) || caruana_rounds < 1) {
+    stop("'caruana_rounds' must be a positive integer >= 1.")
+  }
+  caruana_rounds <- as.integer(caruana_rounds)
+
+  if (missing(data) || is.null(data)) {
+    stop("Argument 'data' (full training dataset) is required for lazy final model fitting.")
+  }
+
+  # Infer target_col
+  if (is.null(target_col)) {
+    if (!is.null(recipe$target_col)) {
+      target_col <- recipe$target_col
+    } else {
+      # Try to infer target_col from data comparing to numeric/categorical cols of best_individual
+      ind <- recipe$best_individual
+      all_known <- unique(c(ind$all_numeric_cols, ind$all_categorical_cols, ind$all_datetime_cols))
+      cand <- setdiff(names(data), all_known)
+      if (length(cand) == 1) {
+        target_col <- cand
+      } else {
+        stop("Could not automatically infer 'target_col'. Please specify target_col explicitly.")
+      }
+    }
+  }
+
+  task <- recipe$task
+  evaluator <- recipe$evaluator
+  metric <- recipe$metric
+  classes <- recipe$classes
+  num_class <- if (!is.null(classes)) length(classes) else NULL
+
+  # Collect validation prediction vectors and targets from all islands
+  val_preds_list <- list()
+  valid_island_indices <- integer(0)
+
+  for (i in seq_along(islands)) {
+    ind_i <- islands[[i]]
+    if (!is.null(ind_i) && !is.null(ind_i$val_preds)) {
+      val_preds_list[[paste0("island_", i)]] <- ind_i$val_preds
+      valid_island_indices <- c(valid_island_indices, i)
+    }
+  }
+
+  if (length(val_preds_list) == 0) {
+    stop("No valid validation prediction vectors found in recipe$island_bests.")
+  }
+
+  y_val <- islands[[valid_island_indices[1]]]$y_val
+  if (is.null(y_val)) {
+    y_val <- data[[target_col]]
+  }
+
+  # Perform Caruana greedy ensemble selection
+  selection_res <- caruana_select(
+    y_true = y_val,
+    val_preds_list = val_preds_list,
+    task = task,
+    metric = metric,
+    rounds = caruana_rounds,
+    bag_samples = bag_samples,
+    sample_ratio = sample_ratio,
+    seed = seed,
+    num_class = num_class
+  )
+
+  weights <- selection_res$weights
+  active_names <- names(weights[weights > 0])
+
+  if (verbose) {
+    message(sprintf(
+      "Caruana Selection Complete (%d rounds): %d / %d islands selected.",
+      caruana_rounds, length(active_names), length(val_preds_list)
+    ))
+  }
+
+  # Identify global best individual matching index
+  best_ind_str <- individual_to_recipe_string(recipe$best_individual)
+
+  active_recipes <- list()
+  active_models <- list()
+
+  # Shared state cache for dataset transformation
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  dt_full <- data.table::as.data.table(data)
+
+  # Lazy training: Reuse best_model for global best island, fit remaining active islands
+  for (name in active_names) {
+    idx <- as.integer(gsub("island_", "", name))
+    ind_i <- islands[[idx]]
+    ind_str <- individual_to_recipe_string(ind_i)
+
+    # Check if this island's individual matches recipe$best_individual & recipe$best_model is available
+    if (ind_str == best_ind_str && !is.null(recipe$best_model)) {
+      if (verbose) {
+        message(sprintf("  [%s] Reusing existing global best model (zero retraining).", name))
+      }
+      active_recipes[[name]] <- recipe$best_individual
+      active_models[[name]] <- recipe$best_model
+    } else {
+      if (verbose) {
+        message(sprintf("  [%s] Lazily training final model on full dataset...", name))
+      }
+
+      res_full <- apply_individual(ind_i, dt_full, NULL, target_col, state_cache = state_cache, allow_prune = TRUE)
+      applied_ind <- res_full$ind
+      active_recipes[[name]] <- applied_ind
+
+      gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
+      features <- c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols)
+      features <- setdiff(features, target_col)
+
+      x_full <- data.matrix(res_full$train[, features, with = FALSE])
+      x_full[!is.finite(x_full)] <- NA
+      y_full <- res_full$train[[target_col]]
+      if (task == "multiclass") {
+        y_full <- as.integer(factor(y_full, levels = classes)) - 1
+      }
+
+      # Train model using island's best params
+      res_m <- train_model(
+        x_full, y_full,
+        task = task, evaluator = evaluator,
+        threads = threads, num_class = num_class, metric = metric,
+        verbose = verbose, best_params = ind_i$best_params, ...
+      )
+      active_models[[name]] <- res_m$model
+    }
+  }
+
+  single_best_fitness <- recipe$best_individual$fitness
+  if (is.null(single_best_fitness) || is.na(single_best_fitness)) {
+    single_best_fitness <- max(vapply(islands, function(x) if (is.null(x$fitness)) -Inf else x$fitness, double(1)))
+  }
+
+  structure(
+    list(
+      active_recipes = active_recipes,
+      active_models = active_models,
+      weights = weights,
+      caruana_history = selection_res$history,
+      single_best_fitness = single_best_fitness,
+      ensemble_val_fitness = selection_res$final_fitness,
+      task = task,
+      evaluator = evaluator,
+      target_col = target_col,
+      classes = classes,
+      metric = metric
+    ),
+    class = "evo_ensemble"
+  )
+}
+
+#' Internal Caruana Greedy Selection Engine
+#' @keywords internal
+caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
+                           bag_samples = TRUE, sample_ratio = 0.8, seed = NULL, num_class = NULL) {
+
+  n_candidates <- length(val_preds_list)
+  candidate_names <- names(val_preds_list)
+  n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
+
+  # Helper for safe metric evaluation (higher is better for fitness)
+  eval_fitness <- function(y, p) {
+    if (is.matrix(p)) {
+      mask <- !is.na(p[, 1])
+      if (!any(mask)) return(-Inf)
+      compute_metric(y[mask], p[mask, , drop = FALSE], task = task, metric = metric, num_class = num_class)
+    } else {
+      mask <- !is.na(p)
+      if (!any(mask)) return(-Inf)
+      compute_metric(y[mask], p[mask], task = task, metric = metric)
+    }
+  }
+
+  # Helper to blend predictions
+  blend_preds <- function(current_sum, new_preds, count) {
+    if (count == 0) return(new_preds)
+    if (is.matrix(current_sum)) {
+      (current_sum * count + new_preds) / (count + 1)
+    } else {
+      (current_sum * count + new_preds) / (count + 1)
+    }
+  }
+
+  # Local seed wrapper preserving user's global RNG state
+  run_with_seed <- function(seed_val, code) {
+    if (is.null(seed_val)) return(code())
+    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
+    on.exit({
+      if (!is.null(old_seed)) {
+        assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      } else if (exists(".Random.seed", envir = .GlobalEnv)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    }, add = TRUE)
+    set.seed(seed_val)
+    code()
+  }
+
+  selected_counts <- stats::setNames(rep(0L, n_candidates), candidate_names)
+
+  # Find initial best candidate model
+  initial_scores <- vapply(candidate_names, function(name) {
+    eval_fitness(y_true, val_preds_list[[name]])
+  }, double(1))
+
+  best_init_idx <- which.max(initial_scores)
+  if (length(best_init_idx) == 0 || is.na(best_init_idx)) {
+    best_init_idx <- 1L
+  }
+  best_init_name <- candidate_names[best_init_idx]
+
+  selected_counts[best_init_name] <- 1L
+  current_blend <- val_preds_list[[best_init_name]]
+  current_score <- initial_scores[best_init_idx]
+
+  history <- data.frame(
+    round = 1:rounds,
+    selected_model = character(rounds),
+    fitness = numeric(rounds),
+    stringsAsFactors = FALSE
+  )
+
+  history$selected_model[1] <- best_init_name
+  history$fitness[1] <- current_score
+
+  if (rounds > 1) {
+    for (r in 2:rounds) {
+      best_cand_name <- NULL
+      best_cand_score <- -Inf
+      best_cand_blend <- NULL
+
+      run_with_seed(if (!is.null(seed)) seed + r else NULL, function() {
+        eval_idx <- if (bag_samples) {
+          sample(seq_len(n_obs), size = round(n_obs * sample_ratio), replace = TRUE)
+        } else {
+          seq_len(n_obs)
+        }
+
+        y_eval <- if (is.matrix(y_true)) y_true[eval_idx, ] else y_true[eval_idx]
+
+        for (name in candidate_names) {
+          cand_preds <- val_preds_list[[name]]
+          candidate_blend <- blend_preds(current_blend, cand_preds, r - 1)
+
+          p_eval <- if (is.matrix(candidate_blend)) candidate_blend[eval_idx, ] else candidate_blend[eval_idx]
+          score <- eval_fitness(y_eval, p_eval)
+
+          if (score > best_cand_score) {
+            best_cand_score <- score
+            best_cand_name <- name
+            best_cand_blend <- candidate_blend
+          }
+        }
+
+        if (!is.null(best_cand_name)) {
+          selected_counts[best_cand_name] <<- selected_counts[best_cand_name] + 1L
+          current_blend <<- best_cand_blend
+          current_score <<- eval_fitness(y_true, current_blend)
+        }
+
+        history$selected_model[r] <<- best_cand_name
+        history$fitness[r] <<- current_score
+      })
+    }
+  }
+
+  weights <- selected_counts / rounds
+  final_fitness <- eval_fitness(y_true, current_blend)
+
+  list(
+    weights = weights,
+    history = history,
+    final_fitness = final_fitness
+  )
+}

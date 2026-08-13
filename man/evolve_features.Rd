@@ -96,7 +96,7 @@ union), "random", or "union"}
 
 \item{verbose}{Logical. If TRUE, prints progress.}
 
-\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a
+\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", "cal_rmse", "cal_mae", or a
 custom function).}
 
 \item{model_all_final_genes}{Logical. If TRUE, the final model is trained using

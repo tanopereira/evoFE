@@ -497,3 +497,27 @@ test_that("stagnation remains 0 on the first generation evaluating a newly migra
   expect_s3_class(rec, "evo_recipe")
 })
 
+test_that("row_split_islands with many islands does not produce -Inf baseline fitness (allow_prune regression)", {
+  # Regression: island baseline was evaluated with allow_prune = FALSE on a tiny row-shard
+  # (1/islands of training data). Genes valid on the full data can legitimately fail on a
+  # small shard, producing -Inf fitness for every individual on that island permanently.
+  #
+  # Use a 200-row synthetic dataset with 8 islands -> ~18 training rows per island per fold.
+  # cv_folds = 4 (glmnet requires nfolds > 3); mtcars (32 rows) would be too small.
+  set.seed(123)
+  n <- 200
+  df_big <- data.frame(
+    y  = rnorm(n),
+    x1 = rnorm(n), x2 = rnorm(n), x3 = rnorm(n),
+    x4 = rnorm(n), x5 = rnorm(n)
+  )
+  rec <- evolve_features(
+    df_big, target_col = "y", task = "regression", evaluator = "lm",
+    generations = 2, pop_size = 4, cv_folds = 4,
+    islands = 8, row_split_islands = TRUE, migration_interval = 1,
+    verbose = FALSE
+  )
+  expect_s3_class(rec, "evo_recipe")
+  # Best fitness must be a real number — not -Inf — even with small per-island shards.
+  expect_true(all(is.finite(rec$fitness)))
+})

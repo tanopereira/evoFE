@@ -16,19 +16,75 @@
 #' @name migration_policy
 NULL
 
+# Compute Jaccard distance between two individuals' complete feature signatures.
+# The feature signature of an individual is defined as:
+#   active raw columns (numeric + categorical + datetime) ∪ engineered gene formulas
+# Returns 0 when both individuals are identical (or both NULL), 1 when fully disjoint.
 .calc_feature_distance <- function(ind_j, ind_k) {
   if (is.null(ind_j) && is.null(ind_k)) return(0.0)
   if (is.null(ind_j) || is.null(ind_k)) return(1.0)
-  
+
   sig_j <- c(ind_j$numeric_cols, ind_j$categorical_cols, ind_j$datetime_cols,
-             vapply(ind_j$genes, gene_to_formula, character(1)))
+              vapply(ind_j$genes, gene_to_formula, character(1)))
   sig_k <- c(ind_k$numeric_cols, ind_k$categorical_cols, ind_k$datetime_cols,
-             vapply(ind_k$genes, gene_to_formula, character(1)))
-  
+              vapply(ind_k$genes, gene_to_formula, character(1)))
+
+  # Drop NAs to prevent spurious matches on missing column fields
+  sig_j <- sig_j[!is.na(sig_j)]
+  sig_k <- sig_k[!is.na(sig_k)]
+
   union_len <- length(union(sig_j, sig_k))
   if (union_len == 0L) return(0.0)
   intersect_len <- length(intersect(sig_j, sig_k))
   1.0 - (intersect_len / union_len)
+}
+
+# Return the best (first) individual from an island's population, or NULL if unavailable.
+.best_individual <- function(state, island_idx) {
+  pop <- state$pop_list[[island_idx]]
+  if (!is.null(pop) && length(pop) > 0L) pop[[1]] else NULL
+}
+
+# Compute Gibbs routing weights for a source island `j` over a set of candidate islands `nbrs`.
+# weight_by: "uniform", "stagnation", "feature_distance", or "fitness" (push) / "fitness" (pull)
+# For push policies pass is_pull = FALSE; for pull policies pass is_pull = TRUE (fitness branch differs).
+.calc_gibbs_weights <- function(j, nbrs, weight_by, temp, state, is_pull = FALSE) {
+  if (weight_by == "uniform") {
+    rep(1 / length(nbrs), length(nbrs))
+  } else if (weight_by == "stagnation") {
+    stags <- state$island_gens_without_improvement[nbrs]
+    stags[is.na(stags)] <- 0
+    max_s <- max(stags)
+    logits <- (stags - max_s) / temp
+    exp(logits) / sum(exp(logits))
+  } else if (weight_by == "feature_distance") {
+    ind_j <- .best_individual(state, j)
+    dists <- vapply(nbrs, function(k) {
+      .calc_feature_distance(ind_j, .best_individual(state, k))
+    }, numeric(1))
+    max_d <- max(dists)
+    logits <- (dists - max_d) / temp
+    exp(logits) / sum(exp(logits))
+  } else { # fitness
+    if (is_pull) {
+      donor_fits <- state$island_best_fitness[nbrs]
+      donor_fits[is.na(donor_fits)] <- -Inf
+      max_f <- max(donor_fits)
+      if (is.finite(max_f)) {
+        logits <- (donor_fits - max_f) / temp
+        exp(logits) / sum(exp(logits))
+      } else {
+        rep(1 / length(nbrs), length(nbrs))
+      }
+    } else {
+      fits <- state$island_best_fitness[nbrs]
+      valid_fits <- fits[!is.na(fits)]
+      fits[is.na(fits)] <- if (length(valid_fits) > 0L) min(valid_fits) else 0
+      diffs <- max(fits) - fits
+      logits <- (diffs - max(diffs)) / temp
+      exp(logits) / sum(exp(logits))
+    }
+  }
 }
 
 #' @rdname migration_policy
@@ -143,7 +199,7 @@ resolve_migration_transactions <- function(policy, topology, state, ...) {
     threshold_mode <- policy$min_fitness_threshold
   }
 
-  for (j in 1:N) {
+  for (j in seq_len(N)) {
     tier_matches <- which(vapply(t_all, function(t_islands) j %in% t_islands, logical(1)))
     if (length(tier_matches) == 0L) next
     tier_idx <- tier_matches[1]
@@ -201,32 +257,9 @@ resolve_migration_transactions.evo_policy_gibbs_push <- function(policy, topolog
   temp <- policy$temperature
   weight_by <- policy$weight_by
 
-  calc_weights <- function(j, nbrs) {
-    if (weight_by == "uniform") {
-      rep(1 / length(nbrs), length(nbrs))
-    } else if (weight_by == "stagnation") {
-      stags <- state$island_gens_without_improvement[nbrs]
-      stags[is.na(stags)] <- 0
-      max_s <- max(stags)
-      logits <- (stags - max_s) / temp
-      exp(logits) / sum(exp(logits))
-    } else if (weight_by == "feature_distance") {
-      ind_j <- if (!is.null(state$pop_list[[j]]) && length(state$pop_list[[j]]) > 0L) state$pop_list[[j]][[1]] else NULL
-      dists <- vapply(nbrs, function(k) {
-        ind_k <- if (!is.null(state$pop_list[[k]]) && length(state$pop_list[[k]]) > 0L) state$pop_list[[k]][[1]] else NULL
-        .calc_feature_distance(ind_j, ind_k)
-      }, numeric(1))
-      max_d <- max(dists)
-      logits <- (dists - max_d) / temp
-      exp(logits) / sum(exp(logits))
-    } else { # fitness
-      fits <- state$island_best_fitness[nbrs]
-      valid_fits <- fits[!is.na(fits)]
-      fits[is.na(fits)] <- if (length(valid_fits) > 0L) min(valid_fits) else 0
-      diffs <- max(fits) - fits
-      logits <- (diffs - max(diffs)) / temp
-      exp(logits) / sum(exp(logits))
-    }
+  safe_weights <- function(j, nbrs) {
+    probs <- .calc_gibbs_weights(j, nbrs, weight_by, temp, state, is_pull = FALSE)
+    if (any(is.na(probs)) || sum(probs) == 0) rep(1 / length(nbrs), length(nbrs)) else probs
   }
 
   if (inherits(topology, "evo_topology_tiered")) {
@@ -236,8 +269,7 @@ resolve_migration_transactions.evo_policy_gibbs_push <- function(policy, topolog
       if (length(t_islands) > 1L) {
         for (j in t_islands) {
           neighbors <- setdiff(t_islands, j)
-          probs <- calc_weights(j, neighbors)
-          if (any(is.na(probs)) || sum(probs) == 0) probs <- rep(1 / length(neighbors), length(neighbors))
+          probs <- safe_weights(j, neighbors)
           dest <- if (length(neighbors) == 1L) neighbors[1] else sample(neighbors, 1L, prob = probs)
           txs[[length(txs) + 1L]] <- list(from = j, to = dest, is_pull = FALSE)
         }
@@ -246,14 +278,10 @@ resolve_migration_transactions.evo_policy_gibbs_push <- function(policy, topolog
     return(txs)
   }
 
-  for (j in 1:N) {
+  for (j in seq_len(N)) {
     neighbors <- get_neighbors(topology, j, state)
     if (length(neighbors) > 0L) {
-      probs <- calc_weights(j, neighbors)
-      if (any(is.na(probs)) || sum(probs) == 0) {
-        probs <- rep(1 / length(neighbors), length(neighbors))
-      }
-
+      probs <- safe_weights(j, neighbors)
       dest <- if (length(neighbors) == 1L) neighbors[1] else sample(neighbors, 1L, prob = probs)
       txs[[length(txs) + 1L]] <- list(from = j, to = dest, is_pull = FALSE)
     }
@@ -273,29 +301,9 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
   weight_by <- policy$weight_by
   if (is.null(weight_by)) weight_by <- "fitness"
 
-  calc_weights <- function(j, nbrs) {
-    if (weight_by == "uniform") {
-      rep(1 / length(nbrs), length(nbrs))
-    } else if (weight_by == "feature_distance") {
-      ind_j <- if (!is.null(state$pop_list[[j]]) && length(state$pop_list[[j]]) > 0L) state$pop_list[[j]][[1]] else NULL
-      dists <- vapply(nbrs, function(k) {
-        ind_k <- if (!is.null(state$pop_list[[k]]) && length(state$pop_list[[k]]) > 0L) state$pop_list[[k]][[1]] else NULL
-        .calc_feature_distance(ind_j, ind_k)
-      }, numeric(1))
-      max_d <- max(dists)
-      logits <- (dists - max_d) / temp
-      exp(logits) / sum(exp(logits))
-    } else { # fitness
-      donor_fits <- state$island_best_fitness[nbrs]
-      donor_fits[is.na(donor_fits)] <- -Inf
-      max_f <- max(donor_fits)
-      if (is.finite(max_f)) {
-        logits <- (donor_fits - max_f) / temp
-        exp(logits) / sum(exp(logits))
-      } else {
-        rep(1 / length(nbrs), length(nbrs))
-      }
-    }
+  safe_weights <- function(j, nbrs) {
+    probs <- .calc_gibbs_weights(j, nbrs, weight_by, temp, state, is_pull = TRUE)
+    if (any(is.na(probs)) || sum(probs) == 0) rep(1 / length(nbrs), length(nbrs)) else probs
   }
 
   if (inherits(topology, "evo_topology_tiered")) {
@@ -308,8 +316,7 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
           p_pull <- 1 / (1 + exp(-(s_j - stag_thresh) / temp))
           if (stats::runif(1) < p_pull) {
             candidates <- setdiff(t_islands, j)
-            probs <- calc_weights(j, candidates)
-            if (any(is.na(probs)) || sum(probs) == 0) probs <- rep(1 / length(candidates), length(candidates))
+            probs <- safe_weights(j, candidates)
             donor <- if (length(candidates) == 1L) candidates[1] else sample(candidates, 1L, prob = probs)
             txs[[length(txs) + 1L]] <- list(from = donor, to = j, is_pull = TRUE)
           }
@@ -319,17 +326,13 @@ resolve_migration_transactions.evo_policy_gibbs_pull <- function(policy, topolog
     return(txs)
   }
 
-  for (j in 1:N) {
+  for (j in seq_len(N)) {
     s_j <- state$island_gens_without_improvement[j]
     p_pull <- 1 / (1 + exp(-(s_j - stag_thresh) / temp))
     if (stats::runif(1) < p_pull) {
       candidates <- get_in_neighbors(topology, j, state)
       if (length(candidates) > 0L) {
-        probs <- calc_weights(j, candidates)
-        if (any(is.na(probs)) || sum(probs) == 0) {
-          probs <- rep(1 / length(candidates), length(candidates))
-        }
-
+        probs <- safe_weights(j, candidates)
         donor <- if (length(candidates) == 1L) candidates[1] else sample(candidates, 1L, prob = probs)
         txs[[length(txs) + 1L]] <- list(from = donor, to = j, is_pull = TRUE)
       }

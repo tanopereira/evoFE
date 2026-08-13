@@ -41,9 +41,41 @@ predict.evo_recipe <- function(object, newdata, ...) {
   res$train[, features, with = FALSE]
 }
 
-#' Predict target values using the fully evolved model
+#' Apply engineered features from an ensemble of recipes
 #'
-#' @param object An evo_recipe object containing the trained model and best individual
+#' @param object An evo_ensemble object
+#' @param newdata A data.frame or data.table
+#' @param ... Additional arguments
+#' @return A data.table containing the combined engineered features across
+#'   all active recipes in the ensemble.
+#' @export
+predict.evo_ensemble <- function(object, newdata, ...) {
+  if (is.null(object$active_recipes) || length(object$active_recipes) == 0) {
+    stop("No active recipes available in evo_ensemble object.")
+  }
+
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  dt_new <- data.table::as.data.table(newdata)
+  out_dt <- data.table::copy(dt_new)
+
+  for (name in names(object$active_recipes)) {
+    ind_i <- object$active_recipes[[name]]
+    res_i <- apply_individual(ind_i, dt_new, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
+    sub_dt <- res_i$train
+    new_cols <- setdiff(names(sub_dt), names(out_dt))
+    if (length(new_cols) > 0) {
+      for (col in new_cols) {
+        out_dt[[col]] <- sub_dt[[col]]
+      }
+    }
+  }
+
+  out_dt
+}
+
+#' Predict target values using the fully evolved model or ensemble
+#'
+#' @param object An evo_recipe or evo_ensemble object containing trained model(s)
 #' @param newdata A data.frame or data.table to make predictions on
 #' @param ... Additional arguments (currently unused)
 #' @return For binary classification and regression tasks a numeric vector of
@@ -73,6 +105,11 @@ predict.evo_recipe <- function(object, newdata, ...) {
 #' }
 #' @export
 predict_model <- function(object, newdata, ...) {
+  UseMethod("predict_model")
+}
+
+#' @export
+predict_model.evo_recipe <- function(object, newdata, ...) {
   if (is.null(object$best_model)) {
     stop("No model was trained or saved during evolution.")
   }
@@ -100,4 +137,64 @@ predict_model <- function(object, newdata, ...) {
   }
   
   preds
+}
+
+#' @export
+predict_model.evo_ensemble <- function(object, newdata, ...) {
+  if (is.null(object$active_models) || length(object$active_models) == 0) {
+    stop("No active models available in evo_ensemble object.")
+  }
+
+  weights <- object$weights
+  active_names <- names(weights[weights > 0])
+  if (length(active_names) == 0) {
+    stop("No active island models with positive weights found in evo_ensemble.")
+  }
+
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  dt_new <- data.table::as.data.table(newdata)
+
+  evaluator_entry <- evo_evaluators[[object$evaluator]]
+  if (is.null(evaluator_entry)) {
+    stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s",
+                 object$evaluator, paste(names(evo_evaluators), collapse = ", ")))
+  }
+
+  weighted_preds <- NULL
+
+  for (name in active_names) {
+    w <- weights[[name]]
+    ind_i <- object$active_recipes[[name]]
+    mod_i <- object$active_models[[name]]
+
+    res_i <- apply_individual(ind_i, dt_new, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
+    applied_ind <- res_i$ind
+
+    gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
+    features <- unique(c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols))
+    if (!is.null(object$target_col)) {
+      features <- setdiff(features, object$target_col)
+    }
+
+    feat_dt <- res_i$train[, features, with = FALSE]
+    x_new <- data.matrix(feat_dt)
+    x_new[!is.finite(x_new)] <- NA
+
+    preds_i <- evaluator_entry$predict_func(mod_i, x_new, task = object$task)
+
+    if (!is.null(object$classes)) {
+      if (!is.matrix(preds_i)) {
+        preds_i <- matrix(preds_i, ncol = length(object$classes), byrow = TRUE)
+      }
+      colnames(preds_i) <- object$classes
+    }
+
+    if (is.null(weighted_preds)) {
+      weighted_preds <- w * preds_i
+    } else {
+      weighted_preds <- weighted_preds + (w * preds_i)
+    }
+  }
+
+  weighted_preds
 }

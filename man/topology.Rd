@@ -11,6 +11,8 @@
 \alias{topology_complete}
 \alias{get_neighbors}
 \alias{get_neighbors.evo_topology}
+\alias{get_in_neighbors}
+\alias{get_in_neighbors.evo_topology}
 \alias{get_neighbors.evo_topology_ring}
 \alias{get_neighbors.evo_topology_grid}
 \alias{get_neighbors.evo_topology_torus}
@@ -35,6 +37,10 @@ topology_complete(islands = 10)
 get_neighbors(topology, island_id, state = NULL, ...)
 
 \method{get_neighbors}{evo_topology}(topology, island_id, state = NULL, ...)
+
+get_in_neighbors(topology, island_id, state = NULL, ...)
+
+\method{get_in_neighbors}{evo_topology}(topology, island_id, state = NULL, ...)
 
 \method{get_neighbors}{evo_topology_ring}(topology, island_id, state = NULL, ...)
 

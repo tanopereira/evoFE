@@ -2,12 +2,12 @@
 % Please edit documentation in R/predict.R
 \name{predict_model}
 \alias{predict_model}
-\title{Predict target values using the fully evolved model}
+\title{Predict target values using the fully evolved model or ensemble}
 \usage{
 predict_model(object, newdata, ...)
 }
 \arguments{
-\item{object}{An evo_recipe object containing the trained model and best individual}
+\item{object}{An evo_recipe or evo_ensemble object containing trained model(s)}
 
 \item{newdata}{A data.frame or data.table to make predictions on}
 
@@ -19,7 +19,7 @@ For binary classification and regression tasks a numeric vector of
   class (columns named after class levels).
 }
 \description{
-Predict target values using the fully evolved model
+Predict target values using the fully evolved model or ensemble
 }
 \examples{
 \donttest{

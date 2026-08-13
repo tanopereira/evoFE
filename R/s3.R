@@ -230,3 +230,86 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
   }
   invisible(NULL)
 }
+
+#' Print an evo_ensemble object
+#'
+#' Prints a human-readable summary of the Caruana island ensemble.
+#'
+#' @param x An \code{evo_ensemble} object.
+#' @param ... Additional arguments (currently unused).
+#' @export
+print.evo_ensemble <- function(x, ...) {
+  cat("An evoFE Caruana Island Ensemble\n")
+  cat(sprintf("  Evaluator:            %s\n", x$evaluator))
+  cat(sprintf("  Task:                 %s\n", x$task))
+  if (!is.null(x$metric)) {
+    cat(sprintf("  Metric:               %s\n", x$metric))
+  }
+  cat(sprintf("  Single Best Fitness:  %.4f\n", x$single_best_fitness))
+  cat(sprintf("  Ensemble Fitness:     %.4f\n", x$ensemble_val_fitness))
+
+  active_names <- names(x$weights[x$weights > 0])
+  cat(sprintf("  Active Islands:       %d / %d\n", length(active_names), length(x$weights)))
+
+  if (length(active_names) > 0) {
+    cat("  Selected Island Weights:\n")
+    for (name in active_names) {
+      w <- x$weights[[name]]
+      rec <- x$active_recipes[[name]]
+      n_genes <- if (!is.null(rec$genes)) length(rec$genes) else 0
+      cat(sprintf("    [%s] Weight: %5.1f%% | Evolved Features: %d\n", name, w * 100, n_genes))
+    }
+  }
+  invisible(x)
+}
+
+#' Summary of an evo_ensemble object
+#'
+#' Computes and formats a detailed summary of the Caruana island ensemble.
+#'
+#' @param object An \code{evo_ensemble} object.
+#' @param ... Additional arguments (currently unused).
+#' @export
+summary.evo_ensemble <- function(object, ...) {
+  active_names <- names(object$weights[object$weights > 0])
+
+  weights_df <- data.frame(
+    Island = active_names,
+    Weight = as.numeric(object$weights[active_names]),
+    Num_Genes = vapply(active_names, function(name) {
+      rec <- object$active_recipes[[name]]
+      if (!is.null(rec$genes)) length(rec$genes) else 0
+    }, integer(1)),
+    stringsAsFactors = FALSE
+  )
+
+  res <- list(
+    evaluator = object$evaluator,
+    task = object$task,
+    metric = object$metric,
+    single_best_fitness = object$single_best_fitness,
+    ensemble_val_fitness = object$ensemble_val_fitness,
+    active_count = length(active_names),
+    total_islands = length(object$weights),
+    weights_summary = weights_df
+  )
+
+  class(res) <- "summary_evo_ensemble"
+  res
+}
+
+#' Print summary of an evo_ensemble object
+#'
+#' Prints summary details of the Caruana island ensemble.
+#'
+#' @param x A \code{summary_evo_ensemble} object.
+#' @param ... Additional arguments (currently unused).
+#' @export
+print.summary_evo_ensemble <- function(x, ...) {
+  cat("Summary of evoFE Caruana Ensemble\n")
+  cat(sprintf("Evaluator: %s | Task: %s | Metric: %s\n", x$evaluator, x$task, x$metric))
+  cat(sprintf("Single Best Fitness: %.4f --> Ensemble Fitness: %.4f\n", x$single_best_fitness, x$ensemble_val_fitness))
+  cat(sprintf("Active Islands: %d of %d\n\n", x$active_count, x$total_islands))
+  print(x$weights_summary)
+  invisible(x)
+}
