@@ -932,7 +932,7 @@ dynamic_population_decay_rate = 0.7,
   cache_key <- digest::digest(paste0(evaluator_main, "::", recipe_str), algo = "md5", serialize = FALSE)
   assign(cache_key, baseline_ind, envir = fitness_cache)
 
-  if (row_split_islands) {
+  if (islands > 1) {
     island_fitness_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
     island_state_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
     for (j in 1:islands) {
@@ -950,20 +950,24 @@ dynamic_population_decay_rate = 0.7,
         task = task, cv_folds = cv_folds,
         evaluation_strategy = evaluation_strategy,
         split_ids = split_ids_val,
-        shared_splits = island_shared_splits[[j]],
+        shared_splits = if (row_split_islands) island_shared_splits[[j]] else shared_splits,
         evaluator = island_evaluators[j],
         fold_ids = fold_ids,
-        shared_folds = island_shared_folds[[j]],
+        shared_folds = if (row_split_islands) island_shared_folds[[j]] else shared_folds,
         shared_full = shared_full,
         state_cache = island_state_caches[[j]],
         threads = threads, metric = metric,
         verbose = FALSE, allow_prune = TRUE, ...
       )
+      local_baseline$evaluator <- island_evaluators[j]
       island_baseline_inds[[j]] <- local_baseline
-      # Pre-populate this island's local fitness cache to prevent global cache hit
       local_recipe_str <- individual_to_recipe_string(local_baseline)
       local_cache_key <- digest::digest(paste0(island_evaluators[j], "::", local_recipe_str), algo = "md5", serialize = FALSE)
       assign(local_cache_key, local_baseline, envir = island_fitness_caches[[j]])
+
+      if (verbose) {
+        message(sprintf("  [Island %d Baseline] (%s) -> Fitness: %.4f", j, island_evaluators[j], local_baseline$fitness))
+      }
     }
   }
 
