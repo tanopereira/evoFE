@@ -833,10 +833,11 @@
         }
 
         /* Hover Zoom on Nodes */
-        .node-group {
+        .node-hover-wrap {
+            transform-origin: 0 0;
             transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
-        .node-group:hover {
+        .node-group:hover .node-hover-wrap {
             transform: scale(1.18);
         }
 
@@ -1797,6 +1798,10 @@
                 g.setAttribute("transform", `translate(${pos.x}, ${pos.y})`);
                 g.style.cursor = "pointer";
 
+                const wrap = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                wrap.setAttribute("class", "node-hover-wrap");
+                g.appendChild(wrap);
+
                 const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                 circle.setAttribute("cx", 0);
                 circle.setAttribute("cy", 0);
@@ -1805,12 +1810,12 @@
                 circle.setAttribute("id", `island-circle-${pos.id}`);
                 circle.style.setProperty("--stroke-col", islandColors[idx % islandColors.length]);
                 circle.setAttribute("stroke", islandColors[idx % islandColors.length]);
-                g.appendChild(circle);
+                wrap.appendChild(circle);
 
                 // Swarm points (relative to node centre)
                 const swarmG = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 swarmG.setAttribute("id", `swarm-${pos.id}`);
-                g.appendChild(swarmG);
+                wrap.appendChild(swarmG);
 
                 const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 txt.setAttribute("x", 0);
@@ -1818,7 +1823,7 @@
                 txt.setAttribute("class", "node-text");
                 txt.style.fontSize = `${fontMainSize}px`;
                 txt.textContent = `ISL ${pos.id}`;
-                g.appendChild(txt);
+                wrap.appendChild(txt);
 
                 const subtxt = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 subtxt.setAttribute("x", 0);
@@ -1827,12 +1832,12 @@
                 subtxt.style.fontSize = `${fontSubSize}px`;
                 subtxt.setAttribute("id", `island-score-${pos.id}`);
                 subtxt.textContent = "0.0000";
-                g.appendChild(subtxt);
+                wrap.appendChild(subtxt);
 
                 // Stagnation ticks container (relative)
                 const ticksG = document.createElementNS("http://www.w3.org/2000/svg", "g");
                 ticksG.setAttribute("id", `stagnation-ticks-${pos.id}`);
-                g.appendChild(ticksG);
+                wrap.appendChild(ticksG);
 
                 g.addEventListener("mouseenter", (e) => showIslandTooltip(e, pos.id));
                 g.addEventListener("mousemove", moveTooltip);
