@@ -1669,6 +1669,32 @@ test_that("model_all_historical_genes collects genes across generations, evaluat
   expect_true(all(preds >= 0 & preds <= 1))
 })
 
+test_that("model_all_historical_genes and model_all_final_genes succeed when no genes evolve and record = TRUE", {
+  set.seed(42)
+  df <- data.frame(
+    x = 1:20,
+    target = c(rep(0, 10), rep(1, 10))
+  )
+
+  expect_no_error({
+    res <- evolve_features(
+      data = df,
+      target_col = "target",
+      task = "classification",
+      generations = 1,
+      pop_size = 2,
+      model_all_historical_genes = TRUE,
+      model_all_final_genes = TRUE,
+      record = TRUE,
+      verbose = FALSE
+    )
+  })
+
+  expect_s3_class(res, "evo_recipe")
+  expect_equal(res$evolution_log$historical$n_genes, 0L)
+  expect_false(res$evolution_log$historical$adopted)
+})
+
 test_that("gradual population growth and decay works correctly during dynamic population expansion and recovery", {
   set.seed(42)
   df <- data.frame(

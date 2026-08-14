@@ -2042,7 +2042,7 @@ dynamic_population_decay_rate = 0.7,
     all_genes <- unlist(lapply(pop, function(ind) ind$genes), recursive = FALSE)
 
     # 2. De-duplicate genes by their unique output column name
-    unique_cols <- unique(vapply(all_genes, function(g) g$output_col, character(1)))
+    unique_cols <- if (length(all_genes) > 0) unique(vapply(all_genes, function(g) g$output_col, character(1))) else character(0)
     deduped_genes <- list()
     for (gene in all_genes) {
       if (gene$output_col %in% unique_cols) {
@@ -2052,62 +2052,74 @@ dynamic_population_decay_rate = 0.7,
     }
     deduped_genes <- unname(deduped_genes)
 
-    # 3. Create the super-individual
-    super_ind <- create_individual(
-      genes = deduped_genes,
-      numeric_cols = best_ind$numeric_cols,
-      categorical_cols = best_ind$categorical_cols,
-      datetime_cols = best_ind$datetime_cols,
-      all_numeric_cols = best_ind$all_numeric_cols,
-      all_categorical_cols = best_ind$all_categorical_cols,
-      all_datetime_cols = best_ind$all_datetime_cols
-    )
+    super_ind <- NULL
+    adopted_pooled <- FALSE
 
-    best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+    if (length(deduped_genes) > 0) {
+      # 3. Create the super-individual
+      super_ind <- create_individual(
+        genes = deduped_genes,
+        numeric_cols = best_ind$numeric_cols,
+        categorical_cols = best_ind$categorical_cols,
+        datetime_cols = best_ind$datetime_cols,
+        all_numeric_cols = best_ind$all_numeric_cols,
+        all_categorical_cols = best_ind$all_categorical_cols,
+        all_datetime_cols = best_ind$all_datetime_cols
+      )
 
-    # 4. Evaluate the super-individual's fitness
-    super_ind <- evaluate_fitness(
-      super_ind, data, target_col,
-      task = task, cv_folds = cv_folds,
-      evaluation_strategy = evaluation_strategy,
-      split_ids = split_ids_val, shared_splits = shared_splits,
-      evaluator = best_eval_curr, fold_ids = fold_ids,
-      shared_folds = shared_folds,
-      shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
-      complexity_penalty = complexity_penalty, ...
-    )
+      best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
 
-    if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
-      super_ind$best_params <- best_ind$best_params
-    }
+      # 4. Evaluate the super-individual's fitness
+      super_ind <- evaluate_fitness(
+        super_ind, data, target_col,
+        task = task, cv_folds = cv_folds,
+        evaluation_strategy = evaluation_strategy,
+        split_ids = split_ids_val, shared_splits = shared_splits,
+        evaluator = best_eval_curr, fold_ids = fold_ids,
+        shared_folds = shared_folds,
+        shared_full = shared_full, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
+        complexity_penalty = complexity_penalty, ...
+      )
 
-    if (!is.na(super_ind$fitness) && (is.na(best_ind$fitness) || super_ind$fitness > best_ind$fitness)) {
-      if (verbose) {
-        message(sprintf(
-          "  Pooled features improved validation fitness from %.4f to %.4f. Using pooled features.",
-          best_ind$fitness, super_ind$fitness
-        ))
+      if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
+        super_ind$best_params <- best_ind$best_params
       }
-      best_ind <- super_ind
-      best_ind$evaluator <- best_eval_curr
-      best_ind_source <- "Adopted (Pooled)"
+
+      if (!is.na(super_ind$fitness) && (is.na(best_ind$fitness) || super_ind$fitness > best_ind$fitness)) {
+        if (verbose) {
+          message(sprintf(
+            "  Pooled features improved validation fitness from %.4f to %.4f. Using pooled features.",
+            best_ind$fitness, super_ind$fitness
+          ))
+        }
+        best_ind <- super_ind
+        best_ind$evaluator <- best_eval_curr
+        best_ind_source <- "Adopted (Pooled)"
+        adopted_pooled <- TRUE
+      } else {
+        if (verbose) {
+          message(sprintf(
+            "  Pooled features (fitness: %.4f) did not exceed best individual (fitness: %.4f). Using best individual.",
+            super_ind$fitness, best_ind$fitness
+          ))
+        }
+      }
     } else {
       if (verbose) {
-        message(sprintf(
-          "  Pooled features (fitness: %.4f) did not exceed best individual (fitness: %.4f). Using best individual.",
-          super_ind$fitness, best_ind$fitness
-        ))
+        message("  No final genes found to evaluate.")
       }
     }
 
     if (record) {
       evolution_log$pooled <- list(
         n_genes = length(deduped_genes),
-        fitness = super_ind$fitness,
-        adopted = (super_ind$fitness > best_ind$fitness)
+        fitness = if (!is.null(super_ind)) super_ind$fitness else best_ind$fitness,
+        adopted = adopted_pooled
       )
-      viewer$send(list(type = "pooled", data = evolution_log$pooled))
+      if (!is.null(viewer)) {
+        viewer$send(list(type = "pooled", data = evolution_log$pooled))
+      }
     }
   }
 
@@ -2117,12 +2129,17 @@ dynamic_population_decay_rate = 0.7,
     }
 
     # Append the final selected best individual's genes to historical best genes
-    historical_best_genes <- c(historical_best_genes, best_ind$genes)
+    if (!is.null(best_ind$genes) && length(best_ind$genes) > 0) {
+      historical_best_genes <- c(historical_best_genes, best_ind$genes)
+    }
+
+    deduped_historical_genes <- list()
+    super_ind_hist <- NULL
+    adopted_hist <- FALSE
 
     if (length(historical_best_genes) > 0) {
       # De-duplicate genes by their unique output column name
       unique_cols_hist <- unique(vapply(historical_best_genes, function(g) g$output_col, character(1)))
-      deduped_historical_genes <- list()
       for (gene in historical_best_genes) {
         if (gene$output_col %in% unique_cols_hist) {
           deduped_historical_genes[[gene$output_col]] <- gene
@@ -2130,7 +2147,9 @@ dynamic_population_decay_rate = 0.7,
         }
       }
       deduped_historical_genes <- unname(deduped_historical_genes)
+    }
 
+    if (length(deduped_historical_genes) > 0) {
       # Create the historical super-individual
       super_ind_hist <- create_individual(
         genes = deduped_historical_genes,
@@ -2170,6 +2189,7 @@ dynamic_population_decay_rate = 0.7,
         best_ind <- super_ind_hist
         best_ind$evaluator <- best_eval_curr
         best_ind_source <- "Adopted (Historical)"
+        adopted_hist <- TRUE
       } else {
         if (verbose) {
           message(sprintf(
@@ -2187,10 +2207,12 @@ dynamic_population_decay_rate = 0.7,
     if (record) {
       evolution_log$historical <- list(
         n_genes = length(deduped_historical_genes),
-        fitness = super_ind_hist$fitness,
-        adopted = (super_ind_hist$fitness > best_ind$fitness)
+        fitness = if (!is.null(super_ind_hist)) super_ind_hist$fitness else best_ind$fitness,
+        adopted = adopted_hist
       )
-      viewer$send(list(type = "historical", data = evolution_log$historical))
+      if (!is.null(viewer)) {
+        viewer$send(list(type = "historical", data = evolution_log$historical))
+      }
     }
   }
 
