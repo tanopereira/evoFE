@@ -115,6 +115,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          fitness_cache, threads, verbose, running_best_fitness,
                          metric = "default", allow_prune = TRUE,
                          complexity_penalty = 0, complexity_mode = "bic_dynamic",
+                         complexity_floor = 0.20,
                          baseline_fitness = NULL, n_samples = NULL, island = NULL, ...) {
   # Initialize running_best_fitness taking into account any already evaluated individuals in pop
   existing_fits <- vapply(pop, function(ind) if (is.null(ind$fitness) || is.na(ind$fitness)) -Inf else ind$fitness, double(1))
@@ -145,6 +146,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         threads = threads, metric = metric, verbose = verbose,
         allow_prune = allow_prune, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         running_best_fitness = running_best_fitness,
         baseline_fitness = baseline_fitness,
         n_samples = n_samples, ...
@@ -293,6 +295,7 @@ tournament_select <- function(pop, k = 3) {
 #' @param complexity_mode Character string specifying the complexity penalty strategy:
 #'   \code{"bic_dynamic"} (default, dynamically relaxes the penalty as fitness approaches the ideal ceiling),
 #'   \code{"bic"} (constant BIC penalty throughout evolution), or \code{"none"} (disabled).
+#' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}, representing a 20\% minimum floor of base BIC).
 #' @param migration Optional \code{evo_migration_config} object created by \code{migration_config()}.
 #' @param islands Integer. Number of islands for multi-island parallel evolution (default 1).
 #' @param migration_interval Integer. Number of generations between migrations (default 5).
@@ -366,6 +369,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             allowed_transformers = "all",
                             complexity_penalty = 0,
                             complexity_mode = "bic_dynamic",
+                            complexity_floor = 0.20,
                             migration = NULL,
                             islands = 1,
                             migration_interval = 5,
@@ -386,6 +390,9 @@ evolve_features <- function(data, target_col, task = "classification",
     stop("'complexity_penalty' must be a non-negative number.")
   }
   complexity_mode <- match.arg(complexity_mode, c("bic_dynamic", "bic", "none"))
+  if (!is.numeric(complexity_floor) || length(complexity_floor) != 1 || complexity_floor < 0 || complexity_floor > 1) {
+    stop("'complexity_floor' must be a numeric value between 0 and 1.")
+  }
 
   # If custom migration config is provided, sync islands count and topology from migration$topology
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
@@ -941,6 +948,7 @@ evolve_features <- function(data, target_col, task = "classification",
     shared_full = shared_full, state_cache = state_cache,
     threads = threads, metric = metric, verbose = verbose,
     complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+    complexity_floor = complexity_floor,
     baseline_fitness = NULL, running_best_fitness = NULL,
     n_samples = nrow(data), ...
   )
@@ -980,6 +988,7 @@ evolve_features <- function(data, target_col, task = "classification",
         threads = threads, metric = metric,
         verbose = FALSE, allow_prune = TRUE,
         complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         baseline_fitness = NULL, running_best_fitness = NULL,
         n_samples = nrow(data), ...
       )
@@ -1069,6 +1078,7 @@ evolve_features <- function(data, target_col, task = "classification",
         fitness_cache, threads, verbose, running_best_fitness,
         metric = metric, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         baseline_fitness = baseline_ind$fitness,
         n_samples = nrow(data), ...
       )
@@ -1286,6 +1296,7 @@ evolve_features <- function(data, target_col, task = "classification",
       fitness_cache, threads, verbose, running_best_fitness,
       metric = metric, complexity_penalty = complexity_penalty,
       complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
       baseline_fitness = baseline_ind$fitness,
       n_samples = nrow(data), ...
     )
@@ -1371,6 +1382,7 @@ evolve_features <- function(data, target_col, task = "classification",
           threads, verbose, island_best_fitness[j],
           metric = metric, complexity_penalty = complexity_penalty,
           complexity_mode = complexity_mode,
+          complexity_floor = complexity_floor,
           baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
           n_samples = nrow(data), island = j, ...
         )
@@ -1657,6 +1669,7 @@ evolve_features <- function(data, target_col, task = "classification",
                   threads, verbose, island_best_fitness[dest],
                   metric = metric, complexity_penalty = complexity_penalty,
                   complexity_mode = complexity_mode,
+                  complexity_floor = complexity_floor,
                   baseline_fitness = if (!is.null(island_baseline_inds[[dest]])) island_baseline_inds[[dest]]$fitness else baseline_ind$fitness,
                   n_samples = nrow(data), island = dest, ...
                 )
@@ -1987,6 +2000,7 @@ evolve_features <- function(data, target_col, task = "classification",
         threads, verbose, island_best_fitness[j],
         metric = metric, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
         n_samples = nrow(data), island = j, ...
       )
@@ -2030,6 +2044,7 @@ evolve_features <- function(data, target_col, task = "classification",
           allow_prune = FALSE,
           complexity_penalty = complexity_penalty,
           complexity_mode = complexity_mode,
+          complexity_floor = complexity_floor,
           baseline_fitness = baseline_ind$fitness,
           running_best_fitness = global_best_fitness,
           n_samples = nrow(data), ...
@@ -2065,6 +2080,7 @@ evolve_features <- function(data, target_col, task = "classification",
         allow_prune = FALSE,
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         baseline_fitness = baseline_ind$fitness,
         running_best_fitness = global_best_fitness,
         n_samples = nrow(data), ...
@@ -2159,6 +2175,7 @@ evolve_features <- function(data, target_col, task = "classification",
         threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         baseline_fitness = baseline_ind$fitness,
         running_best_fitness = best_ind$fitness,
         n_samples = nrow(data), ...
@@ -2256,6 +2273,7 @@ evolve_features <- function(data, target_col, task = "classification",
         threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
         baseline_fitness = baseline_ind$fitness,
         running_best_fitness = best_ind$fitness,
         n_samples = nrow(data), ...

@@ -24,6 +24,7 @@ evaluate_fitness(
   allow_prune = TRUE,
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
+  complexity_floor = 0.2,
   running_best_fitness = NULL,
   baseline_fitness = NULL,
   n_samples = NULL,
@@ -71,6 +72,8 @@ When set to 1.0, applies standard BIC parsimony pressure. Default \code{0} disab
 \item{complexity_mode}{Character. Complexity penalty strategy: "bic_dynamic" (default, scales
 with dataset size and relaxes as fitness approaches the ideal), "bic" (scales with dataset size,
 constant across generations), or "none" (no penalty).}
+
+\item{complexity_floor}{Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}).}
 
 \item{running_best_fitness}{Optional numeric. Current running best fitness for dynamic BIC.}
 

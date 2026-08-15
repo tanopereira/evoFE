@@ -13,7 +13,7 @@ compute_complexity_penalty(
   task = "classification",
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
-  epsilon_floor = 0.05
+  epsilon_floor = 0.2
 )
 }
 \arguments{
@@ -33,7 +33,7 @@ compute_complexity_penalty(
 
 \item{complexity_mode}{Character. "bic_dynamic", "bic", or "none".}
 
-\item{epsilon_floor}{Numeric. Minimum safety floor factor for dynamic BIC (default 0.05).}
+\item{epsilon_floor}{Numeric. Minimum safety floor factor for dynamic BIC (default 0.20, representing 20\% of base BIC).}
 }
 \value{
 Non-negative numeric penalty to subtract from raw fitness.

@@ -26,6 +26,7 @@ evaluate_pop(
   allow_prune = TRUE,
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
+  complexity_floor = 0.2,
   baseline_fitness = NULL,
   n_samples = NULL,
   island = NULL,

@@ -29,6 +29,7 @@ evolve_features(
   allowed_transformers = "all",
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
+  complexity_floor = 0.2,
   migration = NULL,
   islands = 1,
   migration_interval = 5,
@@ -118,6 +119,8 @@ A value of \code{0} disables complexity penalisation.}
 \item{complexity_mode}{Character string specifying the complexity penalty strategy:
 \code{"bic_dynamic"} (default, dynamically relaxes the penalty as fitness approaches the ideal ceiling),
 \code{"bic"} (constant BIC penalty throughout evolution), or \code{"none"} (disabled).}
+
+\item{complexity_floor}{Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}, representing a 20\% minimum floor of base BIC).}
 
 \item{migration}{Optional \code{evo_migration_config} object created by \code{migration_config()}.}
 

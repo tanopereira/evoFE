@@ -250,7 +250,7 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param task Character. "classification", "multiclass", or "regression".
 #' @param complexity_penalty Numeric. Dimensionless penalty multiplier (default 0).
 #' @param complexity_mode Character. "bic_dynamic", "bic", or "none".
-#' @param epsilon_floor Numeric. Minimum safety floor factor for dynamic BIC (default 0.05).
+#' @param epsilon_floor Numeric. Minimum safety floor factor for dynamic BIC (default 0.20, representing 20\% of base BIC).
 #' @return Non-negative numeric penalty to subtract from raw fitness.
 #' @export
 compute_complexity_penalty <- function(n_genes,
@@ -261,7 +261,7 @@ compute_complexity_penalty <- function(n_genes,
                                        task = "classification",
                                        complexity_penalty = 0,
                                        complexity_mode = "bic_dynamic",
-                                       epsilon_floor = 0.05) {
+                                       epsilon_floor = 0.20) {
   if (complexity_penalty <= 0 || n_genes <= 0 || complexity_mode == "none") {
     return(0)
   }
@@ -343,6 +343,7 @@ compute_complexity_penalty <- function(n_genes,
 #' @param complexity_mode Character. Complexity penalty strategy: "bic_dynamic" (default, scales
 #'   with dataset size and relaxes as fitness approaches the ideal), "bic" (scales with dataset size,
 #'   constant across generations), or "none" (no penalty).
+#' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}).
 #' @param running_best_fitness Optional numeric. Current running best fitness for dynamic BIC.
 #' @param baseline_fitness Optional numeric. Generation 0 baseline fitness for dynamic BIC.
 #' @param n_samples Optional integer. Dataset sample size N for BIC calculations. Defaults to nrow(data).
@@ -360,6 +361,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              state_cache = NULL, threads = 2,
                              metric = "default", verbose = FALSE, allow_prune = TRUE,
                              complexity_penalty = 0, complexity_mode = "bic_dynamic",
+                             complexity_floor = 0.20,
                              running_best_fitness = NULL, baseline_fitness = NULL,
                              n_samples = NULL, ...) {
   if (!is.na(ind$fitness)) {
@@ -485,7 +487,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         metric = metric,
         task = task,
         complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode
+        complexity_mode = complexity_mode,
+        epsilon_floor = complexity_floor
       )
       ind$penalty <- pen
       ind$fitness <- raw_score - pen
@@ -637,7 +640,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         metric = metric,
         task = task,
         complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode
+        complexity_mode = complexity_mode,
+        epsilon_floor = complexity_floor
       )
       ind$penalty <- pen
       ind$fitness <- raw_score - pen

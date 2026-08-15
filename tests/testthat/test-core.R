@@ -2070,7 +2070,7 @@ test_that("compute_complexity_penalty correctly calculates static BIC", {
   expect_gt(pen_100, pen_10000)
 })
 
-test_that("compute_complexity_penalty dynamically scales convergence and enforces 5% safety floor", {
+test_that("compute_complexity_penalty dynamically scales convergence and enforces 20% default safety floor", {
   n <- 1000
   bic_base <- 1.0 * (log(n) / (2 * n))
 
@@ -2089,26 +2089,27 @@ test_that("compute_complexity_penalty dynamically scales convergence and enforce
   )
   expect_equal(pen_mid, 0.5 * bic_base)
 
-  # 90% closed (best = 0.97): factor = 0.10
+  # 70% closed (best = 0.91): factor = 0.30
   pen_late <- compute_complexity_penalty(
-    n_genes = 1, n_samples = n, running_best_fitness = 0.97, baseline_fitness = 0.70,
+    n_genes = 1, n_samples = n, running_best_fitness = 0.91, baseline_fitness = 0.70,
     task = "classification", complexity_penalty = 1.0, complexity_mode = "bic_dynamic"
   )
-  expect_equal(pen_late, 0.10 * bic_base)
+  expect_equal(pen_late, 0.30 * bic_base)
 
-  # Near ceiling (best = 0.999): clamped at 0.05 safety floor
+  # Near ceiling (best = 0.999): clamped at 0.20 safety floor
   pen_floor <- compute_complexity_penalty(
     n_genes = 1, n_samples = n, running_best_fitness = 0.999, baseline_fitness = 0.70,
     task = "classification", complexity_penalty = 1.0, complexity_mode = "bic_dynamic"
   )
-  expect_equal(pen_floor, 0.05 * bic_base)
+  expect_equal(pen_floor, 0.20 * bic_base)
 
-  # At or beyond ceiling (best = 1.000): clamped at 0.05 safety floor
-  pen_ceil <- compute_complexity_penalty(
-    n_genes = 1, n_samples = n, running_best_fitness = 1.000, baseline_fitness = 0.70,
-    task = "classification", complexity_penalty = 1.0, complexity_mode = "bic_dynamic"
+  # Custom epsilon_floor (e.g. 0.05)
+  pen_custom_floor <- compute_complexity_penalty(
+    n_genes = 1, n_samples = n, running_best_fitness = 0.999, baseline_fitness = 0.70,
+    task = "classification", complexity_penalty = 1.0, complexity_mode = "bic_dynamic",
+    epsilon_floor = 0.05
   )
-  expect_equal(pen_ceil, 0.05 * bic_base)
+  expect_equal(pen_custom_floor, 0.05 * bic_base)
 })
 
 test_that("compute_complexity_penalty handles regression (negative loss) metrics correctly", {
@@ -2130,12 +2131,12 @@ test_that("compute_complexity_penalty handles regression (negative loss) metrics
   )
   expect_equal(pen_reg_mid, 0.5 * bic_base)
 
-  # Near ideal (best = -0.01): factor clamped to 0.05
+  # Near ideal (best = -0.01): factor clamped to 0.20 default floor
   pen_reg_floor <- compute_complexity_penalty(
     n_genes = 1, n_samples = n, running_best_fitness = -0.01, baseline_fitness = -100,
     task = "regression", complexity_penalty = 1.0, complexity_mode = "bic_dynamic"
   )
-  expect_equal(pen_reg_floor, 0.05 * bic_base)
+  expect_equal(pen_reg_floor, 0.20 * bic_base)
 })
 
 test_that("evolve_features runs successfully with complexity_mode = bic_dynamic and bic", {
@@ -2228,3 +2229,24 @@ test_that("print.evo_recipe and summary.evo_recipe output raw_fitness and penalt
   expect_true(any(grepl("Validation Metric Score:", s_out) | grepl("Best CV/Split Fitness:", s_out)))
 })
 
+test_that("evolve_features validates complexity_floor and passes it to evaluation", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(30),
+    target = sample(0:1, 30, replace = TRUE)
+  )
+
+  # Invalid complexity_floor (< 0 or > 1 or non-numeric)
+  expect_error(evolve_features(df, "target", complexity_floor = -0.1), "complexity_floor")
+  expect_error(evolve_features(df, "target", complexity_floor = 1.5), "complexity_floor")
+  expect_error(evolve_features(df, "target", complexity_floor = "high"), "complexity_floor")
+
+  # Valid complexity_floor
+  rec <- evolve_features(
+    df, "target",
+    generations = 1, pop_size = 2, cv_folds = 2,
+    complexity_penalty = 1.0, complexity_mode = "bic_dynamic",
+    complexity_floor = 0.25, verbose = FALSE
+  )
+  expect_s3_class(rec, "evo_recipe")
+})
