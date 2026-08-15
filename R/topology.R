@@ -9,7 +9,6 @@
 #' @param cols Optional integer. Number of grid columns.
 #' @param dimension Optional integer. Hypercube dimension.
 #' @param tiers Integer. Number of tiers for pyramid topology (default: 3).
-#' @param adj An N x N numeric matrix or list of integer vectors specifying custom adjacency.
 #' @param topology An \code{evo_topology} object.
 #' @param island_id Integer. 1-indexed island ID (1 to \code{islands}).
 #' @param state Optional list containing runtime evolution state (populations, fitnesses, stagnation counts).
@@ -17,7 +16,6 @@
 #'
 #' @return An object of class \code{evo_topology} (and specific subclass), or neighbor node IDs.
 #' @name topology
-#' @docType package
 NULL
 
 # Internal helper to populate adj_list and adj_matrix on any topology object

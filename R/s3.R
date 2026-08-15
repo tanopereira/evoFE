@@ -13,7 +13,17 @@ print.evo_recipe <- function(x, ...) {
   if (!is.null(x$metric)) {
     cat(sprintf("  Metric:       %s\n", x$metric))
   }
-  cat(sprintf("  Best Fitness: %.4f\n", x$best_individual$fitness))
+  raw_fit <- x$best_individual$raw_fitness
+  pen_val <- x$best_individual$penalty
+  if (!is.null(raw_fit) && !is.na(raw_fit)) {
+    if (!is.null(pen_val) && is.finite(pen_val) && pen_val > 0) {
+      cat(sprintf("  Validation Score: %.4f (Penalized Selection Fitness: %.4f)\n", raw_fit, x$best_individual$fitness))
+    } else {
+      cat(sprintf("  Validation Score: %.4f\n", raw_fit))
+    }
+  } else {
+    cat(sprintf("  Best Fitness: %.4f\n", x$best_individual$fitness))
+  }
   
   gene_count <- length(x$best_individual$genes)
   cat(sprintf("  Evolved Features: %d\n", gene_count))
@@ -66,6 +76,8 @@ summary.evo_recipe <- function(object, ...) {
     evaluator = object$evaluator,
     task = object$task,
     metric = object$metric,
+    raw_fitness = object$best_individual$raw_fitness,
+    penalty = object$best_individual$penalty,
     best_fitness = object$best_individual$fitness,
     holdout_fitness = object$best_individual$holdout_fitness,
     num_genes = length(object$best_individual$genes),
@@ -99,14 +111,22 @@ summary.evo_recipe <- function(object, ...) {
 #' @export
 print.summary_evo_recipe <- function(x, ...) {
   cat("=== Evolutionary Feature Engineering Summary ===\n")
-  cat(sprintf("ML Evaluator:          %s\n", x$evaluator))
-  cat(sprintf("Task type:             %s\n", x$task))
+  cat(sprintf("ML Evaluator:             %s\n", x$evaluator))
+  cat(sprintf("Task type:                %s\n", x$task))
   if (!is.null(x$metric)) {
-    cat(sprintf("Optimization Metric:   %s\n", x$metric))
+    cat(sprintf("Optimization Metric:      %s\n", x$metric))
   }
-  cat(sprintf("Best CV/Split Fitness: %.6f\n", x$best_fitness))
+  if (!is.null(x$raw_fitness) && !is.na(x$raw_fitness)) {
+    cat(sprintf("Validation Metric Score:  %.6f\n", x$raw_fitness))
+    if (!is.null(x$penalty) && is.finite(x$penalty) && x$penalty > 0) {
+      cat(sprintf("Complexity Penalty:       %.6f\n", x$penalty))
+      cat(sprintf("Selection Fitness:        %.6f\n", x$best_fitness))
+    }
+  } else {
+    cat(sprintf("Best CV/Split Fitness:    %.6f\n", x$best_fitness))
+  }
   if (!is.null(x$holdout_fitness) && !is.na(x$holdout_fitness)) {
-    cat(sprintf("Best Holdout Fitness:  %.6f\n", x$holdout_fitness))
+    cat(sprintf("Best Holdout Fitness:     %.6f\n", x$holdout_fitness))
   }
   cat(sprintf("Number of Evolved Features: %d\n\n", x$num_genes))
   

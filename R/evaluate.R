@@ -14,14 +14,14 @@
 #' @export
 apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, data_hash = NULL) {
   t_def <- evo_transformers[[gene$transformer_name]]
-  
+
   col_exists_train <- gene$output_col %in% names(train_data)
   col_exists_val <- if (!is.null(val_data)) gene$output_col %in% names(val_data) else TRUE
-  
+
   if (col_exists_train && col_exists_val && !is.null(gene$state)) {
     return(list(train = train_data, val = val_data, gene = gene))
   }
-  
+
   state <- NULL
   has_cached_state <- FALSE
   cache_key <- NULL
@@ -36,7 +36,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       has_cached_state <- TRUE
     }
   }
-  
+
   # If we are fitting (target_col provided) and it's stateful
   if (!has_cached_state && !is.null(t_def$fit_func) && !is.null(target_col)) {
     if (!is.null(gene$state)) {
@@ -57,13 +57,13 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     # If we are predicting
     state <- gene$state
   }
-  
+
   out_type <- if (!is.null(t_def$output_type)) t_def$output_type else "numeric"
-  
+
   # Apply to train
   if (!col_exists_train) {
     new_col_train <- t_def$apply_func(train_data, gene, state)
-    
+
     # Reject constant columns (0 variance)
     if (!is.null(target_col) && length(unique(new_col_train[!is.na(new_col_train)])) <= 1) {
       stop("Constant column generated")
@@ -71,7 +71,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 
     # Reject columns that are near-perfect duplicates of existing features.
     # Guard with !is.null(target_col): during inference (holdout/predict) we
-    # must apply every gene that was accepted at training time — correlation on
+    # must apply every gene that was accepted at training time <U+2014> correlation on
     # a different data split must never prune a gene the model depends on.
     cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.95)
     if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
@@ -81,36 +81,37 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         existing_num_cols <- existing_num_cols[existing_num_cols != gene$output_col]
       }
       if (length(existing_num_cols) > 0) {
-      new_is_finite <- is.finite(new_col_train)
-      if (sum(new_is_finite) > 2 && suppressWarnings(stats::sd(new_col_train[new_is_finite])) > 0) {
-        for (ecol in existing_num_cols) {
-          ev <- train_data[[ecol]]
-          # Find indices where both vectors are finite to preserve row alignment
-          valid_idx <- new_is_finite & is.finite(ev)
-          if (sum(valid_idx) > 2) {
-            r <- tryCatch(
-              suppressWarnings(abs(stats::cor(new_col_train[valid_idx], ev[valid_idx],
-                             use = "complete.obs"))),
-              error = function(e) 0
-            )
-            if (!is.na(r) && r >= cor_threshold) stop("Redundant column")
+        new_is_finite <- is.finite(new_col_train)
+        if (sum(new_is_finite) > 2 && suppressWarnings(stats::sd(new_col_train[new_is_finite])) > 0) {
+          for (ecol in existing_num_cols) {
+            ev <- train_data[[ecol]]
+            # Find indices where both vectors are finite to preserve row alignment
+            valid_idx <- new_is_finite & is.finite(ev)
+            if (sum(valid_idx) > 2) {
+              r <- tryCatch(
+                suppressWarnings(abs(stats::cor(new_col_train[valid_idx], ev[valid_idx],
+                  use = "complete.obs"
+                ))),
+                error = function(e) 0
+              )
+              if (!is.na(r) && r >= cor_threshold) stop("Redundant column")
+            }
           }
         }
-      }
       }
     }
 
     if (out_type == "categorical") {
       new_col_train <- as.factor(new_col_train)
     }
-    
+
     if (data.table::is.data.table(train_data)) {
       train_data[, (gene$output_col) := new_col_train]
     } else {
       train_data[[gene$output_col]] <- new_col_train
     }
   }
-  
+
   # Apply to val
   if (!is.null(val_data) && !col_exists_val) {
     new_col_val <- t_def$apply_func(val_data, gene, state)
@@ -126,7 +127,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       val_data[[gene$output_col]] <- new_col_val
     }
   }
-  
+
   list(train = train_data, val = val_data, gene = gene)
 }
 
@@ -150,25 +151,28 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
   } else {
     NULL
   }
-  
+
   # Pre-compute target column hash once for all genes (avoids redundant hashing)
   pre_hash <- if (!is.null(state_cache) && !is.null(target_col)) {
     digest::digest(dt_train[[target_col]], algo = "xxhash64")
   } else {
     NULL
   }
-  
+
   new_genes <- list()
   for (gene in ind$genes) {
-    res <- tryCatch({
-      if (!all(gene$input_cols %in% names(dt_train))) {
-        stop("Input column missing")
+    res <- tryCatch(
+      {
+        if (!all(gene$input_cols %in% names(dt_train))) {
+          stop("Input column missing")
+        }
+        apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash)
+      },
+      error = function(e) {
+        NULL
       }
-      apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash)
-    }, error = function(e) {
-      NULL
-    })
-    
+    )
+
     if (is.null(res) || !is.null(res$skip)) {
       if (allow_prune) {
         next
@@ -176,14 +180,14 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
         return(NULL)
       }
     }
-    
+
     dt_train <- res$train
     dt_val <- res$val
     new_genes[[length(new_genes) + 1L]] <- res$gene
   }
-  
+
   ind$genes <- new_genes
-  
+
   # Safety check: if genes were pruned and total active columns fell below min_active,
   # restore raw columns to meet the safety floor
   all_num <- ind$all_numeric_cols
@@ -201,14 +205,16 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
       if (length(inactive_cols) > 0) {
         to_activate <- sample(inactive_cols, min(length(inactive_cols), needed))
         for (col in to_activate) {
-          if (col %in% all_num) ind$numeric_cols <- unique(c(ind$numeric_cols, col))
-          else if (col %in% all_cat) ind$categorical_cols <- unique(c(ind$categorical_cols, col))
-          else if (col %in% all_date) ind$datetime_cols <- unique(c(ind$datetime_cols, col))
+          if (col %in% all_num) {
+            ind$numeric_cols <- unique(c(ind$numeric_cols, col))
+          } else if (col %in% all_cat) {
+            ind$categorical_cols <- unique(c(ind$categorical_cols, col))
+          } else if (col %in% all_date) ind$datetime_cols <- unique(c(ind$datetime_cols, col))
         }
       }
     }
   }
-  
+
   list(train = dt_train, val = dt_val, ind = ind)
 }
 
@@ -230,7 +236,90 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 }
 
 
+#' Compute Complexity Penalty for an Individual
+#'
+#' Computes the parsimony complexity penalty using Bayesian Information Criterion (BIC)
+#' scaling (\code{ln(N) / (2N)}) and optional dynamic convergence scaling based on the
+#' relative gap to the metric ceiling.
+#'
+#' @param n_genes Integer. Number of evolved genes in the individual.
+#' @param n_samples Integer. Number of dataset samples (rows).
+#' @param running_best_fitness Numeric. Current running best fitness in the population/island.
+#' @param baseline_fitness Numeric. Generation 0 baseline fitness (raw features only).
+#' @param metric Character or function. Metric being optimized.
+#' @param task Character. "classification", "multiclass", or "regression".
+#' @param complexity_penalty Numeric. Dimensionless penalty multiplier (default 0).
+#' @param complexity_mode Character. "bic_dynamic", "bic", or "none".
+#' @param epsilon_floor Numeric. Minimum safety floor factor for dynamic BIC (default 0.05).
+#' @return Non-negative numeric penalty to subtract from raw fitness.
+#' @export
+compute_complexity_penalty <- function(n_genes,
+                                       n_samples,
+                                       running_best_fitness = NULL,
+                                       baseline_fitness = NULL,
+                                       metric = "default",
+                                       task = "classification",
+                                       complexity_penalty = 0,
+                                       complexity_mode = "bic_dynamic",
+                                       epsilon_floor = 0.05) {
+  if (complexity_penalty <= 0 || n_genes <= 0 || complexity_mode == "none") {
+    return(0)
+  }
+
+  n_samples <- as.numeric(n_samples)
+  if (is.na(n_samples) || n_samples < 2) {
+    n_samples <- 2
+  }
+
+  # Base BIC penalty factor per gene: lambda0 * ln(N) / (2N)
+  bic_base <- complexity_penalty * (log(n_samples) / (2 * n_samples))
+
+  if (complexity_mode == "bic") {
+    return(bic_base * n_genes)
+  }
+
+  # Dynamic BIC mode: scale by normalized gap to ideal
+  if (task %in% c("classification", "multiclass")) {
+    ideal <- 1.0
+  } else {
+    # Regression: fitness is negative loss (-RMSE, -MAE) where ideal is 0.0
+    ideal <- 0.0
+  }
+
+  # If baseline or running_best is missing/NA, default to 100% of BIC
+  if (is.null(baseline_fitness) || is.null(running_best_fitness) ||
+    is.na(baseline_fitness) || is.na(running_best_fitness) ||
+    !is.finite(baseline_fitness) || !is.finite(running_best_fitness)) {
+    return(bic_base * n_genes)
+  }
+
+  denom <- ideal - baseline_fitness
+  numer <- ideal - running_best_fitness
+
+  if (task %in% c("classification", "multiclass")) {
+    if (denom <= 1e-12) {
+      gap_ratio <- 1.0
+    } else {
+      gap_ratio <- numer / denom
+    }
+  } else {
+    if (abs(denom) <= 1e-12) {
+      gap_ratio <- 1.0
+    } else {
+      gap_ratio <- numer / denom
+    }
+  }
+
+  # Clamp gap_ratio between epsilon_floor and 1.0
+  dynamic_factor <- max(epsilon_floor, min(1.0, gap_ratio))
+
+  bic_base * dynamic_factor * n_genes
+}
+
 #' Evaluate the fitness of an individual
+#'
+#' Trains a model using the features specified by the individual's recipe and evaluates
+#' performance using cross-validation or train/val split.
 #'
 #' @param ind An evo_individual object.
 #' @param data A data.frame or data.table containing the dataset.
@@ -249,25 +338,34 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
 #' @param verbose Logical indicating if progress should be printed.
 #' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
-#' @param complexity_penalty Non-negative numeric. Subtracted from raw fitness as
-#'   \code{complexity_penalty * n_genes}, penalising longer recipes to favour
-#'   parsimony.  Default \code{0} disables the penalty.
+#' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
+#'   When set to 1.0, applies standard BIC parsimony pressure. Default \code{0} disables the penalty.
+#' @param complexity_mode Character. Complexity penalty strategy: "bic_dynamic" (default, scales
+#'   with dataset size and relaxes as fitness approaches the ideal), "bic" (scales with dataset size,
+#'   constant across generations), or "none" (no penalty).
+#' @param running_best_fitness Optional numeric. Current running best fitness for dynamic BIC.
+#' @param baseline_fitness Optional numeric. Generation 0 baseline fitness for dynamic BIC.
+#' @param n_samples Optional integer. Dataset sample size N for BIC calculations. Defaults to nrow(data).
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
 #'   the computed score (higher is better), \code{importances} set to a named
 #'   numeric vector of feature importances, \code{holdout_fitness} set to
 #'   \code{NULL}, and \code{genes} updated with fitted transformer states.
 #' @export
-evaluate_fitness <- function(ind, data, target_col, task = "classification", 
+evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              cv_folds = 3, evaluation_strategy = "cv",
                              split_ids = NULL, shared_splits = NULL,
-                             evaluator = "lightgbm", fold_ids = NULL, 
-                             shared_folds = NULL, shared_full = NULL, 
+                             evaluator = "lightgbm", fold_ids = NULL,
+                             shared_folds = NULL, shared_full = NULL,
                              state_cache = NULL, threads = 2,
                              metric = "default", verbose = FALSE, allow_prune = TRUE,
-                             complexity_penalty = 0, ...) {
-  if (!is.na(ind$fitness)) return(ind)
-  
+                             complexity_penalty = 0, complexity_mode = "bic_dynamic",
+                             running_best_fitness = NULL, baseline_fitness = NULL,
+                             n_samples = NULL, ...) {
+  if (!is.na(ind$fitness)) {
+    return(ind)
+  }
+
   num_class <- NULL
   classes <- NULL
   if (task == "multiclass") {
@@ -275,7 +373,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     classes <- levels(target_factor)
     num_class <- length(classes)
   }
-  
+
   if (evaluation_strategy == "split") {
     # Train / Validation split strategy
     if (!is.null(shared_splits)) {
@@ -285,32 +383,37 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       train_fold <- data.table::as.data.table(data[split_ids == "train", ])
       val_fold <- data.table::as.data.table(data[split_ids == "val", ])
     }
-    
+
     # Copy train/val folds so we can modify them when applying recipe
     train_fold <- data.table::copy(train_fold)
     val_fold <- data.table::copy(val_fold)
-    
+
     # Apply genes
-    res <- tryCatch({
-      apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
-    }, error = function(e) {
-      NULL
-    })
-    
+    res <- tryCatch(
+      {
+        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
+      },
+      error = function(e) {
+        NULL
+      }
+    )
+
     if (is.null(res)) {
       # Lethal mutation: invalid gene dependency graph
+      ind$raw_fitness <- -Inf
+      ind$penalty <- 0.0
       ind$fitness <- -Inf
       ind$holdout_fitness <- NULL
       return(ind)
     }
-    
+
     train_fold_feat <- res$train
     val_fold_feat <- res$val
-    
+
     # Features = original + new
     gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
     features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
-    
+
     # Convert features to numeric matrix
     has_cat <- length(res$ind$categorical_cols) > 0 || length(res$ind$datetime_cols) > 0 ||
       any(vapply(res$ind$genes, function(g) {
@@ -329,13 +432,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       y_train <- as.integer(factor(y_train, levels = classes)) - 1
       y_val <- as.integer(factor(y_val, levels = classes)) - 1
     }
-    
-    res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
-                              evaluator = evaluator, threads = threads,
-                              num_class = num_class, metric = metric,
-                              verbose = verbose, ...)
+
+    res_model <- train_model(x_train, y_train, x_val,
+      y_val = y_val, task = task,
+      evaluator = evaluator, threads = threads,
+      num_class = num_class, metric = metric,
+      verbose = verbose, ...
+    )
     preds <- res_model$predictions
-    
+
     # Store importances (single fold)
     if (!is.null(res_model$importances) && length(res_model$importances) > 0) {
       imp <- res_model$importances
@@ -349,37 +454,53 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       ind$importances <- numeric(0)
     }
-    
+
     if (!is.null(res_model$best_params)) {
       ind$best_params <- res_model$best_params
     }
-    
-    # Validation score -> fitness
+
+    # Validation score -> raw_fitness
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-      ind$fitness <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+      raw_score <- compute_metric(y_val_encoded, preds, task, metric, num_class)
       ind$val_preds <- preds
       ind$y_val <- y_val_encoded
     } else {
-      ind$fitness <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
+      raw_score <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
       ind$val_preds <- preds
       ind$y_val <- val_fold_feat[[target_col]]
     }
 
+    ind$raw_fitness <- raw_score
+    ind$penalty <- 0.0
+
     # Complexity penalty: discourage long recipes (parsimony pressure)
-    if (complexity_penalty > 0 && is.finite(ind$fitness)) {
-      ind$fitness <- ind$fitness - complexity_penalty * length(res$ind$genes)
+    if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
+      n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
+      pen <- compute_complexity_penalty(
+        n_genes = length(res$ind$genes),
+        n_samples = n_samp,
+        running_best_fitness = running_best_fitness,
+        baseline_fitness = baseline_fitness,
+        metric = metric,
+        task = task,
+        complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode
+      )
+      ind$penalty <- pen
+      ind$fitness <- raw_score - pen
+    } else {
+      ind$fitness <- raw_score
     }
 
     ind$holdout_fitness <- NULL
-    
+
     # Propagate the updated genes (with state)
     ind$genes <- res$ind$genes
-    
   } else {
     # --- Existing CV strategy ---
     use_shared <- !is.null(shared_folds) && !is.null(shared_full)
-    
+
     if (use_shared) {
       dt <- shared_full
     } else {
@@ -391,10 +512,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         folds <- fold_ids
       }
     }
-    
+
     metrics <- rep(NA_real_, cv_folds)
     fold_importances <- list()
-    
+
     n_total <- nrow(dt)
     if (task == "multiclass") {
       oof_preds <- matrix(NA_real_, nrow = n_total, ncol = num_class)
@@ -415,26 +536,29 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         train_fold <- dt[train_idx, ]
         val_fold <- dt[val_idx, ]
       }
-      
-      res <- tryCatch({
-        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
-      }, error = function(e) {
-        NULL
-      })
-      
+
+      res <- tryCatch(
+        {
+          apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
+        },
+        error = function(e) {
+          NULL
+        }
+      )
+
       if (is.null(res)) {
-        # This fold failed (e.g. constant column on this split) — skip it.
+        # This fold failed (e.g. constant column on this split) <U+2014> skip it.
         # The individual is only killed if every fold fails (handled below).
         next
       }
-      
+
       train_fold_feat <- res$train
       val_fold_feat <- res$val
-      
+
       # Features = original + new
       gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
       features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
-      
+
       # Convert features to numeric matrix
       has_cat <- length(res$ind$categorical_cols) > 0 || length(res$ind$datetime_cols) > 0 ||
         any(vapply(res$ind$genes, function(g) {
@@ -453,11 +577,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         y_train <- as.integer(factor(y_train, levels = classes)) - 1
         y_val <- as.integer(factor(y_val, levels = classes)) - 1
       }
-      
-      res_model <- train_model(x_train, y_train, x_val, y_val = y_val, task = task,
-                                evaluator = evaluator, threads = threads,
-                                num_class = num_class, metric = metric,
-                                verbose = verbose, ...)
+
+      res_model <- train_model(x_train, y_train, x_val,
+        y_val = y_val, task = task,
+        evaluator = evaluator, threads = threads,
+        num_class = num_class, metric = metric,
+        verbose = verbose, ...
+      )
       preds <- res_model$predictions
       if (!is.null(res_model$importances)) {
         fold_importances[[f]] <- res_model$importances
@@ -465,7 +591,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       if (!is.null(res_model$best_params)) {
         ind$best_params <- res_model$best_params
       }
-      
+
       if (task == "multiclass") {
         y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
         metrics[f] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
@@ -484,25 +610,41 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           oof_y[val_idx] <- val_fold_feat[[target_col]]
         }
       }
-      
+
       # Clean up the model if the evaluator provides a cleanup function (e.g. to prevent TF memory leaks)
       if (!is.null(evo_evaluators[[evaluator]]$cleanup_func)) {
         evo_evaluators[[evaluator]]$cleanup_func(res_model$model)
       }
     }
-    
+
     # Fitness: average over successful folds only; -Inf only when every fold failed.
     finite_metrics <- metrics[!is.na(metrics)]
-    ind$fitness <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
+    raw_score <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
 
+    ind$raw_fitness <- raw_score
+    ind$penalty <- 0.0
     ind$val_preds <- oof_preds
     ind$y_val <- oof_y
 
     # Complexity penalty: discourage long recipes (parsimony pressure)
-    if (complexity_penalty > 0 && is.finite(ind$fitness)) {
-      ind$fitness <- ind$fitness - complexity_penalty * length(ind$genes)
+    if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
+      n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
+      pen <- compute_complexity_penalty(
+        n_genes = length(ind$genes),
+        n_samples = n_samp,
+        running_best_fitness = running_best_fitness,
+        baseline_fitness = baseline_fitness,
+        metric = metric,
+        task = task,
+        complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode
+      )
+      ind$penalty <- pen
+      ind$fitness <- raw_score - pen
+    } else {
+      ind$fitness <- raw_score
     }
-    
+
     # Aggregate importances across folds
     all_feats <- unique(unlist(lapply(fold_importances, names)))
     if (length(all_feats) > 0) {
@@ -512,7 +654,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         })
         mean(vals)
       })
-      
+
       imp_sum <- sum(avg_imp, na.rm = TRUE)
       if (imp_sum > 0) {
         avg_imp <- avg_imp / imp_sum
@@ -523,17 +665,17 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       ind$importances <- numeric(0)
     }
-    
+
     ind$holdout_fitness <- NULL
   }
-  
+
   ind
 }
 
 #' Evaluate holdout fitness for an individual
 #' @keywords internal
-evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits, 
-                                     target_col, task, evaluator, threads, 
+evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
+                                     target_col, task, evaluator, threads,
                                      state_cache, classes, num_class, metric = "default",
                                      verbose = FALSE, ...) {
   if (!is.null(shared_splits)) {
@@ -545,31 +687,34 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     val_fold <- data.table::as.data.table(data[split_ids == "val", ])
     holdout_fold <- if ("holdout" %in% split_ids) data.table::as.data.table(data[split_ids == "holdout", ]) else NULL
   }
-  
+
   if (is.null(holdout_fold)) {
     ind$holdout_fitness <- NULL
     return(ind)
   }
-  
+
   train_fold <- data.table::copy(train_fold)
   val_fold <- data.table::copy(val_fold)
   holdout_fold <- data.table::copy(holdout_fold)
-  
-  res <- tryCatch({
-    apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
-  }, error = function(e) NULL)
-  
+
+  res <- tryCatch(
+    {
+      apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
+    },
+    error = function(e) NULL
+  )
+
   if (is.null(res)) {
     ind$holdout_fitness <- -Inf
     return(ind)
   }
-  
+
   train_fold_feat <- res$train
   val_fold_feat <- res$val
-  
+
   gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
   features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
-  
+
   x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
   x_val <- data.matrix(val_fold_feat[, features, with = FALSE])
   x_train[!is.finite(x_train)] <- NA
@@ -580,7 +725,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     y_train <- as.integer(factor(y_train, levels = classes)) - 1
     y_val <- as.integer(factor(y_val, levels = classes)) - 1
   }
-  
+
   # Crucial distinction: The holdout fold is strictly for testing generalization performance on unseen
   # data, and must NEVER be used to drive parameter tuning. Therefore, we bypass the tuner (e.g.
   # lightgbm_mbo) and train the base evaluator (e.g. lightgbm) directly using the best parameters
@@ -590,37 +735,44 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   if (!is.null(eval_entry) && !is.null(eval_entry$base_evaluator)) {
     final_evaluator <- eval_entry$base_evaluator
   }
-  
+
   # Merge best_params into ...
   final_args <- utils::modifyList(list(...), as.list(ind$best_params))
-  
+
   res_model <- do.call(train_model, c(
-    list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task,
-         evaluator = final_evaluator, threads = threads,
-         num_class = num_class, metric = metric,
-         verbose = verbose),
+    list(
+      x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task,
+      evaluator = final_evaluator, threads = threads,
+      num_class = num_class, metric = metric,
+      verbose = verbose
+    ),
     final_args
   ))
-  
+
   if (!is.null(res_model$best_params)) {
     ind$best_params <- res_model$best_params
   }
-  
-  res_holdout <- tryCatch({
-    apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
-  }, error = function(e) NULL)
-  
+
+  res_holdout <- tryCatch(
+    {
+      apply_individual(res$ind, holdout_fold, NULL, NULL, state_cache = state_cache)
+    },
+    error = function(e) NULL
+  )
+
   if (!is.null(res_holdout)) {
     x_holdout <- data.matrix(res_holdout$train[, features, with = FALSE])
     x_holdout[!is.finite(x_holdout)] <- NA
-    
+
     evaluator_entry <- evo_evaluators[[evaluator]]
     if (is.null(evaluator_entry)) {
-      stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s", 
-                   evaluator, paste(names(evo_evaluators), collapse = ", ")))
+      stop(sprintf(
+        "Unknown evaluator '%s'. Registered evaluators are: %s",
+        evaluator, paste(names(evo_evaluators), collapse = ", ")
+      ))
     }
     preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task)
-    
+
     if (task == "multiclass") {
       y_holdout_encoded <- as.integer(factor(holdout_fold[[target_col]], levels = classes)) - 1
       if (!is.matrix(preds_holdout)) {
@@ -633,7 +785,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   } else {
     ind$holdout_fitness <- -Inf
   }
-  
+
   # Propagate updated genes
   ind$genes <- res$ind$genes
   ind
@@ -644,7 +796,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 compute_auc <- function(y_true, y_pred) {
   n_pos <- sum(y_true == 1)
   n_neg <- sum(y_true == 0)
-  if (n_pos == 0 || n_neg == 0) return(0.5)
+  if (n_pos == 0 || n_neg == 0) {
+    return(0.5)
+  }
   r <- rank(y_pred)
   u <- sum(r[y_true == 1]) - (as.numeric(n_pos) * (n_pos + 1)) / 2
   u / (as.numeric(n_pos) * n_neg)
@@ -677,9 +831,9 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
   if (is.function(metric)) {
     return(metric(y_true, y_pred))
   }
-  
+
   metric <- tolower(metric)
-  
+
   if (task == "classification") {
     if (metric %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
       min_loss <- compute_ts_refinement(y_true, y_pred, task = task, is_logits = FALSE)
@@ -748,41 +902,41 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     # Clamp infinite values and impute NA/NaN
     z[is.na(z) | is.nan(z)] <- 0
     z <- pmax(pmin(z, 35), -35)
-    
+
     # Laplace smooth the labels based on true class count
     N1 <- sum(y_true == 1)
     N0 <- sum(y_true == 0)
     N_true <- ifelse(y_true == 1, N1, N0)
-    
+
     y_smooth <- ifelse(y_true == 1,
-                       (N_true + alpha) / (N_true + 2 * alpha),
-                       alpha            / (N_true + 2 * alpha))
-    
+      (N_true + alpha) / (N_true + 2 * alpha),
+      alpha / (N_true + 2 * alpha)
+    )
+
     obj_fn <- function(temp) {
       probs_T <- 1 / (1 + exp(-z / temp))
       probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
       ll <- -mean(y_smooth * log(probs_T) + (1 - y_smooth) * log(1 - probs_T))
       ll
     }
-    
+
     opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
     best_temp <- opt$minimum
-    
+
     # Return the un-smoothed log-loss (Option B) at the optimal temperature
     probs_T <- 1 / (1 + exp(-z / best_temp))
     probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
     ll_unsmoothed <- -mean(y_true * log(probs_T) + (1 - y_true) * log(1 - probs_T))
     return(ll_unsmoothed)
-    
   } else if (task == "multiclass") {
     if (is.null(num_class)) {
       stop("num_class must be specified for multiclass TS-Refinement.")
     }
-    
+
     if (!is.matrix(y_pred)) {
       y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
     }
-    
+
     if (is_logits) {
       z <- y_pred
     } else {
@@ -792,22 +946,22 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     # Clamp infinite values and impute NA/NaN
     z[is.na(z) | is.nan(z)] <- 0
     z <- pmax(pmin(z, 35), -35)
-    
+
     # Laplace smooth labels based on class-count sweep formulation
     n <- length(y_true)
     N_vec <- tabulate(y_true + 1, nbins = num_class)
     N_k_row <- N_vec[y_true + 1]
-    
+
     true_target <- (N_k_row + alpha) / (N_k_row + 2 * alpha)
     leftover_mass <- alpha / (N_k_row + 2 * alpha)
-    
+
     denom <- n - N_k_row
     mass_per_item <- ifelse(denom == 0, 0, leftover_mass / denom)
-    
+
     N_mat <- matrix(N_vec, nrow = n, ncol = num_class, byrow = TRUE)
     y_smooth <- sweep(N_mat, 1, mass_per_item, "*")
     y_smooth[cbind(1:n, y_true + 1)] <- true_target
-    
+
     obj_fn <- function(temp) {
       z_scaled <- z / temp
       z_max <- apply(z_scaled, 1, max)
@@ -816,14 +970,14 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       sum_exp_z <- rowSums(exp_z)
       probs_T <- exp_z / sum_exp_z
       probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-      
+
       ll <- -mean(rowSums(y_smooth * log(probs_T)))
       ll
     }
-    
+
     opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
     best_temp <- opt$minimum
-    
+
     # Return the un-smoothed log-loss (Option B) at the optimal temperature
     z_scaled <- z / best_temp
     z_max <- apply(z_scaled, 1, max)
@@ -832,7 +986,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     sum_exp_z <- rowSums(exp_z)
     probs_T <- exp_z / sum_exp_z
     probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-    
+
     y_hard <- matrix(0, nrow = n, ncol = num_class)
     y_hard[cbind(1:n, y_true + 1)] <- 1
     ll_unsmoothed <- -mean(rowSums(y_hard * log(probs_T)))
@@ -852,25 +1006,27 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
 compute_calibrated_rmse <- function(y_true, y_pred) {
   y_true <- as.numeric(y_true)
   y_pred <- as.numeric(y_pred)
-  
-  if (length(y_true) <= 1L) return(0.0)
-  
+
+  if (length(y_true) <= 1L) {
+    return(0.0)
+  }
+
   sd_true <- stats::sd(y_true)
   sd_pred <- stats::sd(y_pred)
-  
+
   if (is.na(sd_true) || sd_true < 1e-9) {
     return(0.0)
   }
-  
+
   if (is.na(sd_pred) || sd_pred < 1e-9) {
     return(sqrt(mean((y_true - mean(y_pred, na.rm = TRUE))^2, na.rm = TRUE)))
   }
-  
+
   r <- stats::cor(y_pred, y_true, use = "complete.obs")
   if (is.na(r)) {
     return(sqrt(mean((y_true - y_pred)^2, na.rm = TRUE)))
   }
-  
+
   sd_true * sqrt(pmax(0.0, 1.0 - r^2))
 }
 
@@ -886,39 +1042,43 @@ compute_calibrated_rmse <- function(y_true, y_pred) {
 compute_calibrated_mae <- function(y_true, y_pred) {
   y_true <- as.numeric(y_true)
   y_pred <- as.numeric(y_pred)
-  
-  if (length(y_true) == 0L) return(0.0)
-  
+
+  if (length(y_true) == 0L) {
+    return(0.0)
+  }
+
   valid <- !is.na(y_true) & !is.na(y_pred)
   y_true <- y_true[valid]
   y_pred <- y_pred[valid]
-  
-  if (length(y_true) <= 1L) return(0.0)
-  
+
+  if (length(y_true) <= 1L) {
+    return(0.0)
+  }
+
   obj_fn <- function(par) {
     a <- par[1]
     b <- par[2]
     mean(abs(y_true - (a + b * y_pred)))
   }
-  
+
   cov_y <- stats::cov(y_true, y_pred)
   var_pred <- stats::var(y_pred)
-  
+
   start_b <- if (!is.na(var_pred) && var_pred > 1e-9) cov_y / var_pred else 1.0
   start_a <- mean(y_true) - start_b * mean(y_pred)
-  
-  opt <- tryCatch({
-    stats::optim(
-      par = c(start_a, start_b),
-      fn = obj_fn,
-      method = "Nelder-Mead"
-    )
-  }, error = function(e) {
-    list(value = mean(abs(y_true - y_pred)))
-  })
-  
+
+  opt <- tryCatch(
+    {
+      stats::optim(
+        par = c(start_a, start_b),
+        fn = obj_fn,
+        method = "Nelder-Mead"
+      )
+    },
+    error = function(e) {
+      list(value = mean(abs(y_true - y_pred)))
+    }
+  )
+
   opt$value
 }
-
-
-

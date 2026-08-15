@@ -28,6 +28,7 @@ evolve_features(
   model_all_historical_genes = FALSE,
   allowed_transformers = "all",
   complexity_penalty = 0,
+  complexity_mode = "bic_dynamic",
   migration = NULL,
   islands = 1,
   migration_interval = 5,
@@ -110,10 +111,17 @@ than only the best individual's genes.}
 \item{allowed_transformers}{Character vector of allowed transformer names,
 or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.}
 
-\item{complexity_penalty}{Non-negative numeric penalty subtracted from each
-individual's raw fitness as \code{complexity_penalty * n_genes}.  A small
-value (e.g. \code{0.001}) encourages parsimonious recipes and reduces
-overfitting on small datasets.  Default \code{0} disables the penalty.}
+\item{complexity_penalty}{Non-negative numeric multiplier for complexity penalty (default 0).
+When set to \code{1.0}, applies standard BIC parsimony pressure (\code{ln(N) / (2N)}).
+A value of \code{0} disables complexity penalisation.}
+
+\item{complexity_mode}{Character string specifying the complexity penalty strategy:
+\code{"bic_dynamic"} (default, dynamically relaxes the penalty as fitness approaches the ideal ceiling),
+\code{"bic"} (constant BIC penalty throughout evolution), or \code{"none"} (disabled).}
+
+\item{migration}{Optional \code{evo_migration_config} object created by \code{migration_config()}.}
+
+\item{islands}{Integer. Number of islands for multi-island parallel evolution (default 1).}
 
 \item{migration_interval}{Integer. Number of generations between migrations (default 5).}
 

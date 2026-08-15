@@ -285,6 +285,8 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
       all_numeric_cols = all_numeric_cols,
       all_categorical_cols = all_categorical_cols,
       all_datetime_cols = all_datetime_cols,
+      raw_fitness = NA_real_,
+      penalty = 0.0,
       fitness = NA_real_
     ),
     class = "evo_individual"

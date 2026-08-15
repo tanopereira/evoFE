@@ -4,7 +4,7 @@
 \alias{is_invalid_individual}
 \title{Check whether a candidate individual is a duplicate or known-inferior}
 \usage{
-is_invalid_individual(c_ind, pop_list, cache, best_fit)
+is_invalid_individual(c_ind, pop_list, cache, best_fit, evaluator = NULL)
 }
 \description{
 Check whether a candidate individual is a duplicate or known-inferior

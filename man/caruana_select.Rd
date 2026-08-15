@@ -13,7 +13,8 @@ caruana_select(
   bag_samples = TRUE,
   sample_ratio = 0.8,
   seed = NULL,
-  num_class = NULL
+  num_class = NULL,
+  verbose = FALSE
 )
 }
 \description{

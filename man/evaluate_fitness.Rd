@@ -23,6 +23,10 @@ evaluate_fitness(
   verbose = FALSE,
   allow_prune = TRUE,
   complexity_penalty = 0,
+  complexity_mode = "bic_dynamic",
+  running_best_fitness = NULL,
+  baseline_fitness = NULL,
+  n_samples = NULL,
   ...
 )
 }
@@ -61,9 +65,18 @@ evaluate_fitness(
 
 \item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
 
-\item{complexity_penalty}{Non-negative numeric. Subtracted from raw fitness as
-\code{complexity_penalty * n_genes}, penalising longer recipes to favour
-parsimony.  Default \code{0} disables the penalty.}
+\item{complexity_penalty}{Non-negative numeric multiplier for complexity penalty (default 0).
+When set to 1.0, applies standard BIC parsimony pressure. Default \code{0} disables the penalty.}
+
+\item{complexity_mode}{Character. Complexity penalty strategy: "bic_dynamic" (default, scales
+with dataset size and relaxes as fitness approaches the ideal), "bic" (scales with dataset size,
+constant across generations), or "none" (no penalty).}
+
+\item{running_best_fitness}{Optional numeric. Current running best fitness for dynamic BIC.}
+
+\item{baseline_fitness}{Optional numeric. Generation 0 baseline fitness for dynamic BIC.}
+
+\item{n_samples}{Optional integer. Dataset sample size N for BIC calculations. Defaults to nrow(data).}
 
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
@@ -74,5 +87,6 @@ The input \code{evo_individual} with its \code{fitness} field set to
   \code{NULL}, and \code{genes} updated with fitted transformer states.
 }
 \description{
-Evaluate the fitness of an individual
+Trains a model using the features specified by the individual's recipe and evaluates
+performance using cross-validation or train/val split.
 }
