@@ -6,6 +6,9 @@
 \usage{
 evo_evaluators
 }
+\value{
+An \code{environment} containing registered model evaluators.
+}
 \description{
 Global environment for registered model evaluators
 }

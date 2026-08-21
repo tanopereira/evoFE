@@ -10,27 +10,23 @@
 
 0 errors | 0 warnings | 0 notes
 
-## Changes since 0.1.0
+## Changes in version 1.0.0
 
-This is an update to the CRAN-published version 0.1.0. Key changes include:
+This is a major release of evoFE with significant new capabilities and robustness improvements:
 
-### Bug Fixes
-- Fixed CatBoost evaluator writing to disk by enforcing `allow_writing_files = FALSE` and redirecting any diagnostic output to `tempdir()`.
-- Fixed genotype corruption, `-Inf` fitness errors, and `NA` handling in quantile binning.
-- Fixed `is_logits` flag in XGBoost custom metric evaluation.
-- Fixed Laplace smoothing in TS-refinement formulation.
-- Clamped infinite values and imputed `NA`/`NaN` in TS-refinement log-likelihood calculations.
+### Island Model & Multi-Island Evolution
+- Added island model architecture with configurable migration topologies (`topology_ring`, `topology_grid`, `topology_hypercube`, `topology_tiered`, `topology_torus`, `topology_complete`, `topology_custom`).
+- Added configurable migration policies (`policy_push_uniform`, `policy_gibbs_push`, `policy_gibbs_pull`, `policy_tiered_admission`).
+- Added Caruana ensemble selection (`ensemble_islands`) to greedily combine Pareto-diverse models across islands.
 
-### Enhancements
-- Vectorized fallback KNN search (3.8x speedup) and UMAP downsampling (7x fit speedup) with prediction caching (1310x cache hit speedup).
-- Reduced peak memory footprint in CV loops by ~50% by eliminating redundant `data.table` deep copies.
-- Hardened stateful transformers against edge cases (vector option inputs and NA distance matrices).
-- Added input validation for `split_ids` with automatic strategy switching.
-- Optimised clustering deduplication using `duplicated()`.
-- Set XGBoost default `min_child_weight=20` to match LightGBM defaults.
-- Removed `seed` parameter and `set.seed()` calls inside package functions.
+### Thread Safety & CRAN Compliance
+- Added robust OpenMP and `data.table` thread setting and restoration in `evolve_features()` via top-level `on.exit()`, protecting against macOS `NA` thread reporting.
+- Added defensive `requireNamespace()` checks for all optional and suggested dependencies.
+- Added `testthat::skip_if_not_installed()` guards across all test suites.
+- Added `@return` / `\value` roxygen documentation for all exported S3 methods and functions.
 
-### Documentation
-- Reformatted Rd documentation for 80-character line width compliance.
-- Added detailed `\value` tags to all exported functions.
-- Converted arXiv reference to DOI format.
+### New Features & Optimizations
+- Added hybrid active feature masks with importance-guided sampling and dynamic mask mutation.
+- Added Bayesian hyperparameter tuning wrapper (`make_tunable`).
+- Added interactive real-time and post-hoc HTML evolution visualizer (`view()`).
+- Added TS-refinement and calibrated regression metrics (`cal_rmse`, `cal_mae`).

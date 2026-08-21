@@ -28,6 +28,9 @@ vector or matrix of predictions.}
 
 \item{cleanup_func}{Optional function to clean up model resources/states after evaluation.}
 }
+\value{
+Invisible NULL. Called for the side effect of registering the evaluator in \code{evo_evaluators}.
+}
 \description{
 Register a model evaluator
 }

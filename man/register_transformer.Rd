@@ -12,6 +12,9 @@ register_transformer(name, transformer)
 \item{transformer}{An object of class \code{evo_transformer} created
 via \code{create_transformer}.}
 }
+\value{
+Invisible \code{transformer}, the registered transformer object.
+}
 \description{
 Adds a user-defined feature transformer to the available pool for feature evolution.
 }

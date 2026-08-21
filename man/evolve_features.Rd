@@ -30,6 +30,7 @@ evolve_features(
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
   complexity_floor = 0.2,
+  complexity_target = "all_features",
   migration = NULL,
   islands = 1,
   migration_interval = 5,
@@ -113,14 +114,20 @@ than only the best individual's genes.}
 or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.}
 
 \item{complexity_penalty}{Non-negative numeric multiplier for complexity penalty (default 0).
-When set to \code{1.0}, applies standard BIC parsimony pressure (\code{ln(N) / (2N)}).
+When set to \code{1.0}, applies standard BIC or PAC-Bayes parsimony pressure.
 A value of \code{0} disables complexity penalisation.}
 
 \item{complexity_mode}{Character string specifying the complexity penalty strategy:
-\code{"bic_dynamic"} (default, dynamically relaxes the penalty as fitness approaches the ideal ceiling),
-\code{"bic"} (constant BIC penalty throughout evolution), or \code{"none"} (disabled).}
+\code{"bic_dynamic"} (default, asymptotic BIC scaling \code{ln(N) / (2N)} dynamically relaxed with progress),
+\code{"bic"} (constant asymptotic BIC penalty \code{ln(N) / (2N)} throughout evolution),
+\code{"pac_bayes_dynamic"} (PAC-Bayes generalization bound scaling \code{1 / (2*sqrt(N))} dynamically relaxed with progress),
+\code{"pac_bayes"} (constant PAC-Bayes generalization bound scaling \code{1 / (2*sqrt(N))}),
+or \code{"none"} (disabled).}
 
-\item{complexity_floor}{Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}, representing a 20\% minimum floor of base BIC).}
+\item{complexity_floor}{Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic penalties (default \code{0.20}, representing a 20\% minimum floor of base penalty).}
+
+\item{complexity_target}{Character string specifying the complexity count target:
+\code{"all_features"} (default, penalizes total number of active features including raw features and genes, rewarding active feature pruning) or \code{"genes"} (penalizes only derived genes).}
 
 \item{migration}{Optional \code{evo_migration_config} object created by \code{migration_config()}.}
 

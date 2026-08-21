@@ -108,6 +108,7 @@ predict_model <- function(object, newdata, ...) {
   UseMethod("predict_model")
 }
 
+#' @rdname predict_model
 #' @export
 predict_model.evo_recipe <- function(object, newdata, ...) {
   if (is.null(object$best_model)) {
@@ -139,6 +140,7 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   preds
 }
 
+#' @rdname predict_model
 #' @export
 predict_model.evo_ensemble <- function(object, newdata, ...) {
   if (is.null(object$active_models) || length(object$active_models) == 0) {

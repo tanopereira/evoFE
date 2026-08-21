@@ -1,4 +1,7 @@
 test_that("make_tunable() registers and optimizes correctly", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
   # 1. Register a simple mock evaluator
   register_evaluator(
     "mock_base_test",
@@ -49,6 +52,9 @@ test_that("make_tunable() registers and optimizes correctly", {
 })
 
 test_that("make_tunable issues deprecation warning for ea infill optimizer", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
   # We reuse mock_tuned_test from previous test or register new one
   if (!exists("mock_tuned_test", envir = evo_evaluators)) {
     param_ranges <- list(
@@ -75,6 +81,9 @@ test_that("make_tunable issues deprecation warning for ea infill optimizer", {
 })
 
 test_that("lightgbm_mbo end-to-end runs on dummy data", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
   set.seed(42)
   n <- 30
   dummy_data <- data.frame(

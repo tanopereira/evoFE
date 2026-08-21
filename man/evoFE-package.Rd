@@ -73,6 +73,14 @@ behaviour at runtime:
 }
 }
 
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/tanopereira/evoFE}
+  \item Report bugs at \url{https://github.com/tanopereira/evoFE/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Gustavo Pereira \email{tanopereira@gmail.com}
 

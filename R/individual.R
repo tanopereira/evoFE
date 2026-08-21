@@ -7,6 +7,12 @@
 #'   until fitted), and \code{output_col} (auto-generated column name).
 #' @export
 create_gene <- function(transformer_name, input_cols) {
+  if (!transformer_name %in% names(evo_transformers)) {
+    stop(sprintf(
+      "Unknown transformer '%s'. Registered transformers are: %s",
+      transformer_name, paste(names(evo_transformers), collapse = ", ")
+    ))
+  }
   transformer <- evo_transformers[[transformer_name]]
   params <- list()
   if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
@@ -607,7 +613,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       gene_imps <- sapply(ind$genes, function(g) {
         if (g$output_col %in% names(importances)) importances[[g$output_col]] else 0
       })
-      # Invert: low importance → high removal probability
+      # Invert: low importance -> high removal probability
       removal_weights <- 1 / (gene_imps + 1e-8)
       removal_weights[!is.finite(removal_weights)] <- 1
       idx <- sample(seq_along(ind$genes), 1, prob = removal_weights)

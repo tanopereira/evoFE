@@ -6,13 +6,16 @@
 \usage{
 evo_transformers
 }
+\value{
+An \code{environment} containing registered feature transformers.
+}
 \description{
 An environment containing all built-in transformer definitions available
 for the evolutionary feature-engineering search.  Every entry is an
 \code{evo_transformer} object produced by \code{\link{create_transformer}}.
 }
 \details{
-\strong{Arithmetic (numeric → numeric)}
+\strong{Arithmetic (numeric -> numeric)}
 \describe{
   \item{\code{log}}{Safe natural logarithm: \code{log1p(|x|)}.}
   \item{\code{sqrt}}{Safe square root: \code{sqrt(|x|)}.}
@@ -29,13 +32,13 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
 }
 
-\strong{Rank / distribution (numeric → numeric, stateful)}
+\strong{Rank / distribution (numeric -> numeric, stateful)}
 \describe{
   \item{\code{rank_transform}}{ECDF-based percentile rank mapped to
     \eqn{[0, 1]}.  Fit on training data; robust to outliers.}
 }
 
-\strong{Group-by aggregations (mixed cat × num → numeric, stateful)}
+\strong{Group-by aggregations (mixed cat x num -> numeric, stateful)}
 \describe{
   \item{\code{groupby_mean}}{Per-group mean.}
   \item{\code{groupby_sd}}{Per-group standard deviation.}
@@ -48,7 +51,7 @@ for the evolutionary feature-engineering search.  Every entry is an
     \{0.25, 0.75\}).}
 }
 
-\strong{Supervised categorical encodings (categorical → numeric, stateful)}
+\strong{Supervised categorical encodings (categorical -> numeric, stateful)}
 \describe{
   \item{\code{target_encode}}{Smoothed mean-target encoding for binary /
     regression tasks.}
@@ -70,7 +73,7 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
   \item{\code{frequency_encode}}{Count of each category level in training data.}
   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
-    an "other" bucket (\code{comp_idx} 1–6).}
+    an "other" bucket (\code{comp_idx} 1-6).}
   \item{\code{similarity_encode}}{Character 3-gram Jaccard similarity between string
     levels and top-K prototype categories (inspired by \pkg{skrub}).}
   \item{\code{minhash_encode}}{Fast sub-string MinHash hashing for high-cardinality strings
@@ -87,7 +90,7 @@ for the evolutionary feature-engineering search.  Every entry is an
     components (hour, day of week, month, day of year).}
 }
 
-\strong{Dimensionality reduction (numeric → numeric, stateful)}
+\strong{Dimensionality reduction (numeric -> numeric, stateful)}
 \describe{
   \item{\code{pca}}{Selected principal component from \code{prcomp}.}
   \item{\code{truncated_svd}}{Selected component from truncated SVD.}
@@ -95,7 +98,7 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{umap}}{UMAP projection component (requires \pkg{uwot}).}
 }
 
-\strong{Manifold / graph learning (numeric → numeric or categorical, stateful)}
+\strong{Manifold / graph learning (numeric -> numeric or categorical, stateful)}
 \describe{
   \item{\code{genie}}{Genie hierarchical cluster label (requires
     \pkg{genieclust}).}

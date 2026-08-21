@@ -2,9 +2,15 @@
 % Please edit documentation in R/predict.R
 \name{predict_model}
 \alias{predict_model}
+\alias{predict_model.evo_recipe}
+\alias{predict_model.evo_ensemble}
 \title{Predict target values using the fully evolved model or ensemble}
 \usage{
 predict_model(object, newdata, ...)
+
+\method{predict_model}{evo_recipe}(object, newdata, ...)
+
+\method{predict_model}{evo_ensemble}(object, newdata, ...)
 }
 \arguments{
 \item{object}{An evo_recipe or evo_ensemble object containing trained model(s)}

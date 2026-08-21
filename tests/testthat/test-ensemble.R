@@ -108,6 +108,7 @@ test_that("ensemble_islands works for regression tasks", {
 })
 
 test_that("evolve_features supports per-island evaluators vector and ensemble_islands ensembles them", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)

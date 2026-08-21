@@ -59,6 +59,8 @@ test_that("Full feature evolution loop runs on dummy data", {
 })
 
 test_that("UMAP, Genie, MST score, Lumbermark, and Deadwood transformers work", {
+  testthat::skip_if_not_installed("lumbermark")
+  testthat::skip_if_not_installed("deadwood")
   set.seed(42)
   n <- 30
   df <- data.table::as.data.table(data.frame(
@@ -148,6 +150,8 @@ test_that("Constant columns are skipped and individual survives", {
 })
 
 test_that("Genie, MST Score, Lumbermark, and Deadwood handle constant/all-zero data without crashing", {
+  testthat::skip_if_not_installed("lumbermark")
+  testthat::skip_if_not_installed("deadwood")
   set.seed(42)
   n <- 10
   # All zero dataset
@@ -641,6 +645,7 @@ test_that("different components share the same fitted state in state_cache", {
 })
 
 test_that("umap, genie, and mst_score respect evoFE.verbose option", {
+  testthat::skip_if_not_installed("lumbermark")
   df <- data.table::as.data.table(data.frame(
     x1 = rnorm(20),
     x2 = rnorm(20),
@@ -1742,6 +1747,7 @@ test_that("gradual population growth and decay works correctly during dynamic po
 
 
 test_that("genie_centroid_dist and lumbermark_centroid_dist work", {
+  testthat::skip_if_not_installed("lumbermark")
   set.seed(42)
   n <- 30
   df <- data.table::as.data.table(data.frame(
@@ -1790,6 +1796,7 @@ test_that("genie_centroid_dist and lumbermark_centroid_dist work", {
 })
 
 test_that("lm evaluator works for regression, classification, and multiclass", {
+  testthat::skip_if_not_installed("glmnet")
   set.seed(42)
   n <- 30
   x <- matrix(rnorm(n * 2), ncol = 2)
@@ -2058,12 +2065,12 @@ test_that("compute_complexity_penalty returns 0 when disabled", {
 test_that("compute_complexity_penalty correctly calculates static BIC", {
   n <- 1000
   expected_base <- 1.0 * (log(n) / (2 * n))
-  # 1 gene
+  # 1 gene: (1 + p)^1 - 1 = p
   expect_equal(compute_complexity_penalty(n_genes = 1, n_samples = n, complexity_penalty = 1.0, complexity_mode = "bic"), expected_base)
-  # 3 genes
-  expect_equal(compute_complexity_penalty(n_genes = 3, n_samples = n, complexity_penalty = 1.0, complexity_mode = "bic"), 3 * expected_base)
-  # multiplier 2.0
-  expect_equal(compute_complexity_penalty(n_genes = 3, n_samples = n, complexity_penalty = 2.0, complexity_mode = "bic"), 2 * 3 * expected_base)
+  # 3 genes: (1 + p)^3 - 1
+  expect_equal(compute_complexity_penalty(n_genes = 3, n_samples = n, complexity_penalty = 1.0, complexity_mode = "bic"), expm1(3 * log1p(expected_base)))
+  # multiplier 2.0: (1 + 2p)^3 - 1
+  expect_equal(compute_complexity_penalty(n_genes = 3, n_samples = n, complexity_penalty = 2.0, complexity_mode = "bic"), expm1(3 * log1p(2 * expected_base)))
   # Sample size scaling: N = 100 penalty per gene > N = 10,000 penalty per gene
   pen_100 <- compute_complexity_penalty(n_genes = 1, n_samples = 100, complexity_penalty = 1.0, complexity_mode = "bic")
   pen_10000 <- compute_complexity_penalty(n_genes = 1, n_samples = 10000, complexity_penalty = 1.0, complexity_mode = "bic")
@@ -2176,7 +2183,8 @@ test_that("evolve_features runs successfully with complexity_mode = bic_dynamic 
   expect_true(is.numeric(res_bic$best_individual$fitness))
   expect_true(is.numeric(res_bic$best_individual$raw_fitness))
   expect_true(is.numeric(res_bic$best_individual$penalty))
-  expect_equal(res_bic$best_individual$fitness, res_bic$best_individual$raw_fitness - res_bic$best_individual$penalty)
+  expected_fitness_bic <- res_bic$best_individual$raw_fitness - (1 - res_bic$best_individual$raw_fitness) * res_bic$best_individual$penalty
+  expect_equal(res_bic$best_individual$fitness, expected_fitness_bic)
 })
 
 test_that("evaluate_fitness sets raw_fitness, penalty, and fitness correctly", {
@@ -2197,7 +2205,8 @@ test_that("evaluate_fitness sets raw_fitness, penalty, and fitness correctly", {
   expect_true(is.numeric(ind_eval$raw_fitness))
   expect_true(is.numeric(ind_eval$penalty))
   expect_gt(ind_eval$penalty, 0)
-  expect_equal(ind_eval$fitness, ind_eval$raw_fitness - ind_eval$penalty)
+  expected_fitness_ind <- ind_eval$raw_fitness - (1 - ind_eval$raw_fitness) * ind_eval$penalty
+  expect_equal(ind_eval$fitness, expected_fitness_ind)
 
   # With zero penalty
   ind_no_pen <- evaluate_fitness(
@@ -2250,3 +2259,280 @@ test_that("evolve_features validates complexity_floor and passes it to evaluatio
   )
   expect_s3_class(rec, "evo_recipe")
 })
+
+test_that("xgboost evaluator handles non-finite values (Inf, -Inf, NaN) cleanly", {
+  skip_if_not_installed("xgboost")
+
+  x_train <- matrix(rnorm(100), nrow = 20, ncol = 5)
+  x_train[1, 1] <- Inf
+  x_train[2, 2] <- -Inf
+  x_train[3, 3] <- NaN
+  y_train <- sample(0:1, 20, replace = TRUE)
+
+  x_val <- matrix(rnorm(50), nrow = 10, ncol = 5)
+  x_val[1, 2] <- Inf
+  y_val <- sample(0:1, 10, replace = TRUE)
+
+  expect_no_error({
+    fit <- train_model(
+      x_train = x_train,
+      y_train = y_train,
+      x_val = x_val,
+      y_val = y_val,
+      task = "classification",
+      evaluator = "xgboost",
+      nrounds = 5
+    )
+  })
+
+  expect_true(!is.null(fit$model))
+  expect_equal(length(fit$predictions), 10)
+
+  # Predict with new data containing Inf
+  x_new <- matrix(rnorm(25), nrow = 5, ncol = 5)
+  x_new[2, 1] <- -Inf
+  preds <- evo_evaluators$xgboost$predict_func(fit$model, x_new, task = "classification")
+  expect_equal(length(preds), 5)
+  expect_false(any(is.infinite(preds)))
+})
+
+test_that("complexity_target all_features penalizes total feature count and favors sparser masks", {
+  n <- 1000
+  bic_base <- 1.0 * (log(n) / (2 * n))
+
+  # Baseline model with 11 raw features and 0 genes
+  pen_11_raw <- compute_complexity_penalty(
+    n_genes = 0, n_features = 11, n_samples = n,
+    complexity_penalty = 1.0, complexity_mode = "bic", complexity_target = "all_features"
+  )
+  expect_equal(pen_11_raw, expm1(11 * log1p(bic_base)))
+
+  # Sparser model with 2 active raw features and 0 genes
+  pen_2_raw <- compute_complexity_penalty(
+    n_genes = 0, n_features = 2, n_samples = n,
+    complexity_penalty = 1.0, complexity_mode = "bic", complexity_target = "all_features"
+  )
+  expect_equal(pen_2_raw, expm1(2 * log1p(bic_base)))
+  expect_lt(pen_2_raw, pen_11_raw)
+  # Verify compounding effect: (1 + p)^11 - 1 > 11 * p
+  expect_gt(pen_11_raw, 11 * bic_base)
+
+  # Under complexity_target = "genes", both have penalty 0 because n_genes = 0
+  pen_genes_11 <- compute_complexity_penalty(
+    n_genes = 0, n_features = 11, n_samples = n,
+    complexity_penalty = 1.0, complexity_mode = "bic", complexity_target = "genes"
+  )
+  pen_genes_2 <- compute_complexity_penalty(
+    n_genes = 0, n_features = 2, n_samples = n,
+    complexity_penalty = 1.0, complexity_mode = "bic", complexity_target = "genes"
+  )
+  expect_equal(pen_genes_11, 0)
+  expect_equal(pen_genes_2, 0)
+})
+
+test_that("evolve_features validates and runs with complexity_target parameter", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(30),
+    x2 = rnorm(30),
+    x3 = rnorm(30),
+    target = sample(0:1, 30, replace = TRUE)
+  )
+
+  # Invalid complexity_target
+  expect_error(evolve_features(df, "target", complexity_target = "invalid"), "should be one of")
+
+  # Valid complexity_target = "all_features"
+  rec_all <- evolve_features(
+    df, "target", generations = 1, pop_size = 2, cv_folds = 2,
+    complexity_penalty = 1.0, complexity_target = "all_features", verbose = FALSE
+  )
+  expect_s3_class(rec_all, "evo_recipe")
+
+  # Valid complexity_target = "genes"
+  rec_genes <- evolve_features(
+    df, "target", generations = 1, pop_size = 2, cv_folds = 2,
+    complexity_penalty = 1.0, complexity_target = "genes", verbose = FALSE
+  )
+  expect_s3_class(rec_genes, "evo_recipe")
+})
+
+test_that("compute_complexity_penalty handles pac_bayes and pac_bayes_dynamic modes", {
+  n <- 10000
+  expected_base <- 1.0 / (2 * sqrt(n)) # 1 / 200 = 0.005
+
+  # Static PAC-Bayes mode
+  expect_equal(
+    compute_complexity_penalty(n_genes = 1, n_samples = n, complexity_penalty = 1.0, complexity_mode = "pac_bayes"),
+    expected_base
+  )
+  expect_equal(
+    compute_complexity_penalty(n_genes = 4, n_samples = n, complexity_penalty = 1.0, complexity_mode = "pac_bayes"),
+    expm1(4 * log1p(expected_base))
+  )
+
+  # Dynamic PAC-Bayes mode: start at baseline (Gen 0) -> 100% of base
+  pen_start <- compute_complexity_penalty(
+    n_genes = 1, n_samples = n, running_best_fitness = 0.70, baseline_fitness = 0.70,
+    task = "classification", complexity_penalty = 1.0, complexity_mode = "pac_bayes_dynamic"
+  )
+  expect_equal(pen_start, expected_base)
+
+  # Dynamic PAC-Bayes mode: halfway (best = 0.85, base = 0.70) -> 50% of base
+  pen_mid <- compute_complexity_penalty(
+    n_genes = 1, n_samples = n, running_best_fitness = 0.85, baseline_fitness = 0.70,
+    task = "classification", complexity_penalty = 1.0, complexity_mode = "pac_bayes_dynamic"
+  )
+  expect_equal(pen_mid, 0.5 * expected_base)
+
+  # Dynamic PAC-Bayes mode: near ceiling -> clamped to 20% floor
+  pen_floor <- compute_complexity_penalty(
+    n_genes = 1, n_samples = n, running_best_fitness = 0.999, baseline_fitness = 0.70,
+    task = "classification", complexity_penalty = 1.0, complexity_mode = "pac_bayes_dynamic"
+  )
+  expect_equal(pen_floor, 0.20 * expected_base)
+})
+
+test_that("evolve_features runs with pac_bayes and pac_bayes_dynamic complexity modes", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = rnorm(30),
+    x2 = rnorm(30),
+    target = sample(0:1, 30, replace = TRUE)
+  )
+
+  rec_pb <- evolve_features(
+    df, "target", generations = 1, pop_size = 2, cv_folds = 2,
+    complexity_penalty = 1.0, complexity_mode = "pac_bayes", verbose = FALSE
+  )
+  expect_s3_class(rec_pb, "evo_recipe")
+
+  rec_pbd <- evolve_features(
+    df, "target", generations = 1, pop_size = 2, cv_folds = 2,
+    complexity_penalty = 1.0, complexity_mode = "pac_bayes_dynamic", verbose = FALSE
+  )
+  expect_s3_class(rec_pbd, "evo_recipe")
+})
+
+test_that("evaluate_fitness applies scale-invariant percentage penalty for regression", {
+  set.seed(42)
+  # Dataset with large-scale target (e.g. millions)
+  df_large <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    target = rnorm(40, mean = 5e6, sd = 1e6)
+  )
+
+  ind <- create_individual(
+    genes = list(),
+    numeric_cols = c("x1", "x2"),
+    categorical_cols = character(0),
+    datetime_cols = character(0),
+    all_numeric_cols = c("x1", "x2"),
+    all_categorical_cols = character(0),
+    all_datetime_cols = character(0)
+  )
+
+  # Evaluate with complexity_penalty = 1.0, static PAC-Bayes (for N = 40, base factor = 1 / (2*sqrt(40)) ~ 0.07905)
+  # For 2 features, pen ~ 2 * 0.07905 = 0.1581 (15.81% relative penalty)
+  eval_ind <- evaluate_fitness(
+    ind, df_large, "target",
+    task = "regression",
+    evaluator = "lm",
+    cv_folds = 2,
+    complexity_penalty = 1.0,
+    complexity_mode = "pac_bayes",
+    complexity_target = "all_features"
+  )
+
+  raw_loss <- abs(eval_ind$raw_fitness)
+  expect_gt(raw_loss, 1e5) # raw RMSE in hundreds of thousands
+  # Fitness must equal raw_score * (1 + pen)
+  expect_equal(eval_ind$fitness, eval_ind$raw_fitness * (1 + eval_ind$penalty))
+  # Penalty in target units must be proportional to raw_loss (not an absolute 0.15)
+  target_unit_penalty <- abs(eval_ind$fitness - eval_ind$raw_fitness)
+  expect_gt(target_unit_penalty, 1e4) # penalty is tens of thousands, perfectly proportional to 10M scale
+})
+
+test_that("evaluate_fitness applies remaining-error percentage penalty for classification", {
+  set.seed(42)
+  df_clf <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    target = sample(0:1, 40, replace = TRUE)
+  )
+
+  ind <- create_individual(
+    genes = list(),
+    numeric_cols = c("x1", "x2"),
+    categorical_cols = character(0),
+    datetime_cols = character(0),
+    all_numeric_cols = c("x1", "x2"),
+    all_categorical_cols = character(0),
+    all_datetime_cols = character(0)
+  )
+
+  eval_ind <- evaluate_fitness(
+    ind, df_clf, "target",
+    task = "classification",
+    evaluator = "lm",
+    cv_folds = 2,
+    complexity_penalty = 1.0,
+    complexity_mode = "pac_bayes",
+    complexity_target = "all_features"
+  )
+
+  raw_score <- eval_ind$raw_fitness
+  pen <- eval_ind$penalty
+  error_gap <- max(0, min(1.0, 1.0 - raw_score))
+  expected_fitness <- raw_score - error_gap * pen
+  expect_equal(eval_ind$fitness, expected_fitness)
+  expect_lt(abs(eval_ind$fitness - raw_score), pen) # deduction is smaller than unscaled pen because error_gap < 1.0
+})
+
+test_that("xgboost and lightgbm regression evaluators support cal_mae and cal_rmse", {
+  set.seed(42)
+  df_reg <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    target = rnorm(40, mean = 50, sd = 10)
+  )
+
+  # Test xgboost with cal_mae
+  rec_xgb_mae <- evolve_features(
+    df_reg, "target",
+    task = "regression",
+    evaluator = "xgboost",
+    metric = "cal_mae",
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_xgb_mae, "evo_recipe")
+  preds_xgb_mae <- predict_model(rec_xgb_mae, df_reg[1:5, ])
+  expect_equal(length(preds_xgb_mae), 5)
+  expect_true(is.numeric(preds_xgb_mae))
+
+  # Test lightgbm with cal_mae
+  rec_lgb_mae <- evolve_features(
+    df_reg, "target",
+    task = "regression",
+    evaluator = "lightgbm",
+    metric = "cal_mae",
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_lgb_mae, "evo_recipe")
+  preds_lgb_mae <- predict_model(rec_lgb_mae, df_reg[1:5, ])
+  expect_equal(length(preds_lgb_mae), 5)
+  expect_true(is.numeric(preds_lgb_mae))
+})
+
+
+
+
+
+

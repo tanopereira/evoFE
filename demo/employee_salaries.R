@@ -4,23 +4,25 @@
 # for regression on annual salary prediction using LightGBM.
 
 if (!requireNamespace("farff", quietly = TRUE)) {
-  install.packages("farff")
-}
-if (!requireNamespace("data.table", quietly = TRUE)) {
-  install.packages("data.table")
-}
+  message("Package 'farff' is required for this demo. Please install it first.")
+} else {
 
-# Download & load OpenML dataset 42125 (employee_salaries)
-url <- "https://openml.org/data/v1/download/21718841/employee_salaries.arff"
-tmp <- tempfile(fileext = ".arff")
-download.file(url, tmp, headers = c("User-Agent" = "Mozilla/5.0"), quiet = TRUE)
+  # Download & load OpenML dataset 42125 (employee_salaries)
+  url <- "https://openml.org/data/v1/download/21718841/employee_salaries.arff"
+  tmp <- tempfile(fileext = ".arff")
+  on.exit(unlink(tmp), add = TRUE)
 
-df <- farff::readARFF(tmp)
-data.table::setDT(df)
+  dl_status <- tryCatch({
+    download.file(url, tmp, headers = c("User-Agent" = "Mozilla/5.0"), quiet = TRUE)
+  }, error = function(e) 1L)
 
-# Check columns
-head(df[, .(employee_position_title, department_name, date_first_hired, current_annual_salary)])
-df$full_name <- NULL
+  if (dl_status == 0L && file.exists(tmp)) {
+    df <- farff::readARFF(tmp)
+    data.table::setDT(df)
+
+    # Check columns
+    head(df[, .(employee_position_title, department_name, date_first_hired, current_annual_salary)])
+    df$full_name <- NULL
 
 library(evoFE)
 
@@ -53,5 +55,9 @@ recipe <- evolve_features(
   migration = migration
 )
 
-# View top evolved features
-print(summary(recipe))
+    # View top evolved features
+    print(summary(recipe))
+  } else {
+    message("Could not download the employee_salaries dataset. Skipping demo.")
+  }
+}

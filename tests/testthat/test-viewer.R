@@ -1,4 +1,6 @@
 test_that("record = TRUE successfully populates the evolution log", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("jsonlite")
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -119,3 +121,33 @@ test_that("start_evolution_viewer automatically stops the previous active viewer
   expect_silent(v2$stop())
   expect_false(exists("active_viewer", envir = .viewer_env))
 })
+
+test_that("evolution log records min_fitness_threshold for tiered admission policies", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("jsonlite")
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  mig_cfg <- migration_config(
+    topology = topology_tiered(islands = 4, tiers = 2),
+    policy = policy_tiered_admission(min_fitness_threshold = "mean_peer")
+  )
+
+  res <- evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 1,
+    pop_size = 2,
+    islands = 4,
+    migration = mig_cfg,
+    record = TRUE,
+    verbose = FALSE
+  )
+
+  expect_equal(res$evolution_log$config$migration_policy, "tiered_admission")
+  expect_equal(res$evolution_log$config$min_fitness_threshold, "mean_peer")
+})
+

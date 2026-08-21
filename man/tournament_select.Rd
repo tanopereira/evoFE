@@ -6,8 +6,16 @@
 \usage{
 tournament_select(pop, k = 3)
 }
+\arguments{
+\item{pop}{List of candidate individual objects (each with a numeric \code{fitness} element).}
+
+\item{k}{Integer tournament size (number of candidates drawn at random).}
+}
+\value{
+The winning candidate individual object from \code{pop}.
+}
 \description{
-Tournament selection
+Selects the individual with the highest fitness among a randomly chosen tournament of size \code{k}.
 }
 \examples{
 \donttest{

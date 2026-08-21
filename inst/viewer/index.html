@@ -13,7 +13,7 @@
     (function(global) {
         var d3 = {};
 
-        // ── simulation ──────────────────────────────────────────────────
+        // -- simulation --------------------------------------------------
         d3.forceSimulation = function(nodes) {
             var forces = {}, alpha = 1, alphaMin = 0.001, alphaDecay = 0.0228,
                 alphaTarget = 0, velocityDecay = 0.4, listeners = {}, timer = null;
@@ -55,7 +55,7 @@
             return sim;
         };
 
-        // ── many-body (charge) ───────────────────────────────────────────
+        // -- many-body (charge) -------------------------------------------
         d3.forceManyBody = function() {
             var strength = -30, nodes;
             function force(alpha) {
@@ -78,7 +78,7 @@
             return force;
         };
 
-        // ── center ───────────────────────────────────────────────────────
+        // -- center -------------------------------------------------------
         d3.forceCenter = function(cx, cy) {
             var nodes, s = 1;
             function force() {
@@ -94,7 +94,7 @@
             return force;
         };
 
-        // ── collision ────────────────────────────────────────────────────
+        // -- collision ----------------------------------------------------
         d3.forceCollide = function(r) {
             var nodes, radius = typeof r === 'function' ? r : function() { return r; }, s = 0.7, iters = 1;
             function force() {
@@ -122,7 +122,7 @@
             return force;
         };
 
-        // ── link ─────────────────────────────────────────────────────────
+        // -- link ---------------------------------------------------------
         d3.forceLink = function(links) {
             var nodes, id = function(d) { return d.index; }, dist = 30, str = null, iters = 1;
             links = links || [];
@@ -1156,14 +1156,14 @@
                     <span>Island Network</span>
                 </div>
                 <div id="migration-config-text" style="font-size: 0.82rem; font-family: var(--font-main); font-weight: 400; color: #cbd5e1; letter-spacing: 0.01em;">
-                    Topology: <strong style="color:#ffffff;">Ring</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">Push Uniform</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">Full Individual</strong>
+                    Topology: <strong style="color:#ffffff;">Ring</strong> &nbsp;&bull;&nbsp; Policy: <strong style="color:#ffffff;">Push Uniform</strong> &nbsp;&bull;&nbsp; Payload: <strong style="color:#ffffff;">Full Individual</strong>
                 </div>
             </div>
             <svg id="topology-svg"></svg>
 
             <!-- Overlay for Tournament Phase -->
             <div class="overlay" id="tournament-overlay">
-                <div class="overlay-title">🏆 Global Tournament</div>
+                <div class="overlay-title">&#127942; Global Tournament</div>
                 <div class="tournament-list" id="tournament-results-list"></div>
                 <button class="dismiss-btn" onclick="dismissOverlay()">Show Evolved Recipe</button>
             </div>
@@ -1187,8 +1187,8 @@
                 <div class="tabs-header">
                     <button class="tab-btn active" id="btn-tab-dashboard" onclick="switchTab('dashboard')">Island Health</button>
                     <button class="tab-btn" id="btn-tab-preview" onclick="switchTab('preview')">Transformed Data Sample</button>
-                    <button class="tab-btn" id="btn-tab-genes" onclick="switchTab('genes')">🧬 Gene Breakdown</button>
-                    <button class="tab-btn" id="btn-tab-terminal" onclick="switchTab('terminal')">📟 Terminal Log</button>
+                    <button class="tab-btn" id="btn-tab-genes" onclick="switchTab('genes')">&#129516; Gene Breakdown</button>
+                    <button class="tab-btn" id="btn-tab-terminal" onclick="switchTab('terminal')">&#128223; Terminal Log</button>
                 </div>
                 <div class="tab-content active" id="tab-dashboard">
                     <div class="health-list" id="health-list">
@@ -1221,7 +1221,7 @@
                 <div class="tab-content" id="tab-terminal">
                     <div class="terminal-container">
                         <div class="terminal-feed" id="terminal-feed">
-                            <div class="terminal-line system-msg">📟 TERMINAL INITIALIZED. AWAITING EVOLUTION PROCESS...</div>
+                            <div class="terminal-line system-msg">&#128223; TERMINAL INITIALIZED. AWAITING EVOLUTION PROCESS...</div>
                         </div>
                     </div>
                 </div>
@@ -1433,7 +1433,7 @@
                             renderGeneBreakdown(msg.data.global_best_genes);
                         }
                     }
-                    logToTerminal("✔ Evolution completed! Best Fitness: " + (msg.data && msg.data.best_fitness ? msg.data.best_fitness.toFixed(4) : "-"), "system-msg");
+                    logToTerminal("&#10004; Evolution completed! Best Fitness: " + (msg.data && msg.data.best_fitness ? msg.data.best_fitness.toFixed(4) : "-"), "system-msg");
                     break;
             }
         }
@@ -1441,7 +1441,7 @@
         let pathUsageCounts = {};
         let islandBestFitnessMap = {};
 
-        // ── Force-directed layout state ─────────────────────────────────
+        // -- Force-directed layout state ---------------------------------
         let forceSimulation = null;
         let isForceLayout = false;
         let forceLinks = [];     // [{source: id-1, target: id-1, count}] (0-indexed ids)
@@ -1511,15 +1511,18 @@
             const topoStr = topo.replace(/\b\w/g, l => l.toUpperCase());
 
             let pol = (cfg.migration_policy || cfg.policy || "push_uniform").replace(/_/g, ' ');
-            const polStr = pol.replace(/\b\w/g, l => l.toUpperCase());
+            let polStr = pol.replace(/\b\w/g, l => l.toUpperCase());
+            if (cfg.min_fitness_threshold && cfg.min_fitness_threshold !== "min_peer") {
+                polStr += ` (${cfg.min_fitness_threshold})`;
+            }
 
             let pay = (cfg.migration_payload || cfg.payload || "full_individual").replace(/_/g, ' ');
             const payStr = pay.replace(/\b\w/g, l => l.toUpperCase());
 
-            el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;•&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;•&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
+            el.innerHTML = `Topology: <strong style="color:#ffffff;">${topoStr}</strong> &nbsp;&bull;&nbsp; Policy: <strong style="color:#ffffff;">${polStr}</strong> &nbsp;&bull;&nbsp; Payload: <strong style="color:#ffffff;">${payStr}</strong>`;
         }
 
-        // ── Force simulation tick: move node <g>s and redraw edges ──────
+        // -- Force simulation tick: move node <g>s and redraw edges ------
         // pos.x/y are already updated by the simulation's tick callback via _posRef.
         function forceTick() {
             islandPositions.forEach(pos => {
@@ -1559,7 +1562,7 @@
             pathUsageCounts = {};
             islandBestFitnessMap = {};
 
-            // ── helpers ────────────────────────────────────────────────
+            // -- helpers ------------------------------------------------
             function circlePositions(n, cx, cy, r) {
                 const pos = [];
                 for (let i = 0; i < n; i++) {
@@ -1569,7 +1572,7 @@
                 return pos;
             }
 
-            // ── layout by topology ─────────────────────────────────────
+            // -- layout by topology -------------------------------------
 
             if (topo === "tiered" || topo === "hfc") {
                 const nTiers = Math.max(2, (config && (config.tiers || config.topology_tiers)) || 3);
@@ -1679,7 +1682,7 @@
                     tl.style.pointerEvents = "none";
                     bgGroup.appendChild(tl);
 
-                    // Threshold label (fitness value — placed on the left, precisely above the threshold line)
+                    // Threshold label (fitness value -- placed on the left, precisely above the threshold line)
                     const tlt = document.createElementNS("http://www.w3.org/2000/svg", "text");
                     tlt.setAttribute("x", pad.left + 5);
                     tlt.setAttribute("y", lineY - 4);
@@ -1689,7 +1692,7 @@
                     tlt.setAttribute("font-family", "monospace");
                     tlt.setAttribute("text-anchor", "start");
                     tlt.setAttribute("id", `tier-threshold-label-${t}`);
-                    tlt.textContent = "—";
+                    tlt.textContent = "--";
                     tlt.style.pointerEvents = "none";
                     bgGroup.appendChild(tlt);
                 }
@@ -1787,7 +1790,7 @@
                     });
             }
 
-            // Create Node elements — all child coords are RELATIVE (0,0 = node centre)
+            // Create Node elements -- all child coords are RELATIVE (0,0 = node centre)
             // The <g> is positioned via transform="translate(x,y)" so the force tick
             // only needs to update the transform, not every child element.
             islandPositions.forEach((pos, idx) => {
@@ -2061,7 +2064,7 @@
                     setTimeout(() => nodeCircle.classList.remove("improving"), 1000);
                 }
 
-                // Draw stagnation × crosses — coords relative to node centre (0,0)
+                // Draw stagnation x crosses - coords relative to node centre (0,0)
                 const ticksG = document.getElementById(`stagnation-ticks-${isl.island}`);
                 if (ticksG) {
                     ticksG.innerHTML = "";
@@ -2109,10 +2112,10 @@
             renderGeneBreakdown(data.global_best_genes);
 
             // Log completion to terminal log
-            logToTerminal(`★ Generation ${gen} complete. Global Best: ${data.global_best_fitness.toFixed(4)} (Island ${data.global_best_island || "-"})`, "success");
+            logToTerminal(`\u2605 Generation ${gen} complete. Global Best: ${data.global_best_fitness.toFixed(4)} (Island ${data.global_best_island || "-"})`, "success");
         }
 
-        // Draws swarm dots — all coords RELATIVE to node centre (0,0)
+        // Draws swarm dots - all coords RELATIVE to node centre (0,0)
         function renderSwarm(islandId, fitnesses) {
             const swarmG = document.getElementById(`swarm-${islandId}`);
             if (!swarmG) return;
@@ -2269,7 +2272,7 @@
                 setTimeout(() => { pulse.style.display = "none"; }, 2000);
             }
 
-            // ── Update force-directed layout ─────────────────────────────
+            // - Update force-directed layout -----------------------------
             if (isForceLayout && forceSimulation) {
                 const srcId = data.from, dstId = data.to;
                 const existing = forceLinks.find(l =>
@@ -2301,7 +2304,7 @@
                         (topologySvg.clientHeight || 450)
                     ) * baseDistanceFrac);
                 // Small random velocity jitter to break wedge/collinear configurations
-                // before the link force applies — nodes that are stuck in a line
+                // before the link force applies - nodes that are stuck in a line
                 // between two others can now escape.
                 const jitter = 45;
                 forceSimulation.nodes().forEach(sn => {
@@ -2334,7 +2337,7 @@
             };
 
             const actionText = data.is_pull ? "Pulled Elite into" : "Migrated to";
-            logToTerminal(`⇄ [${typeName}] Island ${data.from} ➔ ${actionText} Island ${data.to} | ${data.n_recipes} recipes, ${data.n_genes} genes`, "migration");
+            logToTerminal(`\u21C4 [${typeName}] Island ${data.from} \u2794 ${actionText} Island ${data.to} | ${data.n_recipes} recipes, ${data.n_genes} genes`, "migration");
         }
 
         // Show/hide tournament results overlay
@@ -2357,7 +2360,7 @@
             });
 
             overlay.classList.add("visible");
-            logToTerminal(`🏆 Tournament Final! Winner: Island ${data.winner_island} with fitness ${data.winner_fitness.toFixed(4)}`, "success");
+            logToTerminal(`\uD83C\uDFC6 Tournament Final! Winner: Island ${data.winner_island} with fitness ${data.winner_fitness.toFixed(4)}`, "success");
         }
 
         window.dismissOverlay = function() {
@@ -2715,7 +2718,7 @@
                 healthVal.style.color = status === "evaluating" ? "var(--secondary)" : "var(--primary)";
             }
 
-            logToTerminal(`Island ${islandId} ▸ status set to: ${status.toUpperCase()} (Gen ${data.generation})`, "system-msg");
+            logToTerminal(`Island ${islandId} \u25B8 status set to: ${status.toUpperCase()} (Gen ${data.generation})`, "system-msg");
         }
 
         // Live R island evaluation completion update
@@ -2814,14 +2817,15 @@
             // 5. Update island interior colors based on relative fitness in generation
             updateIslandFitnessColors();
 
-            logToTerminal(`Island ${islandId} ▸ evaluation complete. Fitness: ${fitnessVal.toFixed(4)}`, "success");
+            logToTerminal(`Island ${islandId} \u25B8 evaluation complete. Fitness: ${fitnessVal.toFixed(4)}`, "success");
         }
 
         // Live real-time update helper for tier threshold line values
         function updateTierThresholds() {
             if (!config || (config.migration_topology !== "tiered" && config.migration_topology !== "hfc")) return;
             const nTiers = Math.max(2, (config && (config.tiers || config.topology_tiers)) || 3);
-            const tierMin = {};
+            const tierFits = {};
+            const thresholdMode = config.min_fitness_threshold || config.migration_policy_threshold || "min_peer";
 
             islandPositions.forEach(pos => {
                 if (pos.tier === undefined) return;
@@ -2833,9 +2837,8 @@
                     }
                 }
                 if (f !== undefined && !isNaN(f)) {
-                    if (tierMin[pos.tier] === undefined || f < tierMin[pos.tier]) {
-                        tierMin[pos.tier] = f;
-                    }
+                    if (!tierFits[pos.tier]) tierFits[pos.tier] = [];
+                    tierFits[pos.tier].push(f);
                 }
             });
 
@@ -2843,14 +2846,33 @@
                 const lbl = document.getElementById(`tier-threshold-label-${t}`);
                 if (!lbl) continue;
                 const aboveTierIdx = t; // Tier above line t
-                const val = tierMin[aboveTierIdx];
+                const fits = tierFits[aboveTierIdx] || [];
+                let val;
+                if (typeof thresholdMode === "number") {
+                    val = thresholdMode;
+                } else if (fits.length === 0) {
+                    val = undefined;
+                } else if (thresholdMode === "mean_peer") {
+                    val = fits.reduce((a, b) => a + b, 0) / fits.length;
+                } else if (thresholdMode === "median_peer") {
+                    const sorted = [...fits].sort((a, b) => a - b);
+                    const mid = Math.floor(sorted.length / 2);
+                    val = (sorted.length % 2 !== 0) ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+                } else { // "min_peer" default
+                    val = Math.min(...fits);
+                }
+
                 if (val !== undefined) {
                     const absVal = Math.abs(val);
                     let text;
                     if (absVal === 0) text = "0.0000";
                     else if (absVal >= 1e4 || (absVal < 0.001 && absVal > 0)) text = val.toExponential(2);
                     else text = val.toFixed(4);
-                    lbl.textContent = "> " + text;
+                    let modeTag = "";
+                    if (thresholdMode === "mean_peer") modeTag = " (mean)";
+                    else if (thresholdMode === "median_peer") modeTag = " (median)";
+                    else if (thresholdMode === "min_peer") modeTag = " (min)";
+                    lbl.textContent = "> " + text + modeTag;
                 }
             }
         }
@@ -2965,7 +2987,7 @@
             const rate = config.migration_rate ? (config.migration_rate * 100).toFixed(0) + "%" : "10%";
 
             tooltip.innerHTML = `
-                <div class="tooltip-title" style="color: var(--primary)">Migration Link (ISL ${fromId} → ISL ${toId})</div>
+                <div class="tooltip-title" style="color: var(--primary)">Migration Link (ISL ${fromId} &rarr; ISL ${toId})</div>
                 <div class="tooltip-row">
                     <span class="tooltip-lbl">Rate (pop size fraction):</span>
                     <span>${rate}</span>

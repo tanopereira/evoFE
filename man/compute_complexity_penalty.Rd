@@ -13,11 +13,14 @@ compute_complexity_penalty(
   task = "classification",
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
+  complexity_floor = 0.2,
+  complexity_target = "all_features",
+  n_features = NULL,
   epsilon_floor = 0.2
 )
 }
 \arguments{
-\item{n_genes}{Integer. Number of evolved genes in the individual.}
+\item{n_genes}{Integer. Number of evolved genes in the recipe.}
 
 \item{n_samples}{Integer. Number of dataset samples (rows).}
 
@@ -31,9 +34,15 @@ compute_complexity_penalty(
 
 \item{complexity_penalty}{Numeric. Dimensionless penalty multiplier (default 0).}
 
-\item{complexity_mode}{Character. "bic_dynamic", "bic", or "none".}
+\item{complexity_mode}{Character. "bic_dynamic" (default), "bic", "pac_bayes_dynamic", "pac_bayes", or "none".}
 
-\item{epsilon_floor}{Numeric. Minimum safety floor factor for dynamic BIC (default 0.20, representing 20\% of base BIC).}
+\item{complexity_floor}{Numeric. Minimum safety floor factor for dynamic penalties (default 0.20, representing 20\% of base penalty).}
+
+\item{complexity_target}{Character. "all_features" (default, penalizes total active features) or "genes" (penalizes only derived genes).}
+
+\item{n_features}{Optional integer. Total number of active features (active raw features plus genes). If NULL, defaults to n_genes.}
+
+\item{epsilon_floor}{Deprecated alias for \code{complexity_floor}.}
 }
 \value{
 Non-negative numeric penalty to subtract from raw fitness.

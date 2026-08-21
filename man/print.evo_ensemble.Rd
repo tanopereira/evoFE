@@ -11,6 +11,9 @@
 
 \item{...}{Additional arguments (currently unused).}
 }
+\value{
+Invisible \code{x}. Called for its side effect of printing the ensemble overview.
+}
 \description{
 Prints a human-readable summary of the Caruana island ensemble.
 }

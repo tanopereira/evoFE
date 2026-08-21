@@ -115,7 +115,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          fitness_cache, threads, verbose, running_best_fitness,
                          metric = "default", allow_prune = TRUE,
                          complexity_penalty = 0, complexity_mode = "bic_dynamic",
-                         complexity_floor = 0.20,
+                         complexity_floor = 0.20, complexity_target = "all_features",
                          baseline_fitness = NULL, n_samples = NULL, island = NULL, ...) {
   # Initialize running_best_fitness taking into account any already evaluated individuals in pop
   existing_fits <- vapply(pop, function(ind) if (is.null(ind$fitness) || is.na(ind$fitness)) -Inf else ind$fitness, double(1))
@@ -147,6 +147,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         allow_prune = allow_prune, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         running_best_fitness = running_best_fitness,
         baseline_fitness = baseline_fitness,
         n_samples = n_samples, ...
@@ -225,6 +226,12 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit, evaluator = 
 }
 
 #' Tournament selection
+#'
+#' Selects the individual with the highest fitness among a randomly chosen tournament of size \code{k}.
+#'
+#' @param pop List of candidate individual objects (each with a numeric \code{fitness} element).
+#' @param k Integer tournament size (number of candidates drawn at random).
+#' @return The winning candidate individual object from \code{pop}.
 #' @keywords internal
 #' @examples
 #' \donttest{
@@ -290,12 +297,18 @@ tournament_select <- function(pop, k = 3) {
 #' @param allowed_transformers Character vector of allowed transformer names,
 #'   or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.
 #' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
-#'   When set to \code{1.0}, applies standard BIC parsimony pressure (\code{ln(N) / (2N)}).
+#' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
+#'   When set to \code{1.0}, applies standard BIC or PAC-Bayes parsimony pressure.
 #'   A value of \code{0} disables complexity penalisation.
 #' @param complexity_mode Character string specifying the complexity penalty strategy:
-#'   \code{"bic_dynamic"} (default, dynamically relaxes the penalty as fitness approaches the ideal ceiling),
-#'   \code{"bic"} (constant BIC penalty throughout evolution), or \code{"none"} (disabled).
-#' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}, representing a 20\% minimum floor of base BIC).
+#'   \code{"bic_dynamic"} (default, asymptotic BIC scaling \code{ln(N) / (2N)} dynamically relaxed with progress),
+#'   \code{"bic"} (constant asymptotic BIC penalty \code{ln(N) / (2N)} throughout evolution),
+#'   \code{"pac_bayes_dynamic"} (PAC-Bayes generalization bound scaling \code{1 / (2*sqrt(N))} dynamically relaxed with progress),
+#'   \code{"pac_bayes"} (constant PAC-Bayes generalization bound scaling \code{1 / (2*sqrt(N))}),
+#'   or \code{"none"} (disabled).
+#' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic penalties (default \code{0.20}, representing a 20\% minimum floor of base penalty).
+#' @param complexity_target Character string specifying the complexity count target:
+#'   \code{"all_features"} (default, penalizes total number of active features including raw features and genes, rewarding active feature pruning) or \code{"genes"} (penalizes only derived genes).
 #' @param migration Optional \code{evo_migration_config} object created by \code{migration_config()}.
 #' @param islands Integer. Number of islands for multi-island parallel evolution (default 1).
 #' @param migration_interval Integer. Number of generations between migrations (default 5).
@@ -370,6 +383,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             complexity_penalty = 0,
                             complexity_mode = "bic_dynamic",
                             complexity_floor = 0.20,
+                            complexity_target = "all_features",
                             migration = NULL,
                             islands = 1,
                             migration_interval = 5,
@@ -389,10 +403,11 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1 || complexity_penalty < 0) {
     stop("'complexity_penalty' must be a non-negative number.")
   }
-  complexity_mode <- match.arg(complexity_mode, c("bic_dynamic", "bic", "none"))
+  complexity_mode <- match.arg(complexity_mode, c("bic_dynamic", "bic", "pac_bayes_dynamic", "pac_bayes", "none"))
   if (!is.numeric(complexity_floor) || length(complexity_floor) != 1 || complexity_floor < 0 || complexity_floor > 1) {
     stop("'complexity_floor' must be a numeric value between 0 and 1.")
   }
+  complexity_target <- match.arg(complexity_target, c("all_features", "genes"))
 
   # If custom migration config is provided, sync islands count and topology from migration$topology
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
@@ -530,58 +545,57 @@ evolve_features <- function(data, target_col, task = "classification",
   # Temporarily configure max clustering size and threads options
   old_max_size <- getOption("evoFE.max_clustering_size")
   old_threads <- getOption("evoFE.threads")
+  old_opt_dt <- getOption("datatable.threads")
   options(evoFE.max_clustering_size = max_clustering_size, evoFE.threads = threads)
+
+  # Query all initial thread settings BEFORE setting any thread limits
+  old_dt <- if (requireNamespace("data.table", quietly = TRUE)) tryCatch(data.table::getDTthreads(), error = function(e) NULL) else NULL
+  old_omp <- if (requireNamespace("RhpcBLASctl", quietly = TRUE)) tryCatch(RhpcBLASctl::omp_get_max_threads(), error = function(e) NULL) else NULL
+  old_blas <- if (requireNamespace("RhpcBLASctl", quietly = TRUE)) tryCatch(RhpcBLASctl::blas_get_num_procs(), error = function(e) NULL) else NULL
+  old_qf <- if (requireNamespace("quitefastmst", quietly = TRUE)) tryCatch(quitefastmst::omp_get_max_threads(), error = function(e) NULL) else NULL
+
+  # Scrupulously register on.exit() restorations in the top-level evolve_features() frame
   on.exit(
     {
       options(evoFE.max_clustering_size = old_max_size)
       options(evoFE.threads = old_threads)
+      if (!is.null(old_omp) && !is.na(old_omp) && is.numeric(old_omp) && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+        tryCatch(RhpcBLASctl::omp_set_num_threads(old_omp), error = function(e) NULL)
+      }
+      if (!is.null(old_qf) && !is.na(old_qf) && is.numeric(old_qf) && requireNamespace("quitefastmst", quietly = TRUE)) {
+        tryCatch(quitefastmst::omp_set_num_threads(old_qf), error = function(e) NULL)
+      }
+      if (!is.null(old_blas) && !is.na(old_blas) && is.numeric(old_blas) && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+        tryCatch(RhpcBLASctl::blas_set_num_threads(old_blas), error = function(e) NULL)
+      }
+      if (!is.null(old_dt) && !is.na(old_dt) && is.numeric(old_dt)) {
+        tryCatch(data.table::setDTthreads(old_dt), error = function(e) NULL)
+      }
+      if (!is.null(old_opt_dt) && !is.na(old_opt_dt) && is.numeric(old_opt_dt)) {
+        tryCatch(options(datatable.threads = old_opt_dt), error = function(e) NULL)
+      }
     },
     add = TRUE
   )
 
-  # Prevent macOS OpenMP thread collisions between data.table, lightgbm, and other libraries
+  # Only AFTER capturing initial values, apply thread modifications if requested
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-    old_omp <- RhpcBLASctl::omp_get_max_threads()
-    old_blas <- RhpcBLASctl::blas_get_num_procs()
-    RhpcBLASctl::omp_set_num_threads(threads)
-    RhpcBLASctl::blas_set_num_threads(threads)
-    on.exit(
-      {
-        RhpcBLASctl::omp_set_num_threads(old_omp)
-        RhpcBLASctl::blas_set_num_threads(old_blas)
-      },
-      add = TRUE
-    )
+    if (!is.null(old_omp) && !is.na(old_omp) && is.numeric(old_omp) && !is.null(threads) && !is.na(threads) && is.numeric(threads)) {
+      tryCatch(RhpcBLASctl::omp_set_num_threads(as.integer(threads)), error = function(e) NULL)
+    }
+    if (!is.null(old_blas) && !is.na(old_blas) && is.numeric(old_blas) && !is.null(threads) && !is.na(threads) && is.numeric(threads)) {
+      tryCatch(RhpcBLASctl::blas_set_num_threads(as.integer(threads)), error = function(e) NULL)
+    }
   }
   if (requireNamespace("data.table", quietly = TRUE)) {
-    old_dt <- data.table::getDTthreads()
-    data.table::setDTthreads(threads)
-    on.exit(
-      {
-        data.table::setDTthreads(old_dt)
-      },
-      add = TRUE
-    )
+    if (!is.null(threads) && !is.na(threads) && is.numeric(threads)) {
+      tryCatch(data.table::setDTthreads(as.integer(threads)), error = function(e) NULL)
+    }
   }
   if (requireNamespace("quitefastmst", quietly = TRUE)) {
-    tryCatch(
-      {
-        old_qf <- quitefastmst::omp_get_max_threads()
-        quitefastmst::omp_set_num_threads(threads)
-        on.exit(
-          {
-            tryCatch(
-              {
-                quitefastmst::omp_set_num_threads(old_qf)
-              },
-              error = function(e) NULL
-            )
-          },
-          add = TRUE
-        )
-      },
-      error = function(e) NULL
-    )
+    if (!is.null(old_qf) && !is.na(old_qf) && is.numeric(old_qf) && !is.null(threads) && !is.na(threads) && is.numeric(threads)) {
+      tryCatch(quitefastmst::omp_set_num_threads(as.integer(threads)), error = function(e) NULL)
+    }
   }
 
   if (!task %in% c("classification", "multiclass", "regression")) {
@@ -863,6 +877,7 @@ evolve_features <- function(data, target_col, task = "classification",
   adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
 
   policy_str <- "push_uniform"
+  policy_thresh_val <- "min_peer"
   payload_str <- "full_individual"
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
     if (!is.null(migration$payload)) {
@@ -878,6 +893,9 @@ evolve_features <- function(data, target_col, task = "classification",
         policy_str <- paste0("gibbs_pull_", pol$weight_by)
       } else if (inherits(pol, "evo_policy_tiered_admission")) {
         policy_str <- "tiered_admission"
+        if (!is.null(pol$min_fitness_threshold)) {
+          policy_thresh_val <- pol$min_fitness_threshold
+        }
       }
     }
   }
@@ -892,6 +910,7 @@ evolve_features <- function(data, target_col, task = "classification",
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
         migration_topology = migration_topology, migration_policy = policy_str,
+        min_fitness_threshold = policy_thresh_val,
         migration_payload = payload_str, migration_temperature = migration_temperature,
         pull_stagnation_threshold = pull_stagnation_threshold,
         early_stopping_generations = early_stopping_generations,
@@ -908,14 +927,17 @@ evolve_features <- function(data, target_col, task = "classification",
     )
 
     viewer <- start_evolution_viewer(port = port)
-    utils::browseURL(viewer$url)
-    # Poll for websocket connection (up to 10 seconds)
-    max_wait <- 10.0
-    slept <- 0.0
-    while (is.null(viewer$get_connection()) && slept < max_wait) {
-      Sys.sleep(0.1)
-      slept <- slept + 0.1
-      suppressWarnings(httpuv::service(10))
+    on.exit(if (!is.null(viewer)) tryCatch(viewer$stop(), error = function(e) NULL), add = TRUE)
+    if (interactive()) {
+      utils::browseURL(viewer$url)
+      # Poll for websocket connection (up to 10 seconds)
+      max_wait <- 10.0
+      slept <- 0.0
+      while (is.null(viewer$get_connection()) && slept < max_wait) {
+        Sys.sleep(0.1)
+        slept <- slept + 0.1
+        suppressWarnings(httpuv::service(10))
+      }
     }
     viewer$send(list(type = "config", data = evolution_log$config))
   }
@@ -949,6 +971,7 @@ evolve_features <- function(data, target_col, task = "classification",
     threads = threads, metric = metric, verbose = verbose,
     complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
     complexity_floor = complexity_floor,
+    complexity_target = complexity_target,
     baseline_fitness = NULL, running_best_fitness = NULL,
     n_samples = nrow(data), ...
   )
@@ -989,6 +1012,7 @@ evolve_features <- function(data, target_col, task = "classification",
         verbose = FALSE, allow_prune = TRUE,
         complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         baseline_fitness = NULL, running_best_fitness = NULL,
         n_samples = nrow(data), ...
       )
@@ -1079,6 +1103,7 @@ evolve_features <- function(data, target_col, task = "classification",
         metric = metric, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         baseline_fitness = baseline_ind$fitness,
         n_samples = nrow(data), ...
       )
@@ -1297,6 +1322,7 @@ evolve_features <- function(data, target_col, task = "classification",
       metric = metric, complexity_penalty = complexity_penalty,
       complexity_mode = complexity_mode,
       complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
       baseline_fitness = baseline_ind$fitness,
       n_samples = nrow(data), ...
     )
@@ -1383,6 +1409,7 @@ evolve_features <- function(data, target_col, task = "classification",
           metric = metric, complexity_penalty = complexity_penalty,
           complexity_mode = complexity_mode,
           complexity_floor = complexity_floor,
+          complexity_target = complexity_target,
           baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
           n_samples = nrow(data), island = j, ...
         )
@@ -1603,8 +1630,8 @@ evolve_features <- function(data, target_col, task = "classification",
               probs <- exp(logits) / sum(exp(logits))
               dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
             } else if (migration_topology %in% c("tiered", "hfc")) {
-              topo_obj <- topology_tiered(islands)
-              policy_obj <- policy_tiered_admission()
+              topo_obj <- topology_tiered(islands, tiers = tiers_count)
+              policy_obj <- policy_tiered_admission(min_fitness_threshold = policy_thresh_val)
               txs <- resolve_migration_transactions(policy_obj, topo_obj, state)
               migration_txs <- c(migration_txs, txs)
               break
@@ -1670,6 +1697,7 @@ evolve_features <- function(data, target_col, task = "classification",
                   metric = metric, complexity_penalty = complexity_penalty,
                   complexity_mode = complexity_mode,
                   complexity_floor = complexity_floor,
+                  complexity_target = complexity_target,
                   baseline_fitness = if (!is.null(island_baseline_inds[[dest]])) island_baseline_inds[[dest]]$fitness else baseline_ind$fitness,
                   n_samples = nrow(data), island = dest, ...
                 )
@@ -2001,6 +2029,7 @@ evolve_features <- function(data, target_col, task = "classification",
         metric = metric, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
         n_samples = nrow(data), island = j, ...
       )
@@ -2045,6 +2074,7 @@ evolve_features <- function(data, target_col, task = "classification",
           complexity_penalty = complexity_penalty,
           complexity_mode = complexity_mode,
           complexity_floor = complexity_floor,
+          complexity_target = complexity_target,
           baseline_fitness = baseline_ind$fitness,
           running_best_fitness = global_best_fitness,
           n_samples = nrow(data), ...
@@ -2081,6 +2111,7 @@ evolve_features <- function(data, target_col, task = "classification",
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         baseline_fitness = baseline_ind$fitness,
         running_best_fitness = global_best_fitness,
         n_samples = nrow(data), ...
@@ -2176,6 +2207,7 @@ evolve_features <- function(data, target_col, task = "classification",
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         baseline_fitness = baseline_ind$fitness,
         running_best_fitness = best_ind$fitness,
         n_samples = nrow(data), ...
@@ -2274,6 +2306,7 @@ evolve_features <- function(data, target_col, task = "classification",
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
         complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
         baseline_fitness = baseline_ind$fitness,
         running_best_fitness = best_ind$fitness,
         n_samples = nrow(data), ...

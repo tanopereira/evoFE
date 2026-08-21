@@ -15,3 +15,13 @@ catboost_info/
 /Meta/
 
 .gemini/
+
+# Local build artifacts and workflow notes (kept out of git, mirrors .Rbuildignore)
+/.Rd2pdf*/
+.agents/
+/GATE_STATUS.md
+/PROJECT.md
+/*.pdf
+/*.log
+/vignettes/*.R
+/vignettes/*.html

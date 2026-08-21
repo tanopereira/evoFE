@@ -28,6 +28,20 @@ train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                  evaluator, paste(names(evo_evaluators), collapse = ", ")))
   }
 
+  if (!is.null(x_train)) {
+    if (!is.matrix(x_train)) {
+      x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
+    }
+    x_train[!is.finite(x_train)] <- NA
+  }
+
+  if (!is.null(x_val)) {
+    if (!is.matrix(x_val)) {
+      x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
+    }
+    x_val[!is.finite(x_val)] <- NA
+  }
+
   evaluator_entry$train_func(
     x_train = x_train,
     y_train = y_train,

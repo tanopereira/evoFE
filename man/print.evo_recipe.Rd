@@ -11,6 +11,9 @@
 
 \item{...}{Additional arguments (currently unused).}
 }
+\value{
+Invisible \code{x}. Called for its side effect of printing the recipe overview.
+}
 \description{
 Prints a human-readable summary of the evolutionary feature engineering recipe.
 }

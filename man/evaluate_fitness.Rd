@@ -25,6 +25,7 @@ evaluate_fitness(
   complexity_penalty = 0,
   complexity_mode = "bic_dynamic",
   complexity_floor = 0.2,
+  complexity_target = "all_features",
   running_best_fitness = NULL,
   baseline_fitness = NULL,
   n_samples = NULL,
@@ -48,32 +49,32 @@ evaluate_fitness(
 
 \item{shared_splits}{Optional list of shared data.table splits for in-place caching.}
 
-\item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).}
+\item{evaluator}{Character string specifying the model backend: "lightgbm", "xgboost", "catboost", "rf", or "lm".}
 
-\item{fold_ids}{Optional vector of pre-defined fold assignments.}
+\item{fold_ids}{Optional integer vector of pre-assigned fold indices.}
 
-\item{shared_folds}{Optional list of shared data.table CV folds for in-place caching.}
+\item{shared_folds}{Optional list of shared data.table fold splits for in-place caching.}
 
-\item{shared_full}{Optional data.table of the full dataset for in-place caching.}
+\item{shared_full}{Optional shared full data.table.}
 
-\item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
+\item{state_cache}{Optional environment used to cache transformer training states across evaluations.}
 
-\item{threads}{Number of threads to use for parallel execution (default 2)}
+\item{threads}{Number of threads for model training.}
 
-\item{metric}{The metric to optimize ("default", "auc", "f1", "mae", or a custom function).}
+\item{metric}{Character string or evaluation metric.}
 
-\item{verbose}{Logical indicating if progress should be printed.}
+\item{verbose}{Logical.}
 
-\item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
+\item{allow_prune}{Logical.}
 
-\item{complexity_penalty}{Non-negative numeric multiplier for complexity penalty (default 0).
-When set to 1.0, applies standard BIC parsimony pressure. Default \code{0} disables the penalty.}
+\item{complexity_penalty}{Numeric. Dimensionless penalty multiplier (default 0).}
 
-\item{complexity_mode}{Character. Complexity penalty strategy: "bic_dynamic" (default, scales
-with dataset size and relaxes as fitness approaches the ideal), "bic" (scales with dataset size,
-constant across generations), or "none" (no penalty).}
+\item{complexity_mode}{Character. Complexity penalty strategy: "bic_dynamic" (default),
+"bic", "pac_bayes_dynamic", "pac_bayes", or "none".}
 
-\item{complexity_floor}{Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}).}
+\item{complexity_floor}{Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic penalty (default \code{0.20}).}
+
+\item{complexity_target}{Character. "all_features" (default, penalizes total active features) or "genes" (penalizes only derived genes).}
 
 \item{running_best_fitness}{Optional numeric. Current running best fitness for dynamic BIC.}
 

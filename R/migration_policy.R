@@ -18,7 +18,7 @@ NULL
 
 # Compute Jaccard distance between two individuals' complete feature signatures.
 # The feature signature of an individual is defined as:
-#   active raw columns (numeric + categorical + datetime) ∪ engineered gene formulas
+#   active raw columns (numeric + categorical + datetime) + engineered gene formulas
 # Returns 0 when both individuals are identical (or both NULL), 1 when fully disjoint.
 .calc_feature_distance <- function(ind_j, ind_k) {
   if (is.null(ind_j) && is.null(ind_k)) return(0.0)
@@ -243,6 +243,7 @@ resolve_migration_transactions <- function(policy, topology, state, ...) {
 #' @export
 resolve_migration_transactions.evo_policy_push_uniform <- function(policy, topology, state, ...) {
   policy_gibbs <- policy_gibbs_push(weight_by = "uniform")
+  policy_gibbs$min_fitness_threshold <- policy$min_fitness_threshold
   # Forward to evo_policy_gibbs_push using uniform weight strategy
   resolve_migration_transactions.evo_policy_gibbs_push(policy_gibbs, topology, state, ...)
 }
@@ -349,3 +350,4 @@ resolve_migration_transactions.evo_policy_tiered_admission <- function(policy, t
   }
   resolve_migration_transactions.evo_policy_push_uniform(policy, topology, state, ...)
 }
+

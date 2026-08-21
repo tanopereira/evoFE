@@ -24,6 +24,7 @@ df$am <- as.integer(df$am)
 # =====================================================================
 message("\n>>> Running Evolutionary Feature Engineering (evoFE)...")
 # We use small populations/generations for demonstration speed
+set.seed(42)
 recipe <- evolve_features(
   data = df,
   target_col = "am",
@@ -32,7 +33,6 @@ recipe <- evolve_features(
   generations = 3,
   pop_size = 6,
   cv_folds = 3,
-  seed = 42,
   verbose = TRUE
 )
 

@@ -4,6 +4,7 @@
 #'
 #' @param x An \code{evo_recipe} object.
 #' @param ... Additional arguments (currently unused).
+#' @return Invisible \code{x}. Called for its side effect of printing the recipe overview.
 #' @importFrom stats predict
 #' @export
 print.evo_recipe <- function(x, ...) {
@@ -45,6 +46,7 @@ print.evo_recipe <- function(x, ...) {
 #'
 #' @param object An \code{evo_recipe} object.
 #' @param ... Additional arguments (currently unused).
+#' @return An object of class \code{summary_evo_recipe} containing detailed recipe statistics.
 #' @examples
 #' \donttest{
 #' data(mtcars)
@@ -108,6 +110,7 @@ summary.evo_recipe <- function(object, ...) {
 #'
 #' @param x A \code{summary_evo_recipe} object.
 #' @param ... Additional arguments (currently unused).
+#' @return Invisible \code{x}. Called for its side effect of printing the recipe summary.
 #' @export
 print.summary_evo_recipe <- function(x, ...) {
   cat("=== Evolutionary Feature Engineering Summary ===\n")
@@ -147,6 +150,7 @@ print.summary_evo_recipe <- function(x, ...) {
 #' @param type Character string, either \code{"fitness"} (default) to plot the fitness trajectory,
 #'   or \code{"importance"} to plot a bar chart of the top feature importances of the winning model.
 #' @param ... Additional arguments passed to \code{plot} or \code{barplot}.
+#' @return Invisible NULL. Called for its side effect of plotting the fitness curve or feature importances.
 #' @examples
 #' \donttest{
 #' data(mtcars)
@@ -257,6 +261,7 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
 #'
 #' @param x An \code{evo_ensemble} object.
 #' @param ... Additional arguments (currently unused).
+#' @return Invisible \code{x}. Called for its side effect of printing the ensemble overview.
 #' @export
 print.evo_ensemble <- function(x, ...) {
   cat("An evoFE Caruana Island Ensemble\n")
@@ -289,6 +294,7 @@ print.evo_ensemble <- function(x, ...) {
 #'
 #' @param object An \code{evo_ensemble} object.
 #' @param ... Additional arguments (currently unused).
+#' @return An object of class \code{summary_evo_ensemble} containing detailed ensemble statistics.
 #' @export
 summary.evo_ensemble <- function(object, ...) {
   active_names <- names(object$weights[object$weights > 0])
@@ -324,6 +330,7 @@ summary.evo_ensemble <- function(object, ...) {
 #'
 #' @param x A \code{summary_evo_ensemble} object.
 #' @param ... Additional arguments (currently unused).
+#' @return Invisible \code{x}. Called for its side effect of printing the ensemble summary.
 #' @export
 print.summary_evo_ensemble <- function(x, ...) {
   cat("Summary of evoFE Caruana Ensemble\n")

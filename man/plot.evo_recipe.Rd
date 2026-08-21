@@ -14,6 +14,9 @@ or \code{"importance"} to plot a bar chart of the top feature importances of the
 
 \item{...}{Additional arguments passed to \code{plot} or \code{barplot}.}
 }
+\value{
+Invisible NULL. Called for its side effect of plotting the fitness curve or feature importances.
+}
 \description{
 Plots either the fitness trajectory over generations or the feature importances of the best individual.
 }

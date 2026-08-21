@@ -325,6 +325,7 @@ test_that("evolve_features executes successfully with gibbs_stagnation, gibbs_fi
 })
 
 test_that("promoted migrant with superior fitness is sorted to index 1 in destination island", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc <- migration_config(topology = topology_tiered(islands = 5), payload = "full_individual")
   rec <- evolve_features(
@@ -336,6 +337,7 @@ test_that("promoted migrant with superior fitness is sorted to index 1 in destin
 })
 
 test_that("gene_only payload does not replace full individuals in destination population", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_gene <- migration_config(topology = topology_ring(islands = 3), payload = "gene_only")
   rec_gene <- evolve_features(
@@ -347,6 +349,7 @@ test_that("gene_only payload does not replace full individuals in destination po
 })
 
 test_that("grid topology respects gibbs push policy by stagnation", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_grid_stag <- migration_config(
     topology = topology_grid(islands = 4),
@@ -368,6 +371,7 @@ test_that("policy_tiered_admission throws error when combined with non-tiered to
 })
 
 test_that("tiered topology uses vertical promotion and respects policy within each tier", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_tiered_gibbs <- migration_config(
     topology = topology_tiered(islands = 5),
@@ -382,6 +386,7 @@ test_that("tiered topology uses vertical promotion and respects policy within ea
 })
 
 test_that("evolve_features accepts migration_topology = 'torus'", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   rec <- evolve_features(
     mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
@@ -392,6 +397,7 @@ test_that("evolve_features accepts migration_topology = 'torus'", {
 })
 
 test_that("policy_gibbs_push with feature_distance weighting executes correctly", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_feat_dist <- migration_config(
     topology = topology_grid(islands = 4),
@@ -406,6 +412,7 @@ test_that("policy_gibbs_push with feature_distance weighting executes correctly"
 })
 
 test_that("policy_gibbs_pull with feature_distance weighting executes correctly", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_feat <- migration_config(
     topology = topology_grid(islands = 4),
@@ -420,6 +427,7 @@ test_that("policy_gibbs_pull with feature_distance weighting executes correctly"
 })
 
 test_that("policy_gibbs_pull on tiered topology executes correctly", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_tiered <- migration_config(
     topology = topology_tiered(islands = 6, tiers = 3),
@@ -434,6 +442,7 @@ test_that("policy_gibbs_pull on tiered topology executes correctly", {
 })
 
 test_that("policy_gibbs_pull with uniform weighting executes correctly", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_uni <- migration_config(
     topology = topology_grid(islands = 4),
@@ -468,6 +477,7 @@ test_that("calibrated regression metrics integrate with xgboost and lightgbm in 
 })
 
 test_that("policy_gibbs_pull with gene_only payload runs successfully", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_gene <- migration_config(
     topology = topology_ring(islands = 3),
@@ -483,6 +493,7 @@ test_that("policy_gibbs_pull with gene_only payload runs successfully", {
 })
 
 test_that("stagnation remains 0 on the first generation evaluating a newly migrated elite", {
+  testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc <- migration_config(
     topology = topology_ring(islands = 3),
@@ -498,6 +509,7 @@ test_that("stagnation remains 0 on the first generation evaluating a newly migra
 })
 
 test_that("row_split_islands with many islands does not produce -Inf baseline fitness (allow_prune regression)", {
+  testthat::skip_if_not_installed("glmnet")
   # Regression: island baseline was evaluated with allow_prune = FALSE on a tiny row-shard
   # (1/islands of training data). Genes valid on the full data can legitimately fail on a
   # small shard, producing -Inf fitness for every individual on that island permanently.
@@ -518,6 +530,6 @@ test_that("row_split_islands with many islands does not produce -Inf baseline fi
     verbose = FALSE
   )
   expect_s3_class(rec, "evo_recipe")
-  # Best fitness must be a real number — not -Inf — even with small per-island shards.
+  # Best fitness must be a real number - not -Inf - even with small per-island shards.
   expect_true(all(is.finite(rec$fitness)))
 })

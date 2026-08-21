@@ -2,14 +2,20 @@
 % Please edit documentation in R/viewer.R
 \name{view}
 \alias{view}
+\alias{view.evo_recipe}
 \title{View the evolution history of an evo_recipe}
 \usage{
 view(recipe, ...)
+
+\method{view}{evo_recipe}(recipe, ...)
 }
 \arguments{
 \item{recipe}{An \code{evo_recipe} object.}
 
 \item{...}{Additional arguments (not used).}
+}
+\value{
+Invisible file path string to the generated HTML viewer file.
 }
 \description{
 Opens an interactive HTML page in the browser to visualize the evolutionary

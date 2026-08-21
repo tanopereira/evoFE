@@ -11,6 +11,9 @@
 
 \item{...}{Additional arguments (currently unused).}
 }
+\value{
+An object of class \code{summary_evo_recipe} containing detailed recipe statistics.
+}
 \description{
 Computes and formats a detailed summary of the evolutionary feature engineering recipe.
 }

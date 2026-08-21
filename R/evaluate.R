@@ -103,6 +103,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 
     if (out_type == "categorical") {
       new_col_train <- as.factor(new_col_train)
+    } else if (is.numeric(new_col_train)) {
+      new_col_train[!is.finite(new_col_train)] <- NA
     }
 
     if (data.table::is.data.table(train_data)) {
@@ -120,6 +122,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       train_factor <- train_data[[gene$output_col]]
       train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
       new_col_val <- factor(new_col_val, levels = train_levels)
+    } else if (is.numeric(new_col_val)) {
+      new_col_val[!is.finite(new_col_val)] <- NA
     }
     if (data.table::is.data.table(val_data)) {
       val_data[, (gene$output_col) := new_col_val]
@@ -243,14 +247,19 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 #' relative gap to the metric ceiling.
 #'
 #' @param n_genes Integer. Number of evolved genes in the individual.
+#' @param n_genes Integer. Number of evolved genes in the recipe.
+#' @param n_features Optional integer. Total number of active features (active raw features plus genes). If NULL, defaults to n_genes.
 #' @param n_samples Integer. Number of dataset samples (rows).
 #' @param running_best_fitness Numeric. Current running best fitness in the population/island.
 #' @param baseline_fitness Numeric. Generation 0 baseline fitness (raw features only).
 #' @param metric Character or function. Metric being optimized.
 #' @param task Character. "classification", "multiclass", or "regression".
 #' @param complexity_penalty Numeric. Dimensionless penalty multiplier (default 0).
-#' @param complexity_mode Character. "bic_dynamic", "bic", or "none".
-#' @param epsilon_floor Numeric. Minimum safety floor factor for dynamic BIC (default 0.20, representing 20\% of base BIC).
+#' @param complexity_mode Character. "bic_dynamic" (default), "bic", "pac_bayes_dynamic", "pac_bayes", or "none".
+#' @param complexity_floor Numeric. Minimum safety floor factor for dynamic penalties (default 0.20, representing 20\% of base penalty).
+#' @param complexity_target Character. "all_features" (default, penalizes total active features) or "genes" (penalizes only derived genes).
+#' @param n_features Optional integer. Total number of active features (active raw features plus genes). If NULL, defaults to n_genes.
+#' @param epsilon_floor Deprecated alias for \code{complexity_floor}.
 #' @return Non-negative numeric penalty to subtract from raw fitness.
 #' @export
 compute_complexity_penalty <- function(n_genes,
@@ -261,8 +270,19 @@ compute_complexity_penalty <- function(n_genes,
                                        task = "classification",
                                        complexity_penalty = 0,
                                        complexity_mode = "bic_dynamic",
+                                       complexity_floor = 0.20,
+                                       complexity_target = "all_features",
+                                       n_features = NULL,
                                        epsilon_floor = 0.20) {
-  if (complexity_penalty <= 0 || n_genes <= 0 || complexity_mode == "none") {
+  floor_val <- if (!missing(complexity_floor)) complexity_floor else epsilon_floor
+  target_mode <- if (identical(complexity_target, "genes") || identical(complexity_target, "gene_only")) "genes" else "all_features"
+  k <- if (target_mode == "genes") {
+    n_genes
+  } else {
+    if (!is.null(n_features)) n_features else n_genes
+  }
+
+  if (complexity_penalty <= 0 || k <= 0 || complexity_mode == "none") {
     return(0)
   }
 
@@ -271,49 +291,43 @@ compute_complexity_penalty <- function(n_genes,
     n_samples <- 2
   }
 
-  # Base BIC penalty factor per gene: lambda0 * ln(N) / (2N)
-  bic_base <- complexity_penalty * (log(n_samples) / (2 * n_samples))
+  # Base penalty factor per feature/gene
+  is_dynamic <- grepl("_dynamic$", complexity_mode)
+  base_mode <- sub("_dynamic$", "", complexity_mode)
 
-  if (complexity_mode == "bic") {
-    return(bic_base * n_genes)
+  base_factor <- switch(base_mode,
+    "pac_bayes" = complexity_penalty / (2 * sqrt(n_samples)),
+    "bic"       = complexity_penalty * (log(n_samples) / (2 * n_samples)),
+    0
+  )
+
+  if (base_factor <= 0) {
+    return(0)
   }
 
-  # Dynamic BIC mode: scale by normalized gap to ideal
-  if (task %in% c("classification", "multiclass")) {
-    ideal <- 1.0
-  } else {
-    # Regression: fitness is negative loss (-RMSE, -MAE) where ideal is 0.0
-    ideal <- 0.0
-  }
+  p <- if (is_dynamic) {
+    # Dynamic penalty mode: scale by normalized gap to ideal
+    ideal <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
 
-  # If baseline or running_best is missing/NA, default to 100% of BIC
-  if (is.null(baseline_fitness) || is.null(running_best_fitness) ||
-    is.na(baseline_fitness) || is.na(running_best_fitness) ||
-    !is.finite(baseline_fitness) || !is.finite(running_best_fitness)) {
-    return(bic_base * n_genes)
-  }
-
-  denom <- ideal - baseline_fitness
-  numer <- ideal - running_best_fitness
-
-  if (task %in% c("classification", "multiclass")) {
-    if (denom <= 1e-12) {
-      gap_ratio <- 1.0
+    if (is.null(baseline_fitness) || is.null(running_best_fitness) ||
+      is.na(baseline_fitness) || is.na(running_best_fitness) ||
+      !is.finite(baseline_fitness) || !is.finite(running_best_fitness)) {
+      base_factor
     } else {
-      gap_ratio <- numer / denom
+      denom <- ideal - baseline_fitness
+      numer <- ideal - running_best_fitness
+      gap_ratio <- if (abs(denom) <= 1e-12) 1.0 else numer / denom
+      dynamic_factor <- max(floor_val, min(1.0, gap_ratio))
+      base_factor * dynamic_factor
     }
   } else {
-    if (abs(denom) <= 1e-12) {
-      gap_ratio <- 1.0
-    } else {
-      gap_ratio <- numer / denom
-    }
+    base_factor
   }
 
-  # Clamp gap_ratio between epsilon_floor and 1.0
-  dynamic_factor <- max(epsilon_floor, min(1.0, gap_ratio))
-
-  bic_base * dynamic_factor * n_genes
+  # Compound penalty across k features: (1 + p)^k - 1
+  # Ensures adding k features simultaneously (e.g. multi-dimensional UMAP / PCA embeddings)
+  # has the exact same compound error hurdle as sequential single-feature additions.
+  expm1(k * log1p(p))
 }
 
 #' Evaluate the fitness of an individual
@@ -329,21 +343,20 @@ compute_complexity_penalty <- function(n_genes,
 #' @param evaluation_strategy Character string, either "cv" (cross-validation) or "split" (train/validation split).
 #' @param split_ids Optional vector of pre-defined split assignments (e.g. \code{c("train", "train", "val", "holdout", "train")}). Must have the same length as the number of rows in \code{data} and contain only "train", "val", or "holdout" labels.
 #' @param shared_splits Optional list of shared data.table splits for in-place caching.
-#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a custom registered evaluator name).
-#' @param fold_ids Optional vector of pre-defined fold assignments.
-#' @param shared_folds Optional list of shared data.table CV folds for in-place caching.
-#' @param shared_full Optional data.table of the full dataset for in-place caching.
-#' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
-#' @param threads Number of threads to use for parallel execution (default 2)
-#' @param metric The metric to optimize ("default", "auc", "f1", "mae", or a custom function).
-#' @param verbose Logical indicating if progress should be printed.
-#' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
-#' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
-#'   When set to 1.0, applies standard BIC parsimony pressure. Default \code{0} disables the penalty.
-#' @param complexity_mode Character. Complexity penalty strategy: "bic_dynamic" (default, scales
-#'   with dataset size and relaxes as fitness approaches the ideal), "bic" (scales with dataset size,
-#'   constant across generations), or "none" (no penalty).
-#' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic BIC penalty (default \code{0.20}).
+#' @param evaluator Character string specifying the model backend: "lightgbm", "xgboost", "catboost", "rf", or "lm".
+#' @param fold_ids Optional integer vector of pre-assigned fold indices.
+#' @param shared_folds Optional list of shared data.table fold splits for in-place caching.
+#' @param shared_full Optional shared full data.table.
+#' @param state_cache Optional environment used to cache transformer training states across evaluations.
+#' @param threads Number of threads for model training.
+#' @param metric Character string or evaluation metric.
+#' @param verbose Logical.
+#' @param allow_prune Logical.
+#' @param complexity_penalty Numeric. Dimensionless penalty multiplier (default 0).
+#' @param complexity_mode Character. Complexity penalty strategy: "bic_dynamic" (default),
+#'   "bic", "pac_bayes_dynamic", "pac_bayes", or "none".
+#' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic penalty (default \code{0.20}).
+#' @param complexity_target Character. "all_features" (default, penalizes total active features) or "genes" (penalizes only derived genes).
 #' @param running_best_fitness Optional numeric. Current running best fitness for dynamic BIC.
 #' @param baseline_fitness Optional numeric. Generation 0 baseline fitness for dynamic BIC.
 #' @param n_samples Optional integer. Dataset sample size N for BIC calculations. Defaults to nrow(data).
@@ -361,7 +374,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              state_cache = NULL, threads = 2,
                              metric = "default", verbose = FALSE, allow_prune = TRUE,
                              complexity_penalty = 0, complexity_mode = "bic_dynamic",
-                             complexity_floor = 0.20,
+                             complexity_floor = 0.20, complexity_target = "all_features",
                              running_best_fitness = NULL, baseline_fitness = NULL,
                              n_samples = NULL, ...) {
   if (!is.na(ind$fitness)) {
@@ -479,8 +492,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Complexity penalty: discourage long recipes (parsimony pressure)
     if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
       n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
+      n_active_raw <- length(res$ind$numeric_cols) + length(res$ind$categorical_cols) + length(res$ind$datetime_cols)
+      n_genes <- length(res$ind$genes)
       pen <- compute_complexity_penalty(
-        n_genes = length(res$ind$genes),
+        n_genes = n_genes,
         n_samples = n_samp,
         running_best_fitness = running_best_fitness,
         baseline_fitness = baseline_fitness,
@@ -488,10 +503,17 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         task = task,
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
-        epsilon_floor = complexity_floor
+        complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
+        n_features = n_active_raw + n_genes
       )
       ind$penalty <- pen
-      ind$fitness <- raw_score - pen
+      if (task == "regression") {
+        ind$fitness <- if (raw_score <= 0) raw_score * (1 + pen) else raw_score * (1 - pen)
+      } else {
+        error_gap <- max(0, min(1.0, 1.0 - raw_score))
+        ind$fitness <- raw_score - error_gap * pen
+      }
     } else {
       ind$fitness <- raw_score
     }
@@ -518,6 +540,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
     metrics <- rep(NA_real_, cv_folds)
     fold_importances <- list()
+    last_fit_genes <- NULL
 
     n_total <- nrow(dt)
     if (task == "multiclass") {
@@ -557,6 +580,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
       train_fold_feat <- res$train
       val_fold_feat <- res$val
+      if (!is.null(res$ind)) last_fit_genes <- res$ind$genes
 
       # Features = original + new
       gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
@@ -632,8 +656,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Complexity penalty: discourage long recipes (parsimony pressure)
     if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
       n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
+      n_active_raw <- length(ind$numeric_cols) + length(ind$categorical_cols) + length(ind$datetime_cols)
+      n_genes <- length(ind$genes)
       pen <- compute_complexity_penalty(
-        n_genes = length(ind$genes),
+        n_genes = n_genes,
         n_samples = n_samp,
         running_best_fitness = running_best_fitness,
         baseline_fitness = baseline_fitness,
@@ -641,10 +667,17 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         task = task,
         complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
-        epsilon_floor = complexity_floor
+        complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
+        n_features = n_active_raw + n_genes
       )
       ind$penalty <- pen
-      ind$fitness <- raw_score - pen
+      if (task == "regression") {
+        ind$fitness <- if (raw_score <= 0) raw_score * (1 + pen) else raw_score * (1 - pen)
+      } else {
+        error_gap <- max(0, min(1.0, 1.0 - raw_score))
+        ind$fitness <- raw_score - error_gap * pen
+      }
     } else {
       ind$fitness <- raw_score
     }
@@ -670,6 +703,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$importances <- numeric(0)
     }
 
+    # Propagate fitted gene states from the last successful fold
+    if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
+
     ind$holdout_fitness <- NULL
   }
 
@@ -677,6 +713,22 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 }
 
 #' Evaluate holdout fitness for an individual
+#'
+#' @param ind An \code{evo_individual} object.
+#' @param data A data.frame or data.table.
+#' @param split_ids Character vector of split identifiers.
+#' @param shared_splits Optional pre-split data tables.
+#' @param target_col Target column name.
+#' @param task Task type.
+#' @param evaluator Evaluator name.
+#' @param threads Thread count.
+#' @param state_cache State cache environment.
+#' @param classes Class levels.
+#' @param num_class Number of classes.
+#' @param metric Metric name.
+#' @param verbose Verbosity.
+#' @param ... Additional arguments.
+#' @return An updated \code{evo_individual} with \code{holdout_fitness} evaluated on the holdout partition.
 #' @keywords internal
 evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
                                      target_col, task, evaluator, threads,

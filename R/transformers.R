@@ -50,7 +50,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #' for the evolutionary feature-engineering search.  Every entry is an
 #' \code{evo_transformer} object produced by \code{\link{create_transformer}}.
 #'
-#' \strong{Arithmetic (numeric → numeric)}
+#' \strong{Arithmetic (numeric -> numeric)}
 #' \describe{
 #'   \item{\code{log}}{Safe natural logarithm: \code{log1p(|x|)}.}
 #'   \item{\code{sqrt}}{Safe square root: \code{sqrt(|x|)}.}
@@ -67,13 +67,13 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
 #' }
 #'
-#' \strong{Rank / distribution (numeric → numeric, stateful)}
+#' \strong{Rank / distribution (numeric -> numeric, stateful)}
 #' \describe{
 #'   \item{\code{rank_transform}}{ECDF-based percentile rank mapped to
 #'     \eqn{[0, 1]}.  Fit on training data; robust to outliers.}
 #' }
 #'
-#' \strong{Group-by aggregations (mixed cat × num → numeric, stateful)}
+#' \strong{Group-by aggregations (mixed cat x num -> numeric, stateful)}
 #' \describe{
 #'   \item{\code{groupby_mean}}{Per-group mean.}
 #'   \item{\code{groupby_sd}}{Per-group standard deviation.}
@@ -86,7 +86,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     \{0.25, 0.75\}).}
 #' }
 #'
-#' \strong{Supervised categorical encodings (categorical → numeric, stateful)}
+#' \strong{Supervised categorical encodings (categorical -> numeric, stateful)}
 #' \describe{
 #'   \item{\code{target_encode}}{Smoothed mean-target encoding for binary /
 #'     regression tasks.}
@@ -108,7 +108,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
 #'   \item{\code{frequency_encode}}{Count of each category level in training data.}
 #'   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
-#'     an "other" bucket (\code{comp_idx} 1–6).}
+#'     an "other" bucket (\code{comp_idx} 1-6).}
 #'   \item{\code{similarity_encode}}{Character 3-gram Jaccard similarity between string
 #'     levels and top-K prototype categories (inspired by \pkg{skrub}).}
 #'   \item{\code{minhash_encode}}{Fast sub-string MinHash hashing for high-cardinality strings
@@ -125,7 +125,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     components (hour, day of week, month, day of year).}
 #' }
 #'
-#' \strong{Dimensionality reduction (numeric → numeric, stateful)}
+#' \strong{Dimensionality reduction (numeric -> numeric, stateful)}
 #' \describe{
 #'   \item{\code{pca}}{Selected principal component from \code{prcomp}.}
 #'   \item{\code{truncated_svd}}{Selected component from truncated SVD.}
@@ -133,7 +133,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'   \item{\code{umap}}{UMAP projection component (requires \pkg{uwot}).}
 #' }
 #'
-#' \strong{Manifold / graph learning (numeric → numeric or categorical, stateful)}
+#' \strong{Manifold / graph learning (numeric -> numeric or categorical, stateful)}
 #' \describe{
 #'   \item{\code{genie}}{Genie hierarchical cluster label (requires
 #'     \pkg{genieclust}).}
@@ -152,6 +152,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'   \item{\code{deadwood}}{Deadwood outlier indicator (requires \pkg{deadwood}).}
 #' }
 #'
+#' @return An \code{environment} containing registered feature transformers.
 #' @seealso \code{\link{create_transformer}}, \code{\link{register_transformer}}
 #' @export
 evo_transformers <- new.env(parent = emptyenv())
@@ -163,6 +164,7 @@ evo_transformers <- new.env(parent = emptyenv())
 #' @param name Unique character string naming the transformer.
 #' @param transformer An object of class \code{evo_transformer} created
 #'   via \code{create_transformer}.
+#' @return Invisible \code{transformer}, the registered transformer object.
 #' @examples
 #' # Create a custom transformer
 #' add_ten_trans <- create_transformer(
@@ -184,6 +186,12 @@ evo_transformers <- new.env(parent = emptyenv())
 register_transformer <- function(name, transformer) {
   if (!inherits(transformer, "evo_transformer")) {
     stop("transformer must be an object of class 'evo_transformer' (created via create_transformer).")
+  }
+  if (!is.character(name) || length(name) != 1 || is.na(name) || !nzchar(name)) {
+    stop("name must be a single non-empty character string.")
+  }
+  if (name %in% names(evo_transformers)) {
+    warning(sprintf("Overwriting existing transformer '%s'.", name))
   }
   evo_transformers[[name]] <- transformer
   invisible(transformer)
@@ -279,7 +287,7 @@ is_verbose <- function() {
 }
 
 # Cache-aware KNN apply for clustering transformers.
-# `get_preds(nearest_indices, state)` maps neighbour indices → prediction vector.
+# `get_preds(nearest_indices, state)` maps neighbour indices -> prediction vector.
 # When x_test is identical to the training set, indices are the identity permutation.
 .cluster_knn_apply <- function(x_test, state, get_preds, verbose = FALSE, tag = "Apply") {
   if (is.null(state) || !isTRUE(state$valid))
@@ -754,6 +762,7 @@ evo_transformers$groupby_max <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
+    num_col <- input_cols[2]
     dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
     valid_n <- dt$n[!is.na(dt$n)]
     global_max <- if (length(valid_n) > 0) max(valid_n) else 0

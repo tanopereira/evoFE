@@ -44,13 +44,21 @@ register_evaluator(
       folds <- sample(rep(1:mbo_folds, length.out = n_samples))
     }
     
+    is_mae_metric <- !is.null(metric) && is.character(metric) && tolower(metric) %in% c("mae", "cal_mae", "cal-mae")
+    reg_obj <- if (is_mae_metric) "regression_l1" else "regression"
+    reg_metric <- if (is_mae_metric) "mae" else "rmse"
+
     # Objective function to evaluate hyperparameter sets
     fn <- function(x) {
       params <- list(
         objective = switch(task,
           classification = "binary",
           multiclass     = "multiclass",
-          "regression"),
+          reg_obj),
+        metric = switch(task,
+          classification = "binary_logloss",
+          multiclass     = "multi_logloss",
+          reg_metric),
         num_leaves = x$num_leaves,
         learning_rate = x$learning_rate,
         max_depth = x$max_depth,
@@ -210,11 +218,11 @@ register_evaluator(
       objective = switch(task,
         classification = "binary",
         multiclass     = "multiclass",
-        "regression"),
+        reg_obj),
       metric = switch(task,
         classification = "binary_logloss",
         multiclass     = "multi_logloss",
-        "rmse"),
+        reg_metric),
       num_leaves    = best_params$num_leaves,
       learning_rate = best_params$learning_rate,
       max_depth     = best_params$max_depth,

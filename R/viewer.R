@@ -152,12 +152,13 @@ start_evolution_viewer <- function(port = NULL) {
 #'
 #' @param recipe An \code{evo_recipe} object.
 #' @param ... Additional arguments (not used).
-#'
+#' @return Invisible file path string to the generated HTML viewer file.
 #' @export
 view <- function(recipe, ...) {
   UseMethod("view")
 }
 
+#' @rdname view
 #' @export
 view.evo_recipe <- function(recipe, ...) {
   if (is.null(recipe$evolution_log)) {
@@ -183,6 +184,8 @@ view.evo_recipe <- function(recipe, ...) {
 
   out_path <- tempfile(fileext = ".html")
   writeLines(html, out_path)
-  utils::browseURL(out_path)
+  if (interactive()) {
+    utils::browseURL(out_path)
+  }
   invisible(out_path)
 }

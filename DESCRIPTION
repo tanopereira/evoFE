@@ -21,6 +21,8 @@ Description: Automates feature engineering using evolutionary algorithms
     Gagolewski (2021) <doi:10.1016/j.softx.2021.100722>,
     Gagolewski (2026) <doi:10.32614/CRAN.package.lumbermark>, and
     Gagolewski (2026) <doi:10.32614/CRAN.package.deadwood>.
+URL: https://github.com/tanopereira/evoFE
+BugReports: https://github.com/tanopereira/evoFE/issues
 License: MIT + file LICENSE
 Encoding: UTF-8
 Imports: 
@@ -46,7 +48,10 @@ Suggests:
     deadwood,
     keras3,
     httpuv,
-    jsonlite
+    jsonlite,
+    farff,
+    ranger,
+    mlr3learners
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
 RoxygenNote: 7.3.2

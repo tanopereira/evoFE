@@ -41,7 +41,7 @@ the user's global RNG state.}
 
 \item{verbose}{Logical. Whether to print progress messages.}
 
-\item{...}{Additional arguments passed to \code{\link{train_model}}.}
+\item{...}{Additional arguments passed to \code{train_model}.}
 }
 \value{
 An \code{evo_ensemble} object containing:

@@ -18,7 +18,7 @@
 #'   the user's global RNG state.
 #' @param threads Integer. Number of threads to use for model training.
 #' @param verbose Logical. Whether to print progress messages.
-#' @param ... Additional arguments passed to \code{\link{train_model}}.
+#' @param ... Additional arguments passed to \code{train_model}.
 #'
 #' @return An \code{evo_ensemble} object containing:
 #'   \item{active_recipes}{Named list of feature engineering recipes for surviving islands.}
@@ -264,6 +264,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
 #' Internal Caruana Greedy Selection Engine
 #' @keywords internal
+#' @noRd
 caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
                            bag_samples = TRUE, sample_ratio = 0.8, seed = NULL,
                            num_class = NULL, verbose = FALSE) {

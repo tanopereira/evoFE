@@ -1,7 +1,24 @@
 #' Global environment for registered model evaluators
 #'
+#' @return An \code{environment} containing registered model evaluators.
 #' @export
 evo_evaluators <- new.env(parent = emptyenv())
+
+# Internal helper to read the best iteration from a trained xgboost model,
+# supporting both the legacy API (attribute on the object) and xgboost >= 3.0
+# (where early stopping info lives in model$early_stop).
+.xgb_best_iter <- function(model) {
+  if (!is.null(model$best_iteration)) {
+    return(model$best_iteration)
+  }
+  if (!is.null(model$early_stop) && !is.null(model$early_stop$best_iteration)) {
+    bi <- model$early_stop$best_iteration
+    if (is.numeric(bi) && is.finite(bi) && bi > 0) return(bi)
+    return(NULL)
+  }
+  val <- tryCatch(xgboost::xgb.attr(model, "best_iteration"), error = function(e) NULL)
+  if (!is.null(val)) as.numeric(val) else NULL
+}
 
 # Internal helper to unify SHAP values across models
 .extract_shap_importances <- function(sh, num_feats, feature_names) {
@@ -42,6 +59,7 @@ evo_evaluators <- new.env(parent = emptyenv())
 #'   vector or matrix of predictions.
 #' @param base_evaluator Optional character name of the base registered model.
 #' @param cleanup_func Optional function to clean up model resources/states after evaluation.
+#' @return Invisible NULL. Called for the side effect of registering the evaluator in \code{evo_evaluators}.
 #' @importFrom lightgbm lgb.train
 #' @importFrom xgboost xgb.train
 #' @examples
@@ -77,17 +95,37 @@ register_evaluator(
   "lightgbm",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
+    if (!requireNamespace("lightgbm", quietly = TRUE)) {
+      stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
+    }
+    if (!is.null(x_train)) {
+      if (!is.matrix(x_train)) x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
+      x_train[!is.finite(x_train)] <- NA
+    }
+    if (!is.null(x_val)) {
+      if (!is.matrix(x_val)) x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
+      x_val[!is.finite(x_val)] <- NA
+    }
     dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
+    extra_params <- list(...)
+    y_val <- extra_params$y_val
+    metric_arg <- extra_params$metric
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
+    reg_obj <- if (is_mae_metric) "regression_l1" else "regression"
+    reg_metric <- if (is_mae_metric) "mae" else "rmse"
+
     params <- list(
       objective = switch(task,
         classification = "binary",
         multiclass     = "multiclass",
-        "regression"
+        reg_obj
       ),
       metric = switch(task,
         classification = "binary_logloss",
         multiclass     = "multi_logloss",
-        "rmse"
+        reg_metric
       ),
       num_leaves = 15,
       learning_rate = 0.1,
@@ -96,11 +134,6 @@ register_evaluator(
       seed = 42
     )
     if (task == "multiclass") params$num_class <- num_class
-
-    extra_params <- list(...)
-    y_val <- extra_params$y_val
-    metric_arg <- extra_params$metric
-    early_stopping_rounds <- extra_params$early_stopping_rounds
 
     use_custom_eval <- FALSE
     custom_eval_type <- NULL
@@ -187,6 +220,13 @@ register_evaluator(
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
+    if (!requireNamespace("lightgbm", quietly = TRUE)) {
+      stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
+    }
+    if (!is.null(x_new)) {
+      if (!is.matrix(x_new)) x_new <- if (is.data.frame(x_new)) data.matrix(x_new) else as.matrix(x_new)
+      x_new[!is.finite(x_new)] <- NA
+    }
     if (!is.null(model$best_iter) && model$best_iter > 0) {
       stats::predict(model, x_new, num_iteration = model$best_iter)
     } else {
@@ -200,17 +240,37 @@ register_evaluator(
   "xgboost",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
+    if (!requireNamespace("xgboost", quietly = TRUE)) {
+      stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
+    }
+    if (!is.null(x_train)) {
+      if (!is.matrix(x_train)) x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
+      x_train[!is.finite(x_train)] <- NA
+    }
+    if (!is.null(x_val)) {
+      if (!is.matrix(x_val)) x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
+      x_val[!is.finite(x_val)] <- NA
+    }
     dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train)
+    extra_params <- list(...)
+    y_val <- extra_params$y_val
+    metric_arg <- extra_params$metric
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
+    reg_obj <- if (is_mae_metric) "reg:absoluteerror" else "reg:squarederror"
+    reg_eval_metric <- if (is_mae_metric) "mae" else "rmse"
+
     params <- list(
       objective = switch(task,
         classification = "binary:logistic",
         multiclass     = "multi:softprob",
-        "reg:squarederror"
+        reg_obj
       ),
       eval_metric = switch(task,
         classification = "logloss",
         multiclass     = "mlogloss",
-        "rmse"
+        reg_eval_metric
       ),
       nthread = threads,
       max_depth = 6,
@@ -221,11 +281,6 @@ register_evaluator(
       silent = 1
     )
     if (task == "multiclass") params$num_class <- num_class
-
-    extra_params <- list(...)
-    y_val <- extra_params$y_val
-    metric_arg <- extra_params$metric
-    early_stopping_rounds <- extra_params$early_stopping_rounds
 
     use_custom_eval <- FALSE
     custom_eval_type <- NULL
@@ -259,9 +314,17 @@ register_evaluator(
 
     evals <- list(train = dtrain)
     dval_metric <- NULL
-    if (use_custom_eval && !is.null(x_val) && !is.null(y_val)) {
+    # Early stopping requires a validation set in `evals`; add one whenever
+    # validation data is available and a custom metric or early stopping is used.
+    needs_val <- use_custom_eval ||
+      (!is.null(early_stopping_rounds) && early_stopping_rounds > 0)
+    if (needs_val && !is.null(x_val) && !is.null(y_val)) {
       dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val)
       evals$val <- dval_metric
+    }
+    if (length(evals) <= 1L) {
+      # No validation set available: disable early stopping (mirrors lightgbm path)
+      early_stopping_rounds <- NULL
     }
 
     xgb_feval <- function(preds, dtrain) {
@@ -291,16 +354,7 @@ register_evaluator(
       ))
     })
 
-    best_iter <- if (!is.null(model$best_iteration)) {
-      model$best_iteration
-    } else {
-      tryCatch({
-        val <- xgboost::xgb.attr(model, "best_iteration")
-        if (!is.null(val)) as.numeric(val) else NULL
-      }, error = function(e) {
-        tryCatch(xgboost:::xgb.best_iteration(model), error = function(e) NULL)
-      })
-    }
+    best_iter <- .xgb_best_iter(model)
 
     preds <- if (!is.null(x_val)) {
       dval <- xgboost::xgb.DMatrix(data = x_val)
@@ -330,16 +384,14 @@ register_evaluator(
     list(model = model, predictions = preds, importances = importances)
   },
   predict_func = function(model, x_new, task, ...) {
-    best_iter <- if (!is.null(model$best_iteration)) {
-      model$best_iteration
-    } else {
-      tryCatch({
-        val <- xgboost::xgb.attr(model, "best_iteration")
-        if (!is.null(val)) as.numeric(val) else NULL
-      }, error = function(e) {
-        tryCatch(xgboost:::xgb.best_iteration(model), error = function(e) NULL)
-      })
+    if (!requireNamespace("xgboost", quietly = TRUE)) {
+      stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
     }
+    if (!is.null(x_new)) {
+      if (!is.matrix(x_new)) x_new <- if (is.data.frame(x_new)) data.matrix(x_new) else as.matrix(x_new)
+      x_new[!is.finite(x_new)] <- NA
+    }
+    best_iter <- .xgb_best_iter(model)
     dmatrix <- xgboost::xgb.DMatrix(data = x_new)
     preds <- if (!is.null(best_iter) && best_iter >= 1) {
       stats::predict(model, dmatrix, iterationrange = c(1, best_iter + 1))
@@ -360,15 +412,32 @@ register_evaluator(
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
 
+    if (!is.null(x_train)) {
+      if (!is.matrix(x_train)) x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
+      x_train[!is.finite(x_train)] <- NA
+    }
+    if (!is.null(x_val)) {
+      if (!is.matrix(x_val)) x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
+      x_val[!is.finite(x_val)] <- NA
+    }
+
     df_train <- as.data.frame(x_train)
     df_train[] <- lapply(df_train, as.numeric)
     dtrain <- catboost::catboost.load_pool(data = df_train, label = y_train)
+
+    extra_params <- list(...)
+    y_val            <- extra_params$y_val
+    metric_arg       <- extra_params$metric
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+
+    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
+    reg_loss <- if (is_mae_metric) "MAE" else "RMSE"
 
     params <- list(
       loss_function = switch(task,
         classification = "Logloss",
         multiclass     = "MultiClass",
-        "RMSE"
+        reg_loss
       ),
       thread_count = threads,
       iterations = nrounds,
@@ -378,10 +447,6 @@ register_evaluator(
       train_dir = tempdir(),
       random_seed = 42
     )
-
-    extra_params <- list(...)
-    y_val            <- extra_params$y_val
-    early_stopping_rounds <- extra_params$early_stopping_rounds
 
     control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
                         "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
@@ -438,6 +503,10 @@ register_evaluator(
   predict_func = function(model, x_new, task, ...) {
     if (system.file(package = "catboost") == "") {
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
+    }
+    if (!is.null(x_new)) {
+      if (!is.matrix(x_new)) x_new <- if (is.data.frame(x_new)) data.matrix(x_new) else as.matrix(x_new)
+      x_new[!is.finite(x_new)] <- NA
     }
     df_new <- as.data.frame(x_new)
     df_new[] <- lapply(df_new, as.numeric)
@@ -544,6 +613,10 @@ register_evaluator(
     if (length(missing) > 0) {
       importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
     }
+    
+    # Attach training-time imputation means to the model so predict-time
+    # imputation is consistent with training (prevents train/serve skew).
+    model$col_means <- col_means
     
     list(model = model, predictions = preds, importances = importances, col_means = col_means)
   },

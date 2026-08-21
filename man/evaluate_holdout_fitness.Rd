@@ -21,6 +21,38 @@ evaluate_holdout_fitness(
   ...
 )
 }
+\arguments{
+\item{ind}{An \code{evo_individual} object.}
+
+\item{data}{A data.frame or data.table.}
+
+\item{split_ids}{Character vector of split identifiers.}
+
+\item{shared_splits}{Optional pre-split data tables.}
+
+\item{target_col}{Target column name.}
+
+\item{task}{Task type.}
+
+\item{evaluator}{Evaluator name.}
+
+\item{threads}{Thread count.}
+
+\item{state_cache}{State cache environment.}
+
+\item{classes}{Class levels.}
+
+\item{num_class}{Number of classes.}
+
+\item{metric}{Metric name.}
+
+\item{verbose}{Verbosity.}
+
+\item{...}{Additional arguments.}
+}
+\value{
+An updated \code{evo_individual} with \code{holdout_fitness} evaluated on the holdout partition.
+}
 \description{
 Evaluate holdout fitness for an individual
 }
