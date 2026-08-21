@@ -82,6 +82,7 @@ summary.evo_recipe <- function(object, ...) {
     penalty = object$best_individual$penalty,
     best_fitness = object$best_individual$fitness,
     holdout_fitness = object$best_individual$holdout_fitness,
+    search_gap = object$search_gap,
     num_genes = length(object$best_individual$genes),
     genes_summary = data.frame(
       Transformer = character(),
@@ -130,6 +131,9 @@ print.summary_evo_recipe <- function(x, ...) {
   }
   if (!is.null(x$holdout_fitness) && !is.na(x$holdout_fitness)) {
     cat(sprintf("Best Holdout Fitness:     %.6f\n", x$holdout_fitness))
+    if (!is.null(x$search_gap) && is.finite(x$search_gap)) {
+      cat(sprintf("Search Gap (Holdout-Val): %+.6f\n", x$search_gap))
+    }
   }
   cat(sprintf("Number of Evolved Features: %d\n\n", x$num_genes))
   

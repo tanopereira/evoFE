@@ -123,6 +123,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'     or weekend indicator from date/datetime columns.}
 #'   \item{\code{datetime_cyclic}}{Sine and cosine cyclic encoding for periodic date/time
 #'     components (hour, day of week, month, day of year).}
+#'   \item{\code{date_diff}}{Signed difference in days between two datetime columns.}
 #' }
 #'
 #' \strong{Dimensionality reduction (numeric -> numeric, stateful)}
@@ -1601,6 +1602,33 @@ evo_transformers$datetime_extract <- create_transformer(
     as.numeric(res)
   },
   name_generator = function(gene) .gene_col_name(gene, "dt")
+)
+
+# Date Difference (binary datetime -> numeric, stateless)
+# Days elapsed between two datetime columns; sign encodes order.
+evo_transformers$date_diff <- create_transformer(
+  name = "date_diff",
+  type = "binary",
+  input_type = "datetime",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    .to_posix <- function(x) {
+      tryCatch({
+        if (inherits(x, c("POSIXct", "POSIXlt", "Date"))) {
+          as.POSIXct(x)
+        } else {
+          as.POSIXct(as.character(x), tryFormats = c("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"))
+        }
+      }, error = function(e) as.POSIXct(rep(NA, length(x))))
+    }
+    a <- .to_posix(data[[input_cols[1]]])
+    b <- .to_posix(data[[input_cols[2]]])
+    res <- as.numeric(difftime(a, b, units = "days"))
+    res[!is.finite(res)] <- 0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "ddiff")
 )
 
 # Multiclass Target Encoding

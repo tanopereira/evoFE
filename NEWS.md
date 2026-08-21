@@ -1,5 +1,12 @@
 # evoFE 1.0.0
 
+## New Features
+
+* **Untouched confirmation holdout (`holdout_frac`)**: With `evaluation_strategy = "cv"`, a stratified fraction of rows is excluded from the entire search and scored once after evolution. The result is reported as `holdout_fitness` and a new `search_gap` diagnostic (holdout minus validation score) on the `evo_recipe` object and in `summary()`, making search-level overfitting visible.
+* **Leakage-safe CV fold strategies (`cv_strategy`)**: New options `"time"` (contiguous chronological blocks ordered by `time_col`, so validation always lies in the future of training) and `"group"` (all rows of a `group_col` entity stay in one fold, balanced greedy assignment) alongside the default `"random"`.
+* **Multi-fidelity evaluation (`multi_fidelity`, `mf_sample_frac`, `mf_warmup_frac`)**: Optional cost reduction in which warm-up generations screen individuals on row-subsampled folds; the most promising half is re-evaluated at full fidelity before any selection decision, keeping fitness comparisons apples-to-apples.
+* **New transformer `date_diff`**: Signed difference in days between two datetime columns.
+
 ## Breaking Changes
 
 * The `mbo_infill_opt = "ea"` option is deprecated and ignored with a warning. The `emoa` package is no longer needed.

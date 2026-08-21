@@ -14,6 +14,13 @@ evolve_features(
   evaluation_strategy = "cv",
   split_ratio = c(0.6, 0.2, 0.2),
   split_ids = NULL,
+  holdout_frac = 0,
+  cv_strategy = "random",
+  time_col = NULL,
+  group_col = NULL,
+  multi_fidelity = FALSE,
+  mf_sample_frac = 0.5,
+  mf_warmup_frac = 0.5,
   early_stopping_generations = 3,
   evaluator = "lightgbm",
   dynamic_population = TRUE,
@@ -73,6 +80,39 @@ length as the number of rows in \code{data} and contain only "train", "val",
 or "holdout" labels (with at least "train" and "val" present). When
 provided, \code{evaluation_strategy} is automatically set to "split" and the
 actual split proportions are computed from the vector.}
+
+\item{holdout_frac}{Numeric in \code{[0, 0.5)}. When greater than 0 with
+\code{evaluation_strategy = "cv"}, this fraction of rows is stratified and
+held out of the entire evolutionary search. After evolution, the winning
+recipe (with its frozen transformer states) and the final model are scored
+once on these never-seen rows; the result is exposed as
+\code{holdout_fitness} / \code{search_gap} on the returned object — an
+unbiased estimate of generalization that reveals how much the search
+overfit its selection folds.}
+
+\item{cv_strategy}{Fold construction strategy for CV: \code{"random"}
+(default, rows shuffled into folds), \code{"time"} (rows ordered by
+\code{time_col} and split into contiguous chronological blocks so validation
+always lies in the future of training), or \code{"group"} (all rows sharing
+a \code{group_col} value land in the same fold). Use \code{"time"} for
+temporal data and \code{"group"} for clustered data to avoid leakage.}
+
+\item{time_col}{Column name used when \code{cv_strategy = "time"}. Must be
+datetime or numeric.}
+
+\item{group_col}{Column name used when \code{cv_strategy = "group"}.}
+
+\item{multi_fidelity}{Logical (default FALSE). If TRUE, individuals during
+warm-up generations are first screened on row-subsampled folds
+(\code{mf_sample_frac}); the most promising half is then re-evaluated at
+full fidelity before any selection decision, so all fitness comparisons
+remain apples-to-apples. Reduces compute cost with minimal search-quality loss.}
+
+\item{mf_sample_frac}{Row fraction kept per fold during multi-fidelity
+screening, in \code{(0, 1)}.}
+
+\item{mf_warmup_frac}{Fraction of generations (of \code{generations}) run in
+low-fidelity screening mode before full-fidelity-only evaluation begins.}
 
 \item{early_stopping_generations}{Stop if fitness doesn't improve for this
 many generations}

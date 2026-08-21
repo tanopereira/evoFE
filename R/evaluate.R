@@ -376,7 +376,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              complexity_penalty = 0, complexity_mode = "bic_dynamic",
                              complexity_floor = 0.20, complexity_target = "all_features",
                              running_best_fitness = NULL, baseline_fitness = NULL,
-                             n_samples = NULL, ...) {
+                             n_samples = NULL, cv_strategy = "random",
+                             time_col = NULL, group_col = NULL, ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
   }
@@ -531,8 +532,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       dt <- data.table::as.data.table(data)
       if (is.null(fold_ids)) {
-        folds <- cut(seq(1, nrow(dt)), breaks = cv_folds, labels = FALSE)
-        folds <- sample(folds)
+        folds <- .build_cv_folds(dt, cv_folds, cv_strategy, time_col, group_col)
       } else {
         folds <- fold_ids
       }

@@ -877,7 +877,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     } else if (t_def$type %in% c("unary", "supervised_unary")) {
       cols <- weighted_sample(available_cols, 1)
     } else if (t_def$type == "binary") {
-      allow_rep <- if (t_name %in% c("subtract", "divide")) FALSE else TRUE
+      allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff")) FALSE else TRUE
       if (!allow_rep && length(available_cols) < 2) return(ind)
       cols <- weighted_sample(available_cols, 2, replace = allow_rep)
     } else if (t_def$type == "multivariate") {

@@ -29,6 +29,9 @@ evaluate_fitness(
   running_best_fitness = NULL,
   baseline_fitness = NULL,
   n_samples = NULL,
+  cv_strategy = "random",
+  time_col = NULL,
+  group_col = NULL,
   ...
 )
 }

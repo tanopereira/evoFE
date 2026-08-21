@@ -107,6 +107,44 @@ stratified_split <- function(y, ratio) {
   res
 }
 
+#' Build cross-validation fold assignments
+#'
+#' Internal helper supporting three strategies:
+#' \itemize{
+#'   \item \code{random}: rows shuffled into k folds.
+#'   \item \code{time}: rows ordered by \code{time_col} and split into k
+#'     contiguous chronological blocks (blocked CV; each block is held out once).
+#'     Rows with missing time values sort last.
+#'   \item \code{group}: all rows of a group (\code{group_col}) are assigned to a
+#'     single fold via greedy largest-first balancing, so groups never straddle folds.
+#' }
+#' @noRd
+.build_cv_folds <- function(data, cv_folds, strategy = "random",
+                            time_col = NULL, group_col = NULL) {
+  n <- nrow(data)
+  if (strategy == "time") {
+    ord <- order(data[[time_col]], method = "radix")
+    f <- integer(n)
+    f[ord] <- as.integer(cut(seq_len(n), breaks = cv_folds, labels = FALSE))
+    return(f)
+  }
+  if (strategy == "group") {
+    g <- data[[group_col]]
+    ux <- unique(g)
+    gsizes <- tabulate(match(g, ux))
+    fold_load <- integer(cv_folds)
+    gfold <- integer(length(ux))
+    for (gi in order(gsizes, decreasing = TRUE)) {
+      f <- which.min(fold_load)
+      gfold[gi] <- f
+      fold_load[f] <- fold_load[f] + gsizes[gi]
+    }
+    return(gfold[match(g, ux)])
+  }
+  f <- cut(seq_len(n), breaks = cv_folds, labels = FALSE)
+  sample(f)
+}
+
 #' Evaluate all unevaluated individuals in a population
 #' @keywords internal
 evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strategy,
@@ -116,7 +154,9 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          metric = "default", allow_prune = TRUE,
                          complexity_penalty = 0, complexity_mode = "bic_dynamic",
                          complexity_floor = 0.20, complexity_target = "all_features",
-                         baseline_fitness = NULL, n_samples = NULL, island = NULL, ...) {
+                         baseline_fitness = NULL, n_samples = NULL, island = NULL,
+                         fidelity_tag = "", cv_strategy = "random", time_col = NULL,
+                         group_col = NULL, ...) {
   # Initialize running_best_fitness taking into account any already evaluated individuals in pop
   existing_fits <- vapply(pop, function(ind) if (is.null(ind$fitness) || is.na(ind$fitness)) -Inf else ind$fitness, double(1))
   if (length(existing_fits) > 0 && any(!is.infinite(existing_fits))) {
@@ -130,7 +170,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
     if (!is.na(pop[[i]]$fitness)) next
 
     recipe_str <- individual_to_recipe_string(pop[[i]])
-    cache_key <- digest::digest(paste0(evaluator, "::", recipe_str), algo = "md5", serialize = FALSE)
+    cache_key <- digest::digest(paste0(evaluator, "::", recipe_str, fidelity_tag), algo = "md5", serialize = FALSE)
     cached <- exists(cache_key, envir = fitness_cache, inherits = FALSE)
 
     if (cached) {
@@ -150,7 +190,8 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         complexity_target = complexity_target,
         running_best_fitness = running_best_fitness,
         baseline_fitness = baseline_fitness,
-        n_samples = n_samples, ...
+        n_samples = n_samples,
+        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col, ...
       )
       assign(cache_key, pop[[i]], envir = fitness_cache)
     }
@@ -225,6 +266,83 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit, evaluator = 
   return(FALSE)
 }
 
+#' Evaluate a population with optional multi-fidelity screening
+#'
+#' When \code{mf_on} is TRUE (warm-up generations), individuals are first scored
+#' on row-subsampled folds (\code{lf_*} structures) with low-fidelity results
+#' kept in tagged cache entries. The most promising \code{mf_promote_frac}
+#' fraction of individuals are then re-evaluated at full fidelity before any
+#' selection decision consumes their fitness. When \code{mf_on} is FALSE this
+#' is a pass-through to \code{evaluate_pop}.
+#' @noRd
+evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_strategy,
+                            split_ids, shared_splits, evaluator,
+                            fold_ids, shared_folds, shared_full, state_cache,
+                            fitness_cache, threads, verbose, running_best_fitness,
+                            metric = "default", allow_prune = TRUE,
+                            complexity_penalty = 0, complexity_mode = "bic_dynamic",
+                            complexity_floor = 0.20, complexity_target = "all_features",
+                            baseline_fitness = NULL, n_samples = NULL, island = NULL,
+                            cv_strategy = "random", time_col = NULL, group_col = NULL,
+                            mf_on = FALSE, lf_shared_folds = NULL, lf_shared_full = NULL,
+                            mf_promote_frac = 0.5, ...) {
+  .do_eval <- function(p, sh_folds, sh_full, tag, vb, rb) {
+    evaluate_pop(p, data, target_col, task, cv_folds, evaluation_strategy,
+      split_ids, shared_splits, evaluator,
+      fold_ids, sh_folds, sh_full, state_cache,
+      fitness_cache, threads, vb, rb,
+      metric = metric, allow_prune = allow_prune,
+      complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      baseline_fitness = baseline_fitness,
+      n_samples = n_samples, island = island,
+      fidelity_tag = tag,
+      cv_strategy = cv_strategy, time_col = time_col, group_col = group_col, ...
+    )
+  }
+
+  if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_full))) {
+    return(.do_eval(pop, shared_folds, shared_full, "", verbose, running_best_fitness))
+  }
+
+  rb_in <- running_best_fitness
+
+  lf_folds_eff <- if (!is.null(lf_shared_folds)) lf_shared_folds else shared_folds
+  lf_full_eff <- if (!is.null(lf_shared_full)) lf_shared_full else shared_full
+
+  # Pass 1: cheap screen on subsampled folds (silent; values are not final)
+  res_lf <- .do_eval(pop, lf_folds_eff, lf_full_eff, ":lf", FALSE, -Inf)
+  pop_lf <- res_lf$pop
+
+  fits <- vapply(pop_lf, function(x) {
+    if (is.null(x$fitness) || is.na(x$fitness)) -Inf else x$fitness
+  }, numeric(1))
+  n_finite <- sum(is.finite(fits))
+  if (n_finite == 0) {
+    return(list(pop = pop_lf, running_best_fitness = rb_in))
+  }
+  n_promote <- max(1L, min(n_finite, ceiling(length(pop_lf) * mf_promote_frac)))
+  promo_idx <- order(fits, decreasing = TRUE)[seq_len(n_promote)]
+  promo_idx <- promo_idx[is.finite(fits[promo_idx])]
+
+  # Pass 2: full-fidelity re-evaluation of promoted individuals only
+  promoted <- pop_lf[promo_idx]
+  for (i in seq_along(promoted)) promoted[[i]]$fitness <- NA
+  res_ff <- .do_eval(promoted, shared_folds, shared_full, "", verbose, rb_in)
+
+  pop_out <- pop_lf
+  pop_out[promo_idx] <- res_ff$pop
+
+  fin_fits <- vapply(pop_out, function(x) {
+    if (is.null(x$fitness) || is.na(x$fitness)) -Inf else x$fitness
+  }, numeric(1))
+  rb_out <- max(c(rb_in, fin_fits[is.finite(fin_fits)]))
+
+  list(pop = pop_out, running_best_fitness = rb_out)
+}
+
 #' Tournament selection
 #'
 #' Selects the individual with the highest fitness among a randomly chosen tournament of size \code{k}.
@@ -270,6 +388,32 @@ tournament_select <- function(pop, k = 3) {
 #'   or "holdout" labels (with at least "train" and "val" present). When
 #'   provided, \code{evaluation_strategy} is automatically set to "split" and the
 #'   actual split proportions are computed from the vector.
+#' @param holdout_frac Numeric in \code{[0, 0.5)}. When greater than 0 with
+#'   \code{evaluation_strategy = "cv"}, this fraction of rows is stratified and
+#'   held out of the entire evolutionary search. After evolution, the winning
+#'   recipe (with its frozen transformer states) and the final model are scored
+#'   once on these never-seen rows; the result is exposed as
+#'   \code{holdout_fitness} / \code{search_gap} on the returned object — an
+#'   unbiased estimate of generalization that reveals how much the search
+#'   overfit its selection folds.
+#' @param cv_strategy Fold construction strategy for CV: \code{"random"}
+#'   (default, rows shuffled into folds), \code{"time"} (rows ordered by
+#'   \code{time_col} and split into contiguous chronological blocks so validation
+#'   always lies in the future of training), or \code{"group"} (all rows sharing
+#'   a \code{group_col} value land in the same fold). Use \code{"time"} for
+#'   temporal data and \code{"group"} for clustered data to avoid leakage.
+#' @param time_col Column name used when \code{cv_strategy = "time"}. Must be
+#'   datetime or numeric.
+#' @param group_col Column name used when \code{cv_strategy = "group"}.
+#' @param multi_fidelity Logical (default FALSE). If TRUE, individuals during
+#'   warm-up generations are first screened on row-subsampled folds
+#'   (\code{mf_sample_frac}); the most promising half is then re-evaluated at
+#'   full fidelity before any selection decision, so all fitness comparisons
+#'   remain apples-to-apples. Reduces compute cost with minimal search-quality loss.
+#' @param mf_sample_frac Row fraction kept per fold during multi-fidelity
+#'   screening, in \code{(0, 1)}.
+#' @param mf_warmup_frac Fraction of generations (of \code{generations}) run in
+#'   low-fidelity screening mode before full-fidelity-only evaluation begins.
 #' @param early_stopping_generations Stop if fitness doesn't improve for this
 #'   many generations
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
@@ -370,6 +514,10 @@ evolve_features <- function(data, target_col, task = "classification",
                             generations = 10, pop_size = 10, cv_folds = 3,
                             evaluation_strategy = "cv", split_ratio = c(0.6, 0.2, 0.2),
                             split_ids = NULL,
+                            holdout_frac = 0,
+                            cv_strategy = "random", time_col = NULL, group_col = NULL,
+                            multi_fidelity = FALSE, mf_sample_frac = 0.5,
+                            mf_warmup_frac = 0.5,
                             early_stopping_generations = 3, evaluator = "lightgbm",
                             dynamic_population = TRUE,
                             dynamic_population_growth_rate = 1.5,
@@ -638,6 +786,73 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
+  # Carve a confirmation holdout that is excluded from the entire search and
+  # only scored once, after evolution completes (see holdout_frac).
+  confirmation_dt <- NULL
+  if (holdout_frac > 0) {
+    if (evaluation_strategy != "cv") {
+      warning("'holdout_frac' is ignored with evaluation_strategy = 'split'. Use split_ids or a 3-part split_ratio instead.")
+    } else {
+      conf_ids <- stratified_split(data[[target_col]], c(1 - holdout_frac, holdout_frac))
+      conf_rows <- which(conf_ids == "val")
+      confirmation_dt <- data.table::as.data.table(data[conf_rows, ])
+      data <- data[which(conf_ids != "val"), ]
+      if (verbose) {
+        message(sprintf(
+          "  Confirmation holdout: %d rows (%.0f%%) held out of the search entirely.",
+          nrow(confirmation_dt), 100 * holdout_frac
+        ))
+      }
+      if (nrow(confirmation_dt) < 5) {
+        warning("Confirmation holdout has fewer than 5 rows; skipping final confirmation scoring.")
+        confirmation_dt <- NULL
+      }
+    }
+  }
+
+  # Validate holdout confirmation fraction
+  if (!is.numeric(holdout_frac) || length(holdout_frac) != 1 ||
+      is.na(holdout_frac) || holdout_frac < 0 || holdout_frac >= 0.5) {
+    stop("'holdout_frac' must be a single number in [0, 0.5).")
+  }
+
+  # Validate CV fold strategy
+  cv_strategy <- match.arg(cv_strategy, c("random", "time", "group"))
+  if (evaluation_strategy != "cv") {
+    if (cv_strategy != "random") {
+      warning("'cv_strategy' is only used with evaluation_strategy = 'cv'. Ignoring.")
+      cv_strategy <- "random"
+    }
+  } else if (cv_strategy == "time") {
+    if (is.null(time_col) || length(time_col) != 1 || !time_col %in% names(data)) {
+      stop("'cv_strategy = \"time\"' requires 'time_col' to name an existing column in data.")
+    }
+  } else if (cv_strategy == "group") {
+    if (is.null(group_col) || length(group_col) != 1 || !group_col %in% names(data)) {
+      stop("'cv_strategy = \"group\"' requires 'group_col' to name an existing column in data.")
+    }
+    if (group_col == target_col) {
+      stop("'group_col' must not be the target column.")
+    }
+  }
+
+  # Validate multi-fidelity evaluation
+  if (!is.logical(multi_fidelity) || length(multi_fidelity) != 1 || is.na(multi_fidelity)) {
+    stop("'multi_fidelity' must be TRUE or FALSE.")
+  }
+  if (!is.numeric(mf_sample_frac) || length(mf_sample_frac) != 1 ||
+      is.na(mf_sample_frac) || mf_sample_frac <= 0 || mf_sample_frac >= 1) {
+    stop("'mf_sample_frac' must be a single number in (0, 1).")
+  }
+  if (!is.numeric(mf_warmup_frac) || length(mf_warmup_frac) != 1 ||
+      is.na(mf_warmup_frac) || mf_warmup_frac < 0 || mf_warmup_frac > 1) {
+    stop("'mf_warmup_frac' must be a single number in [0, 1].")
+  }
+  if (multi_fidelity && evaluation_strategy != "cv") {
+    warning("'multi_fidelity' is only supported with evaluation_strategy = 'cv'. Ignoring.")
+    multi_fidelity <- FALSE
+  }
+
   # Validate island parameters
   if (islands > 1) {
     if (!is.numeric(migration_interval) || migration_interval < 1) {
@@ -729,8 +944,7 @@ evolve_features <- function(data, target_col, task = "classification",
   island_shared_folds <- NULL
 
   if (evaluation_strategy == "cv") {
-    fold_ids <- cut(seq(1, nrow(data)), breaks = cv_folds, labels = FALSE)
-    fold_ids <- sample(fold_ids)
+    fold_ids <- .build_cv_folds(data, cv_folds, cv_strategy, time_col, group_col)
 
     if (row_split_islands) {
       island_shared_folds <- lapply(1:islands, function(j) list())
@@ -844,6 +1058,41 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   shared_full <- data.table::as.data.table(data)
+
+  # --- Multi-fidelity evaluation setup ---
+  # During warm-up generations, individuals are screened on row-subsampled
+  # folds; the most promising fraction is then re-evaluated at full fidelity
+  # before any selection decision uses their fitness.
+  mf_warmup_gens <- 0L
+  mf_shared_folds <- NULL
+  mf_island_shared_folds <- NULL
+  mf_shared_full <- NULL
+  if (multi_fidelity) {
+    mf_warmup_gens <- max(1L, as.integer(floor(generations * mf_warmup_frac)))
+    .mf_subsample <- function(part) {
+      k <- max(5L, ceiling(nrow(part) * mf_sample_frac))
+      if (k >= nrow(part)) return(part)
+      part[sample.int(nrow(part), k), ]
+    }
+    .mf_subsample_fold <- function(fl) {
+      list(train = .mf_subsample(fl$train), val = .mf_subsample(fl$val))
+    }
+    if (!is.null(shared_folds)) {
+      mf_shared_folds <- lapply(shared_folds, .mf_subsample_fold)
+    }
+    if (!is.null(island_shared_folds)) {
+      mf_island_shared_folds <- lapply(island_shared_folds, function(per_island) {
+        lapply(per_island, .mf_subsample_fold)
+      })
+    }
+    mf_shared_full <- if (nrow(shared_full) > 20) .mf_subsample(shared_full) else NULL
+    if (verbose) {
+      message(sprintf(
+        "  Multi-fidelity: screening on %.0f%% of rows for the first %d generation(s), then full-fidelity promotion.",
+        100 * mf_sample_frac, mf_warmup_gens
+      ))
+    }
+  }
 
   # Fitness cache to avoid re-evaluating identical recipes
   fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
@@ -1096,7 +1345,7 @@ evolve_features <- function(data, target_col, task = "classification",
         viewer$send(list(type = "status", data = list(island = 1, status = "evaluating", generation = g)))
       }
       # Evaluate fitness
-      eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
+      eval_res <- evaluate_pop_mf(pop, data, target_col, task, cv_folds, evaluation_strategy,
         split_ids_val, shared_splits, evaluator,
         fold_ids, shared_folds, shared_full, state_cache,
         fitness_cache, threads, verbose, running_best_fitness,
@@ -1105,7 +1354,10 @@ evolve_features <- function(data, target_col, task = "classification",
         complexity_floor = complexity_floor,
         complexity_target = complexity_target,
         baseline_fitness = baseline_ind$fitness,
-        n_samples = nrow(data), ...
+        n_samples = nrow(data),
+        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+        mf_on = multi_fidelity && g <= mf_warmup_gens,
+        lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
       )
       pop <- eval_res$pop
       running_best_fitness <- eval_res$running_best_fitness
@@ -1315,7 +1567,7 @@ evolve_features <- function(data, target_col, task = "classification",
     }
 
     # Final evaluation of new individuals
-    eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
+    eval_res <- evaluate_pop_mf(pop, data, target_col, task, cv_folds, evaluation_strategy,
       split_ids_val, shared_splits, evaluator,
       fold_ids, shared_folds, shared_full, state_cache,
       fitness_cache, threads, verbose, running_best_fitness,
@@ -1324,7 +1576,10 @@ evolve_features <- function(data, target_col, task = "classification",
       complexity_floor = complexity_floor,
       complexity_target = complexity_target,
       baseline_fitness = baseline_ind$fitness,
-      n_samples = nrow(data), ...
+      n_samples = nrow(data),
+      cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+      mf_on = multi_fidelity && g <= mf_warmup_gens,
+      lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
     )
     pop <- eval_res$pop
     fitness_vals <- sapply(pop, function(ind) ind$fitness)
@@ -1396,7 +1651,7 @@ evolve_features <- function(data, target_col, task = "classification",
           viewer$send(list(type = "status", data = list(island = j, status = "evaluating", generation = g)))
         }
         # Evaluate fitness of this island's population
-        eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
+        eval_res <- evaluate_pop_mf(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
           split_ids_val,
           if (row_split_islands) island_shared_splits[[j]] else shared_splits,
           island_evaluators[j],
@@ -1411,7 +1666,11 @@ evolve_features <- function(data, target_col, task = "classification",
           complexity_floor = complexity_floor,
           complexity_target = complexity_target,
           baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
-          n_samples = nrow(data), island = j, ...
+          n_samples = nrow(data), island = j,
+          cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+          mf_on = multi_fidelity && g <= mf_warmup_gens,
+          lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
+          lf_shared_full = mf_shared_full, ...
         )
         pop_list[[j]] <- eval_res$pop
 
@@ -2016,7 +2275,7 @@ evolve_features <- function(data, target_col, task = "classification",
 
     # Final evaluation of individuals on all islands
     for (j in 1:islands) {
-      eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
+      eval_res <- evaluate_pop_mf(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
         split_ids_val,
         if (row_split_islands) island_shared_splits[[j]] else shared_splits,
         island_evaluators[j],
@@ -2031,7 +2290,11 @@ evolve_features <- function(data, target_col, task = "classification",
         complexity_floor = complexity_floor,
         complexity_target = complexity_target,
         baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
-        n_samples = nrow(data), island = j, ...
+        n_samples = nrow(data), island = j,
+        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+        mf_on = multi_fidelity && g <= mf_warmup_gens,
+        lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
+        lf_shared_full = mf_shared_full, ...
       )
       pop_list[[j]] <- eval_res$pop
       fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
@@ -2411,6 +2674,56 @@ evolve_features <- function(data, target_col, task = "classification",
   )
   best_model <- res_model$model
 
+  # --- Final confirmation on untouched holdout (holdout_frac > 0 with CV) ---
+  # The recipe's transformer states and the final model never saw these rows
+  # during the search, so this score is an unbiased generalization estimate.
+  if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
+    if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
+    conf_fitness <- NA_real_
+    res_conf <- tryCatch(
+      apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
+      error = function(e) NULL
+    )
+    if (!is.null(res_conf)) {
+      conf_features <- c(res_conf$ind$numeric_cols, res_conf$ind$categorical_cols,
+        res_conf$ind$datetime_cols,
+        if (length(res_conf$ind$genes) > 0) vapply(res_conf$ind$genes, function(g) g$output_col, character(1)) else character(0)
+      )
+      x_conf <- data.matrix(res_conf$train[, conf_features, with = FALSE])
+      x_conf[!is.finite(x_conf)] <- NA
+      preds_conf <- tryCatch(
+        evo_evaluators[[best_evaluator]]$predict_func(best_model, x_conf, task = task),
+        error = function(e) NULL
+      )
+      if (!is.null(preds_conf)) {
+        y_conf <- confirmation_dt[[target_col]]
+        if (task == "multiclass") {
+          y_conf_enc <- as.integer(factor(y_conf, levels = classes)) - 1
+          if (!is.matrix(preds_conf)) {
+            preds_conf <- matrix(preds_conf, ncol = num_class, byrow = TRUE)
+          }
+          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class)
+        } else {
+          conf_fitness <- compute_metric(y_conf, preds_conf, task, metric)
+        }
+        best_ind$holdout_fitness <- conf_fitness
+      }
+    }
+    if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
+  }
+
+  search_gap <- NULL
+  if (!is.null(best_ind$holdout_fitness) && !is.na(best_ind$holdout_fitness) &&
+      !is.null(best_ind$raw_fitness) && is.finite(best_ind$raw_fitness)) {
+    search_gap <- best_ind$holdout_fitness - best_ind$raw_fitness
+    if (verbose) {
+      message(sprintf(
+        "Search gap (holdout - validation): %+.4f. Small gaps indicate the search did not overfit the selection folds.",
+        search_gap
+      ))
+    }
+  }
+
   if (record) {
     # Generate 5-row transformed data sample for the final best individual
     res_sample <- tryCatch(
@@ -2457,6 +2770,7 @@ evolve_features <- function(data, target_col, task = "classification",
       sample = best_list,
       source_island = best_ind_source
     )
+    final_data$search_gap <- search_gap
     evolution_log$final <- final_data
     viewer$send(list(type = "complete", data = final_data))
   }
@@ -2471,6 +2785,9 @@ evolve_features <- function(data, target_col, task = "classification",
       evaluator = best_evaluator,
       classes = classes,
       metric = metric,
+      holdout_fitness = if (!is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NULL,
+      search_gap = search_gap,
+      cv_strategy = cv_strategy,
       island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),
       evolution_log = if (record) evolution_log else NULL
     ),

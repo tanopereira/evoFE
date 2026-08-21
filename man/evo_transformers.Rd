@@ -88,6 +88,7 @@ for the evolutionary feature-engineering search.  Every entry is an
     or weekend indicator from date/datetime columns.}
   \item{\code{datetime_cyclic}}{Sine and cosine cyclic encoding for periodic date/time
     components (hour, day of week, month, day of year).}
+  \item{\code{date_diff}}{Signed difference in days between two datetime columns.}
 }
 
 \strong{Dimensionality reduction (numeric -> numeric, stateful)}

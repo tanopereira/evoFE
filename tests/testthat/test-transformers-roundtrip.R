@@ -15,6 +15,7 @@ test_that("all registered transformers round-trip fit/apply", {
       cat_a = sample(c("red", "green", "blue"), n_rows, replace = TRUE),
       cat_b = sample(c("low", "mid", "high"), n_rows, replace = TRUE),
       dt_col = as.POSIXct("2024-01-01") + seq_len(n_rows) * 3600,
+      dt_col2 = as.POSIXct("2023-06-01") + seq_len(n_rows) * 86400,
       y = rnorm(n_rows)
     )
     if (unseen) {
@@ -36,7 +37,7 @@ test_that("all registered transformers round-trip fit/apply", {
     it <- t_def$input_type
     ty <- t_def$type
     if (it == "datetime") {
-      "dt_col"
+      if (ty == "binary") c("dt_col", "dt_col2") else "dt_col"
     } else if (it == "categorical") {
       if (ty %in% c("multivariate", "supervised_binary")) {
         if (name == "concat") c("cat_a", "cat_b") else c("cat_a", "cat_b", "cat_a")
