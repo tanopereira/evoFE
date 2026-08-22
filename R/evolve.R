@@ -414,6 +414,16 @@ tournament_select <- function(pop, k = 3) {
 #'   screening, in \code{(0, 1)}.
 #' @param mf_warmup_frac Fraction of generations (of \code{generations}) run in
 #'   low-fidelity screening mode before full-fidelity-only evaluation begins.
+#' @param seed Optional integer. Seeds the entire stochastic pipeline (fold
+#'   construction, holdout split, population initialization, mutation and
+#'   crossover) without touching the caller's \code{.Random.seed}: the user's
+#'   RNG state is saved on entry and restored on exit (CRAN-safe). Island
+#'   \code{j} derives its initial population from \code{seed + 1000*j}, so
+#'   island identities are stable regardless of island count. The seed is also
+#'   forwarded to the final model fit (and to evaluators that accept one).
+#'   Multi-threaded LightGBM/XGBoost remain only statistically reproducible
+#'   due to floating-point reduction order; use \code{threads = 1} for bitwise
+#'   identical reruns.
 #' @param early_stopping_generations Stop if fitness doesn't improve for this
 #'   many generations
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
@@ -519,6 +529,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             multi_fidelity = FALSE, mf_sample_frac = 0.5,
                             mf_warmup_frac = 0.5,
                             early_stopping_generations = 3, evaluator = "lightgbm",
+                            seed = NULL,
                             dynamic_population = TRUE,
                             dynamic_population_growth_rate = 1.5,
                             dynamic_population_decay_rate = 0.7,
@@ -725,6 +736,33 @@ evolve_features <- function(data, target_col, task = "classification",
     },
     add = TRUE
   )
+
+  # ---- Reproducible RNG scope (CRAN-safe save/restore of .Random.seed) ----
+  # Registered AFTER the thread-restoration handler above on purpose: multiple
+  # on.exit handlers run in registration order, and
+  # quitefastmst::omp_set_num_threads() recreates .Random.seed as a side
+  # effect, so this restore must be the final one to execute.
+  # Validate seed
+  if (!is.null(seed) && (!is.numeric(seed) || length(seed) != 1 || is.na(seed) ||
+      !is.finite(seed))) {
+    stop("'seed' must be NULL or a single finite number.")
+  }
+  seed <- if (!is.null(seed)) as.integer(seed) else NULL
+  old_seed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  } else {
+    NULL
+  }
+  on.exit({
+    if (!is.null(old_seed)) {
+      assign(".Random.seed", old_seed, envir = globalenv())
+    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      rm(".Random.seed", envir = globalenv())
+    }
+  }, add = TRUE)
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
 
   # Only AFTER capturing initial values, apply thread modifications if requested
   if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
@@ -1590,6 +1628,9 @@ evolve_features <- function(data, target_col, task = "classification",
     # 2. Initialize populations for all islands
     pop_list <- list()
     for (j in 1:islands) {
+      # Per-island sub-stream: island j's initial population depends only on
+      # (seed, j), not on how many islands are being run.
+      if (!is.null(seed)) set.seed(seed + 1000L * j)
       pop_list[[j]] <- initialize_population(
         pop_size, numeric_cols, categorical_cols,
         datetime_cols = datetime_cols,
@@ -2621,7 +2662,7 @@ evolve_features <- function(data, target_col, task = "classification",
     best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
       target_col, task, best_eval_curr, threads, state_cache,
       classes, num_class,
-      metric = metric, verbose = verbose, ...
+      metric = metric, verbose = verbose, seed = seed, ...
     )
   }
 
@@ -2670,7 +2711,7 @@ evolve_features <- function(data, target_col, task = "classification",
   res_model <- train_model(x_full, y_full,
     task = task, evaluator = best_evaluator,
     threads = threads, num_class = num_class, metric = metric,
-    verbose = verbose, best_params = best_params, ...
+    verbose = verbose, best_params = best_params, seed = seed, ...
   )
   best_model <- res_model$model
 
