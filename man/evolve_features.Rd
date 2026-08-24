@@ -23,6 +23,7 @@ evolve_features(
   mf_warmup_frac = 0.5,
   early_stopping_generations = 3,
   evaluator = "lightgbm",
+  seed = NULL,
   dynamic_population = TRUE,
   dynamic_population_growth_rate = 1.5,
   dynamic_population_decay_rate = 0.7,
@@ -119,6 +120,17 @@ many generations}
 
 \item{evaluator}{The ML model to use ("lightgbm", "xgboost", "catboost", or a
 custom registered evaluator name).}
+
+\item{seed}{Optional integer. Seeds the entire stochastic pipeline (fold
+construction, holdout split, population initialization, mutation and
+crossover) without touching the caller's \code{.Random.seed}: the user's
+RNG state is saved on entry and restored on exit (CRAN-safe). Island
+\code{j} derives its initial population from \code{seed + 1000*j}, so
+island identities are stable regardless of island count. The seed is also
+forwarded to the final model fit (and to evaluators that accept one).
+Multi-threaded LightGBM/XGBoost remain only statistically reproducible
+due to floating-point reduction order; use \code{threads = 1} for bitwise
+identical reruns.}
 
 \item{dynamic_population}{Logical. If TRUE, population expands dynamically
 during stagnation.}

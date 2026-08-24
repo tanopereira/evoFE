@@ -237,6 +237,7 @@ All are stateful (fit on training data only -- no leakage).
 | `log_binning` | num -> num | Log-scale bin index (numeric output) |
 | `log_binning_cat` | num -> cat | Log-scale bin label (categorical output) |
 | `datetime_extract` | date -> num | Extracted datetime component: year, month, day, hour, day-of-week, or weekend indicator |
+| `date_diff` | date x date -> num | Signed difference in days between two datetime columns |
 
 ### Dimensionality Reduction (numeric -> numeric)
 
@@ -410,6 +411,98 @@ recipe <- evolve_features(
 )
 ```
 
+### Multi-Evaluator Island Portfolios
+
+Islands can also run different machine learning backends simultaneously. Passing a vector of evaluator names assigns each model family to a dedicated island:
+
+```r
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  islands = 2,
+  evaluator = c("lightgbm", "xgboost"),
+  generations = 5,
+  pop_size = 6
+)
+```
+
+Island 1 discovers features optimized for LightGBM's histogram-based splitting, while Island 2 discovers features optimized for XGBoost's exact/approximate greedy trees.
+
+### Advanced Topologies & Migration Policies
+
+For large-scale or structured exploration, evoFE provides graph-theoretic island topologies and adaptive probabilistic migration policies via `migration_config()`:
+
+```r
+# Torus topology with demand-driven Gibbs pull migration
+mig_cfg <- migration_config(
+  topology = topology_torus(c(2, 2)), # 4 islands arranged on a 2x2 toroidal grid
+  policy = policy_gibbs_pull(),        # stagnant islands actively pull innovations from leading islands
+  interval = 4,
+  rate = 1,
+  gene_prob = 0.25
+)
+
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  migration = mig_cfg,
+  generations = 10
+)
+```
+
+Available topologies include:
+- `topology_ring(k)`: Unidirectional ring (default)
+- `topology_complete(k)`: Fully connected mesh
+- `topology_torus(dims)`: N-dimensional torus with wrap-around boundaries
+- `topology_hypercube(dim)`: $2^d$-vertex binary hypercube
+- `topology_grid(dims)`: N-dimensional Cartesian grid with fixed boundaries
+- `topology_tiered(tiers)`: Hierarchical fitness-stratified tiers (HFC architecture)
+- `topology_custom(adjacency_matrix)`: User-defined directed graph
+
+Available migration policies include:
+- `policy_push_uniform()`: Classic uniform broadcast to downstream neighbors
+- `policy_gibbs_push()`: Softmax-weighted push directing migrants toward lower-fitness islands
+- `policy_gibbs_pull()`: Demand-driven pull where stagnated islands pull elite solutions from high-performing neighbors
+- `policy_tiered_admission()`: Fitness-gated upward migration through hierarchical tiers
+
+## Caruana Post-Hoc Island Ensembling
+
+Multi-island evolution naturally produces diverse, complementary feature recipes across islands. Rather than picking only the single best recipe, `ensemble_islands()` uses **Caruana greedy forward selection with replacement** to construct an optimal weighted ensemble across all island champions:
+
+```r
+# 1. Evolve features across 3 islands
+set.seed(42)
+multi_recipe <- evolve_features(
+  data = mtcars,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  islands = 3,
+  generations = 5,
+  pop_size = 6,
+  verbose = FALSE
+)
+
+# 2. Greedily build the Caruana ensemble from island populations
+ensemble <- ensemble_islands(
+  multi_recipe,
+  data = mtcars,
+  max_rounds = 10,
+  verbose = TRUE
+)
+
+# Inspect the ensemble weights and member recipes
+summary(ensemble)
+
+# 3. Predict directly with the ensemble
+ensemble_preds <- predict_model(ensemble, mtcars[1:5, ])
+ensemble_preds
+```
+
+`predict_model.evo_ensemble()` automatically routes the new observations through each member recipe's transformation pipeline and computes the weighted blend of model predictions.
+
 ## Custom Transformer Registration
 
 evoFE makes it easy to register your own custom transformations. Use
@@ -571,19 +664,12 @@ for (g in ind$genes) {
 
 ## Evaluation Strategies
 
-`evoFE` supports two evaluation strategies for scoring individuals:
+`evoFE` supports multiple evaluation strategies and cross-validation partition schemes designed to balance search speed, compute cost, and strict prevention of data leakage:
 
-1. **Cross-Validation (`cv`)**: The default strategy. Evaluates fitness using
-   K-fold cross-validation (`cv_folds` parameter).
-2. **Train/Validation/Holdout Split (`split`)**: Useful for faster evaluation
-   on larger datasets.  Configure with `evaluation_strategy = "split"` and
-   `split_ratio` (e.g., `c(0.6, 0.2, 0.2)`).
-   - The first two portions are the **Train** and **Validation** sets used to
-     score candidates during search.
-   - The third portion (if provided) is the **Holdout** set. It is evaluated
-     **only once** on the final best individual to avoid data snooping.
+### Cross-Validation vs. Train/Val Splits
 
-You can also supply your own split assignments:
+1. **Cross-Validation (`cv`)**: The default strategy. Evaluates fitness across $K$ folds (`cv_folds` parameter).
+2. **Train/Validation/Holdout Split (`split`)**: Fast evaluation on large datasets using `split_ratio = c(0.6, 0.2, 0.2)` or explicit `split_ids`.
 
 ```r
 split_ids <- sample(
@@ -598,6 +684,82 @@ recipe <- evolve_features(
   split_ids = split_ids   # overrides evaluation_strategy -> "split" automatically
 )
 ```
+
+### Confirmation Holdout & Search-Gap Diagnostic
+
+In iterative automated feature engineering, repeatedly evaluating hundreds of candidate pipelines on the same cross-validation folds can lead to *search-level overfitting* (selecting recipes that fit fold artifacts).
+
+To safeguard against this, `holdout_frac` sets aside an untouched, stratified holdout sample before the search begins:
+
+```r
+recipe <- evolve_features(
+  data = df,
+  target_col = "am",
+  task = "classification",
+  evaluator = "xgboost",
+  holdout_frac = 0.20, # 20% untouched holdout
+  generations = 5,
+  pop_size = 8
+)
+
+# Inspect the holdout fitness and search gap
+cat("Selection CV fitness:", recipe$best_individual$fitness, "\n")
+cat("Confirmation holdout:", recipe$holdout_fitness, "\n")
+cat("Search gap:          ", recipe$search_gap, "\n")
+```
+
+The `search_gap` (holdout score minus selection score) provides an unbiased check of generalization. A large negative search gap immediately alerts you to search-level overfitting.
+
+### Leakage-Safe Cross-Validation Strategies
+
+Standard random K-fold CV can cause severe optimistic leakage when working with time-series or grouped observations. evoFE provides three fold construction strategies via `cv_strategy`:
+
+| Strategy | When to use | Behavior |
+|:---|:---|:---|
+| `"random"` | Independent i.i.d. observations | Standard stratified random K-fold partitioning |
+| `"time"` | Chronological / time-series data | Folds are contiguous chronological blocks ordered by `time_col`. The validation fold is strictly in the future of the training folds, preventing lookahead leakage. |
+| `"group"` | Grouped / clustered observations (e.g. subjects, patients, stores) | All rows sharing a `group_col` entity are assigned to the same fold using greedy bin-packing, ensuring no subject appears in both train and validation. |
+
+```r
+# Temporal data -- chronological forward validation
+recipe_time <- evolve_features(
+  data = financial_df,
+  target_col = "returns",
+  task = "regression",
+  cv_strategy = "time",
+  time_col = "date",
+  cv_folds = 5
+)
+
+# Grouped data -- entity-isolated folds
+recipe_group <- evolve_features(
+  data = patient_df,
+  target_col = "outcome",
+  task = "classification",
+  cv_strategy = "group",
+  group_col = "patient_id",
+  cv_folds = 5
+)
+```
+
+### Multi-Fidelity Evolutionary Screening
+
+For large datasets, evaluating every candidate generation at full dataset size can be compute-intensive. Enabling `multi_fidelity = TRUE` uses a warm-up screening schedule:
+
+```r
+recipe_fast <- evolve_features(
+  data = big_df,
+  target_col = "target",
+  task = "classification",
+  multi_fidelity = TRUE,
+  mf_warmup_frac = 0.40,  # first 40% of generations screen on subsamples
+  mf_sample_frac = 0.50,  # screen on 50% row subsamples
+  generations = 10,
+  pop_size = 12
+)
+```
+
+During warm-up, candidates are screened rapidly on subsampled folds. Crucially, the top-performing half of candidates is **re-evaluated at full fidelity** before selection, ensuring that all fitness comparisons remain 100% apples-to-apples.
 
 ## Alternative and Custom Metrics
 
@@ -673,29 +835,42 @@ cat("TS-Refinement log-loss:", score, "\n")
 | `evaluation_strategy` | `"cv"` | `"cv"` or `"split"` |
 | `split_ratio` | `c(0.6, 0.2, 0.2)` | Train/Val/Holdout proportions for `"split"` |
 | `split_ids` | `NULL` | User-supplied split assignments (`"train"`, `"val"`, `"holdout"`) |
+| `holdout_frac` | 0 | Stratified holdout fraction frozen during search for unbiased confirmation |
+| `cv_strategy` | `"random"` | CV fold construction: `"random"`, `"time"`, or `"group"` |
+| `time_col` | `NULL` | Timestamp column used when `cv_strategy = "time"` |
+| `group_col` | `NULL` | Group entity column used when `cv_strategy = "group"` |
+| `multi_fidelity` | `FALSE` | Enable two-stage row-subsampling evaluation during warm-up |
+| `mf_sample_frac` | 0.5 | Row fraction kept per fold during multi-fidelity screening |
+| `mf_warmup_frac` | 0.5 | Fraction of total generations run in multi-fidelity screening mode |
 | `early_stopping_generations` | 3 | Stop after N generations without improvement |
-| `evaluator` | `"lightgbm"` | ML backend: `"lightgbm"`, `"xgboost"`, `"catboost"`, `"lm"`, `"keras3"`, or a registered custom name |
-| `dynamic_population` | `TRUE` | Expand population during stagnation |
+| `evaluator` | `"lightgbm"` | ML backend: `"lightgbm"`, `"xgboost"`, `"catboost"`, `"lm"`, `"keras3"`, or vector of backends per island |
+| `seed` | `NULL` | Integer RNG seed for fully reproducible evolutionary search (CRAN-safe) |
+| `dynamic_population` | `TRUE` | Expand population dynamically during stagnation |
 | `dynamic_population_growth_rate` | 1.5 | Growth multiplier during stagnation |
 | `dynamic_population_decay_rate` | 0.7 | Decay multiplier when improvement resumes |
 | `crossover_type` | `"both"` | `"random"`, `"union"`, or `"both"` (50/50 mix) |
 | `threads` | 2 | Threads for model training and clustering |
 | `max_clustering_size` | 5000 | Max unique rows passed to clustering transformers |
 | `verbose` | `TRUE` | Print progress to console |
-| `metric` | `"default"` | Optimisation metric |
+| `metric` | `"default"` | Optimisation metric (`"default"`, `"auc"`, `"f1"`, `"mae"`, `"ts-refinement"`, `"cal_rmse"`, `"cal_mae"`, or custom function) |
 | `model_all_final_genes` | `FALSE` | Train final model on union of all genes in final population |
 | `model_all_historical_genes` | `FALSE` | Train final model on union of all genes across all generations |
 | `allowed_transformers` | `"all"` | Transformer pool: `"all"`, `"basic"`, `"robust"`, `"clustering"`, or a character vector |
-| `complexity_penalty` | 0 | Subtract `penalty * n_genes` from raw fitness to favour shorter recipes |
+| `complexity_penalty` | 0 | Multiplier for parsimony penalty (e.g. 1.0 for standard BIC/PAC-Bayes) |
+| `complexity_mode` | `"bic_dynamic"` | Penalty mode: `"bic_dynamic"`, `"bic"`, `"pac_bayes_dynamic"`, `"pac_bayes"`, or `"none"` |
+| `complexity_floor` | 0.20 | Minimum safety floor (e.g. 20%) for dynamic penalty relaxation |
+| `complexity_target` | `"all_features"` | Target to penalize: `"all_features"` (rewards raw feature pruning) or `"genes"` |
+| `migration` | `NULL` | Optional `evo_migration_config` object from `migration_config()` |
 | `islands` | 1 | Number of independent sub-populations |
 | `migration_interval` | 5 | Generations between island migrations |
 | `migration_rate` | 1 | Top-N individuals migrated from each island |
 | `gene_migration_prob` | 0.2 | Probability of injecting a migrated gene during mutation |
+| `migration_topology` | `"ring"` | Topology: `"ring"`, `"gibbs_stagnation"`, `"gibbs_fitness"`, `"dual_gibbs_pull"`, `"random"` |
 | `row_split_islands` | `FALSE` | Split training rows across islands |
 | `per_island_validation` | `FALSE` | Use per-island local validation split (requires `row_split_islands = TRUE`) |
-| `raw_toggle_prob` | 0.15 | Probability of toggling raw feature(s) in the active mask during mutation |
-| `recalculate_mask_prob` | 0.05 | Probability of redrawing the entire active mask from importances |
-| `mask_temp_factor` | 0.5 | Temperature for importance-guided mask sampling (higher = more uniform) |
+| `raw_toggle_prob` | 0.15 | Probability of toggling raw feature(s) in active mask during mutation |
+| `recalculate_mask_prob` | 0.05 | Probability of redrawing entire active mask from importances |
+| `mask_temp_factor` | 0.5 | Temperature for importance-guided mask sampling |
 | `record` | `FALSE` | Enable live evolution viewer |
 | `port` | `NULL` | Port for the live viewer server |
 | `...` | - | Extra arguments passed to the evaluator's `train_func` |
@@ -711,20 +886,35 @@ cat("TS-Refinement log-loss:", score, "\n")
 
 ## Advanced Options
 
-### Complexity Penalty
+### Dynamic BIC & PAC-Bayes Complexity Penalties
 
-By default, a recipe with 10 genes that scores 0.821 beats a 1-gene recipe
-that scores 0.820 -- even though the longer recipe is more likely to overfit.
-The `complexity_penalty` parameter adds parsimony pressure:
+Without regularization, complex feature engineering algorithms risk evolving bloated recipes that overfit cross-validation noise. evoFE provides theoretically grounded complexity penalties that scale with dataset size $N$:
 
-$$\text{adjusted fitness} = \text{raw fitness} - \alpha \times n_{\text{genes}}$$
+#### 1. Bayesian Information Criterion (`complexity_mode = "bic"` / `"bic_dynamic"`)
+Uses asymptotic BIC scaling per feature:
+$$p = \lambda \cdot \frac{\ln(N)}{2N}$$
 
-A value of `0.001` is a good starting point:
+#### 2. PAC-Bayes Generalization Bound (`complexity_mode = "pac_bayes"` / `"pac_bayes_dynamic"`)
+Uses PAC-Bayes generalization bound scaling per feature:
+$$p = \lambda \cdot \frac{1}{2\sqrt{N}}$$
+
+#### Dynamic Relaxation & Safety Floor
+Under dynamic modes (`"bic_dynamic"` and `"pac_bayes_dynamic"`), the penalty dynamically relaxes as evolution converges towards ideal fitness, preventing late-generation stagnation while enforcing a safety floor (`complexity_floor = 0.20`, or 20% of base penalty).
+
+#### Feature Count Targets
+- `complexity_target = "all_features"` (default): Penalizes the total number of active features (retained raw inputs + derived genes). This actively incentivizes the genetic algorithm to prune uninformative raw columns from the active mask.
+- `complexity_target = "genes"`: Penalizes only the number of newly derived transformation genes.
 
 ```r
+# Enable standard dynamic BIC parsimony with total feature regularization
 recipe <- evolve_features(
-  data = df, target_col = "y", task = "classification",
-  complexity_penalty = 0.001   # subtract 0.001 per gene
+  data = df,
+  target_col = "am",
+  task = "classification",
+  complexity_penalty = 1.0,           # standard 1.0x BIC multiplier
+  complexity_mode = "bic_dynamic",
+  complexity_target = "all_features", # reward pruning redundant raw features
+  complexity_floor = 0.20             # 20% minimum floor
 )
 ```
 

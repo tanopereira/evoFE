@@ -85,6 +85,12 @@ evaluate_fitness(
 
 \item{n_samples}{Optional integer. Dataset sample size N for BIC calculations. Defaults to nrow(data).}
 
+\item{cv_strategy}{Fold construction strategy for CV: \code{"random"} (default), \code{"time"}, or \code{"group"}.}
+
+\item{time_col}{Column name used when \code{cv_strategy = "time"}.}
+
+\item{group_col}{Column name used when \code{cv_strategy = "group"}.}
+
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
 \value{

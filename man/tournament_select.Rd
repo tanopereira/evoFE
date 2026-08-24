@@ -2,7 +2,7 @@
 % Please edit documentation in R/evolve.R
 \name{tournament_select}
 \alias{tournament_select}
-\title{Tournament selection}
+\title{Selects the individual with the highest fitness among a randomly chosen tournament of size \code{k}.}
 \usage{
 tournament_select(pop, k = 3)
 }

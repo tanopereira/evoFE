@@ -51,7 +51,9 @@ Suggests:
     jsonlite,
     farff,
     ranger,
+    DiceKriging,
+    rgenoud,
     mlr3learners
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
-RoxygenNote: 7.3.2
+RoxygenNote: 8.0.0

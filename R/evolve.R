@@ -89,6 +89,10 @@ tournament_select <- function(pop, k = 3) {
 #'   screening, in \code{(0, 1)}.
 #' @param mf_warmup_frac Fraction of generations (of \code{generations}) run in
 #'   low-fidelity screening mode before full-fidelity-only evaluation begins.
+#' @param early_stopping_generations Stop if fitness doesn't improve for this
+#'   many generations
+#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
+#'   custom registered evaluator name).
 #' @param seed Optional integer. Seeds the entire stochastic pipeline (fold
 #'   construction, holdout split, population initialization, mutation and
 #'   crossover) without touching the caller's \code{.Random.seed}: the user's
@@ -99,10 +103,6 @@ tournament_select <- function(pop, k = 3) {
 #'   Multi-threaded LightGBM/XGBoost remain only statistically reproducible
 #'   due to floating-point reduction order; use \code{threads = 1} for bitwise
 #'   identical reruns.
-#' @param early_stopping_generations Stop if fitness doesn't improve for this
-#'   many generations
-#' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
-#'   custom registered evaluator name).
 #' @param dynamic_population Logical. If TRUE, population expands dynamically
 #'   during stagnation.
 #' @param dynamic_population_growth_rate Growth rate multiplier for population
@@ -126,7 +126,6 @@ tournament_select <- function(pop, k = 3) {
 #' @param allowed_transformers Character vector of allowed transformer names,
 #'   or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.
 #' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
-#' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
 #'   When set to \code{1.0}, applies standard BIC or PAC-Bayes parsimony pressure.
 #'   A value of \code{0} disables complexity penalisation.
 #' @param complexity_mode Character string specifying the complexity penalty strategy:
@@ -146,10 +145,6 @@ tournament_select <- function(pop, k = 3) {
 #' @param migration_topology Character string specifying the island migration scheme: \code{"ring"} (default unidirectional ring), \code{"gibbs_stagnation"} (probabilistic push targeting stagnated islands), \code{"gibbs_fitness"} (probabilistic push targeting lower-fitness islands), \code{"dual_gibbs_pull"} (demand-driven pull where stagnated islands request migrants from high-fitness donors), or \code{"random"} (uniform random destination).
 #' @param migration_temperature Numeric > 0. Temperature parameter for Gibbs softmax migration probability distributions (default 1.0).
 #' @param pull_stagnation_threshold Integer >= 1. Stagnation generation threshold used as sigmoid midpoint for pull requests in \code{"dual_gibbs_pull"} (default 3).
-#' @param row_split_islands Logical. If TRUE, splits data rows across islands (default FALSE).
-#' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
-#' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
-#' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
 #' @param raw_toggle_prob Numeric in \code{[0, 1]}. Probability that a mutation
 #'   event toggles one or more raw input features in an individual's active mask
 #'   rather than adding/modifying/removing a gene.  A dynamic geometric
@@ -164,6 +159,10 @@ tournament_select <- function(pop, k = 3) {
 #'   Higher values flatten the importance distribution (more uniform sampling);
 #'   lower values concentrate sampling on the highest-importance features.
 #'   Default \code{0.5}.
+#' @param row_split_islands Logical. If TRUE, splits data rows across islands (default FALSE).
+#' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
+#' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
+#' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @importFrom utils tail head

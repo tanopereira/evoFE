@@ -360,6 +360,9 @@ compute_complexity_penalty <- function(n_genes,
 #' @param running_best_fitness Optional numeric. Current running best fitness for dynamic BIC.
 #' @param baseline_fitness Optional numeric. Generation 0 baseline fitness for dynamic BIC.
 #' @param n_samples Optional integer. Dataset sample size N for BIC calculations. Defaults to nrow(data).
+#' @param cv_strategy Fold construction strategy for CV: \code{"random"} (default), \code{"time"}, or \code{"group"}.
+#' @param time_col Column name used when \code{cv_strategy = "time"}.
+#' @param group_col Column name used when \code{cv_strategy = "group"}.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
 #'   the computed score (higher is better), \code{importances} set to a named
