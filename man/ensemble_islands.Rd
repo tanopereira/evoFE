@@ -49,7 +49,7 @@ An \code{evo_ensemble} object containing:
   \item{active_models}{Named list of trained models for surviving islands.}
   \item{weights}{Named numeric vector of Caruana ensemble weights (summing to 1).}
   \item{caruana_history}{Data frame of validation loss trajectory across selection rounds.}
-  \item{single_best_fitness}{Fitness of the single best island model.}
+  \item{single_best_fitness}{Unpenalized validation fitness of the single best island model.}
   \item{ensemble_val_fitness}{Validation fitness achieved by the Caruana ensemble.}
   \item{task}{The learning task ("classification", "regression", or "multiclass").}
   \item{evaluator}{The evaluator model engine used.}

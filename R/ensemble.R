@@ -25,7 +25,7 @@
 #'   \item{active_models}{Named list of trained models for surviving islands.}
 #'   \item{weights}{Named numeric vector of Caruana ensemble weights (summing to 1).}
 #'   \item{caruana_history}{Data frame of validation loss trajectory across selection rounds.}
-#'   \item{single_best_fitness}{Fitness of the single best island model.}
+#'   \item{single_best_fitness}{Unpenalized validation fitness of the single best island model.}
 #'   \item{ensemble_val_fitness}{Validation fitness achieved by the Caruana ensemble.}
 #'   \item{task}{The learning task ("classification", "regression", or "multiclass").}
 #'   \item{evaluator}{The evaluator model engine used.}
@@ -177,8 +177,19 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   weights <- selection_res$weights
   active_names <- names(weights[weights > 0])
 
+  # Apples-to-apples comparison: ensemble fitness is an unpenalized validation
+  # metric, so compare against the island's raw (unpenalized) validation score
+  # rather than the complexity-penalized selection fitness.
   single_best_fitness <- max(vapply(recipe_list, function(r) {
-    if (!is.null(r$best_individual) && !is.null(r$best_individual$fitness)) r$best_individual$fitness else -Inf
+    bi <- r$best_individual
+    if (is.null(bi)) return(-Inf)
+    if (!is.null(bi$raw_fitness) && is.finite(bi$raw_fitness)) {
+      bi$raw_fitness
+    } else if (!is.null(bi$fitness) && !is.na(bi$fitness)) {
+      bi$fitness
+    } else {
+      -Inf
+    }
   }, double(1)))
 
   if (verbose) {
