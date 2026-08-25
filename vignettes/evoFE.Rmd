@@ -590,38 +590,61 @@ recipe <- evolve_features(
 )
 ```
 
-## Bayesian Hyperparameter Tuning
+## Bayesian Hyperparameter Tuning: Zero-Boilerplate "One-Liners"
 
-`make_tunable()` wraps any registered evaluator in a `mlr3mbo` Bayesian
-Optimisation loop that automatically tunes hyperparameters during each
-fitness evaluation:
+Hyperparameters and feature engineering interact strongly—certain transformations perform best under specific tree depths or learning rates. Rather than tuning models after the fact, evoFE supports **simultaneous feature evolution and Bayesian hyperparameter optimization** powered by `mlr3mbo`, `paradox`, and `bbotk`.
+
+### Built-in One-Liner Tuners
+
+evoFE ships with pre-configured Bayesian tuners registered at package load. You can activate full Bayesian hyperparameter tuning across every generation with a **single parameter change**:
 
 ```r
-# Define parameter search space for XGBoost
-param_ranges <- list(
+# One-liner LightGBM Bayesian hyperparameter tuning
+recipe_lgb <- evolve_features(
+  data        = df,
+  target_col  = "am",
+  task        = "classification",
+  evaluator   = "lightgbm_mbo", # Automatically tunes lr, num_leaves, max_depth, feature_fraction
+  generations = 5,
+  pop_size    = 6,
+  mbo_iters   = 5
+)
+
+# One-liner XGBoost Bayesian hyperparameter tuning
+recipe_xgb <- evolve_features(
+  data        = df,
+  target_col  = "am",
+  task        = "classification",
+  evaluator   = "xgboost_mbo",  # Automatically tunes eta, max_depth, min_child_weight, subsample
+  generations = 5,
+  pop_size    = 6,
+  mbo_iters   = 5
+)
+```
+
+### One-Liner Custom Tuner Registration with `make_tunable()`
+
+You can also wrap *any* registered evaluator (including custom models) in a Bayesian optimization loop in a single line using `make_tunable()`:
+
+```r
+# 1. Define custom parameter search space
+custom_space <- list(
   eta         = list(type = "numeric", lower = 0.01, upper = 0.3),
   max_depth   = list(type = "integer", lower = 3,    upper = 9),
   subsample   = list(type = "numeric", lower = 0.5,  upper = 1.0)
 )
 
-# Register a tunable version of xgboost
-make_tunable("xgboost", param_ranges, tuner_name = "xgboost_tuned")
+# 2. One-liner: turn standard xgboost into a Bayesian tuned evaluator
+make_tunable("xgboost", param_ranges = custom_space, tuner_name = "xgboost_custom_tuned")
 
-# Use it exactly like a regular evaluator
+# 3. Use it immediately in evolution
 recipe <- evolve_features(
-  data = df,
-  target_col = "am",
-  task = "classification",
-  evaluator = "xgboost_tuned",
-  generations = 5,
-  pop_size = 6,
-  mbo_iters = 5,          # Bayesian optimisation iterations per fitness eval
-  mbo_init_design = 8     # initial LHS design points
+  data = df, target_col = "am", task = "classification",
+  evaluator = "xgboost_custom_tuned",
+  mbo_iters = 5,
+  mbo_init_design = 8
 )
 ```
-
-evoFE ships two pre-configured tunable evaluators: `lightgbm_mbo` and
-`xgboost_mbo` (registered at package load).
 
 ## Understanding the Output
 
