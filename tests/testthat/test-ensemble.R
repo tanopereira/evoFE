@@ -78,11 +78,10 @@ test_that("ensemble_islands works for binary classification and predict_model/pr
   expect_equal(nrow(feat_dt), 5)
 
   # S3 output checks
-  expect_output(print(ens), "An evoFE Caruana Island Ensemble")
+  expect_output(print(ens), "An evoFE Island Ensemble \\(Caruana\\)")
   sum_ens <- summary(ens)
   expect_s3_class(sum_ens, "summary_evo_ensemble")
-  expect_output(print(sum_ens), "Summary of evoFE Caruana Ensemble")
-})
+  expect_output(print(sum_ens), "Summary of evoFE Caruana Ensemble")})
 
 test_that("ensemble_islands works for regression tasks", {
   data(mtcars)
@@ -166,4 +165,106 @@ test_that("ensemble_islands supports cross-recipe ensembling from a list of evo_
   preds <- predict_model(ens, df[1:5, ])
   expect_true(is.numeric(preds))
   expect_equal(length(preds), 5)
+})
+
+test_that("ensemble_islands method = 'stack' runs on regression with honest CV fitness", {
+  testthat::skip_on_cran()
+  testthat::skip_if_not_installed("glmnet")
+  data(mtcars)
+  set.seed(42)
+
+  rec <- evolve_features(
+    data = mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
+    generations = 1, pop_size = 4, cv_folds = 3, islands = 3, verbose = FALSE
+  )
+
+  ens <- ensemble_islands(rec, data = mtcars, method = "stack", seed = 1, verbose = FALSE)
+
+  expect_s3_class(ens, "evo_ensemble")
+  expect_identical(ens$method, "stack")
+  expect_null(ens$caruana_history)
+  expect_true(is.finite(ens$stack_cv_fitness))
+  expect_true(is.finite(ens$ensemble_val_fitness))
+  expect_true(all(ens$weights >= 0))
+  expect_equal(sum(ens$weights), 1, tolerance = 1e-8)
+  expect_true(length(ens$active_models) > 0)
+
+  preds <- predict_model(ens, mtcars[1:5, ])
+  expect_true(is.numeric(preds))
+  expect_equal(length(preds), 5)
+})
+
+test_that("stacked weights are reproducible under a fixed seed", {
+  testthat::skip_on_cran()
+  testthat::skip_if_not_installed("glmnet")
+  data(mtcars)
+  set.seed(42)
+
+  rec <- evolve_features(
+    data = mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
+    generations = 1, pop_size = 4, cv_folds = 3, islands = 3, verbose = FALSE
+  )
+
+  a <- ensemble_islands(rec, data = mtcars, method = "stack", seed = 11, verbose = FALSE)
+  b <- ensemble_islands(rec, data = mtcars, method = "stack", seed = 11, verbose = FALSE)
+
+  expect_equal(a$weights, b$weights)
+  expect_equal(a$stack_cv_fitness, b$stack_cv_fitness)
+})
+
+test_that("ensemble_islands method = 'stack' supports binary classification and multiclass", {
+  testthat::skip_on_cran()
+  testthat::skip_if_not_installed("glmnet")
+
+  df_bin <- mtcars
+  df_bin$am <- as.integer(df_bin$am)
+  set.seed(42)
+  rec_bin <- evolve_features(
+    data = df_bin, target_col = "am", task = "classification", evaluator = "lm",
+    generations = 1, pop_size = 4, cv_folds = 3, islands = 2, verbose = FALSE
+  )
+  ens_bin <- ensemble_islands(rec_bin, data = df_bin, method = "stack", seed = 2, verbose = FALSE)
+  expect_s3_class(ens_bin, "evo_ensemble")
+  expect_true(is.finite(ens_bin$stack_cv_fitness))
+
+  set.seed(7)
+  rec_multi <- evolve_features(
+    data = iris, target_col = "Species", task = "multiclass", evaluator = "xgboost",
+    generations = 1, pop_size = 3, cv_folds = 3, islands = 3, verbose = FALSE
+  )
+  ens_multi <- ensemble_islands(rec_multi, data = iris, method = "stack",
+                                stack_folds = 3, seed = 3, verbose = FALSE)
+  expect_s3_class(ens_multi, "evo_ensemble")
+  expect_true(is.finite(ens_multi$stack_cv_fitness))
+  expect_true(all(ens_multi$weights >= 0))
+  expect_equal(sum(ens_multi$weights), 1, tolerance = 1e-8)
+
+  preds <- predict_model(ens_multi, iris[1:6, ])
+  expect_true(is.numeric(preds))
+})
+
+test_that("stack method falls back to internal folds in split mode", {
+  testthat::skip_on_cran()
+  testthat::skip_if_not_installed("glmnet")
+  data(mtcars)
+  set.seed(42)
+
+  rec <- evolve_features(
+    data = mtcars, target_col = "mpg", task = "regression", evaluator = "lm",
+    generations = 1, pop_size = 4, islands = 2,
+    evaluation_strategy = "split", verbose = FALSE
+  )
+
+  msgs <- character(0)
+  ens <- withCallingHandlers(
+    ensemble_islands(rec, data = mtcars, method = "stack", seed = 4, verbose = TRUE),
+    message = function(m) {
+      msgs <<- c(msgs, m$message)
+      invokeRestart("muffleMessage")
+    }
+  )
+
+  expect_s3_class(ens, "evo_ensemble")
+  expect_true(any(grepl("internal folds", msgs)))
+  expect_true(is.finite(ens$stack_cv_fitness))
 })

@@ -1,5 +1,9 @@
 # evoFE 1.0.0 (development)
 
+## New Features
+
+* **Stacked ensembling (`method = "stack"`)** in `ensemble_islands()`: a non-negative elastic-net meta-learner (via `glmnet`, `stack_alpha` default `0.5`) fits island weights on out-of-fold predictions, with an honest nested cross-validated performance estimate (`stack_cv_fitness`). The evolution fold partition is reused when available; otherwise internal balanced folds are used. Weights are sparse and normalized to sum to 1, and the existing lazy-training and weighted-prediction paths are shared with Caruana selection.
+
 ## Bug Fixes
 
 * `ensemble_islands()` now reports `single_best_fitness` using the unpenalized validation score (`raw_fitness`) of the best island model instead of the complexity-penalized selection fitness, so the comparison with `ensemble_val_fitness` is apples-to-apples.

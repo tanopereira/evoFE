@@ -268,7 +268,8 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
 #' @return Invisible \code{x}. Called for its side effect of printing the ensemble overview.
 #' @export
 print.evo_ensemble <- function(x, ...) {
-  cat("An evoFE Caruana Island Ensemble\n")
+  method <- if (!is.null(x$method)) x$method else "caruana"
+  cat(sprintf("An evoFE Island Ensemble (%s)\n", if (method == "stack") "Stacked" else "Caruana"))
   cat(sprintf("  Evaluator:            %s\n", x$evaluator))
   cat(sprintf("  Task:                 %s\n", x$task))
   if (!is.null(x$metric)) {
@@ -276,6 +277,9 @@ print.evo_ensemble <- function(x, ...) {
   }
   cat(sprintf("  Single Best Fitness:  %.4f\n", x$single_best_fitness))
   cat(sprintf("  Ensemble Fitness:     %.4f\n", x$ensemble_val_fitness))
+  if (method == "stack" && !is.null(x$stack_cv_fitness)) {
+    cat(sprintf("  Stack CV Fitness:     %.4f  (honest nested estimate)\n", x$stack_cv_fitness))
+  }
 
   active_names <- names(x$weights[x$weights > 0])
   cat(sprintf("  Active Islands:       %d / %d\n", length(active_names), length(x$weights)))
@@ -317,6 +321,8 @@ summary.evo_ensemble <- function(object, ...) {
     evaluator = object$evaluator,
     task = object$task,
     metric = object$metric,
+    method = if (!is.null(object$method)) object$method else "caruana",
+    stack_cv_fitness = object$stack_cv_fitness,
     single_best_fitness = object$single_best_fitness,
     ensemble_val_fitness = object$ensemble_val_fitness,
     active_count = length(active_names),
@@ -337,9 +343,13 @@ summary.evo_ensemble <- function(object, ...) {
 #' @return Invisible \code{x}. Called for its side effect of printing the ensemble summary.
 #' @export
 print.summary_evo_ensemble <- function(x, ...) {
-  cat("Summary of evoFE Caruana Ensemble\n")
+  method <- if (is.null(x$method)) "caruana" else x$method
+  cat(sprintf("Summary of evoFE %s Ensemble\n", if (method == "stack") "Stacked" else "Caruana"))
   cat(sprintf("Evaluator: %s | Task: %s | Metric: %s\n", x$evaluator, x$task, x$metric))
   cat(sprintf("Single Best Fitness: %.4f --> Ensemble Fitness: %.4f\n", x$single_best_fitness, x$ensemble_val_fitness))
+  if (!is.null(x$stack_cv_fitness)) {
+    cat(sprintf("Honest Nested CV Fitness: %.4f\n", x$stack_cv_fitness))
+  }
   cat(sprintf("Active Islands: %d of %d\n\n", x$active_count, x$total_islands))
   print(x$weights_summary)
   invisible(x)

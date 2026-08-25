@@ -1,19 +1,31 @@
-#' Caruana Island Ensemble Selection
+#' Caruana and Stacked Island Ensembling
 #'
-#' Performs Caruana ensemble selection (greedy forward selection with replacement)
-#' over the validation/out-of-fold predictions from evolved islands, creating an
-#' optimal multi-model ensemble.
+#' Performs ensemble selection over the validation/out-of-fold predictions from evolved
+#' islands, creating an optimal multi-model ensemble. Two methods are available:
+#' Caruana greedy forward selection with replacement (default), or non-negative
+#' elastic-net stacking with an honest nested cross-validated performance estimate.
 #'
 #' @param recipe An \code{evo_recipe} object produced by \code{\link{evolve_features}}.
 #' @param data A data.frame or data.table containing the original training data used
 #'   during evolution. Required for lazy final model training of surviving islands.
 #' @param target_col Character string. Name of the target column. If \code{NULL},
 #'   it is inferred from the recipe or data.
+#' @param method Character string. Ensembling strategy: \code{"caruana"} (greedy forward
+#'   selection with replacement) or \code{"stack"} (non-negative elastic-net stacking of
+#'   out-of-fold island predictions with an honest nested cross-validated performance
+#'   estimate). Default: \code{"caruana"}.
 #' @param caruana_rounds Positive integer. Number of greedy selection rounds (default: 50).
+#'   Only used when \code{method = "caruana"}.
 #' @param bag_samples Logical. If \code{TRUE} (default), uses bootstrap sampling of validation
 #'   predictions during selection rounds to prevent validation set overfitting.
 #' @param sample_ratio Numeric between 0 and 1. Fraction of validation samples used when
-#'   \code{bag_samples = TRUE} (default: 0.8).
+#'   \code{bag_samples = TRUE} (default: 0.8). Only used when \code{method = "caruana"}.
+#' @param stack_folds Positive integer. Number of folds for the honest nested evaluation
+#'   of the stacked ensemble (default: \code{min(5, cv_folds)} in cv mode when fold
+#'   assignments are available, otherwise 5). Only used when \code{method = "stack"}.
+#' @param stack_alpha Numeric in \code{[0, 1]}. Elastic-net mixing parameter of the
+#'   stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.
+#'   Only used when \code{method = "stack"}.
 #' @param seed Optional integer seed for reproducible bagged sampling. Does not mutate
 #'   the user's global RNG state.
 #' @param threads Integer. Number of threads to use for model training.
@@ -23,10 +35,14 @@
 #' @return An \code{evo_ensemble} object containing:
 #'   \item{active_recipes}{Named list of feature engineering recipes for surviving islands.}
 #'   \item{active_models}{Named list of trained models for surviving islands.}
-#'   \item{weights}{Named numeric vector of Caruana ensemble weights (summing to 1).}
-#'   \item{caruana_history}{Data frame of validation loss trajectory across selection rounds.}
+#'   \item{weights}{Named numeric vector of ensemble weights (summing to 1).}
+#'   \item{caruana_history}{Data frame of validation loss trajectory across selection rounds
+#'     (only for \code{method = "caruana"}).}
 #'   \item{single_best_fitness}{Unpenalized validation fitness of the single best island model.}
-#'   \item{ensemble_val_fitness}{Validation fitness achieved by the Caruana ensemble.}
+#'   \item{ensemble_val_fitness}{Validation fitness achieved by the ensemble.}
+#'   \item{method}{The ensembling method used.}
+#'   \item{stack_cv_fitness}{Honest nested cross-validated fitness of the stacking procedure
+#'     (only for \code{method = "stack"}).}
 #'   \item{task}{The learning task ("classification", "regression", or "multiclass").}
 #'   \item{evaluator}{The evaluator model engine used.}
 #'   \item{classes}{Target class levels (for multiclass classification).}
@@ -57,12 +73,17 @@
 #' }
 #' @export
 ensemble_islands <- function(recipe, data, target_col = NULL,
+                             method = c("caruana", "stack"),
                              caruana_rounds = 50,
                              bag_samples = TRUE,
                              sample_ratio = 0.8,
+                             stack_folds = NULL,
+                             stack_alpha = 0.5,
                              seed = NULL,
                              threads = 2,
                              verbose = TRUE, ...) {
+  method <- match.arg(method)
+
   # Normalize recipe input: single evo_recipe or list of evo_recipe objects
   if (inherits(recipe, "evo_recipe")) {
     recipe_list <- list(recipe1 = recipe)
@@ -157,22 +178,62 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   if (verbose) {
-    message(sprintf("\nStarting Caruana Ensemble Selection across %d candidate island models (%d rounds)...", length(val_preds_list), caruana_rounds))
+    message(sprintf("\nStarting %s ensemble selection across %d candidate island models...",
+                    if (method == "caruana") "Caruana" else "stacked",
+                    length(val_preds_list)))
   }
 
-  # Perform Caruana greedy ensemble selection
-  selection_res <- caruana_select(
-    y_true = y_val,
-    val_preds_list = val_preds_list,
-    task = task,
-    metric = metric,
-    rounds = caruana_rounds,
-    bag_samples = bag_samples,
-    sample_ratio = sample_ratio,
-    seed = seed,
-    num_class = num_class,
-    verbose = verbose
-  )
+  n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
+
+  selection_res <- NULL
+  if (method == "caruana") {
+    selection_res <- caruana_select(
+      y_true = y_val,
+      val_preds_list = val_preds_list,
+      task = task,
+      metric = metric,
+      rounds = caruana_rounds,
+      bag_samples = bag_samples,
+      sample_ratio = sample_ratio,
+      seed = seed,
+      num_class = num_class,
+      verbose = verbose
+    )
+  } else {
+    if (!requireNamespace("glmnet", quietly = TRUE)) {
+      stop("Package 'glmnet' is required for method = \"stack\". ",
+           "Install it or use method = \"caruana\".")
+    }
+    stored_folds <- first_recipe$fold_ids
+    fold_partition <- NULL
+    stack_k <- stack_folds
+    if (!is.null(stored_folds) && length(stored_folds) == n_obs &&
+        !all(is.na(stored_folds))) {
+      fold_partition <- as.integer(stored_folds)
+      k_avail <- length(unique(fold_partition))
+      if (is.null(stack_k)) stack_k <- min(5L, k_avail)
+    } else {
+      if (verbose) {
+        message("  No stored CV fold assignments matching the out-of-fold predictions; using internal folds for the nested estimate.")
+      }
+      if (is.null(stack_k)) stack_k <- 5L
+    }
+    stack_k <- max(2L, min(as.integer(stack_k), length(y_val) - 1L))
+
+    selection_res <- .stack_select(
+      y_true = y_val,
+      val_preds_list = val_preds_list,
+      task = task,
+      metric = metric,
+      num_class = num_class,
+      classes = classes,
+      stack_folds = stack_k,
+      fold_partition = fold_partition,
+      alpha = stack_alpha,
+      seed = seed,
+      verbose = verbose
+    )
+  }
 
   weights <- selection_res$weights
   active_names <- names(weights[weights > 0])
@@ -193,8 +254,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }, double(1)))
 
   if (verbose) {
-    message(sprintf("\nCaruana Selection Complete: %d / %d island models active.", length(active_names), length(val_preds_list)))
-    message(sprintf("  Single Best Fitness: %.4f  |  Ensemble Fitness: %.4f", single_best_fitness, selection_res$final_fitness))
+    message(sprintf("\nEnsemble Selection Complete: %d / %d island models active.", length(active_names), length(val_preds_list)))
+    if (method == "stack" && !is.null(selection_res$stack_cv_fitness)) {
+      message(sprintf("  Single Best Fitness: %.4f  |  Ensemble Fitness: %.4f  |  Honest CV Fitness: %.4f",
+                      single_best_fitness, selection_res$final_fitness, selection_res$stack_cv_fitness))
+    } else {
+      message(sprintf("  Single Best Fitness: %.4f  |  Ensemble Fitness: %.4f", single_best_fitness, selection_res$final_fitness))
+    }
   }
 
   active_recipes <- list()
@@ -263,6 +329,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       caruana_history = selection_res$history,
       single_best_fitness = single_best_fitness,
       ensemble_val_fitness = selection_res$final_fitness,
+      method = method,
+      stack_cv_fitness = if (!is.null(selection_res$stack_cv_fitness)) selection_res$stack_cv_fitness else NULL,
       task = task,
       evaluator = first_recipe$evaluator,
       target_col = target_col,
@@ -408,5 +476,245 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     weights = weights,
     history = history,
     final_fitness = final_fitness
+  )
+}
+
+#' Internal Non-Negative Elastic-Net Stacking Engine
+#'
+#' Fits a non-negative elastic-net meta-learner over out-of-fold island predictions
+#' and produces an honest nested cross-validated estimate of the deployed stacking
+#' procedure (scalar normalized island weights + weighted prediction averaging).
+#'
+#' @keywords internal
+#' @noRd
+.stack_select <- function(y_true, val_preds_list, task, metric,
+                          num_class = NULL, classes = NULL,
+                          stack_folds = 5L, fold_partition = NULL,
+                          alpha = 0.5, seed = NULL, verbose = FALSE) {
+  n_candidates <- length(val_preds_list)
+  candidate_names <- names(val_preds_list)
+  n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
+
+  fam <- switch(task,
+    regression = "gaussian",
+    classification = "binomial",
+    multiclass = "multinomial",
+    stop(sprintf("Unsupported task '%s' for stacking.", task))
+  )
+
+  # Local seed wrapper preserving the user's global RNG state
+  run_with_seed <- function(seed_val, code) {
+    if (is.null(seed_val)) return(code())
+    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
+    on.exit({
+      if (!is.null(old_seed)) {
+        assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      } else if (exists(".Random.seed", envir = .GlobalEnv)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    }, add = TRUE)
+    set.seed(seed_val)
+    code()
+  }
+
+  # Metric helper (higher is better); NA predictions are masked out
+  eval_fitness <- function(y, p) {
+    if (is.matrix(p)) {
+      mask <- !is.na(p[, 1])
+      if (!any(mask)) return(-Inf)
+      compute_metric(y[mask], p[mask, , drop = FALSE], task = task, metric = metric, num_class = num_class)
+    } else {
+      mask <- !is.na(p)
+      if (!any(mask)) return(-Inf)
+      compute_metric(y[mask], p[mask], task = task, metric = metric)
+    }
+  }
+
+  # Level-2 design matrix: one block of columns per candidate island
+  blocks <- lapply(val_preds_list, function(p) {
+    if (is.matrix(p)) p else matrix(p, ncol = 1)
+  })
+  block_ncols <- vapply(blocks, ncol, integer(1))
+  col_end <- cumsum(block_ncols)
+  col_start <- col_end - block_ncols + 1L
+
+  X_fit <- do.call(cbind, blocks)
+  X_fit[!is.finite(X_fit)] <- 0
+
+  if (task == "regression") {
+    y_fit <- as.numeric(y_true)
+  } else {
+    lv <- if (!is.null(classes)) classes else sort(unique(as.character(y_true)))
+    # Multiclass OOF targets may arrive integer-encoded (0-based); map back to labels
+    y_lab <- if (is.numeric(y_true) && length(lv) > 0 &&
+                 all(stats::na.omit(y_true) %in% (seq_along(lv) - 1))) {
+      lv[as.integer(y_true) + 1]
+    } else {
+      as.character(y_true)
+    }
+    y_fit <- factor(y_lab, levels = lv)
+  }
+
+  # Nesting folds: reuse the evolution partition when provided, else internal balanced folds
+  folds <- if (!is.null(fold_partition) && length(fold_partition) == n_obs && anyDuplicated(fold_partition) > 0 &&
+               length(unique(fold_partition)) >= 2L) {
+    as.integer(factor(fold_partition))
+  } else {
+    run_with_seed(if (!is.null(seed)) seed + 7919L else NULL, function() {
+      sample(rep(seq_len(stack_folds), length.out = n_obs))
+    })
+  }
+  nest_folds <- sort(unique(folds))
+  k_fmt <- nchar(as.character(length(nest_folds)))
+
+  aggregate_weights <- function(fit) {
+    raw_w <- if (fam == "multinomial") {
+      cls_coefs <- glmnet::coef.glmnet(fit, s = "lambda.min")
+      mat <- do.call(cbind, lapply(cls_coefs, function(m) as.numeric(m)[-1]))
+      mat <- pmax(mat, 0)
+      vapply(seq_len(n_candidates), function(j) {
+        sum(mat[col_start[j]:col_end[j], , drop = FALSE]) / ncol(mat)
+      }, numeric(1))
+    } else {
+      cf <- as.numeric(glmnet::coef.glmnet(fit, s = "lambda.min"))[-1]
+      cf <- pmax(cf, 0)
+      vapply(seq_len(n_candidates), function(j) sum(cf[col_start[j]:col_end[j]]), numeric(1))
+    }
+    total <- sum(raw_w)
+    if (!is.finite(total) || total <= 0) {
+      return(NULL)
+    }
+    stats::setNames(raw_w / total, candidate_names)
+  }
+
+  blend_with <- function(w) {
+    out <- NULL
+    for (j in seq_len(n_candidates)) {
+      if (w[j] <= 0) next
+      p <- val_preds_list[[j]]
+      out <- if (is.null(out)) w[j] * p else out + w[j] * p
+    }
+    out
+  }
+
+  fallback_weights <- function() {
+    solo <- vapply(candidate_names, function(nm) eval_fitness(y_true, val_preds_list[[nm]]), double(1))
+    best <- names(which.max(solo))[1]
+    stats::setNames(ifelse(candidate_names == best, 1, 0), candidate_names)
+  }
+
+  # Class-balanced (or random, for regression) internal CV fold ids for cv.glmnet.
+  # All sampling runs under deterministic per-call seeds so results are reproducible
+  # for a given `seed` without touching the user's global RNG state.
+  sample_counter <- 0L
+  seeded_sample <- function(...) {
+    sample_counter <<- sample_counter + 1L
+    run_with_seed(if (!is.null(seed)) seed + 1000003L * sample_counter else NULL, function() {
+      sample(...)
+    })
+  }
+
+  make_foldid <- function(y_sub, k) {
+    k <- max(2L, min(k, length(y_sub)))
+    if (fam == "gaussian") {
+      return(seeded_sample(rep(seq_len(k), length.out = length(y_sub))))
+    }
+    fid <- integer(length(y_sub))
+    for (lv in levels(droplevels(factor(y_sub)))) {
+      ids <- which(as.character(y_sub) == lv)
+      if (length(ids) == 0) next
+      fid[ids] <- seeded_sample(rep(seq_len(min(k, length(ids))), length.out = length(ids)))
+    }
+    un <- which(fid == 0)
+    if (length(un) > 0) {
+      fid[un] <- seeded_sample(rep(seq_len(k), length.out = length(un)))
+    }
+    fid
+  }
+
+  fit_net <- function(rows) {
+    y_tr <- y_fit[rows]
+    nf <- max(3L, min(10L, length(rows) %/% 4L))
+    if (fam != "gaussian") {
+      tab <- table(y_tr)
+      nf <- min(nf, min(tab[tab > 0]))
+    }
+    nf <- max(3L, min(nf, length(rows)))
+    args <- list(
+      x = X_fit[rows, , drop = FALSE],
+      y = y_tr,
+      family = fam,
+      alpha = alpha,
+      standardize = FALSE,
+      foldid = make_foldid(y_tr, nf)
+    )
+    if (fam != "multinomial") args$lower.limits <- 0
+    do.call(glmnet::cv.glmnet, args)
+  }
+
+  if (verbose) {
+    message(sprintf("  Stacking %d island models with non-negative elastic net (alpha = %.2f), nested over %d folds...",
+                    n_candidates, alpha, length(nest_folds)))
+  }
+
+  # Honest nested evaluation of the deployed procedure (scalar weights + weighted blending)
+  pooled_preds <- NULL
+  pooled_y <- NULL
+  fold_fitnesses <- numeric(length(nest_folds))
+
+  for (fi in seq_along(nest_folds)) {
+    f <- nest_folds[fi]
+    te <- which(folds == f)
+    tr <- which(folds != f)
+
+    w_f <- local({
+      fit <- fit_net(tr)
+      w <- aggregate_weights(fit)
+      if (is.null(w)) fallback_weights() else w
+    })
+
+    is_mat <- is.matrix(val_preds_list[[1]])
+    blended <- blend_with(w_f)
+    preds_te <- if (is_mat) blended[te, , drop = FALSE] else blended[te]
+    fold_fitnesses[fi] <- eval_fitness(y_true[te], preds_te)
+
+    if (is.null(pooled_preds)) {
+      pooled_preds <- if (is_mat) {
+        matrix(NA_real_, nrow = n_obs, ncol = num_class)
+      } else {
+        rep(NA_real_, n_obs)
+      }
+      pooled_y <- y_true
+    }
+    if (is_mat) {
+      pooled_preds[te, ] <- preds_te
+    } else {
+      pooled_preds[te] <- preds_te
+    }
+
+    if (verbose) {
+      message(sprintf("  [Nest Fold %*d/%*d] Fitness: %.4f", k_fmt, fi, k_fmt, length(nest_folds), fold_fitnesses[fi]))
+    }
+  }
+
+  stack_cv_fitness <- eval_fitness(pooled_y, pooled_preds)
+
+  # Final weights on all level-2 rows
+  final_w <- local({
+    fit <- fit_net(seq_len(n_obs))
+    w <- aggregate_weights(fit)
+    if (is.null(w)) fallback_weights() else w
+  })
+  final_fitness <- eval_fitness(y_true, blend_with(final_w))
+
+  if (verbose) {
+    message(sprintf("  Stack CV Fitness (honest): %.4f  |  Full-Fit Ensemble Fitness: %.4f", stack_cv_fitness, final_fitness))
+  }
+
+  list(
+    weights = final_w,
+    history = NULL,
+    final_fitness = final_fitness,
+    stack_cv_fitness = stack_cv_fitness
   )
 }

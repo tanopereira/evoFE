@@ -2,15 +2,18 @@
 % Please edit documentation in R/ensemble.R
 \name{ensemble_islands}
 \alias{ensemble_islands}
-\title{Caruana Island Ensemble Selection}
+\title{Caruana and Stacked Island Ensembling}
 \usage{
 ensemble_islands(
   recipe,
   data,
   target_col = NULL,
+  method = c("caruana", "stack"),
   caruana_rounds = 50,
   bag_samples = TRUE,
   sample_ratio = 0.8,
+  stack_folds = NULL,
+  stack_alpha = 0.5,
   seed = NULL,
   threads = 2,
   verbose = TRUE,
@@ -26,13 +29,27 @@ during evolution. Required for lazy final model training of surviving islands.}
 \item{target_col}{Character string. Name of the target column. If \code{NULL},
 it is inferred from the recipe or data.}
 
-\item{caruana_rounds}{Positive integer. Number of greedy selection rounds (default: 50).}
+\item{method}{Character string. Ensembling strategy: \code{"caruana"} (greedy forward
+selection with replacement) or \code{"stack"} (non-negative elastic-net stacking of
+out-of-fold island predictions with an honest nested cross-validated performance
+estimate). Default: \code{"caruana"}.}
+
+\item{caruana_rounds}{Positive integer. Number of greedy selection rounds (default: 50).
+Only used when \code{method = "caruana"}.}
 
 \item{bag_samples}{Logical. If \code{TRUE} (default), uses bootstrap sampling of validation
 predictions during selection rounds to prevent validation set overfitting.}
 
 \item{sample_ratio}{Numeric between 0 and 1. Fraction of validation samples used when
-\code{bag_samples = TRUE} (default: 0.8).}
+\code{bag_samples = TRUE} (default: 0.8). Only used when \code{method = "caruana"}.}
+
+\item{stack_folds}{Positive integer. Number of folds for the honest nested evaluation
+of the stacked ensemble (default: \code{min(5, cv_folds)} in cv mode when fold
+assignments are available, otherwise 5). Only used when \code{method = "stack"}.}
+
+\item{stack_alpha}{Numeric in \code{[0, 1]}. Elastic-net mixing parameter of the
+stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.
+Only used when \code{method = "stack"}.}
 
 \item{seed}{Optional integer seed for reproducible bagged sampling. Does not mutate
 the user's global RNG state.}
@@ -47,19 +64,24 @@ the user's global RNG state.}
 An \code{evo_ensemble} object containing:
   \item{active_recipes}{Named list of feature engineering recipes for surviving islands.}
   \item{active_models}{Named list of trained models for surviving islands.}
-  \item{weights}{Named numeric vector of Caruana ensemble weights (summing to 1).}
-  \item{caruana_history}{Data frame of validation loss trajectory across selection rounds.}
+  \item{weights}{Named numeric vector of ensemble weights (summing to 1).}
+  \item{caruana_history}{Data frame of validation loss trajectory across selection rounds
+    (only for \code{method = "caruana"}).}
   \item{single_best_fitness}{Unpenalized validation fitness of the single best island model.}
-  \item{ensemble_val_fitness}{Validation fitness achieved by the Caruana ensemble.}
+  \item{ensemble_val_fitness}{Validation fitness achieved by the ensemble.}
+  \item{method}{The ensembling method used.}
+  \item{stack_cv_fitness}{Honest nested cross-validated fitness of the stacking procedure
+    (only for \code{method = "stack"}).}
   \item{task}{The learning task ("classification", "regression", or "multiclass").}
   \item{evaluator}{The evaluator model engine used.}
   \item{classes}{Target class levels (for multiclass classification).}
   \item{metric}{Evaluation metric used.}
 }
 \description{
-Performs Caruana ensemble selection (greedy forward selection with replacement)
-over the validation/out-of-fold predictions from evolved islands, creating an
-optimal multi-model ensemble.
+Performs ensemble selection over the validation/out-of-fold predictions from evolved
+islands, creating an optimal multi-model ensemble. Two methods are available:
+Caruana greedy forward selection with replacement (default), or non-negative
+elastic-net stacking with an honest nested cross-validated performance estimate.
 }
 \examples{
 \donttest{
