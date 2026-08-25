@@ -1,7 +1,7 @@
 Package: evoFE
 Type: Package
 Title: Evolutionary Feature Engineering
-Version: 1.0.0
+Version: 1.0.0.9000
 Authors@R: person("Gustavo", "Pereira", role = c("aut", "cre"), email = "tanopereira@gmail.com")
 Description: Automates feature engineering using evolutionary algorithms
     inspired by genetic programming. Starting from raw input features, the

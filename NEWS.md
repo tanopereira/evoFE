@@ -1,3 +1,9 @@
+# evoFE 1.0.0 (development)
+
+## Bug Fixes
+
+* `ensemble_islands()` now reports `single_best_fitness` using the unpenalized validation score (`raw_fitness`) of the best island model instead of the complexity-penalized selection fitness, so the comparison with `ensemble_val_fitness` is apples-to-apples.
+
 # evoFE 1.0.0
 
 ## New Features
