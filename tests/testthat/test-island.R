@@ -55,6 +55,7 @@ test_that("evolve_features throws errors for invalid island parameters", {
 })
 
 test_that("evolve_features runs successfully with multiple islands and outputs correct logging", {
+  testthat::skip_on_cran()
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -97,6 +98,7 @@ test_that("evolve_features runs successfully with multiple islands and outputs c
 })
 
 test_that("evolve_features runs successfully with heterogeneous per-island allowed_transformers", {
+  testthat::skip_on_cran()
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -123,6 +125,7 @@ test_that("evolve_features runs successfully with heterogeneous per-island allow
 })
 
 test_that("evolve_features validates and runs successfully with row_split_islands", {
+  testthat::skip_on_cran()
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -204,6 +207,7 @@ test_that("evolve_features throws errors for invalid per_island_validation param
 })
 
 test_that("evolve_features runs successfully with per_island_validation = TRUE", {
+  testthat::skip_on_cran()
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -226,6 +230,7 @@ test_that("evolve_features runs successfully with per_island_validation = TRUE",
 })
 
 test_that("evolve_features handles migration when no new genes are generated without error", {
+  testthat::skip_on_cran()
   data(iris)
   set.seed(42)
   recipe <- evolve_features(
@@ -246,6 +251,7 @@ test_that("evolve_features handles migration when no new genes are generated wit
 })
 
 test_that("migrated elite individuals participate in survivor selection and elitism", {
+  testthat::skip_on_cran()
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -287,6 +293,7 @@ test_that("migrated elite individuals participate in survivor selection and elit
 })
 
 test_that("evolve_features executes successfully with gibbs_stagnation, gibbs_fitness, dual_gibbs_pull, and random topologies", {
+  testthat::skip_on_cran()
   data(mtcars)
   df <- mtcars
   df$am <- as.integer(df$am)
@@ -337,6 +344,7 @@ test_that("promoted migrant with superior fitness is sorted to index 1 in destin
 })
 
 test_that("gene_only payload does not replace full individuals in destination population", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_gene <- migration_config(topology = topology_ring(islands = 3), payload = "gene_only")
@@ -349,6 +357,7 @@ test_that("gene_only payload does not replace full individuals in destination po
 })
 
 test_that("grid topology respects gibbs push policy by stagnation", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_grid_stag <- migration_config(
@@ -371,6 +380,7 @@ test_that("policy_tiered_admission throws error when combined with non-tiered to
 })
 
 test_that("tiered topology uses vertical promotion and respects policy within each tier", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_tiered_gibbs <- migration_config(
@@ -386,6 +396,7 @@ test_that("tiered topology uses vertical promotion and respects policy within ea
 })
 
 test_that("evolve_features accepts migration_topology = 'torus'", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   rec <- evolve_features(
@@ -397,6 +408,7 @@ test_that("evolve_features accepts migration_topology = 'torus'", {
 })
 
 test_that("policy_gibbs_push with feature_distance weighting executes correctly", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_feat_dist <- migration_config(
@@ -412,6 +424,7 @@ test_that("policy_gibbs_push with feature_distance weighting executes correctly"
 })
 
 test_that("policy_gibbs_pull with feature_distance weighting executes correctly", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_feat <- migration_config(
@@ -427,6 +440,7 @@ test_that("policy_gibbs_pull with feature_distance weighting executes correctly"
 })
 
 test_that("policy_gibbs_pull on tiered topology executes correctly", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_tiered <- migration_config(
@@ -442,6 +456,7 @@ test_that("policy_gibbs_pull on tiered topology executes correctly", {
 })
 
 test_that("policy_gibbs_pull with uniform weighting executes correctly", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_uni <- migration_config(
@@ -457,6 +472,7 @@ test_that("policy_gibbs_pull with uniform weighting executes correctly", {
 })
 
 test_that("calibrated regression metrics integrate with xgboost and lightgbm in evolve_features", {
+  testthat::skip_on_cran()
   data(mtcars)
   
   # LightGBM with cal_rmse
@@ -477,6 +493,7 @@ test_that("calibrated regression metrics integrate with xgboost and lightgbm in 
 })
 
 test_that("policy_gibbs_pull with gene_only payload runs successfully", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc_pull_gene <- migration_config(
@@ -493,6 +510,7 @@ test_that("policy_gibbs_pull with gene_only payload runs successfully", {
 })
 
 test_that("stagnation remains 0 on the first generation evaluating a newly migrated elite", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   data(mtcars)
   mc <- migration_config(
@@ -509,6 +527,7 @@ test_that("stagnation remains 0 on the first generation evaluating a newly migra
 })
 
 test_that("row_split_islands with many islands does not produce -Inf baseline fitness (allow_prune regression)", {
+  testthat::skip_on_cran()
   testthat::skip_if_not_installed("glmnet")
   # Regression: island baseline was evaluated with allow_prune = FALSE on a tiny row-shard
   # (1/islands of training data). Genes valid on the full data can legitimately fail on a
