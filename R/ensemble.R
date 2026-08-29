@@ -175,9 +175,76 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     warning("Only 1 candidate island prediction vector available. Ensembling requires >= 2 candidate islands.")
   }
 
-  y_val <- cand_metadata[[1]]$ind$y_val
-  if (is.null(y_val)) {
-    y_val <- data[[target_col]]
+  # Validate and align candidate validation predictions across recipes
+  cand_row_counts <- vapply(val_preds_list, function(p) {
+    if (is.matrix(p)) nrow(p) else length(p)
+  }, integer(1))
+
+  # Check if row counts are inhomogeneous or don't cover the full dataset when mixing recipes
+  needs_harmonization <- length(unique(cand_row_counts)) > 1L ||
+    (length(recipe_list) > 1L && any(cand_row_counts != nrow(data)))
+
+  stored_folds <- first_recipe$fold_ids
+
+  if (needs_harmonization) {
+    if (verbose) {
+      message("  Aligning out-of-fold validation predictions across candidate models on the training dataset...")
+    }
+    common_folds <- min(5L, max(2L, nrow(data) %/% 4L))
+    common_fold_ids <- if (task %in% c("classification", "multiclass")) {
+      fid <- integer(nrow(data))
+      y_fac <- as.factor(data[[target_col]])
+      for (lv in levels(y_fac)) {
+        ids <- which(as.character(y_fac) == lv)
+        if (length(ids) > 0) {
+          fid[ids] <- sample(rep(seq_len(min(common_folds, length(ids))), length.out = length(ids)))
+        }
+      }
+      un <- which(fid == 0)
+      if (length(un) > 0) fid[un] <- sample(rep(seq_len(common_folds), length.out = length(un)))
+      fid
+    } else {
+      sample(rep(seq_len(common_folds), length.out = nrow(data)))
+    }
+
+    for (nm in names(val_preds_list)) {
+      ind_re <- cand_metadata[[nm]]$ind
+      ind_re$fitness <- NA_real_
+      cand_eval <- cand_metadata[[nm]]$evaluator
+      ind_re <- evaluate_fitness(
+        ind_re, data = data, target_col = target_col,
+        task = task, cv_folds = common_folds,
+        evaluation_strategy = "cv", fold_ids = common_fold_ids,
+        evaluator = cand_eval, threads = threads,
+        metric = metric, verbose = FALSE, allow_prune = FALSE
+      )
+      val_preds_list[[nm]] <- ind_re$val_preds
+      cand_metadata[[nm]]$ind <- ind_re
+    }
+    stored_folds <- common_fold_ids
+    y_val <- cand_metadata[[1]]$ind$y_val
+  } else {
+    y_val <- cand_metadata[[1]]$ind$y_val
+    if (is.null(y_val)) {
+      y_val <- if (task == "multiclass") {
+        as.integer(factor(data[[target_col]], levels = classes)) - 1
+      } else {
+        data[[target_col]]
+      }
+    }
+  }
+
+  # Ensure multiclass predictions are properly formatted as (N x num_class) matrices
+  if (task == "multiclass") {
+    for (nm in names(val_preds_list)) {
+      p <- val_preds_list[[nm]]
+      if (!is.matrix(p)) {
+        val_preds_list[[nm]] <- matrix(p, ncol = num_class, byrow = FALSE)
+      }
+    }
+    if (!is.numeric(y_val)) {
+      y_val <- as.integer(factor(y_val, levels = classes)) - 1
+    }
   }
 
   if (verbose) {
@@ -207,7 +274,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       stop("Package 'glmnet' is required for method = \"stack\". ",
            "Install it or use method = \"caruana\".")
     }
-    stored_folds <- first_recipe$fold_ids
     fold_partition <- NULL
     stack_k <- stack_folds
     if (!is.null(stored_folds) && length(stored_folds) == n_obs &&

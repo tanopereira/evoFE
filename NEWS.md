@@ -7,6 +7,7 @@
 
 ## Bug Fixes
 
+* `ensemble_islands()`: Automatically aligns and harmonizes validation prediction dimensions across mixed recipes and evaluation strategies (e.g. combining `split` with `cv` recipes, or `row_split_islands`), ensuring conformable prediction arrays and ground-truth targets in both Caruana and Stacking selection.
 * `ensemble_islands()` now reports `single_best_fitness` using the unpenalized validation score (`raw_fitness`) of the best island model instead of the complexity-penalized selection fitness, so the comparison with `ensemble_val_fitness` is apples-to-apples.
 * `ensemble_islands()`: Fixed data leakage in nested CV fallback when regularized coefficients are all zero, protected stratified fold generation against sparse classes, and scoped `evoFE.threads` during lazy feature evaluation.
 

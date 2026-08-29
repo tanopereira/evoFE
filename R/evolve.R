@@ -2065,35 +2065,42 @@ evolve_features <- function(data, target_col, task = "classification",
       tournament_fitness <- sapply(candidates, function(ind) ind$fitness)
       winner_idx <- which.max(tournament_fitness)
       best_ind <- candidates[[winner_idx]]
+      island_best_individual <- candidates
       best_ind_source <- paste0("Island ", winner_idx)
       if (verbose) {
         message(sprintf("  Tournament winner: Island %d (fitness %.4f)", winner_idx, best_ind$fitness))
       }
     } else {
-      # Single re-evaluation of global best on full training dataset
+      # Re-evaluate all island bests on the full training dataset
       if (verbose) {
-        message("\nRe-evaluating best individual on full training dataset...")
+        message("\nRe-evaluating island bests on full training dataset...")
       }
-      best_ind$fitness <- NA_real_
-      best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-      best_ind <- evaluate_fitness(
-        best_ind, data, target_col,
-        task = task, cv_folds = cv_folds,
-        evaluation_strategy = evaluation_strategy,
-        split_ids = split_ids_val, shared_splits = shared_splits,
-        evaluator = best_eval_curr, fold_ids = fold_ids,
-        shared_folds = shared_folds,
-        shared_full = shared_full, state_cache = state_cache,
-        threads = threads, metric = metric, verbose = FALSE,
-        allow_prune = FALSE,
-        complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        baseline_fitness = baseline_ind$fitness,
-        running_best_fitness = global_best_fitness,
-        n_samples = nrow(data), ...
-      )
+      island_best_individual <- lapply(seq_len(islands), function(j) {
+        ind_j <- island_best_individual[[j]]
+        ind_j$fitness <- NA_real_
+        cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
+        evaluate_fitness(
+          ind_j, data, target_col,
+          task = task, cv_folds = cv_folds,
+          evaluation_strategy = evaluation_strategy,
+          split_ids = split_ids_val, shared_splits = shared_splits,
+          evaluator = cand_eval, fold_ids = fold_ids,
+          shared_folds = shared_folds,
+          shared_full = shared_full, state_cache = state_cache,
+          threads = threads, metric = metric, verbose = FALSE,
+          allow_prune = FALSE,
+          complexity_penalty = complexity_penalty,
+          complexity_mode = complexity_mode,
+          complexity_floor = complexity_floor,
+          complexity_target = complexity_target,
+          baseline_fitness = baseline_ind$fitness,
+          running_best_fitness = global_best_fitness,
+          n_samples = nrow(data), ...
+        )
+      })
+      winner_idx <- which.max(sapply(island_best_individual, function(ind) ind$fitness))
+      best_ind <- island_best_individual[[winner_idx]]
+      best_ind_source <- paste0("Island ", winner_idx)
       if (verbose) {
         message(sprintf("  Global fitness of best individual: %.4f", best_ind$fitness))
       }

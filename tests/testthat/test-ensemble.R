@@ -268,3 +268,36 @@ test_that("stack method falls back to internal folds in split mode", {
   expect_true(any(grepl("internal folds", msgs)))
   expect_true(is.finite(ens$stack_cv_fitness))
 })
+
+test_that("ensemble_islands harmonizes mixed recipes with different evaluation strategies (split + cv)", {
+  testthat::skip_on_cran()
+  testthat::skip_if_not_installed("glmnet")
+  data(iris)
+  set.seed(42)
+
+  rec1 <- evolve_features(
+    data = iris, target_col = "Species", task = "multiclass", evaluator = "lightgbm",
+    generations = 1, pop_size = 2, islands = 2, evaluation_strategy = "split", verbose = FALSE
+  )
+  rec2 <- evolve_features(
+    data = iris, target_col = "Species", task = "multiclass", evaluator = "lightgbm",
+    generations = 1, pop_size = 2, islands = 2, evaluation_strategy = "cv", cv_folds = 2, verbose = FALSE
+  )
+
+  res <- list(recipe1 = rec1, recipe2 = rec2)
+
+  ens_stack <- ensemble_islands(res, data = iris, method = "stack", threads = 2, verbose = FALSE)
+  expect_s3_class(ens_stack, "evo_ensemble")
+  expect_true(is.finite(ens_stack$stack_cv_fitness))
+  expect_equal(sum(ens_stack$weights), 1, tolerance = 1e-8)
+  preds_s <- predict_model(ens_stack, iris[1:5, ])
+  expect_true(is.matrix(preds_s) || is.numeric(preds_s))
+
+  ens_car <- ensemble_islands(res, data = iris, method = "caruana", caruana_rounds = 10, threads = 2, verbose = FALSE)
+  expect_s3_class(ens_car, "evo_ensemble")
+  expect_true(is.finite(ens_car$ensemble_val_fitness))
+  expect_equal(sum(ens_car$weights), 1, tolerance = 1e-8)
+  preds_c <- predict_model(ens_car, iris[1:5, ])
+  expect_true(is.matrix(preds_c) || is.numeric(preds_c))
+})
+
