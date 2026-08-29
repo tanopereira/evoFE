@@ -125,7 +125,8 @@ evo_transformers$umap <- create_transformer(
       C <- max(2L, as.integer(round(log2(ncol(x_s)))))
       model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
                           dens_scale = dens_scale, ret_model = TRUE, 
-                          n_threads = threads, verbose = FALSE, init = "random")
+                          n_threads = threads, n_sgd_threads = "auto",
+                          verbose = FALSE, init = "random")
       if (verbose) {
         message(sprintf("  [UMAP Fit] umap on %d rows. %d neighbors (dens_scale = %.2f). %.3f s",
                         nrow(x_s), n_neighbors, dens_scale, as.numeric(difftime(Sys.time(), t0, units = "secs"))))
@@ -169,7 +170,8 @@ evo_transformers$umap <- create_transformer(
       } else {
         t0 <- Sys.time()
         threads <- getOption("evoFE.threads", 1)
-        preds <- uwot::umap_transform(x, model = state$model, n_threads = threads, verbose = FALSE)
+        preds <- uwot::umap_transform(x, model = state$model, n_threads = threads,
+                                      n_sgd_threads = "auto", verbose = FALSE)
         if (verbose) {
           message(sprintf("  [UMAP Apply] Transform: %d test rows. %.3f s",
                           nrow(x), as.numeric(difftime(Sys.time(), t0, units = "secs"))))

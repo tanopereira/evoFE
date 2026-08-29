@@ -3,10 +3,12 @@
 ## New Features
 
 * **Stacked ensembling (`method = "stack"`)** in `ensemble_islands()`: a non-negative elastic-net meta-learner (via `glmnet`, `stack_alpha` default `0.5`) fits island weights on out-of-fold predictions, with an honest nested cross-validated performance estimate (`stack_cv_fitness`). The evolution fold partition is reused when available; otherwise internal balanced folds are used. Weights are sparse and normalized to sum to 1, and the existing lazy-training and weighted-prediction paths are shared with Caruana selection.
+* **Multi-threaded UMAP SGD optimization**: `umap`, `umap_genie`, and `umap_lumbermark` now configure `n_sgd_threads = "auto"` in `uwot::umap()` and `uwot::umap_transform()` for parallelized SGD layout optimization.
 
 ## Bug Fixes
 
 * `ensemble_islands()` now reports `single_best_fitness` using the unpenalized validation score (`raw_fitness`) of the best island model instead of the complexity-penalized selection fitness, so the comparison with `ensemble_val_fitness` is apples-to-apples.
+* `ensemble_islands()`: Fixed data leakage in nested CV fallback when regularized coefficients are all zero, protected stratified fold generation against sparse classes, and scoped `evoFE.threads` during lazy feature evaluation.
 
 # evoFE 1.0.0
 

@@ -104,7 +104,8 @@ evo_transformers$umap_genie <- create_transformer(
       # 1. Fit UMAP
       umap_model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
                               dens_scale = dens_scale, ret_model = TRUE, 
-                              n_threads = threads, verbose = FALSE, init = "random")
+                              n_threads = threads, n_sgd_threads = "auto",
+                              verbose = FALSE, init = "random")
       x_s_umap <- umap_model$embedding
       
       # 2. Run Genie clustering on UMAP embedding
@@ -153,7 +154,8 @@ evo_transformers$umap_genie <- create_transformer(
       threads <- getOption("evoFE.threads", 1)
       
       # 1. Transform test data to UMAP space
-      x_test_umap <- uwot::umap_transform(x_test, model = state$umap_model, n_threads = threads, verbose = FALSE)
+      x_test_umap <- uwot::umap_transform(x_test, model = state$umap_model, n_threads = threads,
+                                          n_sgd_threads = "auto", verbose = FALSE)
       
       # 2. KNN lookup in UMAP space
       dummy_state <- list(
@@ -223,7 +225,8 @@ evo_transformers$umap_lumbermark <- create_transformer(
       # 1. Fit UMAP
       umap_model <- uwot::umap(x_s, n_neighbors = n_neighbors, n_components = C, 
                               dens_scale = dens_scale, ret_model = TRUE, 
-                              n_threads = threads, verbose = FALSE, init = "random")
+                              n_threads = threads, n_sgd_threads = "auto",
+                              verbose = FALSE, init = "random")
       x_s_umap <- umap_model$embedding
       
       # 2. Run Lumbermark clustering on UMAP embedding
@@ -272,7 +275,8 @@ evo_transformers$umap_lumbermark <- create_transformer(
       threads <- getOption("evoFE.threads", 1)
       
       # 1. Transform test data to UMAP space
-      x_test_umap <- uwot::umap_transform(x_test, model = state$umap_model, n_threads = threads, verbose = FALSE)
+      x_test_umap <- uwot::umap_transform(x_test, model = state$umap_model, n_threads = threads,
+                                          n_sgd_threads = "auto", verbose = FALSE)
       
       # 2. KNN lookup in UMAP space
       dummy_state <- list(

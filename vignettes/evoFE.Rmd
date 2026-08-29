@@ -635,6 +635,7 @@ recipe_xgb <- evolve_features(
   generations = 5,
   pop_size    = 6,
   mbo_iters   = 5
+)
 ```
 
 ## Understanding the Output

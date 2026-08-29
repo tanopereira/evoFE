@@ -83,6 +83,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              threads = 2,
                              verbose = TRUE, ...) {
   method <- match.arg(method)
+  old_threads <- getOption("evoFE.threads")
+  on.exit(options(evoFE.threads = old_threads), add = TRUE)
+  options(evoFE.threads = threads)
 
   # Normalize recipe input: single evo_recipe or list of evo_recipe objects
   if (inherits(recipe, "evo_recipe")) {
@@ -241,13 +244,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   # Apples-to-apples comparison: ensemble fitness is an unpenalized validation
   # metric, so compare against the island's raw (unpenalized) validation score
   # rather than the complexity-penalized selection fitness.
-  single_best_fitness <- max(vapply(recipe_list, function(r) {
-    bi <- r$best_individual
-    if (is.null(bi)) return(-Inf)
-    if (!is.null(bi$raw_fitness) && is.finite(bi$raw_fitness)) {
-      bi$raw_fitness
-    } else if (!is.null(bi$fitness) && !is.na(bi$fitness)) {
-      bi$fitness
+  single_best_fitness <- max(vapply(cand_metadata, function(m) {
+    ind_i <- m$ind
+    if (is.null(ind_i)) return(-Inf)
+    if (!is.null(ind_i$raw_fitness) && is.finite(ind_i$raw_fitness)) {
+      ind_i$raw_fitness
+    } else if (!is.null(ind_i$fitness) && !is.na(ind_i$fitness)) {
+      ind_i$fitness
     } else {
       -Inf
     }
@@ -430,18 +433,18 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
 
       run_with_seed(if (!is.null(seed)) seed + r else NULL, function() {
         eval_idx <- if (bag_samples) {
-          sample(seq_len(n_obs), size = round(n_obs * sample_ratio), replace = TRUE)
+          sample(seq_len(n_obs), size = max(2L, min(n_obs, round(n_obs * sample_ratio))), replace = TRUE)
         } else {
           seq_len(n_obs)
         }
 
-        y_eval <- if (is.matrix(y_true)) y_true[eval_idx, ] else y_true[eval_idx]
+        y_eval <- if (is.matrix(y_true)) y_true[eval_idx, , drop = FALSE] else y_true[eval_idx]
 
         for (name in candidate_names) {
           cand_preds <- val_preds_list[[name]]
           candidate_blend <- blend_preds(current_blend, cand_preds, r - 1)
 
-          p_eval <- if (is.matrix(candidate_blend)) candidate_blend[eval_idx, ] else candidate_blend[eval_idx]
+          p_eval <- if (is.matrix(candidate_blend)) candidate_blend[eval_idx, , drop = FALSE] else candidate_blend[eval_idx]
           score <- eval_fitness(y_eval, p_eval)
 
           if (score > best_cand_score) {
@@ -588,17 +591,25 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   }
 
   blend_with <- function(w) {
-    out <- NULL
-    for (j in seq_len(n_candidates)) {
-      if (w[j] <= 0) next
-      p <- val_preds_list[[j]]
-      out <- if (is.null(out)) w[j] * p else out + w[j] * p
+    if (!is.matrix(val_preds_list[[1]])) {
+      as.vector(X_fit %*% w)
+    } else {
+      out <- NULL
+      for (j in seq_len(n_candidates)) {
+        if (w[j] <= 0) next
+        p <- val_preds_list[[j]]
+        out <- if (is.null(out)) w[j] * p else out + w[j] * p
+      }
+      out
     }
-    out
   }
 
-  fallback_weights <- function() {
-    solo <- vapply(candidate_names, function(nm) eval_fitness(y_true, val_preds_list[[nm]]), double(1))
+  fallback_weights <- function(rows = seq_len(n_obs)) {
+    y_sub <- if (is.matrix(y_true)) y_true[rows, , drop = FALSE] else y_true[rows]
+    solo <- vapply(candidate_names, function(nm) {
+      p_sub <- if (is.matrix(val_preds_list[[nm]])) val_preds_list[[nm]][rows, , drop = FALSE] else val_preds_list[[nm]][rows]
+      eval_fitness(y_sub, p_sub)
+    }, double(1))
     best <- names(which.max(solo))[1]
     stats::setNames(ifelse(candidate_names == best, 1, 0), candidate_names)
   }
@@ -628,6 +639,9 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     un <- which(fid == 0)
     if (length(un) > 0) {
       fid[un] <- seeded_sample(rep(seq_len(k), length.out = length(un)))
+    }
+    if (length(unique(fid[fid > 0])) < min(2L, length(y_sub))) {
+      fid <- seeded_sample(rep(seq_len(k), length.out = length(y_sub)))
     }
     fid
   }
@@ -670,7 +684,7 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     w_f <- local({
       fit <- fit_net(tr)
       w <- aggregate_weights(fit)
-      if (is.null(w)) fallback_weights() else w
+      if (is.null(w)) fallback_weights(tr) else w
     })
 
     is_mat <- is.matrix(val_preds_list[[1]])
@@ -703,7 +717,7 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   final_w <- local({
     fit <- fit_net(seq_len(n_obs))
     w <- aggregate_weights(fit)
-    if (is.null(w)) fallback_weights() else w
+    if (is.null(w)) fallback_weights(seq_len(n_obs)) else w
   })
   final_fitness <- eval_fitness(y_true, blend_with(final_w))
 
