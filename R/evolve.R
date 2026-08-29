@@ -2027,6 +2027,45 @@ evolve_features <- function(data, target_col, task = "classification",
     fitness_vals <- sapply(pop, function(ind) ind$fitness)
     pop <- pop[order(fitness_vals, decreasing = TRUE)]
     best_ind <- global_best_individual
+
+    # If multi-fidelity was enabled, ensure all island bests are evaluated at full fidelity
+    if (multi_fidelity) {
+      for (j in seq_len(islands)) {
+        ind_j <- island_best_individual[[j]]
+        p_j <- ind_j$val_preds
+        n_rows_j <- if (is.matrix(p_j)) nrow(p_j) else length(p_j)
+        if (n_rows_j < nrow(data)) {
+          ind_j$fitness <- NA_real_
+          cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
+          ind_j <- evaluate_fitness(
+            ind_j, data, target_col,
+            task = task, cv_folds = cv_folds,
+            evaluation_strategy = evaluation_strategy,
+            split_ids = split_ids_val,
+            shared_splits = if (row_split_islands) island_shared_splits[[j]] else shared_splits,
+            evaluator = cand_eval, fold_ids = fold_ids,
+            shared_folds = if (row_split_islands) island_shared_folds[[j]] else shared_folds,
+            shared_full = shared_full, state_cache = if (row_split_islands) island_state_caches[[j]] else state_cache,
+            threads = threads, metric = metric, verbose = FALSE,
+            allow_prune = FALSE,
+            complexity_penalty = complexity_penalty,
+            complexity_mode = complexity_mode,
+            complexity_floor = complexity_floor,
+            complexity_target = complexity_target,
+            baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
+            running_best_fitness = global_best_fitness,
+            n_samples = nrow(data), ...
+          )
+          island_best_individual[[j]] <- ind_j
+        }
+      }
+      # Update global best if any re-evaluated island best improved
+      best_j_idx <- which.max(sapply(island_best_individual, function(ind) ind$fitness))
+      if (island_best_individual[[best_j_idx]]$fitness > best_ind$fitness) {
+        best_ind <- island_best_individual[[best_j_idx]]
+        global_best_fitness <- best_ind$fitness
+      }
+    }
   }
 
   if (row_split_islands) {
