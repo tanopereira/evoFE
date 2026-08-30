@@ -223,19 +223,35 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
 }
 
 compute_exp_neg_logloss <- function(y_true, y_pred) {
-  p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
-  ll <- -mean(y_true * log(p) + (1 - y_true) * log(1 - p))
+  if (is.factor(y_true)) {
+    y_true <- as.integer(y_true) - 1L
+  } else if (is.character(y_true)) {
+    y_true <- as.integer(as.factor(y_true)) - 1L
+  } else if (is.logical(y_true)) {
+    y_true <- as.integer(y_true)
+  } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
+    y_true <- as.integer(as.factor(y_true)) - 1L
+  }
+  p <- pmax(pmin(as.numeric(y_pred), 1 - 1e-15), 1e-15)
+  ll <- -mean(y_true * log(p) + (1 - y_true) * log(1 - p), na.rm = TRUE)
   exp(-ll)
 }
 
 compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
   n <- length(y_true)
   if (!is.matrix(y_pred)) {
-    y_pred <- matrix(y_pred, ncol = num_class, byrow = TRUE)
+    y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
   }
-  probs <- y_pred[cbind(1:n, y_true + 1)]
+  y_idx <- as.integer(y_true)
+  if (min(y_idx, na.rm = TRUE) >= 1 && max(y_idx, na.rm = TRUE) <= num_class) {
+    idx_col <- y_idx
+  } else {
+    idx_col <- y_idx + 1L
+  }
+  idx_col <- pmax(1L, pmin(as.integer(idx_col), as.integer(num_class)))
+  probs <- y_pred[cbind(seq_len(n), idx_col)]
   probs <- pmax(pmin(probs, 1 - 1e-15), 1e-15)
-  ll <- -mean(log(probs))
+  ll <- -mean(log(probs), na.rm = TRUE)
   exp(-ll)
 }
 
@@ -450,6 +466,22 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     if (task == "multiclass") {
       y_train <- as.integer(factor(y_train, levels = classes)) - 1
       y_val <- as.integer(factor(y_val, levels = classes)) - 1
+    } else if (task == "classification") {
+      if (is.factor(y_train)) {
+        y_train <- as.integer(y_train) - 1L
+        y_val <- as.integer(y_val) - 1L
+      } else if (is.character(y_train)) {
+        y_fac <- as.factor(y_train)
+        y_train <- as.integer(y_fac) - 1L
+        y_val <- as.integer(factor(y_val, levels = levels(y_fac))) - 1L
+      } else if (is.logical(y_train)) {
+        y_train <- as.integer(y_train)
+        y_val <- as.integer(y_val)
+      } else if (is.numeric(y_train) && !all(stats::na.omit(y_train) %in% c(0, 1))) {
+        y_fac <- as.factor(y_train)
+        y_train <- as.integer(y_fac) - 1L
+        y_val <- as.integer(factor(y_val, levels = levels(y_fac))) - 1L
+      }
     }
 
     res_model <- train_model(x_train, y_train, x_val,
@@ -482,6 +514,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
       raw_score <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+      ind$val_preds <- preds
+      ind$y_val <- y_val_encoded
+    } else if (task == "classification") {
+      y_val_encoded <- y_val
+      raw_score <- compute_metric(y_val_encoded, preds, task, metric)
       ind$val_preds <- preds
       ind$y_val <- y_val_encoded
     } else {
@@ -606,6 +643,22 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       if (task == "multiclass") {
         y_train <- as.integer(factor(y_train, levels = classes)) - 1
         y_val <- as.integer(factor(y_val, levels = classes)) - 1
+      } else if (task == "classification") {
+        if (is.factor(y_train)) {
+          y_train <- as.integer(y_train) - 1L
+          y_val <- as.integer(y_val) - 1L
+        } else if (is.character(y_train)) {
+          y_fac <- as.factor(y_train)
+          y_train <- as.integer(y_fac) - 1L
+          y_val <- as.integer(factor(y_val, levels = levels(y_fac))) - 1L
+        } else if (is.logical(y_train)) {
+          y_train <- as.integer(y_train)
+          y_val <- as.integer(y_val)
+        } else if (is.numeric(y_train) && !all(stats::na.omit(y_train) %in% c(0, 1))) {
+          y_fac <- as.factor(y_train)
+          y_train <- as.integer(y_fac) - 1L
+          y_val <- as.integer(factor(y_val, levels = levels(y_fac))) - 1L
+        }
       }
 
       res_model <- train_model(x_train, y_train, x_val,
@@ -629,8 +682,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           if (is.matrix(preds)) {
             oof_preds[val_idx, ] <- preds
           } else {
-            oof_preds[val_idx, ] <- matrix(preds, ncol = num_class, byrow = TRUE)
+            oof_preds[val_idx, ] <- matrix(preds, ncol = num_class, byrow = FALSE)
           }
+          oof_y[val_idx] <- y_val_encoded
+        }
+      } else if (task == "classification") {
+        y_val_encoded <- y_val
+        metrics[f] <- compute_metric(y_val_encoded, preds, task, metric)
+        if (length(val_idx) == length(preds)) {
+          oof_preds[val_idx] <- preds
           oof_y[val_idx] <- y_val_encoded
         }
       } else {
@@ -853,8 +913,17 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 # --- METRIC COMPUTATION HELPERS ---
 
 compute_auc <- function(y_true, y_pred) {
-  n_pos <- sum(y_true == 1)
-  n_neg <- sum(y_true == 0)
+  if (is.factor(y_true)) {
+    y_true <- as.integer(y_true) - 1L
+  } else if (is.character(y_true)) {
+    y_true <- as.integer(as.factor(y_true)) - 1L
+  } else if (is.logical(y_true)) {
+    y_true <- as.integer(y_true)
+  } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
+    y_true <- as.integer(as.factor(y_true)) - 1L
+  }
+  n_pos <- sum(y_true == 1, na.rm = TRUE)
+  n_neg <- sum(y_true == 0, na.rm = TRUE)
   if (n_pos == 0 || n_neg == 0) {
     return(0.5)
   }
@@ -864,26 +933,44 @@ compute_auc <- function(y_true, y_pred) {
 }
 
 compute_multiclass_auc <- function(y_true, y_pred_matrix, num_class) {
+  if (!is.matrix(y_pred_matrix)) {
+    y_pred_matrix <- matrix(y_pred_matrix, ncol = num_class, byrow = FALSE)
+  }
+  y_idx <- as.integer(y_true)
+  if (min(y_idx, na.rm = TRUE) >= 1 && max(y_idx, na.rm = TRUE) <= num_class) {
+    y_true_0 <- y_idx - 1L
+  } else {
+    y_true_0 <- y_idx
+  }
   aucs <- numeric(num_class)
   for (k in 1:num_class) {
-    y_true_bin <- as.integer(y_true == (k - 1))
+    y_true_bin <- as.integer(y_true_0 == (k - 1))
     aucs[k] <- compute_auc(y_true_bin, y_pred_matrix[, k])
   }
-  mean(aucs)
+  mean(aucs, na.rm = TRUE)
 }
 
 compute_f1 <- function(y_true, y_pred) {
-  preds <- as.integer(y_pred >= 0.5)
-  tp <- sum(y_true == 1 & preds == 1)
-  fp <- sum(y_true == 0 & preds == 1)
-  fn <- sum(y_true == 1 & preds == 0)
+  if (is.factor(y_true)) {
+    y_true <- as.integer(y_true) - 1L
+  } else if (is.character(y_true)) {
+    y_true <- as.integer(as.factor(y_true)) - 1L
+  } else if (is.logical(y_true)) {
+    y_true <- as.integer(y_true)
+  } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
+    y_true <- as.integer(as.factor(y_true)) - 1L
+  }
+  preds <- as.integer(as.numeric(y_pred) >= 0.5)
+  tp <- sum(y_true == 1 & preds == 1, na.rm = TRUE)
+  fp <- sum(y_true == 0 & preds == 1, na.rm = TRUE)
+  fn <- sum(y_true == 1 & preds == 0, na.rm = TRUE)
   precision <- if (tp + fp == 0) 0 else tp / (tp + fp)
   recall <- if (tp + fn == 0) 0 else tp / (tp + fn)
   if (precision + recall == 0) 0 else 2 * (precision * recall) / (precision + recall)
 }
 
 compute_mae <- function(y_true, y_pred) {
-  mean(abs(y_true - y_pred))
+  mean(abs(as.numeric(y_true) - as.numeric(y_pred)), na.rm = TRUE)
 }
 
 compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
@@ -911,7 +998,7 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
     switch(metric,
       auc = {
         if (!is.matrix(y_pred)) {
-          y_pred <- matrix(y_pred, ncol = num_class, byrow = TRUE)
+          y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
         }
         compute_multiclass_auc(y_true, y_pred, num_class)
       },
@@ -924,7 +1011,7 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
       `cal-rmse` = compute_calibrated_rmse(y_true, y_pred),
       cal_mae = compute_calibrated_mae(y_true, y_pred),
       `cal-mae` = compute_calibrated_mae(y_true, y_pred),
-      sqrt(mean((y_true - y_pred)^2))
+      sqrt(mean((as.numeric(y_true) - as.numeric(y_pred))^2, na.rm = TRUE))
     )
     -val_score
   }
@@ -950,6 +1037,15 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
   }
 
   if (task == "classification") {
+    if (is.factor(y_true)) {
+      y_true <- as.integer(y_true) - 1L
+    } else if (is.character(y_true)) {
+      y_true <- as.integer(as.factor(y_true)) - 1L
+    } else if (is.logical(y_true)) {
+      y_true <- as.integer(y_true)
+    } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
+      y_true <- as.integer(as.factor(y_true)) - 1L
+    }
     y_pred <- as.numeric(y_pred)
     if (is_logits) {
       z <- y_pred
@@ -963,8 +1059,8 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     z <- pmax(pmin(z, 35), -35)
 
     # Laplace smooth the labels based on true class count
-    N1 <- sum(y_true == 1)
-    N0 <- sum(y_true == 0)
+    N1 <- sum(y_true == 1, na.rm = TRUE)
+    N0 <- sum(y_true == 0, na.rm = TRUE)
     N_true <- ifelse(y_true == 1, N1, N0)
 
     y_smooth <- ifelse(y_true == 1,
@@ -975,7 +1071,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     obj_fn <- function(temp) {
       probs_T <- 1 / (1 + exp(-z / temp))
       probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-      ll <- -mean(y_smooth * log(probs_T) + (1 - y_smooth) * log(1 - probs_T))
+      ll <- -mean(y_smooth * log(probs_T) + (1 - y_smooth) * log(1 - probs_T), na.rm = TRUE)
       ll
     }
 
@@ -985,7 +1081,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     # Return the un-smoothed log-loss (Option B) at the optimal temperature
     probs_T <- 1 / (1 + exp(-z / best_temp))
     probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-    ll_unsmoothed <- -mean(y_true * log(probs_T) + (1 - y_true) * log(1 - probs_T))
+    ll_unsmoothed <- -mean(y_true * log(probs_T) + (1 - y_true) * log(1 - probs_T), na.rm = TRUE)
     return(ll_unsmoothed)
   } else if (task == "multiclass") {
     if (is.null(num_class)) {
@@ -995,6 +1091,14 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     if (!is.matrix(y_pred)) {
       y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
     }
+
+    y_idx <- as.integer(y_true)
+    if (min(y_idx, na.rm = TRUE) >= 1 && max(y_idx, na.rm = TRUE) <= num_class) {
+      y_true_0 <- y_idx - 1L
+    } else {
+      y_true_0 <- y_idx
+    }
+    y_true_0 <- pmax(0L, pmin(as.integer(y_true_0), as.integer(num_class - 1L)))
 
     if (is_logits) {
       z <- y_pred
@@ -1007,19 +1111,19 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     z <- pmax(pmin(z, 35), -35)
 
     # Laplace smooth labels based on class-count sweep formulation
-    n <- length(y_true)
-    N_vec <- tabulate(y_true + 1, nbins = num_class)
-    N_k_row <- N_vec[y_true + 1]
+    n <- length(y_true_0)
+    N_vec <- tabulate(y_true_0 + 1, nbins = num_class)
+    N_k_row <- N_vec[y_true_0 + 1]
 
     true_target <- (N_k_row + alpha) / (N_k_row + 2 * alpha)
     leftover_mass <- alpha / (N_k_row + 2 * alpha)
 
     denom <- n - N_k_row
-    mass_per_item <- ifelse(denom == 0, 0, leftover_mass / denom)
+    mass_per_item <- ifelse(denom == 0, 0, leftover_mass / pmax(1, denom))
 
     N_mat <- matrix(N_vec, nrow = n, ncol = num_class, byrow = TRUE)
     y_smooth <- sweep(N_mat, 1, mass_per_item, "*")
-    y_smooth[cbind(1:n, y_true + 1)] <- true_target
+    y_smooth[cbind(seq_len(n), y_true_0 + 1)] <- true_target
 
     obj_fn <- function(temp) {
       z_scaled <- z / temp
@@ -1030,7 +1134,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
       probs_T <- exp_z / sum_exp_z
       probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
 
-      ll <- -mean(rowSums(y_smooth * log(probs_T)))
+      ll <- -mean(rowSums(y_smooth * log(probs_T)), na.rm = TRUE)
       ll
     }
 
@@ -1047,8 +1151,8 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
 
     y_hard <- matrix(0, nrow = n, ncol = num_class)
-    y_hard[cbind(1:n, y_true + 1)] <- 1
-    ll_unsmoothed <- -mean(rowSums(y_hard * log(probs_T)))
+    y_hard[cbind(seq_len(n), y_true_0 + 1)] <- 1
+    ll_unsmoothed <- -mean(rowSums(y_hard * log(probs_T)), na.rm = TRUE)
     return(ll_unsmoothed)
   }
 }

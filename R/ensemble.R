@@ -250,15 +250,25 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
   }
 
-  # Ensure multiclass predictions are properly formatted as (N x num_class) matrices
-  if (task == "multiclass") {
+  # Ensure targets and predictions are normalized
+  if (task == "classification") {
+    if (is.factor(y_val)) {
+      y_val <- as.integer(y_val) - 1L
+    } else if (is.character(y_val)) {
+      y_val <- as.integer(as.factor(y_val)) - 1L
+    } else if (is.logical(y_val)) {
+      y_val <- as.integer(y_val)
+    } else if (is.numeric(y_val) && !all(stats::na.omit(y_val) %in% c(0, 1))) {
+      y_val <- as.integer(as.factor(y_val)) - 1L
+    }
+  } else if (task == "multiclass") {
     for (nm in names(val_preds_list)) {
       p <- val_preds_list[[nm]]
       if (!is.matrix(p)) {
         val_preds_list[[nm]] <- matrix(p, ncol = num_class, byrow = FALSE)
       }
     }
-    if (!is.numeric(y_val)) {
+    if (!is.numeric(y_val) || any(y_val >= num_class) || any(y_val < 0)) {
       y_val <- as.integer(factor(y_val, levels = classes)) - 1
     }
   }
@@ -635,14 +645,23 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
 
   # Metric helper (higher is better); NA predictions are masked out
   eval_fitness <- function(y, p) {
+    if (is.null(p) || length(p) == 0) return(-Inf)
     if (is.matrix(p)) {
-      mask <- !is.na(p[, 1])
+      mask <- !is.na(p[, 1]) & !is.na(y)
       if (!any(mask)) return(-Inf)
-      compute_metric(y[mask], p[mask, , drop = FALSE], task = task, metric = metric, num_class = num_class)
+      res <- tryCatch(
+        compute_metric(y[mask], p[mask, , drop = FALSE], task = task, metric = metric, num_class = num_class),
+        error = function(e) -Inf
+      )
+      if (is.na(res) || is.nan(res)) -Inf else res
     } else {
-      mask <- !is.na(p)
+      mask <- !is.na(p) & !is.na(y)
       if (!any(mask)) return(-Inf)
-      compute_metric(y[mask], p[mask], task = task, metric = metric)
+      res <- tryCatch(
+        compute_metric(y[mask], p[mask], task = task, metric = metric),
+        error = function(e) -Inf
+      )
+      if (is.na(res) || is.nan(res)) -Inf else res
     }
   }
 
@@ -661,7 +680,7 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     y_fit <- as.numeric(y_true)
   } else {
     lv <- if (!is.null(classes)) classes else sort(unique(as.character(y_true)))
-    # Multiclass OOF targets may arrive integer-encoded (0-based); map back to labels
+    # Multiclass/classification targets may arrive integer-encoded; map back to labels
     y_lab <- if (is.numeric(y_true) && length(lv) > 0 &&
                  all(stats::na.omit(y_true) %in% (seq_along(lv) - 1))) {
       lv[as.integer(y_true) + 1]
@@ -727,12 +746,13 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
       eval_fitness(y_sub, p_sub)
     }, double(1))
     best <- names(which.max(solo))[1]
+    if (is.na(best) || length(best) == 0) {
+      return(stats::setNames(rep(1 / n_candidates, n_candidates), candidate_names))
+    }
     stats::setNames(ifelse(candidate_names == best, 1, 0), candidate_names)
   }
 
   # Class-balanced (or random, for regression) internal CV fold ids for cv.glmnet.
-  # All sampling runs under deterministic per-call seeds so results are reproducible
-  # for a given `seed` without touching the user's global RNG state.
   sample_counter <- 0L
   seeded_sample <- function(...) {
     sample_counter <<- sample_counter + 1L
@@ -764,12 +784,28 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
 
   fit_net <- function(rows) {
     y_tr <- y_fit[rows]
-    nf <- max(3L, min(10L, length(rows) %/% 4L))
     if (fam != "gaussian") {
       tab <- table(y_tr)
+      if (length(tab[tab > 0]) < 2L || any(tab[tab > 0] < 2L)) {
+        fit_direct <- tryCatch({
+          glmnet::glmnet(
+            x = X_fit[rows, , drop = FALSE],
+            y = y_tr,
+            family = fam,
+            alpha = alpha,
+            standardize = FALSE,
+            lambda = 0.01
+          )
+        }, error = function(e) NULL)
+        return(fit_direct)
+      }
+      nf <- max(3L, min(10L, length(rows) %/% 4L))
       nf <- min(nf, min(tab[tab > 0]))
+      nf <- max(2L, min(nf, length(rows)))
+    } else {
+      nf <- max(3L, min(10L, length(rows) %/% 4L))
+      nf <- max(2L, min(nf, length(rows)))
     }
-    nf <- max(3L, min(nf, length(rows)))
     args <- list(
       x = X_fit[rows, , drop = FALSE],
       y = y_tr,
@@ -781,7 +817,18 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     if (fam != "multinomial") args$lower.limits <- 0
     tryCatch({
       do.call(glmnet::cv.glmnet, args)
-    }, error = function(e) NULL)
+    }, error = function(e) {
+      tryCatch({
+        glmnet::glmnet(
+          x = X_fit[rows, , drop = FALSE],
+          y = y_tr,
+          family = fam,
+          alpha = alpha,
+          standardize = FALSE,
+          lambda = 0.01
+        )
+      }, error = function(e2) NULL)
+    })
   }
 
   if (verbose) {
