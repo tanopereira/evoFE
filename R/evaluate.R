@@ -569,6 +569,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
     if (use_shared) {
       dt <- shared_full
+      folds <- if (!is.null(fold_ids)) fold_ids else rep(seq_along(shared_folds), length.out = nrow(dt))
     } else {
       dt <- data.table::as.data.table(data)
       if (is.null(fold_ids)) {
@@ -578,7 +579,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }
     }
 
-    metrics <- rep(NA_real_, cv_folds)
+    unique_folds <- sort(unique(folds))
+    k_folds <- length(unique_folds)
+    metrics <- rep(NA_real_, k_folds)
     fold_importances <- list()
     last_fit_genes <- NULL
 
@@ -591,7 +594,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       oof_y <- vector(mode = typeof(dt[[target_col]]), length = n_total)
     }
 
-    for (f in 1:cv_folds) {
+    for (fi in seq_along(unique_folds)) {
+      f <- unique_folds[fi]
       if (use_shared) {
         train_fold <- data.table::copy(shared_folds[[f]]$train)
         val_fold <- data.table::copy(shared_folds[[f]]$val)
@@ -613,7 +617,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       )
 
       if (is.null(res)) {
-        # This fold failed (e.g. constant column on this split) <U+2014> skip it.
+        # This fold failed (e.g. constant column on this split) — skip it.
         # The individual is only killed if every fold fails (handled below).
         next
       }
@@ -669,7 +673,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       )
       preds <- res_model$predictions
       if (!is.null(res_model$importances)) {
-        fold_importances[[f]] <- res_model$importances
+        fold_importances[[fi]] <- res_model$importances
       }
       if (!is.null(res_model$best_params)) {
         ind$best_params <- res_model$best_params
@@ -677,7 +681,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
       if (task == "multiclass") {
         y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-        metrics[f] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+        metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
         if (length(val_idx) == length(y_val_encoded)) {
           if (is.matrix(preds)) {
             oof_preds[val_idx, ] <- preds
@@ -688,13 +692,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         }
       } else if (task == "classification") {
         y_val_encoded <- y_val
-        metrics[f] <- compute_metric(y_val_encoded, preds, task, metric)
+        metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric)
         if (length(val_idx) == length(preds)) {
           oof_preds[val_idx] <- preds
           oof_y[val_idx] <- y_val_encoded
         }
       } else {
-        metrics[f] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
+        metrics[fi] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
         if (length(val_idx) == length(preds)) {
           oof_preds[val_idx] <- preds
           oof_y[val_idx] <- val_fold_feat[[target_col]]

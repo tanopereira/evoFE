@@ -2085,7 +2085,7 @@ evolve_features <- function(data, target_col, task = "classification",
         ind_j <- island_best_individual[[j]]
         p_j <- ind_j$val_preds
         n_rows_j <- if (is.matrix(p_j)) nrow(p_j) else length(p_j)
-        if (n_rows_j < nrow(data)) {
+        if (evaluation_strategy != "metacv" && n_rows_j < nrow(data)) {
           ind_j$fitness <- NA_real_
           cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
           ind_j <- evaluate_fitness(
@@ -2232,7 +2232,7 @@ evolve_features <- function(data, target_col, task = "classification",
       cand_eval <- if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
       ind <- evaluate_fitness(
         ind, data, target_col,
-        task = task, cv_folds = cv_folds,
+        task = task, cv_folds = islands,
         evaluation_strategy = "cv",
         split_ids = NULL, shared_splits = NULL,
         evaluator = cand_eval, fold_ids = fold_ids,
