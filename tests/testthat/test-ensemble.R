@@ -39,6 +39,12 @@ test_that("ensemble_islands validates inputs correctly", {
     ensemble_islands(fake_recipe, data = mtcars, target_col = "mpg"),
     "No valid validation prediction vectors found"
   )
+
+  # Non-existent target column
+  expect_error(
+    ensemble_islands(fake_recipe, data = mtcars, target_col = "nonexistent_col"),
+    "Target column 'nonexistent_col' not found in 'data'"
+  )
 })
 
 test_that("ensemble_islands works for binary classification and predict_model/print/summary S3 methods", {
@@ -66,6 +72,16 @@ test_that("ensemble_islands works for binary classification and predict_model/pr
   expect_s3_class(ens, "evo_ensemble")
   expect_true(sum(ens$weights) == 1.0)
   expect_true(length(ens$active_models) > 0)
+
+  # Positional method = "caruana"
+  ens_pos_caruana <- ensemble_islands(recipe, df, "caruana", caruana_rounds = 5, verbose = FALSE)
+  expect_s3_class(ens_pos_caruana, "evo_ensemble")
+  expect_equal(ens_pos_caruana$method, "caruana")
+
+  # Positional method = "stack"
+  ens_pos_stack <- ensemble_islands(recipe, df, "stack", seed = 1, verbose = FALSE)
+  expect_s3_class(ens_pos_stack, "evo_ensemble")
+  expect_equal(ens_pos_stack$method, "stack")
 
   # Predict model
   preds <- predict_model(ens, df[1:5, ])

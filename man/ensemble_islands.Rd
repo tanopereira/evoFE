@@ -10,7 +10,7 @@ ensemble_islands(
   target_col = NULL,
   method = c("caruana", "stack"),
   caruana_rounds = 50,
-  bag_samples = TRUE,
+  bag_samples = FALSE,
   sample_ratio = 0.8,
   stack_folds = NULL,
   stack_alpha = 0.5,
@@ -37,8 +37,8 @@ estimate). Default: \code{"caruana"}.}
 \item{caruana_rounds}{Positive integer. Number of greedy selection rounds (default: 50).
 Only used when \code{method = "caruana"}.}
 
-\item{bag_samples}{Logical. If \code{TRUE} (default), uses bootstrap sampling of validation
-predictions during selection rounds to prevent validation set overfitting.}
+\item{bag_samples}{Logical. If \code{TRUE}, uses multi-bag bootstrap sampling of validation
+predictions during selection rounds to prevent validation set overfitting (default: \code{FALSE}).}
 
 \item{sample_ratio}{Numeric between 0 and 1. Fraction of validation samples used when
 \code{bag_samples = TRUE} (default: 0.8). Only used when \code{method = "caruana"}.}

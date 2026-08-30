@@ -393,7 +393,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     num_class <- length(classes)
   }
 
-  if (evaluation_strategy == "split") {
+  if (evaluation_strategy %in% c("split", "metacv", "meta_cv")) {
     # Train / Validation split strategy
     if (!is.null(shared_splits)) {
       train_fold <- shared_splits$train

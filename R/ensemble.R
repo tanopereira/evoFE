@@ -16,8 +16,8 @@
 #'   estimate). Default: \code{"caruana"}.
 #' @param caruana_rounds Positive integer. Number of greedy selection rounds (default: 50).
 #'   Only used when \code{method = "caruana"}.
-#' @param bag_samples Logical. If \code{TRUE} (default), uses bootstrap sampling of validation
-#'   predictions during selection rounds to prevent validation set overfitting.
+#' @param bag_samples Logical. If \code{TRUE}, uses multi-bag bootstrap sampling of validation
+#'   predictions during selection rounds to prevent validation set overfitting (default: \code{FALSE}).
 #' @param sample_ratio Numeric between 0 and 1. Fraction of validation samples used when
 #'   \code{bag_samples = TRUE} (default: 0.8). Only used when \code{method = "caruana"}.
 #' @param stack_folds Positive integer. Number of folds for the honest nested evaluation
@@ -75,14 +75,20 @@
 ensemble_islands <- function(recipe, data, target_col = NULL,
                              method = c("caruana", "stack"),
                              caruana_rounds = 50,
-                             bag_samples = TRUE,
+                             bag_samples = FALSE,
                              sample_ratio = 0.8,
                              stack_folds = NULL,
                              stack_alpha = 0.5,
                              seed = NULL,
                              threads = 2,
                              verbose = TRUE, ...) {
-  method <- match.arg(method)
+  # Handle positional method passed in 3rd argument (e.g. ensemble_islands(rec, data, "stack"))
+  if (is.character(target_col) && length(target_col) == 1 &&
+      target_col %in% c("caruana", "stack") && !target_col %in% names(data)) {
+    method <- target_col
+    target_col <- NULL
+  }
+  method <- match.arg(method, c("caruana", "stack"))
   old_threads <- getOption("evoFE.threads")
   on.exit(options(evoFE.threads = old_threads), add = TRUE)
   options(evoFE.threads = threads)
@@ -126,6 +132,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         stop("Could not automatically infer 'target_col'. Please specify target_col explicitly.")
       }
     }
+  }
+
+  if (!target_col %in% names(data)) {
+    stop(sprintf("Target column '%s' not found in 'data'.", target_col))
   }
 
   task <- first_recipe$task
@@ -180,9 +190,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     if (is.matrix(p)) nrow(p) else length(p)
   }, integer(1))
 
-  # Check if row counts are inhomogeneous or don't cover the full dataset when mixing recipes
+  # Check if row counts are inhomogeneous or don't cover the full dataset when mixing recipes or in metacv
   needs_harmonization <- length(unique(cand_row_counts)) > 1L ||
-    (length(recipe_list) > 1L && any(cand_row_counts != nrow(data)))
+    (length(recipe_list) > 1L && any(cand_row_counts != nrow(data))) ||
+    (identical(first_recipe$evaluation_strategy, "metacv") && any(cand_row_counts != nrow(data)))
 
   stored_folds <- first_recipe$fold_ids
 
@@ -190,21 +201,26 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     if (verbose) {
       message("  Aligning out-of-fold validation predictions across candidate models on the training dataset...")
     }
-    common_folds <- min(5L, max(2L, nrow(data) %/% 4L))
-    common_fold_ids <- if (task %in% c("classification", "multiclass")) {
-      fid <- integer(nrow(data))
-      y_fac <- as.factor(data[[target_col]])
-      for (lv in levels(y_fac)) {
-        ids <- which(as.character(y_fac) == lv)
-        if (length(ids) > 0) {
-          fid[ids] <- sample(rep(seq_len(min(common_folds, length(ids))), length.out = length(ids)))
-        }
-      }
-      un <- which(fid == 0)
-      if (length(un) > 0) fid[un] <- sample(rep(seq_len(common_folds), length.out = length(un)))
-      fid
+    if (!is.null(stored_folds) && length(stored_folds) == nrow(data) && !any(is.na(stored_folds))) {
+      common_fold_ids <- stored_folds
+      common_folds <- length(unique(stored_folds))
     } else {
-      sample(rep(seq_len(common_folds), length.out = nrow(data)))
+      common_folds <- min(5L, max(2L, nrow(data) %/% 4L))
+      common_fold_ids <- if (task %in% c("classification", "multiclass")) {
+        fid <- integer(nrow(data))
+        y_fac <- as.factor(data[[target_col]])
+        for (lv in levels(y_fac)) {
+          ids <- which(as.character(y_fac) == lv)
+          if (length(ids) > 0) {
+            fid[ids] <- sample(rep(seq_len(min(common_folds, length(ids))), length.out = length(ids)))
+          }
+        }
+        un <- which(fid == 0)
+        if (length(un) > 0) fid[un] <- sample(rep(seq_len(common_folds), length.out = length(un)))
+        fid
+      } else {
+        sample(rep(seq_len(common_folds), length.out = nrow(data)))
+      }
     }
 
     for (nm in names(val_preds_list)) {
@@ -276,8 +292,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
     fold_partition <- NULL
     stack_k <- stack_folds
-    if (!is.null(stored_folds) && length(stored_folds) == n_obs &&
-        !all(is.na(stored_folds))) {
+    if (!is.null(stored_folds) && is.atomic(stored_folds) &&
+        length(stored_folds) == n_obs && !all(is.na(stored_folds))) {
       fold_partition <- as.integer(stored_folds)
       k_avail <- length(unique(fold_partition))
       if (is.null(stack_k)) stack_k <- min(5L, k_avail)
@@ -411,10 +427,12 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 }
 
 #' Internal Caruana Greedy Selection Engine
+#' Internal Caruana Greedy Selection Engine
 #' @keywords internal
 #' @noRd
 caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
-                           bag_samples = TRUE, sample_ratio = 0.8, seed = NULL,
+                           patience = 15, bag_samples = FALSE, bag_bags = 5,
+                           sample_ratio = 0.8, seed = NULL,
                            num_class = NULL, verbose = FALSE) {
 
   n_candidates <- length(val_preds_list)
@@ -422,7 +440,6 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
   w_fmt <- nchar(as.character(rounds))
 
-  # Helper for safe metric evaluation (higher is better for fitness)
   eval_fitness <- function(y, p) {
     if (is.matrix(p)) {
       mask <- !is.na(p[, 1])
@@ -435,17 +452,11 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     }
   }
 
-  # Helper to blend predictions
   blend_preds <- function(current_sum, new_preds, count) {
     if (count == 0) return(new_preds)
-    if (is.matrix(current_sum)) {
-      (current_sum * count + new_preds) / (count + 1)
-    } else {
-      (current_sum * count + new_preds) / (count + 1)
-    }
+    (current_sum * count + new_preds) / (count + 1)
   }
 
-  # Local seed wrapper preserving user's global RNG state
   run_with_seed <- function(seed_val, code) {
     if (is.null(seed_val)) return(code())
     old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
@@ -460,90 +471,126 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
     code()
   }
 
-  selected_counts <- stats::setNames(rep(0L, n_candidates), candidate_names)
+  run_greedy_trajectory <- function(y_eval, preds_eval, max_rounds, early_patience, is_verbose = FALSE) {
+    init_scores <- vapply(candidate_names, function(nm) eval_fitness(y_eval, preds_eval[[nm]]), double(1))
+    best_init_idx <- which.max(init_scores)
+    if (length(best_init_idx) == 0 || is.na(best_init_idx)) best_init_idx <- 1L
+    best_init_name <- candidate_names[best_init_idx]
 
-  # Find initial best candidate model
-  initial_scores <- vapply(candidate_names, function(name) {
-    eval_fitness(y_true, val_preds_list[[name]])
-  }, double(1))
+    counts <- stats::setNames(rep(0L, n_candidates), candidate_names)
+    counts[best_init_name] <- 1L
+    current_blend <- preds_eval[[best_init_name]]
+    current_score <- init_scores[best_init_idx]
 
-  best_init_idx <- which.max(initial_scores)
-  if (length(best_init_idx) == 0 || is.na(best_init_idx)) {
-    best_init_idx <- 1L
-  }
-  best_init_name <- candidate_names[best_init_idx]
+    best_score <- current_score
+    best_counts <- counts
+    best_step <- 1L
+    no_improve <- 0L
 
-  selected_counts[best_init_name] <- 1L
-  current_blend <- val_preds_list[[best_init_name]]
-  current_score <- initial_scores[best_init_idx]
+    if (is_verbose) {
+      message(sprintf("  [Round %*d/%d] Initialized with %s -> Fitness: %.4f", w_fmt, 1, max_rounds, best_init_name, current_score))
+    }
 
-  if (verbose) {
-    message(sprintf("  [Round %*d/%d] Initialized with %s -> Fitness: %.4f", w_fmt, 1, rounds, best_init_name, current_score))
-  }
+    history <- data.frame(
+      round = 1:max_rounds,
+      selected_model = character(max_rounds),
+      fitness = numeric(max_rounds),
+      stringsAsFactors = FALSE
+    )
+    history$selected_model[1] <- best_init_name
+    history$fitness[1] <- current_score
 
-  history <- data.frame(
-    round = 1:rounds,
-    selected_model = character(rounds),
-    fitness = numeric(rounds),
-    stringsAsFactors = FALSE
-  )
+    if (max_rounds > 1) {
+      for (r in 2:max_rounds) {
+        best_cand <- NULL
+        best_cand_score <- -Inf
+        best_cand_blend <- NULL
 
-  history$selected_model[1] <- best_init_name
-  history$fitness[1] <- current_score
-
-  if (rounds > 1) {
-    for (r in 2:rounds) {
-      best_cand_name <- NULL
-      best_cand_score <- -Inf
-      best_cand_blend <- NULL
-
-      run_with_seed(if (!is.null(seed)) seed + r else NULL, function() {
-        eval_idx <- if (bag_samples) {
-          sample(seq_len(n_obs), size = max(2L, min(n_obs, round(n_obs * sample_ratio))), replace = TRUE)
-        } else {
-          seq_len(n_obs)
-        }
-
-        y_eval <- if (is.matrix(y_true)) y_true[eval_idx, , drop = FALSE] else y_true[eval_idx]
-
-        for (name in candidate_names) {
-          cand_preds <- val_preds_list[[name]]
-          candidate_blend <- blend_preds(current_blend, cand_preds, r - 1)
-
-          p_eval <- if (is.matrix(candidate_blend)) candidate_blend[eval_idx, , drop = FALSE] else candidate_blend[eval_idx]
-          score <- eval_fitness(y_eval, p_eval)
-
+        for (nm in candidate_names) {
+          cand_p <- preds_eval[[nm]]
+          cand_blend <- blend_preds(current_blend, cand_p, r - 1)
+          score <- eval_fitness(y_eval, cand_blend)
           if (score > best_cand_score) {
             best_cand_score <- score
-            best_cand_name <- name
-            best_cand_blend <- candidate_blend
+            best_cand <- nm
+            best_cand_blend <- cand_blend
           }
         }
 
-        if (!is.null(best_cand_name)) {
-          selected_counts[best_cand_name] <<- selected_counts[best_cand_name] + 1L
-          current_blend <<- best_cand_blend
-          prev_score <- current_score
-          current_score <<- eval_fitness(y_true, current_blend)
+        if (!is.null(best_cand)) {
+          counts[best_cand] <- counts[best_cand] + 1L
+          current_blend <- best_cand_blend
+          current_score <- best_cand_score
 
-          if (verbose) {
-            imp_tag <- if (!is.na(current_score) && !is.na(prev_score) && current_score > prev_score) " (Improved!)" else ""
-            message(sprintf("  [Round %*d/%d] Selected %s -> Ensemble Fitness: %.4f%s", w_fmt, r, rounds, best_cand_name, current_score, imp_tag))
+          if (current_score > best_score + 1e-7) {
+            best_score <- current_score
+            best_counts <- counts
+            best_step <- r
+            no_improve <- 0L
+          } else {
+            no_improve <- no_improve + 1L
+          }
+
+          if (is_verbose) {
+            imp_tag <- if (current_score >= best_score) " (Improved!)" else ""
+            message(sprintf("  [Round %*d/%d] Selected %s -> Ensemble Fitness: %.4f%s", w_fmt, r, max_rounds, best_cand, current_score, imp_tag))
           }
         }
 
-        history$selected_model[r] <<- best_cand_name
-        history$fitness[r] <<- current_score
-      })
+        history$selected_model[r] <- if (!is.null(best_cand)) best_cand else best_init_name
+        history$fitness[r] <- current_score
+
+        if (no_improve >= early_patience) {
+          if (is_verbose) {
+            message(sprintf("  Early stopping at round %d (no improvement for %d rounds; best fitness: %.4f at round %d).",
+                            r, early_patience, best_score, best_step))
+          }
+          history <- history[1:r, , drop = FALSE]
+          break
+        }
+      }
     }
+
+    list(weights = best_counts / sum(best_counts), best_score = best_score, best_step = best_step, history = history)
   }
 
-  weights <- selected_counts / rounds
-  final_fitness <- eval_fitness(y_true, current_blend)
+  selection_res <- if (!bag_samples || bag_bags <= 1) {
+    run_with_seed(seed, function() {
+      run_greedy_trajectory(y_true, val_preds_list, rounds, patience, is_verbose = verbose)
+    })
+  } else {
+    run_with_seed(seed, function() {
+      bag_w_list <- vector("list", bag_bags)
+      if (verbose) {
+        message(sprintf("  Running Bagged Caruana Ensemble Selection over %d bootstrap bags...", bag_bags))
+      }
+      for (b in seq_len(bag_bags)) {
+        boot_idx <- sample(seq_len(n_obs), size = max(2L, min(n_obs, round(n_obs * sample_ratio))), replace = TRUE)
+        y_boot <- if (is.matrix(y_true)) y_true[boot_idx, , drop = FALSE] else y_true[boot_idx]
+        preds_boot <- lapply(val_preds_list, function(p) {
+          if (is.matrix(p)) p[boot_idx, , drop = FALSE] else p[boot_idx]
+        })
+        res_b <- run_greedy_trajectory(y_boot, preds_boot, rounds, patience, is_verbose = FALSE)
+        bag_w_list[[b]] <- res_b$weights
+      }
+      avg_w <- Reduce("+", bag_w_list) / bag_bags
+      list(weights = avg_w, history = NULL)
+    })
+  }
+
+  final_w <- selection_res$weights
+  final_blend <- NULL
+  for (nm in candidate_names) {
+    w <- final_w[[nm]]
+    if (w <= 0) next
+    p <- val_preds_list[[nm]]
+    final_blend <- if (is.null(final_blend)) w * p else final_blend + w * p
+  }
+  final_fitness <- eval_fitness(y_true, final_blend)
 
   list(
-    weights = weights,
-    history = history,
+    weights = final_w,
+    history = selection_res$history,
     final_fitness = final_fitness
   )
 }
@@ -637,15 +684,18 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   k_fmt <- nchar(as.character(length(nest_folds)))
 
   aggregate_weights <- function(fit) {
+    if (is.null(fit)) return(NULL)
     raw_w <- if (fam == "multinomial") {
-      cls_coefs <- glmnet::coef.glmnet(fit, s = "lambda.min")
+      cls_coefs <- tryCatch(glmnet::coef.glmnet(fit, s = "lambda.min"), error = function(e) NULL)
+      if (is.null(cls_coefs)) return(NULL)
       mat <- do.call(cbind, lapply(cls_coefs, function(m) as.numeric(m)[-1]))
       mat <- pmax(mat, 0)
       vapply(seq_len(n_candidates), function(j) {
         sum(mat[col_start[j]:col_end[j], , drop = FALSE]) / ncol(mat)
       }, numeric(1))
     } else {
-      cf <- as.numeric(glmnet::coef.glmnet(fit, s = "lambda.min"))[-1]
+      cf <- tryCatch(as.numeric(glmnet::coef.glmnet(fit, s = "lambda.min"))[-1], error = function(e) NULL)
+      if (is.null(cf)) return(NULL)
       cf <- pmax(cf, 0)
       vapply(seq_len(n_candidates), function(j) sum(cf[col_start[j]:col_end[j]]), numeric(1))
     }
@@ -729,7 +779,9 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
       foldid = make_foldid(y_tr, nf)
     )
     if (fam != "multinomial") args$lower.limits <- 0
-    do.call(glmnet::cv.glmnet, args)
+    tryCatch({
+      do.call(glmnet::cv.glmnet, args)
+    }, error = function(e) NULL)
   }
 
   if (verbose) {

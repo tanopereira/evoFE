@@ -54,7 +54,9 @@ tournament_select <- function(pop, k = 3) {
 #' @param generations Number of generations (max iterations)
 #' @param pop_size Population size
 #' @param cv_folds Number of cross-validation folds
-#' @param evaluation_strategy "cv" or "split". Strategy to evaluate candidate recipes.
+#' @param evaluation_strategy "cv", "split", or "metacv". Strategy to evaluate candidate recipes.
+#'   When "metacv", cross-validation folds are mapped across islands: island j trains on K-1 folds
+#'   and validates on fold j, offering a Kx speedup while testing out-of-fold generalization on migration.
 #' @param split_ratio A numeric vector of length 2 or 3 defining
 #'   train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).
 #' @param split_ids An optional character vector of split assignments (e.g.
@@ -64,7 +66,7 @@ tournament_select <- function(pop, k = 3) {
 #'   provided, \code{evaluation_strategy} is automatically set to "split" and the
 #'   actual split proportions are computed from the vector.
 #' @param holdout_frac Numeric in \code{[0, 0.5)}. When greater than 0 with
-#'   \code{evaluation_strategy = "cv"}, this fraction of rows is stratified and
+#'   \code{evaluation_strategy = "cv"} or \code{"metacv"}, this fraction of rows is stratified and
 #'   held out of the entire evolutionary search. After evolution, the winning
 #'   recipe (with its frozen transformer states) and the final model are scored
 #'   once on these never-seen rows; the result is exposed as
@@ -242,11 +244,35 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   complexity_target <- match.arg(complexity_target, c("all_features", "genes"))
 
+  # Normalize evaluation_strategy
+  if (is.character(evaluation_strategy) && length(evaluation_strategy) == 1) {
+    if (evaluation_strategy %in% c("meta_cv", "metacv")) {
+      evaluation_strategy <- "metacv"
+    }
+  }
+
   # If custom migration config is provided, sync islands count and topology from migration$topology
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
     islands <- migration$topology$islands
     if (!is.null(migration$topology$type)) {
       migration_topology <- migration$topology$type
+    }
+  }
+
+  # Validate metacv islands & cv_folds alignment
+  if (evaluation_strategy == "metacv") {
+    if (missing(islands) && !missing(cv_folds)) {
+      islands <- cv_folds
+    } else if (!missing(islands) && missing(cv_folds)) {
+      cv_folds <- islands
+    } else if (missing(islands) && missing(cv_folds)) {
+      islands <- 3L
+      cv_folds <- 3L
+    } else if (islands != cv_folds) {
+      stop("'islands' must equal 'cv_folds' when evaluation_strategy is 'metacv'.")
+    }
+    if (islands < 2) {
+      stop("evaluation_strategy = 'metacv' requires at least 2 islands (got 1).")
     }
   }
 
@@ -260,6 +286,9 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.logical(row_split_islands) || length(row_split_islands) != 1) {
     stop("row_split_islands must be a logical scalar (TRUE or FALSE).")
   }
+  if (row_split_islands && evaluation_strategy == "metacv") {
+    stop("row_split_islands is not supported with evaluation_strategy = 'metacv'. metacv automatically partitions folds across islands.")
+  }
   if (row_split_islands && islands == 1) {
     warning("row_split_islands is TRUE but islands is 1. Setting row_split_islands to FALSE.")
     row_split_islands <- FALSE
@@ -272,7 +301,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (per_island_validation && !row_split_islands) {
     stop("per_island_validation = TRUE requires row_split_islands = TRUE.")
   }
-  if (per_island_validation && evaluation_strategy == "cv") {
+  if (per_island_validation && evaluation_strategy %in% c("cv", "metacv")) {
     stop("per_island_validation = TRUE is only supported with evaluation_strategy = 'split'.")
   }
 
@@ -492,8 +521,8 @@ evolve_features <- function(data, target_col, task = "classification",
     if (!all(c("train", "val") %in% split_ids)) {
       stop("split_ids must contain at least 'train' and 'val' labels.")
     }
-    if (evaluation_strategy == "cv") {
-      warning("split_ids was provided but evaluation_strategy is 'cv'. Setting evaluation_strategy to 'split'.")
+    if (evaluation_strategy %in% c("cv", "metacv")) {
+      warning(sprintf("split_ids was provided but evaluation_strategy is '%s'. Setting evaluation_strategy to 'split'.", evaluation_strategy))
       evaluation_strategy <- "split"
     }
   }
@@ -502,7 +531,7 @@ evolve_features <- function(data, target_col, task = "classification",
   # only scored once, after evolution completes (see holdout_frac).
   confirmation_dt <- NULL
   if (holdout_frac > 0) {
-    if (evaluation_strategy != "cv") {
+    if (!evaluation_strategy %in% c("cv", "metacv")) {
       warning("'holdout_frac' is ignored with evaluation_strategy = 'split'. Use split_ids or a 3-part split_ratio instead.")
     } else {
       conf_ids <- stratified_split(data[[target_col]], c(1 - holdout_frac, holdout_frac))
@@ -530,9 +559,9 @@ evolve_features <- function(data, target_col, task = "classification",
 
   # Validate CV fold strategy
   cv_strategy <- match.arg(cv_strategy, c("random", "time", "group"))
-  if (evaluation_strategy != "cv") {
+  if (!evaluation_strategy %in% c("cv", "metacv")) {
     if (cv_strategy != "random") {
-      warning("'cv_strategy' is only used with evaluation_strategy = 'cv'. Ignoring.")
+      warning("'cv_strategy' is only used with evaluation_strategy = 'cv' or 'metacv'. Ignoring.")
       cv_strategy <- "random"
     }
   } else if (cv_strategy == "time") {
@@ -624,6 +653,8 @@ evolve_features <- function(data, target_col, task = "classification",
 
     if (evaluation_strategy == "cv") {
       message(sprintf("  Generations: %d, Population Size: %d, CV Folds: %d", generations, pop_size, cv_folds))
+    } else if (evaluation_strategy == "metacv") {
+      message(sprintf("  Generations: %d, Population Size: %d, Strategy: MetaCV (%d islands / folds)", generations, pop_size, islands))
     } else {
       if (!is.null(split_ids)) {
         counts <- table(split_ids)
@@ -679,6 +710,26 @@ evolve_features <- function(data, target_col, task = "classification",
           train = data.table::as.data.table(data[fold_ids != f, ]),
           val = data.table::as.data.table(data[fold_ids == f, ])
         )
+      }
+    }
+  } else if (evaluation_strategy == "metacv") {
+    fold_ids <- .build_cv_folds(data, islands, cv_strategy, time_col, group_col)
+    island_shared_splits <- lapply(1:islands, function(j) {
+      list(
+        train = data.table::as.data.table(data[fold_ids != j, ]),
+        val   = data.table::as.data.table(data[fold_ids == j, ])
+      )
+    })
+    shared_splits <- list(
+      train = data.table::as.data.table(data),
+      val   = data.table::as.data.table(data)
+    )
+    if (verbose) {
+      message(sprintf("  MetaCV partitions -> %d folds mapped across %d islands", islands, islands))
+      for (j in 1:islands) {
+        message(sprintf("    Island %d -> Train: %d rows (Folds -%d), Val: %d rows (Fold %d)",
+                        j, nrow(island_shared_splits[[j]]$train), j,
+                        nrow(island_shared_splits[[j]]$val), j))
       }
     }
   } else if (evaluation_strategy == "split") {
@@ -766,7 +817,7 @@ evolve_features <- function(data, target_col, task = "classification",
       message(msg_split)
     }
   } else {
-    stop("Unknown evaluation_strategy. Must be 'cv' or 'split'.")
+    stop("Unknown evaluation_strategy. Must be 'cv', 'split', or 'metacv'.")
   }
 
   shared_full <- data.table::as.data.table(data)
@@ -963,7 +1014,7 @@ evolve_features <- function(data, target_col, task = "classification",
         task = task, cv_folds = cv_folds,
         evaluation_strategy = evaluation_strategy,
         split_ids = split_ids_val,
-        shared_splits = if (row_split_islands) island_shared_splits[[j]] else shared_splits,
+        shared_splits = if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
         evaluator = island_evaluators[j],
         fold_ids = fold_ids,
         shared_folds = if (row_split_islands) island_shared_folds[[j]] else shared_folds,
@@ -1322,7 +1373,7 @@ evolve_features <- function(data, target_col, task = "classification",
     island_improved_by_migration <- rep(FALSE, islands)
     island_current_pop_size <- rep(pop_size, islands)
 
-    if (row_split_islands) {
+    if (row_split_islands || evaluation_strategy == "metacv") {
       best_idx <- which.max(island_best_fitness)
       global_best_fitness <- island_best_fitness[best_idx]
       global_best_individual <- island_baseline_inds[[best_idx]]
@@ -1368,13 +1419,13 @@ evolve_features <- function(data, target_col, task = "classification",
         # Evaluate fitness of this island's population
         eval_res <- evaluate_pop_mf(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
           split_ids_val,
-          if (row_split_islands) island_shared_splits[[j]] else shared_splits,
+          if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
           island_evaluators[j],
           fold_ids,
           if (row_split_islands) island_shared_folds[[j]] else shared_folds,
           shared_full,
-          if (row_split_islands) island_state_caches[[j]] else state_cache,
-          if (row_split_islands) island_fitness_caches[[j]] else fitness_cache,
+          if (row_split_islands || evaluation_strategy == "metacv") island_state_caches[[j]] else state_cache,
+          if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache,
           threads, verbose, island_best_fitness[j],
           metric = metric, complexity_penalty = complexity_penalty,
           complexity_mode = complexity_mode,
@@ -1652,21 +1703,21 @@ evolve_features <- function(data, target_col, task = "classification",
             if (effective_rate > 0) {
               migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
-              if (row_split_islands || per_island_validation || island_evaluators[src] != island_evaluators[dest]) {
-                # Fitness was evaluated on src local split or evaluator <U+2014> must re-evaluate on dest local split/evaluator
+              if (row_split_islands || per_island_validation || evaluation_strategy == "metacv" || island_evaluators[src] != island_evaluators[dest]) {
+                # Fitness was evaluated on src local split or evaluator — must re-evaluate on dest local split/evaluator
                 migrant_inds <- lapply(migrant_inds, function(ind) {
                   ind$fitness <- NA_real_
                   ind
                 })
                 eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
                   split_ids_val,
-                  if (row_split_islands) island_shared_splits[[dest]] else shared_splits,
+                  if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[dest]] else shared_splits,
                   island_evaluators[dest],
                   fold_ids,
                   if (row_split_islands) island_shared_folds[[dest]] else shared_folds,
                   shared_full,
-                  if (row_split_islands) island_state_caches[[dest]] else state_cache,
-                  if (row_split_islands) island_fitness_caches[[dest]] else fitness_cache,
+                  if (row_split_islands || evaluation_strategy == "metacv") island_state_caches[[dest]] else state_cache,
+                  if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[dest]] else fitness_cache,
                   threads, verbose, island_best_fitness[dest],
                   metric = metric, complexity_penalty = complexity_penalty,
                   complexity_mode = complexity_mode,
@@ -1992,13 +2043,13 @@ evolve_features <- function(data, target_col, task = "classification",
     for (j in 1:islands) {
       eval_res <- evaluate_pop_mf(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
         split_ids_val,
-        if (row_split_islands) island_shared_splits[[j]] else shared_splits,
+        if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
         island_evaluators[j],
         fold_ids,
         if (row_split_islands) island_shared_folds[[j]] else shared_folds,
         shared_full,
-        if (row_split_islands) island_state_caches[[j]] else state_cache,
-        if (row_split_islands) island_fitness_caches[[j]] else fitness_cache,
+        if (row_split_islands || evaluation_strategy == "metacv") island_state_caches[[j]] else state_cache,
+        if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache,
         threads, verbose, island_best_fitness[j],
         metric = metric, complexity_penalty = complexity_penalty,
         complexity_mode = complexity_mode,
@@ -2146,7 +2197,74 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  if (record && row_split_islands) {
+  oof_preds <- NULL
+  if (evaluation_strategy == "metacv") {
+    # Stitch Out-Of-Fold predictions from each island best
+    if (task == "multiclass") {
+      oof_preds <- matrix(NA_real_, nrow = nrow(data), ncol = num_class)
+      for (j in seq_len(islands)) {
+        ind_j <- island_best_individual[[j]]
+        val_idx <- which(fold_ids == j)
+        if (!is.null(ind_j$val_preds)) {
+          vp <- ind_j$val_preds
+          if (!is.matrix(vp)) vp <- matrix(vp, ncol = num_class, byrow = FALSE)
+          oof_preds[val_idx, ] <- vp
+        }
+      }
+    } else {
+      oof_preds <- rep(NA_real_, nrow(data))
+      for (j in seq_len(islands)) {
+        ind_j <- island_best_individual[[j]]
+        val_idx <- which(fold_ids == j)
+        if (!is.null(ind_j$val_preds)) {
+          oof_preds[val_idx] <- ind_j$val_preds
+        }
+      }
+    }
+
+    # Tournament: evaluate each island's best candidate with full CV to select the global champion
+    if (verbose) {
+      message(sprintf("\nRunning MetaCV tournament: evaluating full CV fitness for best individual from each of %d islands...", islands))
+    }
+    candidates <- lapply(seq_len(islands), function(j) {
+      ind <- island_best_individual[[j]]
+      ind$fitness <- NA_real_
+      cand_eval <- if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
+      ind <- evaluate_fitness(
+        ind, data, target_col,
+        task = task, cv_folds = cv_folds,
+        evaluation_strategy = "cv",
+        split_ids = NULL, shared_splits = NULL,
+        evaluator = cand_eval, fold_ids = fold_ids,
+        shared_folds = NULL,
+        shared_full = NULL, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = FALSE,
+        allow_prune = FALSE,
+        complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
+        baseline_fitness = baseline_ind$fitness,
+        running_best_fitness = global_best_fitness,
+        n_samples = nrow(data), ...
+      )
+      if (verbose) {
+        message(sprintf("  [Island %d] Full CV fitness: %.4f  Recipe: %s", j, ind$fitness, individual_to_recipe_string(ind)))
+      }
+      ind
+    })
+    island_best_individual <- candidates
+    island_best_fitness <- sapply(candidates, function(ind) ind$fitness)
+    tournament_fitness <- island_best_fitness
+    winner_idx <- which.max(tournament_fitness)
+    best_ind <- candidates[[winner_idx]]
+    best_ind_source <- paste0("Island ", winner_idx)
+    if (verbose) {
+      message(sprintf("  MetaCV Tournament winner: Island %d (fitness %.4f)", winner_idx, best_ind$fitness))
+    }
+  }
+
+  if (record && (row_split_islands || evaluation_strategy == "metacv")) {
     if (per_island_validation) {
       tournament_data <- list(
         candidates = lapply(seq_len(islands), function(j) {
@@ -2406,7 +2524,6 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  # Train best model on the full data using the best evolved features
   if (verbose) {
     message("Training final model on full dataset...")
   }
@@ -2424,9 +2541,6 @@ evolve_features <- function(data, target_col, task = "classification",
     y_full <- as.integer(factor(y_full, levels = classes)) - 1
   }
 
-  # Train the final model on the full dataset. Since we are using all data, we use the original
-  # tuner evaluator (e.g., lightgbm_mbo) so that it performs hyperparameter tuning on the full
-  # dataset, using the best parameters found during evolution as a seed.
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
   res_model <- train_model(x_full, y_full,
     task = task, evaluator = best_evaluator,
@@ -2435,9 +2549,6 @@ evolve_features <- function(data, target_col, task = "classification",
   )
   best_model <- res_model$model
 
-  # --- Final confirmation on untouched holdout (holdout_frac > 0 with CV) ---
-  # The recipe's transformer states and the final model never saw these rows
-  # during the search, so this score is an unbiased generalization estimate.
   if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
     if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
     conf_fitness <- NA_real_
@@ -2486,7 +2597,6 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (record) {
-    # Generate 5-row transformed data sample for the final best individual
     res_sample <- tryCatch(
       {
         apply_individual(best_ind, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
@@ -2513,7 +2623,6 @@ evolve_features <- function(data, target_col, task = "classification",
         importance = imp_val
       )
     })
-    # Sort genes by importance descending
     if (length(serialized_genes) > 0) {
       gene_imps <- sapply(serialized_genes, function(x) x$importance)
       serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
@@ -2550,8 +2659,9 @@ evolve_features <- function(data, target_col, task = "classification",
       search_gap = search_gap,
       cv_strategy = cv_strategy,
       evaluation_strategy = evaluation_strategy,
-      fold_ids = if (evaluation_strategy == "cv") fold_ids else NULL,
+      fold_ids = if (evaluation_strategy %in% c("cv", "metacv")) fold_ids else NULL,
       split_ids = if (evaluation_strategy == "split" && !is.null(split_ids_val)) split_ids_val else NULL,
+      oof_preds = oof_preds,
       island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),
       evolution_log = if (record) evolution_log else NULL
     ),

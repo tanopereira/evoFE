@@ -30,7 +30,8 @@ The main entry point is \code{\link{evolve_features}}, which returns an
     migration. Configured via the \code{islands}, \code{migration_interval},
     \code{migration_rate}, \code{gene_migration_prob}, \code{migration_topology},
     \code{migration_temperature}, \code{pull_stagnation_threshold},
-    \code{row_split_islands}, and \code{per_island_validation} parameters of
+    \code{row_split_islands}, \code{per_island_validation}, and MetaCV
+    (\code{evaluation_strategy = "metacv"}) parameters of
     \code{\link{evolve_features}}.}
   \item{Hybrid Active Feature Mask}{Each individual carries an active mask
     over the raw input columns so that the genetic search simultaneously

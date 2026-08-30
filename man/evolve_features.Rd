@@ -70,7 +70,9 @@ evolve_features(
 
 \item{cv_folds}{Number of cross-validation folds}
 
-\item{evaluation_strategy}{"cv" or "split". Strategy to evaluate candidate recipes.}
+\item{evaluation_strategy}{"cv", "split", or "metacv". Strategy to evaluate candidate recipes.
+When "metacv", cross-validation folds are mapped across islands: island j trains on K-1 folds
+and validates on fold j, offering a Kx speedup while testing out-of-fold generalization on migration.}
 
 \item{split_ratio}{A numeric vector of length 2 or 3 defining
 train/validation/holdout proportions (e.g. c(0.6, 0.2, 0.2)).}
@@ -83,7 +85,7 @@ provided, \code{evaluation_strategy} is automatically set to "split" and the
 actual split proportions are computed from the vector.}
 
 \item{holdout_frac}{Numeric in \code{[0, 0.5)}. When greater than 0 with
-\code{evaluation_strategy = "cv"}, this fraction of rows is stratified and
+\code{evaluation_strategy = "cv"} or \code{"metacv"}, this fraction of rows is stratified and
 held out of the entire evolutionary search. After evolution, the winning
 recipe (with its frozen transformer states) and the final model are scored
 once on these never-seen rows; the result is exposed as
