@@ -139,11 +139,13 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
                             complexity_floor = 0.20, complexity_target = "all_features",
                             baseline_fitness = NULL, n_samples = NULL, island = NULL,
                             cv_strategy = "random", time_col = NULL, group_col = NULL,
-                            mf_on = FALSE, lf_shared_folds = NULL, lf_shared_full = NULL,
+                            mf_on = FALSE,
+                            lf_shared_splits = NULL,
+                            lf_shared_folds = NULL, lf_shared_full = NULL,
                             mf_promote_frac = 0.5, ...) {
-  .do_eval <- function(p, sh_folds, sh_full, tag, vb, rb) {
+  .do_eval <- function(p, sh_splits, sh_folds, sh_full, tag, vb, rb) {
     evaluate_pop(p, data, target_col, task, cv_folds, evaluation_strategy,
-      split_ids, shared_splits, evaluator,
+      split_ids, sh_splits, evaluator,
       fold_ids, sh_folds, sh_full, state_cache,
       fitness_cache, threads, vb, rb,
       metric = metric, allow_prune = allow_prune,
@@ -158,17 +160,18 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
     )
   }
 
-  if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_full))) {
-    return(.do_eval(pop, shared_folds, shared_full, "", verbose, running_best_fitness))
+  if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_full) && is.null(lf_shared_splits))) {
+    return(.do_eval(pop, shared_splits, shared_folds, shared_full, "", verbose, running_best_fitness))
   }
 
   rb_in <- running_best_fitness
 
+  lf_splits_eff <- if (!is.null(lf_shared_splits)) lf_shared_splits else shared_splits
   lf_folds_eff <- if (!is.null(lf_shared_folds)) lf_shared_folds else shared_folds
   lf_full_eff <- if (!is.null(lf_shared_full)) lf_shared_full else shared_full
 
-  # Pass 1: cheap screen on subsampled folds (silent; values are not final)
-  res_lf <- .do_eval(pop, lf_folds_eff, lf_full_eff, ":lf", FALSE, -Inf)
+  # Pass 1: cheap screen on subsampled folds/splits (silent; values are not final)
+  res_lf <- .do_eval(pop, lf_splits_eff, lf_folds_eff, lf_full_eff, ":lf", FALSE, -Inf)
   pop_lf <- res_lf$pop
 
   fits <- vapply(pop_lf, function(x) {
@@ -185,7 +188,7 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
   # Pass 2: full-fidelity re-evaluation of promoted individuals only
   promoted <- pop_lf[promo_idx]
   for (i in seq_along(promoted)) promoted[[i]]$fitness <- NA
-  res_ff <- .do_eval(promoted, shared_folds, shared_full, "", verbose, rb_in)
+  res_ff <- .do_eval(promoted, shared_splits, shared_folds, shared_full, "", verbose, rb_in)
 
   pop_out <- pop_lf
   pop_out[promo_idx] <- res_ff$pop

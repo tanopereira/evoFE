@@ -589,10 +589,6 @@ evolve_features <- function(data, target_col, task = "classification",
       is.na(mf_warmup_frac) || mf_warmup_frac < 0 || mf_warmup_frac > 1) {
     stop("'mf_warmup_frac' must be a single number in [0, 1].")
   }
-  if (multi_fidelity && evaluation_strategy != "cv") {
-    warning("'multi_fidelity' is only supported with evaluation_strategy = 'cv'. Ignoring.")
-    multi_fidelity <- FALSE
-  }
 
   # Validate island parameters
   if (islands > 1) {
@@ -829,16 +825,22 @@ evolve_features <- function(data, target_col, task = "classification",
   mf_warmup_gens <- 0L
   mf_shared_folds <- NULL
   mf_island_shared_folds <- NULL
+  mf_shared_splits <- NULL
+  mf_island_shared_splits <- NULL
   mf_shared_full <- NULL
   if (multi_fidelity) {
     mf_warmup_gens <- max(1L, as.integer(floor(generations * mf_warmup_frac)))
     .mf_subsample <- function(part) {
-      k <- max(5L, ceiling(nrow(part) * mf_sample_frac))
+      if (is.null(part) || nrow(part) < 30L) return(part)
+      k <- max(20L, ceiling(nrow(part) * mf_sample_frac))
       if (k >= nrow(part)) return(part)
       part[sample.int(nrow(part), k), ]
     }
     .mf_subsample_fold <- function(fl) {
-      list(train = .mf_subsample(fl$train), val = .mf_subsample(fl$val))
+      if (is.null(fl)) return(NULL)
+      res <- list(train = .mf_subsample(fl$train), val = fl$val)
+      if (!is.null(fl$holdout)) res$holdout <- fl$holdout
+      res
     }
     if (!is.null(shared_folds)) {
       mf_shared_folds <- lapply(shared_folds, .mf_subsample_fold)
@@ -848,10 +850,16 @@ evolve_features <- function(data, target_col, task = "classification",
         lapply(per_island, .mf_subsample_fold)
       })
     }
-    mf_shared_full <- if (nrow(shared_full) > 20) .mf_subsample(shared_full) else NULL
+    if (!is.null(shared_splits)) {
+      mf_shared_splits <- .mf_subsample_fold(shared_splits)
+    }
+    if (!is.null(island_shared_splits)) {
+      mf_island_shared_splits <- lapply(island_shared_splits, .mf_subsample_fold)
+    }
+    mf_shared_full <- if (!is.null(shared_full) && nrow(shared_full) > 30L) .mf_subsample(shared_full) else NULL
     if (verbose) {
       message(sprintf(
-        "  Multi-fidelity: screening on %.0f%% of rows for the first %d generation(s), then full-fidelity promotion.",
+        "  Multi-fidelity: screening on %.0f%% of training rows (min 30 rows floor) for the first %d generation(s), then full-fidelity promotion.",
         100 * mf_sample_frac, mf_warmup_gens
       ))
     }
@@ -1120,6 +1128,7 @@ evolve_features <- function(data, target_col, task = "classification",
         n_samples = nrow(data),
         cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
         mf_on = multi_fidelity && g <= mf_warmup_gens,
+        lf_shared_splits = mf_shared_splits,
         lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
       )
       pop <- eval_res$pop
@@ -1342,6 +1351,7 @@ evolve_features <- function(data, target_col, task = "classification",
       n_samples = nrow(data),
       cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
       mf_on = multi_fidelity && g <= mf_warmup_gens,
+      lf_shared_splits = mf_shared_splits,
       lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
     )
     pop <- eval_res$pop
@@ -1435,6 +1445,7 @@ evolve_features <- function(data, target_col, task = "classification",
           n_samples = nrow(data), island = j,
           cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
           mf_on = multi_fidelity && g <= mf_warmup_gens,
+          lf_shared_splits = if (row_split_islands || evaluation_strategy == "metacv") mf_island_shared_splits[[j]] else mf_shared_splits,
           lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
           lf_shared_full = mf_shared_full, ...
         )
@@ -2059,6 +2070,7 @@ evolve_features <- function(data, target_col, task = "classification",
         n_samples = nrow(data), island = j,
         cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
         mf_on = multi_fidelity && g <= mf_warmup_gens,
+        lf_shared_splits = if (row_split_islands || evaluation_strategy == "metacv") mf_island_shared_splits[[j]] else mf_shared_splits,
         lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
         lf_shared_full = mf_shared_full, ...
       )
