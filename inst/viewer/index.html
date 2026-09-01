@@ -647,6 +647,13 @@
             word-break: break-all;
             color: #a78bfa;
             line-height: 1.4;
+            cursor: pointer;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+
+        .recipe-display:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 14px rgba(56, 189, 248, 0.3);
         }
 
         .stat-group {
@@ -767,6 +774,116 @@
             background: #10b981;
             transform: translateY(-2px);
             box-shadow: 0 4px 12px rgba(52, 211, 153, 0.3);
+        }
+
+        /* Global Recipe Modal */
+        .global-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(5, 6, 10, 0.85);
+            backdrop-filter: blur(10px);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+
+        .global-modal.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .recipe-modal-dialog {
+            background: #11141c;
+            border: 1px solid var(--gold);
+            border-radius: 0.85rem;
+            padding: 1.5rem;
+            max-width: 680px;
+            width: 90%;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 35px rgba(0, 0, 0, 0.9), 0 0 25px rgba(251, 191, 36, 0.2);
+            transform: scale(0.96);
+            transition: transform 0.25s ease;
+        }
+
+        .global-modal.visible .recipe-modal-dialog {
+            transform: scale(1);
+        }
+
+        .recipe-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 0.75rem;
+        }
+
+        .recipe-modal-title {
+            font-family: var(--font-header);
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--gold);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .recipe-modal-stats {
+            font-size: 0.85rem;
+            font-family: monospace;
+            color: var(--secondary);
+            background: rgba(6, 182, 212, 0.12);
+            padding: 0.2rem 0.6rem;
+            border-radius: 0.35rem;
+        }
+
+        .recipe-modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0.1rem 0.4rem;
+            border-radius: 0.25rem;
+            transition: color 0.2s;
+        }
+
+        .recipe-modal-close:hover {
+            color: #ffffff;
+        }
+
+        .recipe-modal-body {
+            font-family: 'Space Grotesk', monospace;
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid var(--card-border);
+            border-radius: 0.5rem;
+            padding: 1.2rem;
+            color: #c4b5fd;
+            font-size: 0.92rem;
+            line-height: 1.6;
+            overflow-y: auto;
+            max-height: 400px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin-bottom: 1.25rem;
+            user-select: all;
+        }
+
+        .recipe-modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
         }
 
         @keyframes dash {
@@ -1165,7 +1282,10 @@
             <div class="overlay" id="tournament-overlay">
                 <div class="overlay-title">&#127942; Global Tournament</div>
                 <div class="tournament-list" id="tournament-results-list"></div>
-                <button class="dismiss-btn" onclick="dismissOverlay()">Show Evolved Recipe</button>
+                <div style="display: flex; gap: 0.75rem; align-items: center;">
+                    <button class="dismiss-btn" onclick="showWinnerRecipe()">Show Evolved Recipe</button>
+                    <button class="dismiss-btn" style="background: rgba(255, 255, 255, 0.1); color: var(--text-muted);" onclick="dismissOverlay()">Dismiss</button>
+                </div>
             </div>
         </div>
 
@@ -1246,10 +1366,32 @@
                         <div class="stat-val" id="best-genes">-</div>
                     </div>
                 </div>
-                <div class="recipe-display" id="best-recipe">[Original features only]</div>
+                <div class="recipe-display" id="best-recipe" onclick="openCurrentBestRecipeModal()" title="Click to view full recipe & copy">[Original features only]</div>
             </div>
         </div>
     </main>
+
+    <!-- Global Recipe Details Modal -->
+    <div class="global-modal" id="recipe-modal" onclick="handleRecipeModalBackdropClick(event)">
+        <div class="recipe-modal-dialog">
+            <div class="recipe-modal-header">
+                <div id="recipe-modal-title" class="recipe-modal-title">
+                    &#127942; Champion Recipe
+                </div>
+                <div style="display: flex; gap: 0.75rem; align-items: center;">
+                    <span id="recipe-modal-stats" class="recipe-modal-stats"></span>
+                    <button class="recipe-modal-close" onclick="closeRecipeModal()">&times;</button>
+                </div>
+            </div>
+            <div id="recipe-modal-body" class="recipe-modal-body"></div>
+            <div class="recipe-modal-footer">
+                <button id="copy-recipe-btn" class="dismiss-btn" onclick="copyRecipeText()">
+                    <span>&#128203;</span> <span id="copy-btn-label">Copy Recipe</span>
+                </button>
+                <button class="dismiss-btn" style="background: rgba(255, 255, 255, 0.1); color: var(--text-main);" onclick="closeRecipeModal()">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Injection placeholder tag: R will replace "__EVOLUTION_DATA__" with the actual JSON payload -->
     <script id="evolution-data" type="application/json">__EVOLUTION_DATA__</script>
@@ -2340,31 +2482,145 @@
             logToTerminal(`\u21C4 [${typeName}] Island ${data.from} \u2794 ${actionText} Island ${data.to} | ${data.n_recipes} recipes, ${data.n_genes} genes`, "migration");
         }
 
+        let lastTournamentData = null;
+
         // Show/hide tournament results overlay
         function showTournamentOverlay(data) {
+            lastTournamentData = data;
             const overlay = document.getElementById("tournament-overlay");
             const list = document.getElementById("tournament-results-list");
             list.innerHTML = "";
 
-            data.candidates.forEach(cand => {
-                const isWinner = cand.island === data.winner_island;
-                const color = islandColors[(cand.island - 1) % islandColors.length];
-                const item = document.createElement("div");
-                item.className = isWinner ? "tournament-item winner" : "tournament-item";
-                item.innerHTML = `
-                    <span class="candidate-island" style="color: ${isWinner ? 'var(--gold)' : color}">Island ${cand.island}</span>
-                    <span class="candidate-recipe" style="font-size: 0.8rem; color: var(--text-muted); max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cand.recipe}</span>
-                    <span class="candidate-fitness">${cand.global_fitness.toFixed(4)}</span>
-                `;
-                list.appendChild(item);
-            });
+            const winnerCand = (data.candidates && data.candidates.find(cand => cand.island === data.winner_island)) || (data.candidates && data.candidates[0]);
+
+            if (data.candidates && data.candidates.length > 0) {
+                data.candidates.forEach(cand => {
+                    const isWinner = cand.island === data.winner_island;
+                    const color = islandColors[(cand.island - 1) % islandColors.length];
+                    const item = document.createElement("div");
+                    item.className = isWinner ? "tournament-item winner" : "tournament-item";
+                    item.style.cursor = "pointer";
+                    item.title = `Click to inspect recipe for Island ${cand.island}`;
+                    item.onclick = () => {
+                        openRecipeModal(
+                            cand.recipe,
+                            `${isWinner ? '&#127942; ' : ''}Island ${cand.island} Candidate Recipe`,
+                            cand.global_fitness,
+                            `Island ${cand.island}`
+                        );
+                    };
+                    item.innerHTML = `
+                        <span class="candidate-island" style="color: ${isWinner ? 'var(--gold)' : color}; display: flex; align-items: center; gap: 0.35rem;">
+                            ${isWinner ? '&#127942;' : ''} Island ${cand.island}
+                        </span>
+                        <span class="candidate-recipe" style="font-size: 0.8rem; color: var(--text-muted); max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cand.recipe}</span>
+                        <span class="candidate-fitness" style="font-family: monospace; font-weight: 600;">${cand.global_fitness !== undefined && cand.global_fitness !== null ? cand.global_fitness.toFixed(4) : "-"}</span>
+                    `;
+                    list.appendChild(item);
+                });
+            }
+
+            // Immediately update Global Best card with tournament winner
+            if (winnerCand) {
+                updateBestInfo(`Island ${data.winner_island} (Champion)`, data.winner_fitness.toFixed(4), winnerCand.n_genes, winnerCand.recipe);
+            }
 
             overlay.classList.add("visible");
-            logToTerminal(`\uD83C\uDFC6 Tournament Final! Winner: Island ${data.winner_island} with fitness ${data.winner_fitness.toFixed(4)}`, "success");
+            logToTerminal(`\uD83C\uDFC6 Tournament Final! Winner: Island ${data.winner_island} with fitness ${data.winner_fitness !== undefined && data.winner_fitness !== null ? data.winner_fitness.toFixed(4) : "-"}`, "success");
         }
 
+        window.showWinnerRecipe = function() {
+            // Dismiss tournament overlay
+            const overlay = document.getElementById("tournament-overlay");
+            if (overlay) overlay.classList.remove("visible");
+
+            // Open the recipe modal with the winning recipe
+            if (lastTournamentData) {
+                const winnerCand = (lastTournamentData.candidates && lastTournamentData.candidates.find(c => c.island === lastTournamentData.winner_island)) || (lastTournamentData.candidates && lastTournamentData.candidates[0]);
+                if (winnerCand) {
+                    openRecipeModal(
+                        winnerCand.recipe,
+                        `&#127942; Island ${lastTournamentData.winner_island} - Tournament Champion Recipe`,
+                        lastTournamentData.winner_fitness,
+                        `Island ${lastTournamentData.winner_island}`
+                    );
+                } else {
+                    openCurrentBestRecipeModal();
+                }
+            } else {
+                openCurrentBestRecipeModal();
+            }
+
+            // Also highlight and scroll the dashboard recipe card
+            highlightRecipeCard();
+        };
+
         window.dismissOverlay = function() {
-            document.getElementById("tournament-overlay").classList.remove("visible");
+            const overlay = document.getElementById("tournament-overlay");
+            if (overlay) overlay.classList.remove("visible");
+            highlightRecipeCard();
+        };
+
+        function highlightRecipeCard() {
+            const recipeEl = document.getElementById("best-recipe");
+            const recipeCard = recipeEl ? recipeEl.closest(".card") : null;
+            if (recipeCard) {
+                recipeCard.scrollIntoView({ behavior: "smooth", block: "center" });
+                recipeCard.style.transition = "border-color 0.4s, box-shadow 0.4s";
+                recipeCard.style.borderColor = "var(--gold)";
+                recipeCard.style.boxShadow = "0 0 30px rgba(251, 191, 36, 0.45)";
+                setTimeout(() => {
+                    recipeCard.style.borderColor = "";
+                    recipeCard.style.boxShadow = "";
+                }, 3500);
+            }
+        }
+
+        window.openCurrentBestRecipeModal = function() {
+            const recipe = document.getElementById("best-recipe") ? document.getElementById("best-recipe").textContent : "";
+            const island = document.getElementById("best-island") ? document.getElementById("best-island").textContent : "-";
+            const fitness = document.getElementById("best-fitness") ? document.getElementById("best-fitness").textContent : "-";
+            openRecipeModal(recipe, `&#127942; Best Individual Recipe (${island})`, fitness, island);
+        };
+
+        window.openRecipeModal = function(recipe, title, fitness, island) {
+            const modal = document.getElementById("recipe-modal");
+            if (!modal) return;
+            document.getElementById("recipe-modal-title").innerHTML = title || "&#127942; Evolved Recipe";
+            const fitText = (fitness !== undefined && fitness !== null && fitness !== "") ? `Fitness: ${typeof fitness === 'number' ? fitness.toFixed(4) : fitness}` : "";
+            document.getElementById("recipe-modal-stats").textContent = fitText;
+            document.getElementById("recipe-modal-body").textContent = recipe || "[Original features only]";
+            const btnLabel = document.getElementById("copy-btn-label");
+            if (btnLabel) btnLabel.textContent = "Copy Recipe";
+            modal.classList.add("visible");
+        };
+
+        window.closeRecipeModal = function() {
+            const modal = document.getElementById("recipe-modal");
+            if (modal) modal.classList.remove("visible");
+        };
+
+        window.handleRecipeModalBackdropClick = function(event) {
+            if (event.target && event.target.id === "recipe-modal") {
+                closeRecipeModal();
+            }
+        };
+
+        window.copyRecipeText = function() {
+            const body = document.getElementById("recipe-modal-body");
+            if (!body) return;
+            const text = body.textContent || "";
+            navigator.clipboard.writeText(text).then(() => {
+                const btnLabel = document.getElementById("copy-btn-label");
+                if (btnLabel) {
+                    btnLabel.textContent = "Copied!";
+                    setTimeout(() => {
+                        btnLabel.textContent = "Copy Recipe";
+                    }, 2000);
+                }
+            }).catch(err => {
+                console.error("Clipboard copy failed:", err);
+            });
         };
 
         function updateBestInfo(island, fitness, genes, recipe) {

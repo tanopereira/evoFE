@@ -2277,39 +2277,26 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (record && (row_split_islands || evaluation_strategy == "metacv")) {
-    if (per_island_validation) {
-      tournament_data <- list(
-        candidates = lapply(seq_len(islands), function(j) {
-          list(
-            island = j,
-            local_fitness = island_best_fitness[j],
-            global_fitness = tournament_fitness[j],
-            recipe = individual_to_recipe_string(candidates[[j]]),
-            n_genes = length(candidates[[j]]$genes)
-          )
-        }),
-        winner_island = winner_idx,
-        winner_fitness = best_ind$fitness
-      )
-      evolution_log$tournament <- tournament_data
-      viewer$send(list(type = "tournament", data = tournament_data))
-    } else {
-      tournament_data <- list(
-        candidates = list(
-          list(
-            island = 1,
-            local_fitness = global_best_fitness,
-            global_fitness = best_ind$fitness,
-            recipe = individual_to_recipe_string(best_ind),
-            n_genes = length(best_ind$genes)
-          )
-        ),
-        winner_island = 1,
-        winner_fitness = best_ind$fitness
-      )
-      evolution_log$tournament <- tournament_data
-      viewer$send(list(type = "tournament", data = tournament_data))
-    }
+    cands_list <- if (exists("candidates") && !is.null(candidates)) candidates else island_best_individual
+    tourn_fit <- if (exists("tournament_fitness") && !is.null(tournament_fitness)) tournament_fitness else sapply(cands_list, function(ind) ind$fitness)
+    win_idx <- if (exists("winner_idx") && !is.null(winner_idx)) winner_idx else which.max(tourn_fit)
+
+    tournament_data <- list(
+      candidates = lapply(seq_len(islands), function(j) {
+        cand <- cands_list[[j]]
+        list(
+          island = j,
+          local_fitness = if (exists("island_best_fitness") && length(island_best_fitness) >= j) island_best_fitness[j] else cand$fitness,
+          global_fitness = tourn_fit[j],
+          recipe = individual_to_recipe_string(cand),
+          n_genes = length(cand$genes)
+        )
+      }),
+      winner_island = win_idx,
+      winner_fitness = best_ind$fitness
+    )
+    evolution_log$tournament <- tournament_data
+    viewer$send(list(type = "tournament", data = tournament_data))
   }
 
   if (model_all_final_genes) {
