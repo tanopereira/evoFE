@@ -168,3 +168,25 @@ test_that("metacv respects cv_strategy like group and time", {
     expect_equal(length(fold_assignment), 1)
   }
 })
+
+test_that("metacv early stopping evaluates per-island stagnation", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  recipe <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    islands = 3,
+    generations = 5,
+    pop_size = 2,
+    early_stopping_generations = 2,
+    verbose = FALSE
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_equal(recipe$evaluation_strategy, "metacv")
+  expect_true(length(recipe$fitness_history) <= 5)
+})

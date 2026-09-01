@@ -1573,8 +1573,8 @@ evolve_features <- function(data, target_col, task = "classification",
 
       # Early stopping check
       if (!is.null(early_stopping_generations)) {
-        if (per_island_validation) {
-          # Fitness scores are not comparable across islands <U+2014> stop only when all islands stagnate
+        if (per_island_validation || evaluation_strategy == "metacv") {
+          # Fitness scores are not comparable across islands — stop only when all islands stagnate
           if (all(island_gens_without_improvement >= early_stopping_generations)) {
             message(sprintf(
               "  Early stopping triggered: all %d islands stagnated for %d generations.",
