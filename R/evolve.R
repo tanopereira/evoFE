@@ -367,7 +367,7 @@ evolve_features <- function(data, target_col, task = "classification",
           "feature_hash",
           "groupby_mean", "groupby_median", "groupby_sd",
           "groupby_zscore", "groupby_ratio", "groupby_quantile",
-          "groupby_min", "groupby_max",
+          "groupby_min", "groupby_max", "groupby_signed_log",
           "quantile_binning", "pca", "concat", "mca", "famd", "between_group_pca"
         ))
       }

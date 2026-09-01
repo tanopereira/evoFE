@@ -832,130 +832,134 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
     }
     if (length(allowed_t) == 0) allowed_t <- names(evo_transformers)
-    t_name <- sample(allowed_t, 1)
-    t_def <- evo_transformers[[t_name]]
-    
     avail_num <- c(ind$all_numeric_cols, gene_num)
     avail_cat <- c(ind$all_categorical_cols, gene_cat)
     avail_date <- c(ind$all_datetime_cols, gene_date)
     
-    # Select available columns based on input_type
-    available_cols <- if (t_def$input_type == "numeric") {
-      avail_num
-    } else if (t_def$input_type == "categorical") {
-      avail_cat
-    } else if (t_def$input_type == "datetime") {
-      avail_date
-    } else if (t_def$input_type == "mixed") {
-      c(avail_cat, avail_num) # Placeholder to pass length check
-    } else {
-      character(0)
-    }
-    
-    # If no columns available for this type, return early
-    if (t_def$input_type == "mixed") {
-      if (length(avail_num) == 0 || length(avail_cat) == 0) return(ind)
-    } else {
-      if (length(available_cols) == 0) return(ind)
-    }
-    
-    # Select random columns
-    if (t_def$input_type == "mixed") {
-      if (t_name %in% c("famd", "supervised_famd")) {
-        num_cat <- min(sample(1:3, 1), length(avail_cat))
-        num_num <- min(sample(1:5, 1), length(avail_num))
-        cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
-      } else if (t_name == "between_group_pca") {
-        if (length(avail_num) < 2) return(ind)
-        num_num <- min(sample(2:5, 1), length(avail_num))
-        cols <- c(weighted_sample(avail_cat, 1), weighted_sample(avail_num, num_num))
+    max_add_attempts <- if (force_add) 25L else 5L
+    for (add_attempt in seq_len(max_add_attempts)) {
+      t_name <- sample(allowed_t, 1)
+      t_def <- evo_transformers[[t_name]]
+      
+      # Select available columns based on input_type
+      available_cols <- if (t_def$input_type == "numeric") {
+        avail_num
+      } else if (t_def$input_type == "categorical") {
+        avail_cat
+      } else if (t_def$input_type == "datetime") {
+        avail_date
+      } else if (t_def$input_type == "mixed") {
+        c(avail_cat, avail_num) # Placeholder to pass length check
       } else {
-        col_cat <- weighted_sample(avail_cat, 1)
-        col_num <- weighted_sample(avail_num, 1)
-        cols <- c(col_cat, col_num)
-      }
-    } else if (t_def$type %in% c("unary", "supervised_unary")) {
-      cols <- weighted_sample(available_cols, 1)
-    } else if (t_def$type == "binary") {
-      allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff")) FALSE else TRUE
-      if (!allow_rep && length(available_cols) < 2) return(ind)
-      cols <- weighted_sample(available_cols, 2, replace = allow_rep)
-    } else if (t_def$type == "multivariate") {
-      if (length(available_cols) < 2) return(ind)
-      max_cols <- if (t_name %in% c("add", "multiply")) {
-        min(5, length(available_cols))
-      } else if (t_name == "concat") {
-        min(3, length(available_cols))
-      } else {
-        max(2, floor((1 - exp(-1)) * length(available_cols)))
-      }
-      num_cols <- if (max_cols == 2) 2 else sample(2:max_cols, 1)
-      allow_rep <- if (!is.null(t_def$allow_replace)) t_def$allow_replace else FALSE
-      if (!allow_rep) {
-        sampled_cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
-        cols <- unique(sampled_cols)
-        if (length(cols) < 2) {
-          cols <- weighted_sample(available_cols, min(2, length(available_cols)), replace = FALSE)
-        }
-      } else {
-        cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
-      }
-    } else {
-      cols <- weighted_sample(available_cols, 1)
-    }
-    
-    # If the transformer is multi-component, add all components
-    new_genes_to_add <- list()
-    if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
-      C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
-        sample(2:5, 1)
-      } else if (t_name %in% c("mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
-        sample(2:5, 1)
-      } else {
-        max(2L, as.integer(round(log2(length(cols)))))
+        character(0)
       }
       
-      gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
-      n_neighbors <- if (t_name == "umap") max(2L, stats::rpois(1, 15)) else NULL
-      dens_scale <- if (t_name == "umap") round(stats::runif(1, 0, 1), 2) else NULL
-      
-      for (comp in 1:C) {
-        g <- create_gene(t_name, cols)
-        g$params$comp_idx <- comp
-        if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
-          g$params$k <- C
-          if (!is.null(gini_threshold)) g$params$gini_threshold <- gini_threshold
-        } else if (t_name == "umap") {
-          g$params$n_neighbors <- n_neighbors
-          g$params$dens_scale <- dens_scale
-        }
-        g$output_col <- t_def$name_generator(g)
-        new_genes_to_add <- c(new_genes_to_add, list(g))
+      # If no columns available for this type, continue to next attempt
+      if (t_def$input_type == "mixed") {
+        if (length(avail_num) == 0 || length(avail_cat) == 0) next
+      } else {
+        if (length(available_cols) == 0) next
       }
-    } else {
-      new_gene <- create_gene(t_name, cols)
-      new_genes_to_add <- list(new_gene)
-    }
-    
-    # Avoid exact duplicates and add genes
-    existing_out <- sapply(ind$genes, function(g) g$output_col)
-    added_any <- FALSE
-    for (g in new_genes_to_add) {
-      if (!(g$output_col %in% existing_out)) {
-        ind$genes <- c(ind$genes, list(g))
-        added_any <- TRUE
-        if (verbose) {
-          message(sprintf("    [Mutation] Added gene: %s (%s)", 
-                          g$output_col, gene_to_formula(g)))
+      
+      # Select random columns
+      if (t_def$input_type == "mixed") {
+        if (t_name %in% c("famd", "supervised_famd")) {
+          num_cat <- min(sample(1:3, 1), length(avail_cat))
+          num_num <- min(sample(1:5, 1), length(avail_num))
+          cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
+        } else if (t_name == "between_group_pca") {
+          if (length(avail_num) < 2) next
+          num_num <- min(sample(2:5, 1), length(avail_num))
+          cols <- c(weighted_sample(avail_cat, 1), weighted_sample(avail_num, num_num))
+        } else {
+          col_cat <- weighted_sample(avail_cat, 1)
+          col_num <- weighted_sample(avail_num, 1)
+          cols <- c(col_cat, col_num)
+        }
+      } else if (t_def$type %in% c("unary", "supervised_unary")) {
+        cols <- weighted_sample(available_cols, 1)
+      } else if (t_def$type == "binary") {
+        allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff")) FALSE else TRUE
+        if (!allow_rep && length(available_cols) < 2) next
+        cols <- weighted_sample(available_cols, 2, replace = allow_rep)
+      } else if (t_def$type == "multivariate") {
+        if (length(available_cols) < 2) next
+        max_cols <- if (t_name %in% c("add", "multiply")) {
+          min(5, length(available_cols))
+        } else if (t_name == "concat") {
+          min(3, length(available_cols))
+        } else {
+          max(2, floor((1 - exp(-1)) * length(available_cols)))
+        }
+        num_cols <- if (max_cols == 2) 2 else sample(2:max_cols, 1)
+        allow_rep <- if (!is.null(t_def$allow_replace)) t_def$allow_replace else FALSE
+        if (!allow_rep) {
+          sampled_cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
+          cols <- unique(sampled_cols)
+          if (length(cols) < 2) {
+            cols <- weighted_sample(available_cols, min(2, length(available_cols)), replace = FALSE)
+          }
+        } else {
+          cols <- weighted_sample(available_cols, num_cols, replace = TRUE)
         }
       } else {
-        if (verbose) {
-          message(sprintf("    [Mutation] Attempted to add duplicate gene: %s (%s) (skipped)", g$output_col, gene_to_formula(g)))
+        cols <- weighted_sample(available_cols, 1)
+      }
+      
+      # If the transformer is multi-component, add all components
+      new_genes_to_add <- list()
+      if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
+        C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+          sample(2:5, 1)
+        } else if (t_name %in% c("mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
+          sample(2:5, 1)
+        } else {
+          max(2L, as.integer(round(log2(length(cols)))))
+        }
+        
+        gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
+        n_neighbors <- if (t_name == "umap") max(2L, stats::rpois(1, 15)) else NULL
+        dens_scale <- if (t_name == "umap") round(stats::runif(1, 0, 1), 2) else NULL
+        
+        for (comp in 1:C) {
+          g <- create_gene(t_name, cols)
+          g$params$comp_idx <- comp
+          if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+            g$params$k <- C
+            if (!is.null(gini_threshold)) g$params$gini_threshold <- gini_threshold
+          } else if (t_name == "umap") {
+            g$params$n_neighbors <- n_neighbors
+            g$params$dens_scale <- dens_scale
+          }
+          g$output_col <- t_def$name_generator(g)
+          new_genes_to_add <- c(new_genes_to_add, list(g))
+        }
+      } else {
+        new_gene <- create_gene(t_name, cols)
+        new_genes_to_add <- list(new_gene)
+      }
+      
+      # Avoid exact duplicates and add genes
+      existing_out <- sapply(ind$genes, function(g) g$output_col)
+      added_any <- FALSE
+      for (g in new_genes_to_add) {
+        if (!(g$output_col %in% existing_out)) {
+          ind$genes <- c(ind$genes, list(g))
+          added_any <- TRUE
+          if (verbose) {
+            message(sprintf("    [Mutation] Added gene: %s (%s)", 
+                            g$output_col, gene_to_formula(g)))
+          }
+        } else {
+          if (verbose) {
+            message(sprintf("    [Mutation] Attempted to add duplicate gene: %s (%s) (skipped)", g$output_col, gene_to_formula(g)))
+          }
         }
       }
-    }
-    if (added_any) {
-      ind$fitness <- NA_real_
+      if (added_any) {
+        ind$fitness <- NA_real_
+        break
+      }
     }
   }
 }

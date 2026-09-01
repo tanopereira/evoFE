@@ -49,6 +49,7 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{groupby_median}}{Per-group median (robust to outliers).}
   \item{\code{groupby_quantile}}{Per-group Q1 or Q3 (\code{q} sampled from
     \{0.25, 0.75\}).}
+  \item{\code{groupby_signed_log}}{\code{sign(value - group_mean) * log1p(|value - group_mean|)}.}
 }
 
 \strong{Supervised categorical encodings (categorical -> numeric, stateful)}

@@ -105,6 +105,43 @@ test_that("groupby_max returns group maxima consistent with raw data", {
   expect_equal(merged$out, merged$mx)
 })
 
+test_that("groupby_signed_log computes sign(x - mean) * log1p(|x - mean|) correctly", {
+  library(data.table)
+  train <- data.table(
+    cat = c("a", "a", "b", "b"),
+    num = c(10, 20, 100, 200) # mean(a) = 15, mean(b) = 150, global_mean = 82.5
+  )
+  test <- data.table(
+    cat = c("a", "a", "b", "zzz_unseen"),
+    num = c(15, 25, 50, 182.5)
+  )
+
+  gene <- create_gene("groupby_signed_log", c("cat", "num"))
+  state <- evo_transformers$groupby_signed_log$fit_func(train, gene)
+  out_train <- evo_transformers$groupby_signed_log$apply_func(train, gene, state)
+  out_test <- evo_transformers$groupby_signed_log$apply_func(test, gene, state)
+
+  # Train expectations
+  # a1: 10 - 15 = -5 => -1 * log1p(5)
+  expect_equal(out_train[1], -log1p(5))
+  # a2: 20 - 15 = +5 => +1 * log1p(5)
+  expect_equal(out_train[2], log1p(5))
+  # b1: 100 - 150 = -50 => -1 * log1p(50)
+  expect_equal(out_train[3], -log1p(50))
+  # b2: 200 - 150 = +50 => +1 * log1p(50)
+  expect_equal(out_train[4], log1p(50))
+
+  # Test expectations
+  # a_test1: 15 - 15 = 0 => 0
+  expect_equal(out_test[1], 0)
+  # a_test2: 25 - 15 = +10 => log1p(10)
+  expect_equal(out_test[2], log1p(10))
+  # b_test: 50 - 150 = -100 => -log1p(100)
+  expect_equal(out_test[3], -log1p(100))
+  # unseen: 182.5 - global_mean(82.5) = 100 => log1p(100)
+  expect_equal(out_test[4], log1p(100))
+})
+
 test_that("stateful encoders use training statistics, not batch statistics", {
   library(data.table)
   set.seed(11)

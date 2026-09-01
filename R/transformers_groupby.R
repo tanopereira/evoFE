@@ -274,4 +274,46 @@ evo_transformers$groupby_quantile <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "gbq")
 )
 
+# Group-by Signed Log (composite: deviation from group mean with signed log damping)
+evo_transformers$groupby_signed_log <- create_transformer(
+  name = "groupby_signed_log",
+  type = "mixed_binary",
+  input_type = "mixed",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    input_cols <- gene$input_cols
+    cat_col <- input_cols[1]
+    num_col <- input_cols[2]
+    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    mapping <- dt[, .(val = mean(n, na.rm = TRUE)), by = c]
+    data.table::setkey(mapping, c)
+    global_mean <- mean(dt$n, na.rm = TRUE)
+    if (is.na(global_mean)) global_mean <- 0
+    list(mapping = mapping, default_val = global_mean)
+  },
+  apply_func = function(data, gene, state) {
+    input_cols <- gene$input_cols
+    x_cat <- data[[input_cols[1]]]
+    x_num <- .to_numeric(data[[input_cols[2]]])
+
+    if (is.null(x_cat) || length(x_cat) == 0 || is.null(state) || is.null(state$mapping)) {
+      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+      diff <- x_num - def_val
+      res <- sign(diff) * log1p(abs(diff))
+      res[!is.finite(res)] <- 0
+      return(res)
+    }
+
+    dt <- data.table::data.table(c = x_cat)
+    means <- state$mapping[dt, on = "c"]$val
+    means[is.na(means)] <- state$default_val
+
+    diff <- x_num - means
+    res <- sign(diff) * log1p(abs(diff))
+    res[!is.finite(res)] <- 0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "gbslog")
+)
+
 # Concatenation of Categorical Columns

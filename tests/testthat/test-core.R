@@ -315,6 +315,12 @@ test_that("New algorithm-agnostic transformers work correctly", {
   expect_true(gene_gz$output_col %in% names(res_gz$train))
   expect_type(res_gz$train[[gene_gz$output_col]], "double")
 
+  # 3b. groupby_signed_log
+  gene_gbslog <- create_gene("groupby_signed_log", c("cat", "x1"))
+  res_gbslog <- apply_gene(gene_gbslog, df, target_col = "target")
+  expect_true(gene_gbslog$output_col %in% names(res_gbslog$train))
+  expect_type(res_gbslog$train[[gene_gbslog$output_col]], "double")
+
   # 4. quantile_binning
   gene_qb <- create_gene("quantile_binning", "x1")
   res_qb <- apply_gene(gene_qb, df, target_col = "target")
