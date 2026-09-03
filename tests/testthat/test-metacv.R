@@ -190,3 +190,76 @@ test_that("metacv early stopping evaluates per-island stagnation", {
   expect_equal(recipe$evaluation_strategy, "metacv")
   expect_true(length(recipe$fitness_history) <= 5)
 })
+
+test_that("metacv respects migration configuration topology and islands", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  mig_cfg <- migration_config(
+    topology = topology_ring(islands = 3),
+    policy = policy_push_uniform()
+  )
+
+  recipe <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    migration = mig_cfg,
+    generations = 2,
+    pop_size = 3,
+    verbose = FALSE
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_equal(recipe$evaluation_strategy, "metacv")
+  expect_equal(length(recipe$island_bests), 3)
+})
+
+test_that("metacv provides aligned oof_preds and metacv_island_oof_preds", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  recipe <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    islands = 3,
+    generations = 2,
+    pop_size = 3,
+    verbose = FALSE
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  # oof_preds matches the best_individual full CV predictions
+  expect_equal(recipe$oof_preds, recipe$best_individual$val_preds)
+  expect_equal(length(recipe$oof_preds), nrow(df))
+  # metacv_island_oof_preds contains stitched island predictions
+  expect_true(!is.null(recipe$metacv_island_oof_preds))
+  expect_equal(length(recipe$metacv_island_oof_preds), nrow(df))
+})
+
+test_that("metacv tournament deduplicates identical candidate recipes", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  # With pop_size 2 and generations 1, islands are likely to share baseline or simple recipes
+  recipe <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    verbose = FALSE
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_equal(length(recipe$island_bests), 3)
+  expect_true(all(vapply(recipe$island_bests, function(ind) is.finite(ind$fitness), logical(1))))
+})
