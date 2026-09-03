@@ -23,7 +23,17 @@ print.evo_recipe <- function(x, ...) {
       cat(sprintf("  Validation Score: %.4f\n", raw_fit))
     }
   } else {
-    cat(sprintf("  Best Fitness: %.4f\n", x$best_individual$fitness))
+    cat(sprintf("  Best Fitness:     %.4f\n", x$best_individual$fitness))
+  }
+  if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
+    gain <- if (!is.null(x$improvement)) x$improvement else (x$best_individual$fitness - x$baseline_fitness)
+    headroom_pct <- if (!is.null(x$headroom_closed)) x$headroom_closed * 100 else {
+      ideal <- if (x$task %in% c("classification", "multiclass")) 1.0 else 0.0
+      denom <- ideal - x$baseline_fitness
+      if (abs(denom) > 1e-6) (gain / denom) * 100 else 0.0
+    }
+    cat(sprintf("  Baseline Score:   %.4f  (Gain: %+.4f | Headroom Closed: %+.1f%%)\n",
+                x$baseline_fitness, gain, headroom_pct))
   }
   
   gene_count <- length(x$best_individual$genes)
@@ -81,6 +91,12 @@ summary.evo_recipe <- function(object, ...) {
     raw_fitness = object$best_individual$raw_fitness,
     penalty = object$best_individual$penalty,
     best_fitness = object$best_individual$fitness,
+    baseline_fitness = object$baseline_fitness,
+    improvement = object$improvement,
+    headroom_closed = object$headroom_closed,
+    island_baselines = object$island_baselines,
+    island_improvements = object$island_improvements,
+    island_headroom_closed = object$island_headroom_closed,
     holdout_fitness = object$best_individual$holdout_fitness,
     search_gap = object$search_gap,
     num_genes = length(object$best_individual$genes),
@@ -120,6 +136,9 @@ print.summary_evo_recipe <- function(x, ...) {
   if (!is.null(x$metric)) {
     cat(sprintf("Optimization Metric:      %s\n", x$metric))
   }
+  if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
+    cat(sprintf("Baseline Metric Score:    %.6f\n", x$baseline_fitness))
+  }
   if (!is.null(x$raw_fitness) && !is.na(x$raw_fitness)) {
     cat(sprintf("Validation Metric Score:  %.6f\n", x$raw_fitness))
     if (!is.null(x$penalty) && is.finite(x$penalty) && x$penalty > 0) {
@@ -129,13 +148,37 @@ print.summary_evo_recipe <- function(x, ...) {
   } else {
     cat(sprintf("Best CV/Split Fitness:    %.6f\n", x$best_fitness))
   }
+  if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
+    gain <- if (!is.null(x$improvement)) x$improvement else (x$best_fitness - x$baseline_fitness)
+    headroom_pct <- if (!is.null(x$headroom_closed)) x$headroom_closed * 100 else {
+      ideal <- if (x$task %in% c("classification", "multiclass")) 1.0 else 0.0
+      denom <- ideal - x$baseline_fitness
+      if (abs(denom) > 1e-6) (gain / denom) * 100 else 0.0
+    }
+    cat(sprintf("Gain over Baseline:       %+.6f (Headroom Closed: %+.1f%%)\n", gain, headroom_pct))
+  }
   if (!is.null(x$holdout_fitness) && !is.na(x$holdout_fitness)) {
     cat(sprintf("Best Holdout Fitness:     %.6f\n", x$holdout_fitness))
     if (!is.null(x$search_gap) && is.finite(x$search_gap)) {
       cat(sprintf("Search Gap (Holdout-Val): %+.6f\n", x$search_gap))
     }
   }
-  cat(sprintf("Number of Evolved Features: %d\n\n", x$num_genes))
+  if (!is.null(x$island_baselines) && length(x$island_baselines) > 1) {
+    cat("\nIsland Baseline & Headroom Breakdown (Migration Drivers):\n")
+    best_vals <- if (!is.null(x$island_improvements)) sprintf("%.4f", x$island_baselines + x$island_improvements) else rep("-", length(x$island_baselines))
+    gain_vals <- if (!is.null(x$island_improvements)) sprintf("%+.4f", x$island_improvements) else rep("-", length(x$island_baselines))
+    hd_vals <- if (!is.null(x$island_headroom_closed)) sprintf("%+.1f%%", x$island_headroom_closed * 100) else rep("-", length(x$island_baselines))
+    df_islands <- data.frame(
+      Island = seq_along(x$island_baselines),
+      Baseline = sprintf("%.4f", x$island_baselines),
+      Best = best_vals,
+      Gain = gain_vals,
+      Headroom_Closed = hd_vals,
+      stringsAsFactors = FALSE
+    )
+    print(df_islands, row.names = FALSE)
+  }
+  cat(sprintf("\nNumber of Evolved Features: %d\n\n", x$num_genes))
   
   if (x$num_genes > 0) {
     cat("Feature Transformation Details:\n")
@@ -190,12 +233,16 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
     y_vals  <- x$fitness_history
     x_vals  <- seq_along(y_vals)
     best_g  <- which.max(y_vals)
-    baseline <- y_vals[1]
+    baseline <- if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) x$baseline_fitness else y_vals[1]
     total_gain <- y_vals[best_g] - baseline
-    subtitle <- sprintf("Generations: %d  |  Best: %.4f  |  Gain vs Gen 1: %+.4f",
-                        length(y_vals), y_vals[best_g], total_gain)
+    ideal <- if (identical(x$task, "regression")) 0.0 else 1.0
+    denom <- ideal - baseline
+    headroom_pct <- if (abs(denom) > 1e-6) (total_gain / denom) * 100 else 0.0
+    gain_lbl <- if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) "Gain vs Base" else "Gain vs Gen 1"
+    subtitle <- sprintf("Generations: %d  |  Best: %.4f  |  %s: %+.4f (Headroom: %+.1f%%)",
+                        length(y_vals), y_vals[best_g], gain_lbl, total_gain, headroom_pct)
 
-    y_range <- range(y_vals, na.rm = TRUE)
+    y_range <- range(c(y_vals, baseline), na.rm = TRUE)
     y_pad   <- max(0.002, diff(y_range) * 0.12)
     ylim    <- c(y_range[1] - y_pad, y_range[2] + y_pad)
 

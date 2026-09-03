@@ -1362,6 +1362,10 @@
                         <div class="stat-val" id="best-fitness">-</div>
                     </div>
                     <div class="stat-box">
+                        <div class="stat-lbl">Headroom Closed</div>
+                        <div class="stat-val" id="best-headroom" style="color: var(--accent); font-weight: 700;">-</div>
+                    </div>
+                    <div class="stat-box">
                         <div class="stat-lbl">Gene Count</div>
                         <div class="stat-val" id="best-genes">-</div>
                     </div>
@@ -1454,6 +1458,11 @@
 
             config = logData.config;
             baselineFitness = logData.baseline ? logData.baseline.fitness : 0;
+            if (logData.baseline && logData.baseline.islands) {
+                logData.baseline.islands.forEach(isl => {
+                    islandBaselines[isl.island] = isl.fitness;
+                });
+            }
             activeIslands = config.islands;
 
             setupLayout();
@@ -1538,12 +1547,21 @@
                     break;
                 case "baseline":
                     baselineFitness = msg.data.fitness;
+                    if (msg.data.islands) {
+                        msg.data.islands.forEach(isl => {
+                            islandBaselines[isl.island] = isl.fitness;
+                        });
+                    }
                     updateBaselineOnChart(baselineFitness);
                     updateBestInfo("-", baselineFitness, 0, msg.data.recipe);
                     if (msg.data.sample) {
                         renderPreviewTable(msg.data.sample, msg.data.importances);
                     }
-                    logToTerminal("Baseline Fitness Calculated: " + baselineFitness.toFixed(4) + " | Recipe: " + msg.data.recipe, "info");
+                    let baseInfoStr = "Baseline Fitness Calculated: " + baselineFitness.toFixed(4);
+                    if (msg.data.islands && msg.data.islands.length > 1) {
+                        baseInfoStr += " (Folds: " + msg.data.islands.map(i => "Isl " + i.island + ": " + i.fitness.toFixed(3)).join(", ") + ")";
+                    }
+                    logToTerminal(baseInfoStr + " | Recipe: " + msg.data.recipe, "info");
                     break;
                 case "status":
                     handleIslandStatusUpdate(msg.data);
@@ -1582,6 +1600,7 @@
 
         let pathUsageCounts = {};
         let islandBestFitnessMap = {};
+        let islandBaselines = {};
 
         // -- Force-directed layout state ---------------------------------
         let forceSimulation = null;
@@ -2191,6 +2210,18 @@
                     glitchText(healthVal, fitnessVal, 150);
                 }
 
+                const ideal = (config && config.task === "regression") ? 0.0 : 1.0;
+                const baseVal = isl.baseline_fitness !== undefined ? isl.baseline_fitness : islandBaselines[isl.island];
+                if (baseVal !== undefined && baseVal !== null && !isNaN(baseVal) && healthVal) {
+                    const denom = ideal - baseVal;
+                    if (Math.abs(denom) > 1e-6) {
+                        const pct = ((fitnessVal - baseVal) / denom) * 100;
+                        const sign = pct >= 0 ? "+" : "";
+                        const diff = fitnessVal - baseVal;
+                        healthVal.title = `Baseline: ${baseVal.toFixed(4)} | Gain: ${diff >= 0 ? "+" : ""}${diff.toFixed(4)} | Headroom closed: ${sign}${pct.toFixed(1)}%`;
+                    }
+                }
+
                 // Update health bar width
                 healthBar.style.width = `${getHealthBarPercentage(fitnessVal)}%`;
 
@@ -2628,6 +2659,26 @@
             glitchText(document.getElementById("best-fitness"), fitness);
             glitchText(document.getElementById("best-genes"), genes);
             document.getElementById("best-recipe").textContent = recipe || "[Original features only]";
+
+            const headroomEl = document.getElementById("best-headroom");
+            if (headroomEl) {
+                const ideal = (config && config.task === "regression") ? 0.0 : 1.0;
+                const fitNum = parseFloat(fitness);
+                if (baselineFitness !== null && baselineFitness !== undefined && !isNaN(baselineFitness) && !isNaN(fitNum)) {
+                    const denom = ideal - baselineFitness;
+                    if (Math.abs(denom) > 1e-6) {
+                        const pct = ((fitNum - baselineFitness) / denom) * 100;
+                        const sign = pct >= 0 ? "+" : "";
+                        const diff = fitNum - baselineFitness;
+                        headroomEl.textContent = `${sign}${pct.toFixed(1)}%`;
+                        headroomEl.title = `Gain: ${diff >= 0 ? "+" : ""}${diff.toFixed(4)} over baseline ${baselineFitness.toFixed(4)}`;
+                    } else {
+                        headroomEl.textContent = "0.0%";
+                    }
+                } else {
+                    headroomEl.textContent = "-";
+                }
+            }
         }
 
         // Playback Control logic
@@ -2906,11 +2957,34 @@
             const color = islandColors[(islandId - 1) % islandColors.length];
             const fitnessStr = data.best_fitness ? data.best_fitness.toFixed(4) : "0.0000";
 
+            const ideal = (config && config.task === "regression") ? 0.0 : 1.0;
+            const baseVal = data.baseline_fitness !== undefined ? data.baseline_fitness : islandBaselines[islandId];
+            let baseStr = "-";
+            let headroomStr = "-";
+            if (baseVal !== undefined && baseVal !== null && !isNaN(baseVal)) {
+                baseStr = baseVal.toFixed(4);
+                const denom = ideal - baseVal;
+                if (Math.abs(denom) > 1e-6 && data.best_fitness !== null && data.best_fitness !== undefined) {
+                    const pct = ((data.best_fitness - baseVal) / denom) * 100;
+                    const diff = data.best_fitness - baseVal;
+                    const sign = pct >= 0 ? "+" : "";
+                    headroomStr = `${sign}${pct.toFixed(1)}% (${diff >= 0 ? "+" : ""}${diff.toFixed(4)})`;
+                }
+            }
+
             tooltip.innerHTML = `
                 <div class="tooltip-title" style="color: ${color}">Island ${islandId} Details</div>
                 <div class="tooltip-row">
                     <span class="tooltip-lbl">Best Fitness:</span>
-                    <span>${fitnessStr}</span>
+                    <span style="font-weight: bold;">${fitnessStr}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Fold Baseline:</span>
+                    <span>${baseStr}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-lbl">Headroom Closed:</span>
+                    <span style="color: var(--accent); font-weight: bold;">${headroomStr}</span>
                 </div>
                 <div class="tooltip-row">
                     <span class="tooltip-lbl">Stagnation:</span>

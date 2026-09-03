@@ -1574,13 +1574,19 @@ evolve_features <- function(data, target_col, task = "classification",
           serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
         }
 
+        ideal_val <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
         gen_snapshot <- list(
           generation = g,
           islands = lapply(seq_len(islands), function(j) {
             pop_j <- pop_list[[j]]
+            base_j <- if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]]$fitness)) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
+            h_denom <- ideal_val - base_j
+            h_closed <- if (abs(h_denom) < 1e-6 || is.na(island_best_fitness[j])) 0.0 else (island_best_fitness[j] - base_j) / h_denom
             list(
               island = j,
               best_fitness = island_best_fitness[j],
+              baseline_fitness = base_j,
+              headroom_closed = h_closed,
               stagnation = island_gens_without_improvement[j],
               pop_size = length(pop_j),
               population = lapply(head(pop_j, 5), function(ind) {
@@ -1590,6 +1596,10 @@ evolve_features <- function(data, target_col, task = "classification",
             )
           }),
           global_best_fitness = global_best_fitness,
+          global_headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+            h_denom <- ideal_val - baseline_ind$fitness
+            if (abs(h_denom) < 1e-6) 0.0 else (global_best_fitness - baseline_ind$fitness) / h_denom
+          } else 0.0,
           global_best_recipe = individual_to_recipe_string(global_best_individual),
           global_best_n_genes = length(global_best_individual$genes),
           global_best_importances = if (!is.null(global_best_individual$importances)) as.list(global_best_individual$importances) else list(),
@@ -1656,13 +1666,21 @@ evolve_features <- function(data, target_col, task = "classification",
           island_gens_without_improvement = island_gens_without_improvement
         )
 
-        # Normalized relative fitness for migration when partitions/folds differ across islands
+        # Normalized headroom-closed relative fitness for migration when partitions/folds differ across islands
         use_rel_fits <- per_island_validation || evaluation_strategy == "metacv"
         effective_island_fits <- if (use_rel_fits) {
+          ideal_mig <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
           island_baselines <- vapply(island_baseline_inds, function(x) if (!is.null(x$fitness) && is.finite(x$fitness)) x$fitness else 0, numeric(1))
-          island_best_fitness - island_baselines
+          headroom <- ideal_mig - island_baselines
+          headroom[abs(headroom) < 1e-6] <- 1e-6
+          (island_best_fitness - island_baselines) / headroom
         } else {
           island_best_fitness
+        }
+
+        if (verbose && use_rel_fits) {
+          headroom_pcts <- paste(sprintf("Island %d: %+.1f%%", seq_len(islands), effective_island_fits * 100), collapse = ", ")
+          message(sprintf("  [Migration Headroom Closed] %s", headroom_pcts))
         }
 
         if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
@@ -1927,7 +1945,9 @@ evolve_features <- function(data, target_col, task = "classification",
             n_recipes = effective_rate,
             n_genes = n_injected,
             migrated_genes = migrated_gene_details,
-            feature_distance = feat_dist
+            feature_distance = feat_dist,
+            donor_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[src] else NULL,
+            dest_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[dest] else NULL
           )
 
           if (record) {
@@ -2724,10 +2744,17 @@ evolve_features <- function(data, target_col, task = "classification",
       serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
     }
 
+    ideal_final <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
     final_data <- list(
       raw_fitness = if (!is.null(best_ind$raw_fitness)) best_ind$raw_fitness else best_ind$fitness,
       penalty = if (!is.null(best_ind$penalty)) best_ind$penalty else 0.0,
       best_fitness = best_ind$fitness,
+      baseline_fitness = baseline_ind$fitness,
+      improvement = best_ind$fitness - baseline_ind$fitness,
+      headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+        h_denom <- ideal_final - baseline_ind$fitness
+        if (abs(h_denom) < 1e-6) 0.0 else (best_ind$fitness - baseline_ind$fitness) / h_denom
+      } else 0.0,
       best_recipe = individual_to_recipe_string(best_ind),
       holdout_fitness = if (exists("best_ind") && !is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NA_real_,
       n_genes = length(best_ind$genes),
@@ -2741,6 +2768,7 @@ evolve_features <- function(data, target_col, task = "classification",
     viewer$send(list(type = "complete", data = final_data))
   }
 
+  ideal_recipe <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
   structure(
     list(
       best_individual = best_ind,
@@ -2751,6 +2779,25 @@ evolve_features <- function(data, target_col, task = "classification",
       evaluator = best_evaluator,
       classes = classes,
       metric = metric,
+      baseline_fitness = baseline_ind$fitness,
+      improvement = best_ind$fitness - baseline_ind$fitness,
+      headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+        h_denom <- ideal_recipe - baseline_ind$fitness
+        if (abs(h_denom) < 1e-6) 0.0 else (best_ind$fitness - baseline_ind$fitness) / h_denom
+      } else NULL,
+      island_baselines = if (islands > 1 && length(island_baseline_inds) == islands) {
+        vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
+      } else NULL,
+      island_improvements = if (islands > 1 && length(island_baseline_inds) == islands && exists("island_best_individual")) {
+        island_b <- vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
+        sapply(island_best_individual, function(ind) ind$fitness) - island_b
+      } else NULL,
+      island_headroom_closed = if (islands > 1 && length(island_baseline_inds) == islands && exists("island_best_individual")) {
+        island_b <- vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
+        h_denoms <- ideal_recipe - island_b
+        h_denoms[abs(h_denoms) < 1e-6] <- 1e-6
+        (sapply(island_best_individual, function(ind) ind$fitness) - island_b) / h_denoms
+      } else NULL,
       holdout_fitness = if (!is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NULL,
       search_gap = search_gap,
       cv_strategy = cv_strategy,

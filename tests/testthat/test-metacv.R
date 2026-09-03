@@ -290,5 +290,22 @@ test_that("metacv computes honest non-resubstitution baseline fitness", {
   # Baseline fitness must equal the average of the out-of-fold island baselines
   expect_equal(base_fit, mean(island_fits), tolerance = 1e-6)
   expect_true(is.finite(base_fit))
+
+  # Check new top-level recipe fields
+  expect_equal(recipe$baseline_fitness, base_fit)
+  expect_equal(recipe$improvement, recipe$best_individual$fitness - base_fit)
+  expect_true(is.numeric(recipe$headroom_closed))
+  expect_equal(length(recipe$island_baselines), 3)
+  expect_equal(length(recipe$island_improvements), 3)
+  expect_equal(length(recipe$island_headroom_closed), 3)
+
+  # Check print and summary methods
+  out_print <- utils::capture.output(print(recipe))
+  expect_true(any(grepl("Baseline Score:", out_print)))
+  expect_true(any(grepl("Headroom Closed:", out_print)))
+
+  out_summary <- utils::capture.output(print(summary(recipe)))
+  expect_true(any(grepl("Baseline Metric Score:", out_summary)))
+  expect_true(any(grepl("Headroom Breakdown", out_summary)))
 })
 
