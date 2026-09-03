@@ -2278,7 +2278,9 @@
                 data.global_best_island || "-",
                 data.global_best_fitness,
                 data.global_best_n_genes || 0,
-                data.global_best_recipe
+                data.global_best_recipe,
+                data.global_best_island_baseline,
+                data.global_headroom_closed
             );
 
             // Render gene breakdown
@@ -2553,7 +2555,7 @@
 
             // Immediately update Global Best card with tournament winner
             if (winnerCand) {
-                updateBestInfo(`Island ${data.winner_island} (Champion)`, data.winner_fitness.toFixed(4), winnerCand.n_genes, winnerCand.recipe);
+                updateBestInfo(`Island ${data.winner_island} (Champion)`, data.winner_fitness, winnerCand.n_genes, winnerCand.recipe, baselineFitness);
             }
 
             overlay.classList.add("visible");
@@ -2654,8 +2656,9 @@
             });
         };
 
-        function updateBestInfo(island, fitness, genes, recipe) {
-            document.getElementById("best-island").textContent = island;
+        function updateBestInfo(island, fitness, genes, recipe, explicitBaseline, explicitHeadroom) {
+            const islandDisplay = (typeof island === "number") ? `Island ${island}` : (island || "-");
+            document.getElementById("best-island").textContent = islandDisplay;
             glitchText(document.getElementById("best-fitness"), fitness);
             glitchText(document.getElementById("best-genes"), genes);
             document.getElementById("best-recipe").textContent = recipe || "[Original features only]";
@@ -2664,17 +2667,38 @@
             if (headroomEl) {
                 const ideal = (config && config.task === "regression") ? 0.0 : 1.0;
                 const fitNum = parseFloat(fitness);
-                if (baselineFitness !== null && baselineFitness !== undefined && !isNaN(baselineFitness) && !isNaN(fitNum)) {
-                    const denom = ideal - baselineFitness;
-                    if (Math.abs(denom) > 1e-6) {
-                        const pct = ((fitNum - baselineFitness) / denom) * 100;
-                        const sign = pct >= 0 ? "+" : "";
-                        const diff = fitNum - baselineFitness;
-                        headroomEl.textContent = `${sign}${pct.toFixed(1)}%`;
-                        headroomEl.title = `Gain: ${diff >= 0 ? "+" : ""}${diff.toFixed(4)} over baseline ${baselineFitness.toFixed(4)}`;
+
+                // Determine the correct baseline for this individual:
+                let effBaseline = explicitBaseline;
+                let islandId = null;
+                if (typeof island === "number") {
+                    islandId = island;
+                } else if (typeof island === "string") {
+                    const m = island.match(/Island\s*(\d+)/i);
+                    if (m) islandId = parseInt(m[1], 10);
+                }
+
+                if (effBaseline === undefined || effBaseline === null || isNaN(effBaseline)) {
+                    if (islandId && islandBaselines && islandBaselines[islandId] !== undefined && islandBaselines[islandId] !== null) {
+                        effBaseline = islandBaselines[islandId];
                     } else {
-                        headroomEl.textContent = "0.0%";
+                        effBaseline = baselineFitness;
                     }
+                }
+
+                if (effBaseline !== null && effBaseline !== undefined && !isNaN(effBaseline) && !isNaN(fitNum)) {
+                    let pct;
+                    if (explicitHeadroom !== undefined && explicitHeadroom !== null && !isNaN(explicitHeadroom)) {
+                        pct = explicitHeadroom * 100;
+                    } else {
+                        const denom = ideal - effBaseline;
+                        pct = Math.abs(denom) > 1e-6 ? ((fitNum - effBaseline) / denom) * 100 : 0.0;
+                    }
+                    const sign = pct >= 0 ? "+" : "";
+                    const diff = fitNum - effBaseline;
+                    headroomEl.textContent = `${sign}${pct.toFixed(1)}%`;
+                    const srcLabel = islandId ? `Island ${islandId} baseline ${effBaseline.toFixed(4)}` : `baseline ${effBaseline.toFixed(4)}`;
+                    headroomEl.title = `Gain: ${diff >= 0 ? "+" : ""}${diff.toFixed(4)} over ${srcLabel}`;
                 } else {
                     headroomEl.textContent = "-";
                 }

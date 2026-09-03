@@ -307,5 +307,10 @@ test_that("metacv computes honest non-resubstitution baseline fitness", {
   out_summary <- utils::capture.output(print(summary(recipe)))
   expect_true(any(grepl("Baseline Metric Score:", out_summary)))
   expect_true(any(grepl("Headroom Breakdown", out_summary)))
+
+  # Verify that generation snapshots calculate headroom off the source island baseline
+  gen1 <- recipe$evolution_log$generations[[1]]
+  expect_true(!is.null(gen1$global_best_island))
+  expect_equal(gen1$global_best_island_baseline, island_fits[gen1$global_best_island])
 })
 

@@ -1575,6 +1575,23 @@ evolve_features <- function(data, target_col, task = "classification",
         }
 
         ideal_val <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
+
+        # Find which island contains the global best individual
+        best_island_idx <- 1L
+        for (j in seq_len(islands)) {
+          if (identical(pop_list[[j]][[1]], global_best_individual)) {
+            best_island_idx <- j
+            break
+          }
+        }
+        best_island_baseline <- if (length(island_baseline_inds) >= best_island_idx && !is.null(island_baseline_inds[[best_island_idx]]$fitness)) {
+          island_baseline_inds[[best_island_idx]]$fitness
+        } else {
+          baseline_ind$fitness
+        }
+        best_island_h_denom <- ideal_val - best_island_baseline
+        best_island_headroom_closed <- if (abs(best_island_h_denom) < 1e-6 || is.na(global_best_fitness)) 0.0 else (global_best_fitness - best_island_baseline) / best_island_h_denom
+
         gen_snapshot <- list(
           generation = g,
           islands = lapply(seq_len(islands), function(j) {
@@ -1596,23 +1613,15 @@ evolve_features <- function(data, target_col, task = "classification",
             )
           }),
           global_best_fitness = global_best_fitness,
-          global_headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
-            h_denom <- ideal_val - baseline_ind$fitness
-            if (abs(h_denom) < 1e-6) 0.0 else (global_best_fitness - baseline_ind$fitness) / h_denom
-          } else 0.0,
+          global_best_island = best_island_idx,
+          global_best_island_baseline = best_island_baseline,
+          global_headroom_closed = best_island_headroom_closed,
           global_best_recipe = individual_to_recipe_string(global_best_individual),
           global_best_n_genes = length(global_best_individual$genes),
           global_best_importances = if (!is.null(global_best_individual$importances)) as.list(global_best_individual$importances) else list(),
           global_best_genes = serialized_genes,
           sample = best_list
         )
-        # Find which island contains the global best individual
-        for (j in seq_len(islands)) {
-          if (identical(pop_list[[j]][[1]], global_best_individual)) {
-            gen_snapshot$global_best_island <- j
-            break
-          }
-        }
         evolution_log$generations[[g]] <- gen_snapshot
         viewer$send(list(type = "generation", data = gen_snapshot))
       }
