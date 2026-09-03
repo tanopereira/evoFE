@@ -719,10 +719,7 @@ evolve_features <- function(data, target_col, task = "classification",
         val   = data.table::as.data.table(data[fold_ids == j, ])
       )
     })
-    shared_splits <- list(
-      train = data.table::as.data.table(data),
-      val   = data.table::as.data.table(data)
-    )
+    shared_splits <- NULL
     if (verbose) {
       message(sprintf("  MetaCV partitions -> %d folds mapped across %d islands", islands, islands))
       for (j in 1:islands) {
@@ -2028,6 +2025,9 @@ evolve_features <- function(data, target_col, task = "classification",
         next_gen <- list()
         next_gen[[1]] <- survivors[[1]]
 
+        cur_island_cache <- if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache
+        cur_island_best_fit <- if (row_split_islands || evaluation_strategy == "metacv") island_best_fitness[j] else global_best_fitness
+
         # Fill the rest
         while (length(next_gen) < target_pop_size) {
           idx <- length(next_gen) + 1
@@ -2087,8 +2087,6 @@ evolve_features <- function(data, target_col, task = "classification",
 
           # Validation Check: Duplicate in next_gen OR already known to be worse than best
           attempts <- 0
-          cur_island_cache <- if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache
-          cur_island_best_fit <- if (row_split_islands || evaluation_strategy == "metacv") island_best_fitness[j] else global_best_fitness
           while (is_invalid_individual(child, next_gen, cur_island_cache, cur_island_best_fit, evaluator = island_evaluators[j]) && attempts < 15) {
             child <- mutate(child,
               verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
@@ -2318,9 +2316,9 @@ evolve_features <- function(data, target_col, task = "classification",
     candidates <- vector("list", islands)
 
     for (j in seq_len(islands)) {
-      k_key <- cand_keys[j]
-      if (!is.null(cv_eval_cache[[k_key]])) {
-        candidates[[j]] <- cv_eval_cache[[k_key]]
+      cache_key <- cand_keys[j]
+      if (!is.null(cv_eval_cache[[cache_key]])) {
+        candidates[[j]] <- cv_eval_cache[[cache_key]]
         if (verbose) {
           message(sprintf("  [Island %d] Full CV fitness: %.4f (cached)  Recipe: %s",
                           j, candidates[[j]]$fitness, individual_to_recipe_string(candidates[[j]])))
@@ -2336,7 +2334,7 @@ evolve_features <- function(data, target_col, task = "classification",
           split_ids = NULL, shared_splits = NULL,
           evaluator = cand_eval, fold_ids = fold_ids,
           shared_folds = island_shared_splits,
-          shared_full = NULL, state_cache = state_cache,
+          shared_full = shared_full, state_cache = state_cache,
           threads = threads, metric = metric, verbose = FALSE,
           allow_prune = FALSE,
           complexity_penalty = complexity_penalty,
@@ -2347,7 +2345,7 @@ evolve_features <- function(data, target_col, task = "classification",
           running_best_fitness = global_best_fitness,
           n_samples = nrow(data), ...
         )
-        cv_eval_cache[[k_key]] <- ind
+        cv_eval_cache[[cache_key]] <- ind
         candidates[[j]] <- ind
         if (verbose) {
           message(sprintf("  [Island %d] Full CV fitness: %.4f  Recipe: %s",
@@ -2431,11 +2429,13 @@ evolve_features <- function(data, target_col, task = "classification",
       # 4. Evaluate the super-individual's fitness
       super_ind <- evaluate_fitness(
         super_ind, data, target_col,
-        task = task, cv_folds = cv_folds,
-        evaluation_strategy = evaluation_strategy,
-        split_ids = split_ids_val, shared_splits = shared_splits,
+        task = task,
+        cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
+        evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
+        split_ids = split_ids_val,
+        shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
         evaluator = best_eval_curr, fold_ids = fold_ids,
-        shared_folds = shared_folds,
+        shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
         shared_full = shared_full, state_cache = state_cache,
         threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
         complexity_penalty = complexity_penalty,
@@ -2462,6 +2462,7 @@ evolve_features <- function(data, target_col, task = "classification",
         best_ind$evaluator <- best_eval_curr
         best_ind_source <- "Adopted (Pooled)"
         adopted_pooled <- TRUE
+        oof_preds <- best_ind$val_preds
       } else {
         if (verbose) {
           message(sprintf(
@@ -2530,11 +2531,13 @@ evolve_features <- function(data, target_col, task = "classification",
       # Evaluate the historical super-individual's fitness
       super_ind_hist <- evaluate_fitness(
         super_ind_hist, data, target_col,
-        task = task, cv_folds = cv_folds,
-        evaluation_strategy = evaluation_strategy,
-        split_ids = split_ids_val, shared_splits = shared_splits,
+        task = task,
+        cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
+        evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
+        split_ids = split_ids_val,
+        shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
         evaluator = best_eval_curr, fold_ids = fold_ids,
-        shared_folds = shared_folds,
+        shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
         shared_full = shared_full, state_cache = state_cache,
         threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
         complexity_penalty = complexity_penalty,
@@ -2561,6 +2564,7 @@ evolve_features <- function(data, target_col, task = "classification",
         best_ind$evaluator <- best_eval_curr
         best_ind_source <- "Adopted (Historical)"
         adopted_hist <- TRUE
+        oof_preds <- best_ind$val_preds
       } else {
         if (verbose) {
           message(sprintf(
@@ -2754,7 +2758,7 @@ evolve_features <- function(data, target_col, task = "classification",
       fold_ids = if (evaluation_strategy %in% c("cv", "metacv")) fold_ids else NULL,
       split_ids = if (evaluation_strategy == "split" && !is.null(split_ids_val)) split_ids_val else NULL,
       oof_preds = oof_preds,
-      metacv_island_oof_preds = if (evaluation_strategy == "metacv" && exists("metacv_island_oof_preds")) metacv_island_oof_preds else NULL,
+      metacv_island_oof_preds = if (evaluation_strategy == "metacv") metacv_island_oof_preds else NULL,
       island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),
       evolution_log = if (record) evolution_log else NULL
     ),

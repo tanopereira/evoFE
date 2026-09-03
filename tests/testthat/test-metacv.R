@@ -263,3 +263,32 @@ test_that("metacv tournament deduplicates identical candidate recipes", {
   expect_equal(length(recipe$island_bests), 3)
   expect_true(all(vapply(recipe$island_bests, function(ind) is.finite(ind$fitness), logical(1))))
 })
+
+test_that("metacv computes honest non-resubstitution baseline fitness", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  recipe <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    record = TRUE,
+    verbose = FALSE
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_true(!is.null(recipe$evolution_log$baseline))
+
+  base_fit <- recipe$evolution_log$baseline$fitness
+  island_fits <- vapply(recipe$evolution_log$baseline$islands, function(x) x$fitness, numeric(1))
+
+  # Baseline fitness must equal the average of the out-of-fold island baselines
+  expect_equal(base_fit, mean(island_fits), tolerance = 1e-6)
+  expect_true(is.finite(base_fit))
+})
+
