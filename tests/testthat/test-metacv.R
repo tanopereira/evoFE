@@ -222,24 +222,50 @@ test_that("metacv provides aligned oof_preds and metacv_island_oof_preds", {
   df <- mtcars
   df$am <- as.integer(df$am)
 
-  recipe <- evolve_features(
+  # 1. Ensemble mode (default): oof_preds matches the stitched metacv_island_oof_preds
+  rec_ens <- evolve_features(
     df, "am",
     task = "classification",
     evaluator = "lightgbm",
     evaluation_strategy = "metacv",
+    metacv_mode = "ensemble",
     islands = 3,
     generations = 2,
     pop_size = 3,
     verbose = FALSE
   )
 
-  expect_s3_class(recipe, "evo_recipe")
-  # oof_preds matches the best_individual full CV predictions
-  expect_equal(recipe$oof_preds, recipe$best_individual$val_preds)
-  expect_equal(length(recipe$oof_preds), nrow(df))
-  # metacv_island_oof_preds contains stitched island predictions
-  expect_true(!is.null(recipe$metacv_island_oof_preds))
-  expect_equal(length(recipe$metacv_island_oof_preds), nrow(df))
+  expect_s3_class(rec_ens, "evo_ensemble")
+  expect_s3_class(rec_ens, "evo_recipe")
+  expect_equal(rec_ens$oof_preds, rec_ens$metacv_island_oof_preds)
+  expect_equal(length(rec_ens$oof_preds), nrow(df))
+  expect_equal(length(rec_ens$active_models), 3)
+  expect_equal(length(rec_ens$active_recipes), 3)
+
+  # Predict model on new data works with ensemble
+  ens_preds <- predict_model(rec_ens, df[1:5, ])
+  expect_equal(length(ens_preds), 5)
+  expect_true(is.numeric(ens_preds))
+
+  # 2. Tournament mode: oof_preds matches the best_individual full CV predictions
+  rec_tourn <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_mode = "tournament",
+    islands = 3,
+    generations = 2,
+    pop_size = 3,
+    verbose = FALSE
+  )
+
+  expect_s3_class(rec_tourn, "evo_recipe")
+  expect_false(inherits(rec_tourn, "evo_ensemble"))
+  expect_equal(rec_tourn$oof_preds, rec_tourn$best_individual$val_preds)
+  expect_equal(length(rec_tourn$oof_preds), nrow(df))
+  expect_true(!is.null(rec_tourn$metacv_island_oof_preds))
+  expect_equal(length(rec_tourn$metacv_island_oof_preds), nrow(df))
 })
 
 test_that("metacv tournament deduplicates identical candidate recipes", {
@@ -312,5 +338,89 @@ test_that("metacv computes honest non-resubstitution baseline fitness", {
   gen1 <- recipe$evolution_log$generations[[1]]
   expect_true(!is.null(gen1$global_best_island))
   expect_equal(gen1$global_best_island_baseline, island_fits[gen1$global_best_island])
+})
+
+test_that("metacv_mode validation and task coverage for ensemble and tournament", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  # Invalid metacv_mode throws error
+  expect_error(
+    evolve_features(df, "am", evaluation_strategy = "metacv", islands = 3, metacv_mode = "invalid", verbose = FALSE),
+    "'arg' should be one of"
+  )
+
+  # Regression with metacv_mode = 'ensemble'
+  rec_reg <- evolve_features(
+    mtcars, "mpg",
+    task = "regression",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_mode = "ensemble",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_reg, "evo_ensemble")
+  expect_s3_class(rec_reg, "evo_recipe")
+  expect_equal(rec_reg$method, "metacv")
+  expect_equal(length(rec_reg$active_models), 3)
+
+  reg_preds <- predict_model(rec_reg, mtcars[1:4, ])
+  expect_equal(length(reg_preds), 4)
+  expect_true(is.numeric(reg_preds))
+
+  reg_feats <- predict(rec_reg, mtcars[1:4, ])
+  expect_true(inherits(reg_feats, "data.table"))
+  expect_equal(nrow(reg_feats), 4)
+
+  # Multiclass with metacv_mode = 'ensemble'
+  data(iris)
+  rec_mc <- evolve_features(
+    iris, "Species",
+    task = "multiclass",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_mode = "ensemble",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_mc, "evo_ensemble")
+  expect_equal(length(rec_mc$active_models), 3)
+
+  mc_preds <- predict_model(rec_mc, iris[1:6, ])
+  expect_true(is.matrix(mc_preds))
+  expect_equal(nrow(mc_preds), 6)
+  expect_equal(ncol(mc_preds), 3)
+  expect_equal(colnames(mc_preds), levels(iris$Species))
+
+  # Test print and summary for metacv ensemble
+  ens_print <- utils::capture.output(print(rec_mc))
+  expect_true(any(grepl("An evoFE Island Ensemble \\(MetaCV\\)", ens_print)))
+  expect_true(any(grepl("Active Islands:       3 / 3", ens_print)))
+
+  ens_summary <- utils::capture.output(print(summary(rec_mc)))
+  expect_true(any(grepl("Summary of evoFE MetaCV Ensemble", ens_summary)))
+
+  # Confirmation holdout scoring with metacv ensemble
+  rec_holdout <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_mode = "ensemble",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    holdout_frac = 0.25,
+    verbose = FALSE
+  )
+  expect_s3_class(rec_holdout, "evo_ensemble")
+  expect_true(!is.null(rec_holdout$best_individual$holdout_fitness))
+  expect_true(is.numeric(rec_holdout$best_individual$holdout_fitness))
 })
 

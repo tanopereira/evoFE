@@ -316,7 +316,14 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
 #' @export
 print.evo_ensemble <- function(x, ...) {
   method <- if (!is.null(x$method)) x$method else "caruana"
-  cat(sprintf("An evoFE Island Ensemble (%s)\n", if (method == "stack") "Stacked" else "Caruana"))
+  method_str <- if (method == "stack") {
+    "Stacked"
+  } else if (method == "metacv") {
+    "MetaCV"
+  } else {
+    "Caruana"
+  }
+  cat(sprintf("An evoFE Island Ensemble (%s)\n", method_str))
   cat(sprintf("  Evaluator:            %s\n", x$evaluator))
   cat(sprintf("  Task:                 %s\n", x$task))
   if (!is.null(x$metric)) {
@@ -330,6 +337,13 @@ print.evo_ensemble <- function(x, ...) {
 
   active_names <- names(x$weights[x$weights > 0])
   cat(sprintf("  Active Islands:       %d / %d\n", length(active_names), length(x$weights)))
+
+  if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
+    cat(sprintf("  Baseline Score:       %.4f\n", x$baseline_fitness))
+    if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
+      cat(sprintf("  Headroom Closed:      %5.1f%%\n", x$headroom_closed * 100))
+    }
+  }
 
   if (length(active_names) > 0) {
     cat("  Selected Island Weights:\n")
@@ -372,6 +386,10 @@ summary.evo_ensemble <- function(object, ...) {
     stack_cv_fitness = object$stack_cv_fitness,
     single_best_fitness = object$single_best_fitness,
     ensemble_val_fitness = object$ensemble_val_fitness,
+    baseline_fitness = object$baseline_fitness,
+    headroom_closed = object$headroom_closed,
+    island_baselines = object$island_baselines,
+    island_headroom_closed = object$island_headroom_closed,
     active_count = length(active_names),
     total_islands = length(object$weights),
     weights_summary = weights_df
@@ -391,13 +409,34 @@ summary.evo_ensemble <- function(object, ...) {
 #' @export
 print.summary_evo_ensemble <- function(x, ...) {
   method <- if (is.null(x$method)) "caruana" else x$method
-  cat(sprintf("Summary of evoFE %s Ensemble\n", if (method == "stack") "Stacked" else "Caruana"))
+  method_str <- if (method == "stack") {
+    "Stacked"
+  } else if (method == "metacv") {
+    "MetaCV"
+  } else {
+    "Caruana"
+  }
+  cat(sprintf("Summary of evoFE %s Ensemble\n", method_str))
   cat(sprintf("Evaluator: %s | Task: %s | Metric: %s\n", x$evaluator, x$task, x$metric))
   cat(sprintf("Single Best Fitness: %.4f --> Ensemble Fitness: %.4f\n", x$single_best_fitness, x$ensemble_val_fitness))
   if (!is.null(x$stack_cv_fitness)) {
     cat(sprintf("Honest Nested CV Fitness: %.4f\n", x$stack_cv_fitness))
   }
-  cat(sprintf("Active Islands: %d of %d\n\n", x$active_count, x$total_islands))
+  if (!is.null(x$baseline_fitness)) {
+    cat(sprintf("Baseline Metric Score:  %.4f\n", x$baseline_fitness))
+  }
+  if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
+    cat(sprintf("Headroom Closed:        %5.1f%%\n", x$headroom_closed * 100))
+  }
+  if (!is.null(x$island_headroom_closed)) {
+    cat("\nHeadroom Breakdown by Island:\n")
+    for (i in seq_along(x$island_headroom_closed)) {
+      base_val <- if (!is.null(x$island_baselines) && length(x$island_baselines) >= i) x$island_baselines[i] else NA_real_
+      base_str <- if (!is.na(base_val)) sprintf(" (baseline: %.4f)", base_val) else ""
+      cat(sprintf("  Island %d: %5.1f%% headroom closed%s\n", i, x$island_headroom_closed[i] * 100, base_str))
+    }
+  }
+  cat(sprintf("\nActive Islands: %d of %d\n\n", x$active_count, x$total_islands))
   print(x$weights_summary)
   invisible(x)
 }
