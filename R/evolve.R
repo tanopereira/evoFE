@@ -2659,8 +2659,7 @@ evolve_features <- function(data, target_col, task = "classification",
   gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
   features <- c(best_ind$numeric_cols, best_ind$categorical_cols, best_ind$datetime_cols, gene_cols)
 
-  x_full <- data.matrix(res_full$train[, features, with = FALSE])
-  x_full[!is.finite(x_full)] <- NA
+  x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
   y_full <- res_full$train[[target_col]]
   if (task == "multiclass") {
     y_full <- as.integer(factor(y_full, levels = classes)) - 1
@@ -2686,8 +2685,7 @@ evolve_features <- function(data, target_col, task = "classification",
         res_conf$ind$datetime_cols,
         if (length(res_conf$ind$genes) > 0) vapply(res_conf$ind$genes, function(g) g$output_col, character(1)) else character(0)
       )
-      x_conf <- data.matrix(res_conf$train[, conf_features, with = FALSE])
-      x_conf[!is.finite(x_conf)] <- NA
+      x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
       preds_conf <- tryCatch(
         evo_evaluators[[best_evaluator]]$predict_func(best_model, x_conf, task = task),
         error = function(e) NULL

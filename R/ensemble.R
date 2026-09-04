@@ -397,8 +397,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       features <- c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols)
       features <- setdiff(features, target_col)
 
-      x_full <- data.matrix(res_full$train[, features, with = FALSE])
-      x_full[!is.finite(x_full)] <- NA
+      x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
       y_full <- res_full$train[[target_col]]
       if (task == "multiclass") {
         y_full <- as.integer(factor(y_full, levels = classes)) - 1

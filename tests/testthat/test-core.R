@@ -2273,10 +2273,13 @@ test_that("xgboost evaluator handles non-finite values (Inf, -Inf, NaN) cleanly"
   x_train[1, 1] <- Inf
   x_train[2, 2] <- -Inf
   x_train[3, 3] <- NaN
+  x_train[4, 4] <- 1e50
+  x_train[5, 5] <- -1e100
   y_train <- sample(0:1, 20, replace = TRUE)
 
   x_val <- matrix(rnorm(50), nrow = 10, ncol = 5)
   x_val[1, 2] <- Inf
+  x_val[2, 3] <- 1e50
   y_val <- sample(0:1, 10, replace = TRUE)
 
   expect_no_error({
@@ -2294,12 +2297,46 @@ test_that("xgboost evaluator handles non-finite values (Inf, -Inf, NaN) cleanly"
   expect_true(!is.null(fit$model))
   expect_equal(length(fit$predictions), 10)
 
-  # Predict with new data containing Inf
+  # Predict with new data containing Inf and values exceeding 32-bit float limit (> 3.4e38)
   x_new <- matrix(rnorm(25), nrow = 5, ncol = 5)
   x_new[2, 1] <- -Inf
+  x_new[3, 2] <- 1e50
+  x_new[4, 3] <- -1e100
   preds <- evo_evaluators$xgboost$predict_func(fit$model, x_new, task = "classification")
   expect_equal(length(preds), 5)
   expect_false(any(is.infinite(preds)))
+})
+
+test_that("xgboost evolution and predict handle values exceeding 32-bit float limits cleanly", {
+  skip_if_not_installed("xgboost")
+  df <- mtcars
+  df$am <- as.integer(df$am)
+  # Inject extreme numbers that are finite in R double but exceed 32-bit float
+  df$disp[1] <- 1e50
+  df$hp[2] <- -1e60
+
+  expect_no_error({
+    recipe <- evolve_features(
+      data = df,
+      target_col = "am",
+      task = "classification",
+      evaluator = "xgboost",
+      generations = 2,
+      pop_size = 2,
+      islands = 1,
+      verbose = FALSE
+    )
+  })
+
+  df_new <- mtcars[1:5, ]
+  df_new$disp[1] <- 1e100
+  expect_no_error({
+    feats <- predict(recipe, df_new)
+    preds <- predict_model(recipe, df_new)
+  })
+  expect_equal(nrow(feats), 5)
+  expect_equal(length(preds), 5)
+  expect_true(all(is.finite(preds)))
 })
 
 test_that("complexity_target all_features penalizes total feature count and favors sparser masks", {

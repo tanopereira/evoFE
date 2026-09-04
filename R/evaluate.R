@@ -63,6 +63,9 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   # Apply to train
   if (!col_exists_train) {
     new_col_train <- t_def$apply_func(train_data, gene, state)
+    if (is.double(new_col_train)) {
+      new_col_train[!is.finite(new_col_train) | abs(new_col_train) > 3.402823e38] <- NA_real_
+    }
 
     # Reject constant columns (0 variance)
     if (!is.null(target_col) && length(unique(new_col_train[!is.na(new_col_train)])) <= 1) {
@@ -103,8 +106,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 
     if (out_type == "categorical") {
       new_col_train <- as.factor(new_col_train)
-    } else if (is.numeric(new_col_train)) {
-      new_col_train[!is.finite(new_col_train)] <- NA
+    } else if (is.double(new_col_train)) {
+      new_col_train[!is.finite(new_col_train) | abs(new_col_train) > 3.402823e38] <- NA_real_
     }
 
     if (data.table::is.data.table(train_data)) {
@@ -122,8 +125,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       train_factor <- train_data[[gene$output_col]]
       train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
       new_col_val <- factor(new_col_val, levels = train_levels)
-    } else if (is.numeric(new_col_val)) {
-      new_col_val[!is.finite(new_col_val)] <- NA
+    } else if (is.double(new_col_val)) {
+      new_col_val[!is.finite(new_col_val) | abs(new_col_val) > 3.402823e38] <- NA_real_
     }
     if (data.table::is.data.table(val_data)) {
       val_data[, (gene$output_col) := new_col_val]
@@ -457,10 +460,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }, logical(1)))
     dt_sub_tr <- train_fold_feat[, features, with = FALSE]
     dt_sub_va <- val_fold_feat[, features, with = FALSE]
-    x_train <- if (!has_cat) as.matrix(dt_sub_tr) else data.matrix(dt_sub_tr)
-    x_val <- if (!has_cat) as.matrix(dt_sub_va) else data.matrix(dt_sub_va)
-    x_train[!is.finite(x_train)] <- NA
-    x_val[!is.finite(x_val)] <- NA
+    x_train <- .sanitize_feature_matrix(dt_sub_tr)
+    x_val <- .sanitize_feature_matrix(dt_sub_va)
     y_train <- train_fold_feat[[target_col]]
     y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
@@ -638,10 +639,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         }, logical(1)))
       dt_sub_tr <- train_fold_feat[, features, with = FALSE]
       dt_sub_va <- val_fold_feat[, features, with = FALSE]
-      x_train <- if (!has_cat) as.matrix(dt_sub_tr) else data.matrix(dt_sub_tr)
-      x_val <- if (!has_cat) as.matrix(dt_sub_va) else data.matrix(dt_sub_va)
-      x_train[!is.finite(x_train)] <- NA
-      x_val[!is.finite(x_val)] <- NA
+      x_train <- .sanitize_feature_matrix(dt_sub_tr)
+      x_val <- .sanitize_feature_matrix(dt_sub_va)
       y_train <- train_fold_feat[[target_col]]
       y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
@@ -838,10 +837,8 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
   features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
 
-  x_train <- data.matrix(train_fold_feat[, features, with = FALSE])
-  x_val <- data.matrix(val_fold_feat[, features, with = FALSE])
-  x_train[!is.finite(x_train)] <- NA
-  x_val[!is.finite(x_val)] <- NA
+  x_train <- .sanitize_feature_matrix(train_fold_feat[, features, with = FALSE])
+  x_val   <- .sanitize_feature_matrix(val_fold_feat[, features, with = FALSE])
   y_train <- train_fold_feat[[target_col]]
   y_val <- val_fold_feat[[target_col]]
   if (task == "multiclass") {
@@ -884,8 +881,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   )
 
   if (!is.null(res_holdout)) {
-    x_holdout <- data.matrix(res_holdout$train[, features, with = FALSE])
-    x_holdout[!is.finite(x_holdout)] <- NA
+    x_holdout <- .sanitize_feature_matrix(res_holdout$train[, features, with = FALSE])
 
     evaluator_entry <- evo_evaluators[[evaluator]]
     if (is.null(evaluator_entry)) {

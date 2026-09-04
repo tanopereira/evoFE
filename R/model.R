@@ -1,3 +1,24 @@
+#' Internal helper to convert input features into a clean numeric matrix
+#' safe for C++ ML backends (e.g. XGBoost, LightGBM, CatBoost).
+#' Handles data.frames, factors/characters, non-finites (Inf, -Inf, NaN),
+#' and numbers exceeding 32-bit single-precision float range (~3.402823e38),
+#' converting all out-of-bounds or non-finite values to NA_real_.
+.sanitize_feature_matrix <- function(x) {
+  if (is.null(x)) return(NULL)
+  if (!is.matrix(x)) {
+    x <- if (is.data.frame(x)) data.matrix(x) else as.matrix(x)
+  }
+  if (!is.numeric(x)) {
+    storage.mode(x) <- "double"
+  }
+  # 32-bit single-precision float limit is ~3.402823e38.
+  # Values exceeding this or non-finite (Inf, -Inf, NaN) cause XGBoost
+  # to fail with: Check failed: valid: Input data contains `inf` or a value too large
+  max_float <- 3.402823e38
+  x[!is.finite(x) | abs(x) > max_float] <- NA_real_
+  x
+}
+
 #' Train a boosted tree model
 #'
 #' Internal helper that encapsulates LightGBM / XGBoost parameter construction
@@ -28,19 +49,8 @@ train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                  evaluator, paste(names(evo_evaluators), collapse = ", ")))
   }
 
-  if (!is.null(x_train)) {
-    if (!is.matrix(x_train)) {
-      x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
-    }
-    x_train[!is.finite(x_train)] <- NA
-  }
-
-  if (!is.null(x_val)) {
-    if (!is.matrix(x_val)) {
-      x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
-    }
-    x_val[!is.finite(x_val)] <- NA
-  }
+  x_train <- .sanitize_feature_matrix(x_train)
+  x_val   <- .sanitize_feature_matrix(x_val)
 
   evaluator_entry$train_func(
     x_train = x_train,

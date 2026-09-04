@@ -118,9 +118,8 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   # Step 1: Evolve features for newdata
   features_dt <- stats::predict(object, newdata)
   
-  # Step 2: Convert to numeric matrix
-  x_new <- data.matrix(features_dt)
-  x_new[!is.finite(x_new)] <- NA
+  # Step 2: Convert to clean numeric matrix
+  x_new <- .sanitize_feature_matrix(features_dt)
   
   # Step 3: Run prediction
   evaluator_entry <- evo_evaluators[[object$evaluator]]
@@ -179,8 +178,7 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     }
 
     feat_dt <- res_i$train[, features, with = FALSE]
-    x_new <- data.matrix(feat_dt)
-    x_new[!is.finite(x_new)] <- NA
+    x_new <- .sanitize_feature_matrix(feat_dt)
 
     preds_i <- evaluator_entry$predict_func(mod_i, x_new, task = object$task)
 

@@ -98,14 +98,8 @@ register_evaluator(
     if (!requireNamespace("lightgbm", quietly = TRUE)) {
       stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
     }
-    if (!is.null(x_train)) {
-      if (!is.matrix(x_train)) x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
-      x_train[!is.finite(x_train)] <- NA
-    }
-    if (!is.null(x_val)) {
-      if (!is.matrix(x_val)) x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
-      x_val[!is.finite(x_val)] <- NA
-    }
+    x_train <- .sanitize_feature_matrix(x_train)
+    x_val   <- .sanitize_feature_matrix(x_val)
     dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
     extra_params <- list(...)
     y_val <- extra_params$y_val
@@ -223,10 +217,7 @@ register_evaluator(
     if (!requireNamespace("lightgbm", quietly = TRUE)) {
       stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
     }
-    if (!is.null(x_new)) {
-      if (!is.matrix(x_new)) x_new <- if (is.data.frame(x_new)) data.matrix(x_new) else as.matrix(x_new)
-      x_new[!is.finite(x_new)] <- NA
-    }
+    x_new <- .sanitize_feature_matrix(x_new)
     if (!is.null(model$best_iter) && model$best_iter > 0) {
       stats::predict(model, x_new, num_iteration = model$best_iter)
     } else {
@@ -243,15 +234,9 @@ register_evaluator(
     if (!requireNamespace("xgboost", quietly = TRUE)) {
       stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
     }
-    if (!is.null(x_train)) {
-      if (!is.matrix(x_train)) x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
-      x_train[!is.finite(x_train)] <- NA
-    }
-    if (!is.null(x_val)) {
-      if (!is.matrix(x_val)) x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
-      x_val[!is.finite(x_val)] <- NA
-    }
-    dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train)
+    x_train <- .sanitize_feature_matrix(x_train)
+    x_val   <- .sanitize_feature_matrix(x_val)
+    dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA)
     extra_params <- list(...)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
@@ -319,7 +304,7 @@ register_evaluator(
     needs_val <- use_custom_eval ||
       (!is.null(early_stopping_rounds) && early_stopping_rounds > 0)
     if (needs_val && !is.null(x_val) && !is.null(y_val)) {
-      dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val)
+      dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val, missing = NA)
       evals$val <- dval_metric
     }
     if (length(evals) <= 1L) {
@@ -357,7 +342,7 @@ register_evaluator(
     best_iter <- .xgb_best_iter(model)
 
     preds <- if (!is.null(x_val)) {
-      dval <- xgboost::xgb.DMatrix(data = x_val)
+      dval <- xgboost::xgb.DMatrix(data = x_val, missing = NA)
       p <- if (!is.null(best_iter) && best_iter >= 1) {
         stats::predict(model, dval, iterationrange = c(1, best_iter + 1))
       } else {
@@ -387,12 +372,9 @@ register_evaluator(
     if (!requireNamespace("xgboost", quietly = TRUE)) {
       stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
     }
-    if (!is.null(x_new)) {
-      if (!is.matrix(x_new)) x_new <- if (is.data.frame(x_new)) data.matrix(x_new) else as.matrix(x_new)
-      x_new[!is.finite(x_new)] <- NA
-    }
+    x_new <- .sanitize_feature_matrix(x_new)
     best_iter <- .xgb_best_iter(model)
-    dmatrix <- xgboost::xgb.DMatrix(data = x_new)
+    dmatrix <- xgboost::xgb.DMatrix(data = x_new, missing = NA)
     preds <- if (!is.null(best_iter) && best_iter >= 1) {
       stats::predict(model, dmatrix, iterationrange = c(1, best_iter + 1))
     } else {
@@ -412,14 +394,8 @@ register_evaluator(
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
 
-    if (!is.null(x_train)) {
-      if (!is.matrix(x_train)) x_train <- if (is.data.frame(x_train)) data.matrix(x_train) else as.matrix(x_train)
-      x_train[!is.finite(x_train)] <- NA
-    }
-    if (!is.null(x_val)) {
-      if (!is.matrix(x_val)) x_val <- if (is.data.frame(x_val)) data.matrix(x_val) else as.matrix(x_val)
-      x_val[!is.finite(x_val)] <- NA
-    }
+    x_train <- .sanitize_feature_matrix(x_train)
+    x_val   <- .sanitize_feature_matrix(x_val)
 
     df_train <- as.data.frame(x_train)
     df_train[] <- lapply(df_train, as.numeric)
@@ -504,10 +480,7 @@ register_evaluator(
     if (system.file(package = "catboost") == "") {
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
-    if (!is.null(x_new)) {
-      if (!is.matrix(x_new)) x_new <- if (is.data.frame(x_new)) data.matrix(x_new) else as.matrix(x_new)
-      x_new[!is.finite(x_new)] <- NA
-    }
+    x_new <- .sanitize_feature_matrix(x_new)
     df_new <- as.data.frame(x_new)
     df_new[] <- lapply(df_new, as.numeric)
     dval <- catboost::catboost.load_pool(data = df_new)
