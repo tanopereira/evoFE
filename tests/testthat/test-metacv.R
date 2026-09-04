@@ -319,7 +319,8 @@ test_that("metacv computes honest non-resubstitution baseline fitness", {
 
   # Check new top-level recipe fields
   expect_equal(recipe$baseline_fitness, base_fit)
-  expect_equal(recipe$improvement, recipe$best_individual$fitness - base_fit)
+  expect_equal(recipe$improvement, recipe$ensemble_val_fitness - base_fit)
+  expect_equal(recipe$single_best_improvement, recipe$best_individual$fitness - base_fit)
   expect_true(is.numeric(recipe$headroom_closed))
   expect_equal(length(recipe$island_baselines), 3)
   expect_equal(length(recipe$island_improvements), 3)
@@ -402,9 +403,20 @@ test_that("metacv_mode validation and task coverage for ensemble and tournament"
   ens_print <- utils::capture.output(print(rec_mc))
   expect_true(any(grepl("An evoFE Island Ensemble \\(MetaCV\\)", ens_print)))
   expect_true(any(grepl("Active Islands:       3 / 3", ens_print)))
+  expect_equal(rec_mc$headroom_closed, rec_mc$ensemble_headroom_closed)
+  expect_equal(rec_mc$improvement, rec_mc$ensemble_improvement)
+  expect_true(!is.null(rec_mc$single_best_improvement))
+  expect_true(!is.null(rec_mc$single_best_headroom_closed))
+
+  if (!is.null(rec_mc$ensemble_headroom_closed) && is.finite(rec_mc$ensemble_headroom_closed)) {
+    expected_hd_str <- sprintf("%5.1f%%", rec_mc$ensemble_headroom_closed * 100)
+    expect_true(any(grepl(expected_hd_str, ens_print, fixed = TRUE)))
+  }
 
   ens_summary <- utils::capture.output(print(summary(rec_mc)))
   expect_true(any(grepl("Summary of evoFE MetaCV Ensemble", ens_summary)))
+  sum_mc <- summary(rec_mc)
+  expect_equal(sum_mc$headroom_closed, rec_mc$ensemble_headroom_closed)
 
   # Confirmation holdout scoring with metacv ensemble
   rec_holdout <- evolve_features(
@@ -422,5 +434,11 @@ test_that("metacv_mode validation and task coverage for ensemble and tournament"
   expect_s3_class(rec_holdout, "evo_ensemble")
   expect_true(!is.null(rec_holdout$best_individual$holdout_fitness))
   expect_true(is.numeric(rec_holdout$best_individual$holdout_fitness))
+
+  # Edge case: islands < 2 fails with clear error
+  expect_error(
+    evolve_features(df, "am", evaluation_strategy = "metacv", islands = 1, verbose = FALSE),
+    "requires at least 2 islands"
+  )
 })
 

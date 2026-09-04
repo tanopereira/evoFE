@@ -2354,7 +2354,7 @@ evolve_features <- function(data, target_col, task = "classification",
     if (metacv_mode == "ensemble") {
       # ENSEMBLE MODE: Skip the K^2 CV tournament.
       oof_preds <- metacv_island_oof_preds
-      island_best_fitness <- sapply(island_best_individual, function(ind) ind$fitness)
+      island_best_fitness <- vapply(island_best_individual, function(ind) ind$fitness, numeric(1))
 
       ideal_metric <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
       island_headrooms <- vapply(seq_len(islands), function(j) {
@@ -2429,7 +2429,7 @@ evolve_features <- function(data, target_col, task = "classification",
         }
       }
       island_best_individual <- candidates
-      island_best_fitness <- sapply(candidates, function(ind) ind$fitness)
+      island_best_fitness <- vapply(candidates, function(ind) ind$fitness, numeric(1))
       tournament_fitness <- island_best_fitness
       winner_idx <- which.max(tournament_fitness)
       best_ind <- candidates[[winner_idx]]
@@ -2445,7 +2445,7 @@ evolve_features <- function(data, target_col, task = "classification",
 
   if (record && (row_split_islands || evaluation_strategy == "metacv")) {
     cands_list <- if (exists("candidates") && !is.null(candidates)) candidates else island_best_individual
-    tourn_fit <- if (exists("tournament_fitness") && !is.null(tournament_fitness)) tournament_fitness else sapply(cands_list, function(ind) ind$fitness)
+    tourn_fit <- if (exists("tournament_fitness") && !is.null(tournament_fitness)) tournament_fitness else vapply(cands_list, function(ind) ind$fitness, numeric(1))
     win_idx <- if (exists("winner_idx") && !is.null(winner_idx)) winner_idx else which.max(tourn_fit)
 
     tournament_data <- list(
@@ -2703,10 +2703,6 @@ evolve_features <- function(data, target_col, task = "classification",
     if (verbose) {
       message(sprintf("Training final MetaCV island models on full dataset (%d models)...", islands))
     }
-    y_full <- shared_full[[target_col]]
-    if (task == "multiclass") {
-      y_full <- as.integer(factor(y_full, levels = classes)) - 1
-    }
 
     active_recipes <- list()
     active_models <- list()
@@ -2727,9 +2723,13 @@ evolve_features <- function(data, target_col, task = "classification",
       features_j <- setdiff(features_j, target_col)
 
       x_full_j <- .sanitize_feature_matrix(res_full_j$train[, features_j, with = FALSE])
+      y_full_j <- res_full_j$train[[target_col]]
+      if (task == "multiclass") {
+        y_full_j <- as.integer(factor(y_full_j, levels = classes)) - 1
+      }
 
       res_m_j <- train_model(
-        x_full_j, y_full,
+        x_full_j, y_full_j,
         task = task, evaluator = eval_j,
         threads = threads, num_class = num_class, metric = metric,
         verbose = FALSE, best_params = applied_ind_j$best_params, seed = seed, ...
@@ -2741,7 +2741,13 @@ evolve_features <- function(data, target_col, task = "classification",
     }
 
     winner_name <- paste0("island_", winner_idx)
-    best_ind <- active_recipes[[winner_name]]
+    applied_winner <- active_recipes[[winner_name]]
+    for (nm in names(best_ind)) {
+      if (is.null(applied_winner[[nm]])) {
+        applied_winner[[nm]] <- best_ind[[nm]]
+      }
+    }
+    best_ind <- applied_winner
     best_model <- active_models[[winner_name]]
     best_evaluator <- active_evaluators[[winner_name]]
 
@@ -2838,6 +2844,12 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
+  effective_fitness <- if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness)) {
+    ensemble_oof_fitness
+  } else {
+    best_ind$fitness
+  }
+
   search_gap <- NULL
   if (!is.null(best_ind$holdout_fitness) && !is.na(best_ind$holdout_fitness)) {
     val_score <- if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness)) {
@@ -2845,7 +2857,7 @@ evolve_features <- function(data, target_col, task = "classification",
     } else if (!is.null(best_ind$raw_fitness) && is.finite(best_ind$raw_fitness)) {
       best_ind$raw_fitness
     } else {
-      best_ind$fitness
+      effective_fitness
     }
     if (!is.null(val_score) && is.finite(val_score)) {
       search_gap <- best_ind$holdout_fitness - val_score
@@ -2856,12 +2868,6 @@ evolve_features <- function(data, target_col, task = "classification",
         ))
       }
     }
-  }
-
-  effective_fitness <- if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness)) {
-    ensemble_oof_fitness
-  } else {
-    best_ind$fitness
   }
 
   if (record) {
@@ -2921,6 +2927,14 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   ideal_recipe <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
+
+  is_metacv_ensemble <- (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness))
+  ens_impr <- if (is_metacv_ensemble) ensemble_oof_fitness - baseline_ind$fitness else NULL
+  ens_hd <- if (is_metacv_ensemble && !is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+    h_denom <- ideal_recipe - baseline_ind$fitness
+    if (abs(h_denom) < 1e-6) 0.0 else (ensemble_oof_fitness - baseline_ind$fitness) / h_denom
+  } else NULL
+
   res_obj <- list(
     best_individual = best_ind,
     history = pop,
@@ -2932,30 +2946,32 @@ evolve_features <- function(data, target_col, task = "classification",
     classes = classes,
     metric = metric,
     baseline_fitness = baseline_ind$fitness,
-    improvement = best_ind$fitness - baseline_ind$fitness,
-    headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+    improvement = if (is_metacv_ensemble) ens_impr else (best_ind$fitness - baseline_ind$fitness),
+    headroom_closed = if (is_metacv_ensemble) {
+      ens_hd
+    } else if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
       h_denom <- ideal_recipe - baseline_ind$fitness
       if (abs(h_denom) < 1e-6) 0.0 else (best_ind$fitness - baseline_ind$fitness) / h_denom
     } else NULL,
-    ensemble_improvement = if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness)) {
-      ensemble_oof_fitness - baseline_ind$fitness
-    } else NULL,
-    ensemble_headroom_closed = if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness) && !is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+    single_best_improvement = best_ind$fitness - baseline_ind$fitness,
+    single_best_headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
       h_denom <- ideal_recipe - baseline_ind$fitness
-      if (abs(h_denom) < 1e-6) 0.0 else (ensemble_oof_fitness - baseline_ind$fitness) / h_denom
+      if (abs(h_denom) < 1e-6) 0.0 else (best_ind$fitness - baseline_ind$fitness) / h_denom
     } else NULL,
+    ensemble_improvement = ens_impr,
+    ensemble_headroom_closed = ens_hd,
     island_baselines = if (islands > 1 && length(island_baseline_inds) == islands) {
       vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
     } else NULL,
     island_improvements = if (islands > 1 && length(island_baseline_inds) == islands && exists("island_best_individual")) {
       island_b <- vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
-      sapply(island_best_individual, function(ind) ind$fitness) - island_b
+      vapply(island_best_individual, function(ind) ind$fitness, numeric(1)) - island_b
     } else NULL,
     island_headroom_closed = if (islands > 1 && length(island_baseline_inds) == islands && exists("island_best_individual")) {
       island_b <- vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
       h_denoms <- ideal_recipe - island_b
       h_denoms[abs(h_denoms) < 1e-6] <- 1e-6
-      (sapply(island_best_individual, function(ind) ind$fitness) - island_b) / h_denoms
+      (vapply(island_best_individual, function(ind) ind$fitness, numeric(1)) - island_b) / h_denoms
     } else NULL,
     holdout_fitness = if (!is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NULL,
     search_gap = search_gap,

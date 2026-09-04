@@ -308,7 +308,7 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
 
 #' Print an evo_ensemble object
 #'
-#' Prints a human-readable summary of the Caruana island ensemble.
+#' Prints a human-readable summary of the island ensemble (Caruana, Stacked, or MetaCV).
 #'
 #' @param x An \code{evo_ensemble} object.
 #' @param ... Additional arguments (currently unused).
@@ -340,8 +340,9 @@ print.evo_ensemble <- function(x, ...) {
 
   if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
     cat(sprintf("  Baseline Score:       %.4f\n", x$baseline_fitness))
-    if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
-      cat(sprintf("  Headroom Closed:      %5.1f%%\n", x$headroom_closed * 100))
+    hr <- if (!is.null(x$ensemble_headroom_closed)) x$ensemble_headroom_closed else x$headroom_closed
+    if (!is.null(hr) && is.finite(hr)) {
+      cat(sprintf("  Headroom Closed:      %5.1f%%\n", hr * 100))
     }
   }
 
@@ -359,7 +360,7 @@ print.evo_ensemble <- function(x, ...) {
 
 #' Summary of an evo_ensemble object
 #'
-#' Computes and formats a detailed summary of the Caruana island ensemble.
+#' Computes and formats a detailed summary of the island ensemble (Caruana, Stacked, or MetaCV).
 #'
 #' @param object An \code{evo_ensemble} object.
 #' @param ... Additional arguments (currently unused).
@@ -378,6 +379,8 @@ summary.evo_ensemble <- function(object, ...) {
     stringsAsFactors = FALSE
   )
 
+  hr <- if (!is.null(object$ensemble_headroom_closed)) object$ensemble_headroom_closed else object$headroom_closed
+
   res <- list(
     evaluator = object$evaluator,
     task = object$task,
@@ -387,7 +390,8 @@ summary.evo_ensemble <- function(object, ...) {
     single_best_fitness = object$single_best_fitness,
     ensemble_val_fitness = object$ensemble_val_fitness,
     baseline_fitness = object$baseline_fitness,
-    headroom_closed = object$headroom_closed,
+    headroom_closed = hr,
+    ensemble_headroom_closed = object$ensemble_headroom_closed,
     island_baselines = object$island_baselines,
     island_headroom_closed = object$island_headroom_closed,
     active_count = length(active_names),
@@ -401,7 +405,7 @@ summary.evo_ensemble <- function(object, ...) {
 
 #' Print summary of an evo_ensemble object
 #'
-#' Prints summary details of the Caruana island ensemble.
+#' Prints summary details of the island ensemble (Caruana, Stacked, or MetaCV).
 #'
 #' @param x A \code{summary_evo_ensemble} object.
 #' @param ... Additional arguments (currently unused).
@@ -425,8 +429,9 @@ print.summary_evo_ensemble <- function(x, ...) {
   if (!is.null(x$baseline_fitness)) {
     cat(sprintf("Baseline Metric Score:  %.4f\n", x$baseline_fitness))
   }
-  if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
-    cat(sprintf("Headroom Closed:        %5.1f%%\n", x$headroom_closed * 100))
+  hr <- if (!is.null(x$ensemble_headroom_closed)) x$ensemble_headroom_closed else x$headroom_closed
+  if (!is.null(hr) && is.finite(hr)) {
+    cat(sprintf("Headroom Closed:        %5.1f%%\n", hr * 100))
   }
   if (!is.null(x$island_headroom_closed)) {
     cat("\nHeadroom Breakdown by Island:\n")
