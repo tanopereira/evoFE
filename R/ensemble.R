@@ -190,8 +190,11 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     if (is.matrix(p)) nrow(p) else length(p)
   }, integer(1))
 
-  # Check if row counts are inhomogeneous or don't cover the full dataset when mixing recipes or in metacv
-  needs_harmonization <- length(unique(cand_row_counts)) > 1L ||
+  cand_has_na <- any(vapply(val_preds_list, anyNA, logical(1)))
+
+  # Check if row counts are inhomogeneous, contain NAs, or don't cover the full dataset when mixing recipes or in metacv
+  needs_harmonization <- cand_has_na ||
+    length(unique(cand_row_counts)) > 1L ||
     (length(recipe_list) > 1L && any(cand_row_counts != nrow(data))) ||
     (identical(first_recipe$evaluation_strategy, "metacv") && any(cand_row_counts != nrow(data)))
 
@@ -232,16 +235,23 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         task = task, cv_folds = common_folds,
         evaluation_strategy = "cv", fold_ids = common_fold_ids,
         evaluator = cand_eval, threads = threads,
-        metric = metric, verbose = FALSE, allow_prune = FALSE
+        metric = metric, verbose = FALSE, allow_prune = TRUE
       )
       val_preds_list[[nm]] <- ind_re$val_preds
       cand_metadata[[nm]]$ind <- ind_re
     }
     stored_folds <- common_fold_ids
     y_val <- cand_metadata[[1]]$ind$y_val
+    if (is.null(y_val) || any(is.na(y_val))) {
+      y_val <- if (task == "multiclass") {
+        as.integer(factor(data[[target_col]], levels = classes)) - 1
+      } else {
+        data[[target_col]]
+      }
+    }
   } else {
     y_val <- cand_metadata[[1]]$ind$y_val
-    if (is.null(y_val)) {
+    if (is.null(y_val) || any(is.na(y_val))) {
       y_val <- if (task == "multiclass") {
         as.integer(factor(data[[target_col]], levels = classes)) - 1
       } else {
@@ -732,7 +742,15 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
       for (j in seq_len(n_candidates)) {
         if (w[j] <= 0) next
         p <- val_preds_list[[j]]
+        p[!is.finite(p)] <- 0
         out <- if (is.null(out)) w[j] * p else out + w[j] * p
+      }
+      if (!is.null(out)) {
+        rs <- rowSums(out)
+        pos <- rs > 0
+        if (any(pos)) {
+          out[pos, ] <- out[pos, , drop = FALSE] / rs[pos]
+        }
       }
       out
     }

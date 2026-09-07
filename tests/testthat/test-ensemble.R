@@ -317,3 +317,27 @@ test_that("ensemble_islands harmonizes mixed recipes with different evaluation s
   expect_true(is.matrix(preds_c) || is.numeric(preds_c))
 })
 
+test_that("ensemble_islands method = 'stack' handles metacv tournament recipes with incomplete fold predictions", {
+  skip_on_cran()
+  set.seed(42)
+  res <- evolve_features(
+    iris, "Species",
+    task = "multiclass",
+    evaluation_strategy = "metacv",
+    metacv_mode = "tournament",
+    islands = 3,
+    generations = 1,
+    pop_size = 3,
+    verbose = FALSE
+  )
+  ens <- ensemble_islands(res, iris, method = "stack", verbose = FALSE)
+  expect_s3_class(ens, "evo_ensemble")
+  expect_equal(ens$method, "stack")
+  expect_true(is.finite(ens$stack_cv_fitness))
+  expect_true(ens$stack_cv_fitness > -Inf)
+  expect_true(is.finite(ens$ensemble_val_fitness))
+  expect_true(ens$ensemble_val_fitness > -Inf)
+  expect_equal(sum(ens$weights), 1, tolerance = 1e-8)
+})
+
+
