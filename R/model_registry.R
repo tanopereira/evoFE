@@ -753,6 +753,9 @@ register_evaluator(
     if (!requireNamespace("torch", quietly = TRUE)) {
       stop("The 'torch' package is required for the 'realmlp' evaluator. Please install it via install.packages('torch') and torch::install_torch().")
     }
+    if (!"package:torch" %in% search()) {
+      suppressPackageStartupMessages(require("torch", quietly = TRUE, character.only = TRUE))
+    }
 
     extra_params <- list(...)
     y_val <- extra_params$y_val
@@ -818,10 +821,10 @@ register_evaluator(
     } else if (task %in% c("classification", "multiclass")) {
       net <- realmlp_ns$Standalone_RealMLP_TD_S_Classifier$new(device = device)
 
-      levels_target <- if (task == "multiclass" && !is.null(num_class)) {
-        seq(0, num_class - 1)
-      } else {
-        unique(y_train)
+      levels_target <- if (task == "classification") {
+        if (is.factor(y_train)) levels(y_train) else c(0, 1)
+      } else if (task == "multiclass") {
+        if (!is.null(num_class)) seq(0, num_class - 1) else if (is.factor(y_train)) levels(y_train) else sort(unique(y_train))
       }
 
       y_train_fac <- factor(y_train, levels = levels_target)
@@ -838,9 +841,23 @@ register_evaluator(
       if (!is.null(df_val)) {
         probs <- net$predict_proba(df_val)
         if (task == "classification") {
-          preds <- if (is.matrix(probs) && ncol(probs) >= 2) probs[, 2] else as.numeric(probs)
+          pos_idx <- which(as.character(net$classes_) == "1")
+          if (length(pos_idx) == 0 && is.matrix(probs) && ncol(probs) >= 2) {
+            pos_idx <- 2
+          }
+          preds <- if (length(pos_idx) == 1 && is.matrix(probs)) {
+            probs[, pos_idx]
+          } else {
+            as.numeric(probs)
+          }
         } else {
-          preds <- as.matrix(probs)
+          probs <- as.matrix(probs)
+          expected_cols <- as.character(levels_target)
+          cur_cols <- as.character(net$classes_)
+          if (length(expected_cols) > 0 && !identical(cur_cols, expected_cols) && all(expected_cols %in% cur_cols)) {
+            probs <- probs[, match(expected_cols, cur_cols), drop = FALSE]
+          }
+          preds <- probs
         }
       }
     } else {
@@ -861,7 +878,8 @@ register_evaluator(
 
     wrapped_model <- list(
       net = net,
-      col_meds = col_meds
+      col_meds = col_meds,
+      levels_target = if (task %in% c("classification", "multiclass")) levels_target else NULL
     )
 
     list(model = wrapped_model, predictions = preds, importances = NULL)
@@ -870,6 +888,9 @@ register_evaluator(
   predict_func = function(model, x_new, task, ...) {
     if (!requireNamespace("realmlp", quietly = TRUE)) {
       stop("The 'realmlp' package is required for the 'realmlp' evaluator.")
+    }
+    if (!"package:torch" %in% search()) {
+      suppressPackageStartupMessages(require("torch", quietly = TRUE, character.only = TRUE))
     }
     net <- model$net
     col_meds <- model$col_meds
@@ -889,9 +910,23 @@ register_evaluator(
       as.numeric(net$predict(df_new))
     } else if (task == "classification") {
       probs <- net$predict_proba(df_new)
-      if (is.matrix(probs) && ncol(probs) >= 2) probs[, 2] else as.numeric(probs)
+      pos_idx <- which(as.character(net$classes_) == "1")
+      if (length(pos_idx) == 0 && is.matrix(probs) && ncol(probs) >= 2) {
+        pos_idx <- 2
+      }
+      if (length(pos_idx) == 1 && is.matrix(probs)) {
+        probs[, pos_idx]
+      } else {
+        as.numeric(probs)
+      }
     } else if (task == "multiclass") {
-      as.matrix(net$predict_proba(df_new))
+      probs <- as.matrix(net$predict_proba(df_new))
+      expected_cols <- as.character(model$levels_target)
+      cur_cols <- as.character(net$classes_)
+      if (length(expected_cols) > 0 && !identical(cur_cols, expected_cols) && all(expected_cols %in% cur_cols)) {
+        probs <- probs[, match(expected_cols, cur_cols), drop = FALSE]
+      }
+      probs
     }
   },
 
