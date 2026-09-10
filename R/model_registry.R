@@ -149,7 +149,7 @@ register_evaluator(
       params$metric <- "None"
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -287,7 +287,7 @@ register_evaluator(
       params$eval_metric <- NULL
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -425,7 +425,8 @@ register_evaluator(
     )
 
     control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
-                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds")
+                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds",
+                        "device", "realmlp_device")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -765,10 +766,10 @@ register_evaluator(
     # Respect early_stopping_rounds consistent with LightGBM and XGBoost
     use_es <- !is.null(early_stopping_rounds) && early_stopping_rounds > 0 && !is.null(x_val) && !is.null(y_val)
 
-    device <- if (!is.null(extra_params$device)) {
+    device <- if (!is.null(extra_params$realmlp_device)) {
+      extra_params$realmlp_device
+    } else if (!is.null(extra_params$device)) {
       extra_params$device
-    } else if (torch::cuda_is_available()) {
-      "cuda"
     } else {
       "cpu"
     }
