@@ -757,6 +757,12 @@ register_evaluator(
       suppressPackageStartupMessages(require("torch", quietly = TRUE, character.only = TRUE))
     }
 
+    if (!is.null(threads) && is.numeric(threads) && threads >= 1) {
+      if (torch::torch_get_num_threads() != as.integer(threads)) {
+        try(torch::torch_set_num_threads(as.integer(threads)), silent = TRUE)
+      }
+    }
+
     extra_params <- list(...)
     y_val <- extra_params$y_val
     early_stopping_rounds <- extra_params$early_stopping_rounds
