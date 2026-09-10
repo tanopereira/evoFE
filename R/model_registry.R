@@ -742,6 +742,9 @@ register_evaluator(
   }
 )
 
+# Internal session environment for RealMLP evaluator state
+.realmlp_env <- new.env(parent = emptyenv())
+
 # 6. RealMLP Evaluator (frankiethull/realmlp with torch)
 register_evaluator(
   "realmlp",
@@ -750,6 +753,15 @@ register_evaluator(
     if (!requireNamespace("realmlp", quietly = TRUE)) {
       stop("The 'realmlp' package is required for the 'realmlp' evaluator. Please install it via pak::pak('frankiethull/realmlp').")
     }
+
+    if (!is.null(threads) && is.numeric(threads) && threads >= 1) {
+      target_th <- as.integer(threads)
+      # Pre-set OMP_NUM_THREADS before torch initializes its native thread pool
+      if (!"torch" %in% loadedNamespaces()) {
+        Sys.setenv(OMP_NUM_THREADS = as.character(target_th))
+      }
+    }
+
     if (!requireNamespace("torch", quietly = TRUE)) {
       stop("The 'torch' package is required for the 'realmlp' evaluator. Please install it via install.packages('torch') and torch::install_torch().")
     }
@@ -758,8 +770,14 @@ register_evaluator(
     }
 
     if (!is.null(threads) && is.numeric(threads) && threads >= 1) {
-      if (torch::torch_get_num_threads() != as.integer(threads)) {
-        try(torch::torch_set_num_threads(as.integer(threads)), silent = TRUE)
+      target_th <- as.integer(threads)
+      # libtorch ParallelNative only allows setting threads once before parallel work starts.
+      # Guard against repeatedly calling torch_set_num_threads to avoid ParallelNative C++ warnings.
+      if (!identical(.realmlp_env$last_set_threads, target_th)) {
+        .realmlp_env$last_set_threads <- target_th
+        if (torch::torch_get_num_threads() != target_th) {
+          try(torch::torch_set_num_threads(target_th), silent = TRUE)
+        }
       }
     }
 
