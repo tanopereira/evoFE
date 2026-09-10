@@ -785,8 +785,15 @@ register_evaluator(
     y_val <- extra_params$y_val
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
+    # Ensure deterministic torch weight initialization for stable fitness evaluations,
+    # and restore torch RNG state on exit so caller session state is unaffected (CRAN-compliant)
+    old_torch_state <- if (requireNamespace("torch", quietly = TRUE)) tryCatch(torch::torch_get_rng_state(), error = function(e) NULL) else NULL
+    if (!is.null(old_torch_state)) {
+      on.exit(tryCatch(torch::torch_set_rng_state(old_torch_state), error = function(e) NULL), add = TRUE)
+    }
+
     seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else 42L
-    if (!is.null(seed_val) && is.numeric(seed_val)) {
+    if (!is.null(seed_val) && is.numeric(seed_val) && requireNamespace("torch", quietly = TRUE)) {
       torch::torch_manual_seed(seed_val)
     }
 
