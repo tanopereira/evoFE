@@ -740,3 +740,157 @@ register_evaluator(
     }
   }
 )
+
+# 6. RealMLP Evaluator (frankiethull/realmlp with torch)
+register_evaluator(
+  "realmlp",
+  train_func = function(x_train, y_train, x_val = NULL, task = "regression",
+                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+    if (!requireNamespace("realmlp", quietly = TRUE)) {
+      stop("The 'realmlp' package is required for the 'realmlp' evaluator. Please install it via pak::pak('frankiethull/realmlp').")
+    }
+    if (!requireNamespace("torch", quietly = TRUE)) {
+      stop("The 'torch' package is required for the 'realmlp' evaluator. Please install it via install.packages('torch') and torch::install_torch().")
+    }
+
+    extra_params <- list(...)
+    y_val <- extra_params$y_val
+    early_stopping_rounds <- extra_params$early_stopping_rounds
+    verbose <- if (!is.null(extra_params$verbose)) extra_params$verbose else FALSE
+
+    # Respect early_stopping_rounds consistent with LightGBM and XGBoost
+    use_es <- !is.null(early_stopping_rounds) && early_stopping_rounds > 0 && !is.null(x_val) && !is.null(y_val)
+
+    device <- if (!is.null(extra_params$device)) {
+      extra_params$device
+    } else if (torch::cuda_is_available()) {
+      "cuda"
+    } else {
+      "cpu"
+    }
+
+    x_train <- .sanitize_feature_matrix(x_train)
+    x_val   <- .sanitize_feature_matrix(x_val)
+
+    df_train <- as.data.frame(x_train)
+    df_val   <- if (!is.null(x_val)) as.data.frame(x_val) else NULL
+
+    # Safeguard against residual NAs before torch tensor ingestion
+    col_meds <- vapply(df_train, function(col) {
+      m <- stats::median(col[!is.na(col) & is.finite(col)])
+      if (is.na(m) || !is.finite(m)) 0 else m
+    }, numeric(1))
+
+    impute_df <- function(df) {
+      if (is.null(df)) return(NULL)
+      for (nm in names(df)) {
+        na_mask <- is.na(df[[nm]]) | !is.finite(df[[nm]])
+        if (any(na_mask)) df[[nm]][na_mask] <- col_meds[[nm]]
+      }
+      df
+    }
+
+    df_train <- impute_df(df_train)
+    df_val   <- impute_df(df_val)
+
+    realmlp_ns <- asNamespace("realmlp")
+    t0 <- Sys.time()
+
+    # 1. Regression
+    if (task == "regression") {
+      net <- realmlp_ns$Standalone_RealMLP_TD_S_Regressor$new(device = device)
+
+      net$fit(
+        X = df_train,
+        y = as.numeric(y_train),
+        X_val = if (use_es) df_val else NULL,
+        y_val = if (use_es) as.numeric(y_val) else NULL
+      )
+
+      preds <- if (!is.null(df_val)) as.numeric(net$predict(df_val)) else NULL
+
+    # 2. Classification (Binary & Multiclass)
+    } else if (task %in% c("classification", "multiclass")) {
+      net <- realmlp_ns$Standalone_RealMLP_TD_S_Classifier$new(device = device)
+
+      levels_target <- if (task == "multiclass" && !is.null(num_class)) {
+        seq(0, num_class - 1)
+      } else {
+        unique(y_train)
+      }
+
+      y_train_fac <- factor(y_train, levels = levels_target)
+      y_val_fac   <- if (!is.null(y_val)) factor(y_val, levels = levels_target) else NULL
+
+      net$fit(
+        X = df_train,
+        y = y_train_fac,
+        X_val = if (use_es) df_val else NULL,
+        y_val = if (use_es) y_val_fac else NULL
+      )
+
+      preds <- NULL
+      if (!is.null(df_val)) {
+        probs <- net$predict_proba(df_val)
+        if (task == "classification") {
+          preds <- if (is.matrix(probs) && ncol(probs) >= 2) probs[, 2] else as.numeric(probs)
+        } else {
+          preds <- as.matrix(probs)
+        }
+      }
+    } else {
+      stop(sprintf("Unsupported task '%s' for RealMLP evaluator.", task))
+    }
+
+    if (verbose) {
+      elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+      message(sprintf("    [RealMLP %s] Fitted on %s (Early stopping: %s, %.2fs)",
+                      task, device,
+                      if (use_es) paste0("patience=", early_stopping_rounds) else "OFF",
+                      elapsed))
+    }
+
+    wrapped_model <- list(
+      net = net,
+      col_meds = col_meds
+    )
+
+    list(model = wrapped_model, predictions = preds, importances = NULL)
+  },
+
+  predict_func = function(model, x_new, task, ...) {
+    if (!requireNamespace("realmlp", quietly = TRUE)) {
+      stop("The 'realmlp' package is required for the 'realmlp' evaluator.")
+    }
+    net <- model$net
+    col_meds <- model$col_meds
+    x_new <- .sanitize_feature_matrix(x_new)
+    df_new <- as.data.frame(x_new)
+
+    if (!is.null(col_meds)) {
+      for (nm in names(df_new)) {
+        if (nm %in% names(col_meds)) {
+          na_mask <- is.na(df_new[[nm]]) | !is.finite(df_new[[nm]])
+          if (any(na_mask)) df_new[[nm]][na_mask] <- col_meds[[nm]]
+        }
+      }
+    }
+
+    if (task == "regression") {
+      as.numeric(net$predict(df_new))
+    } else if (task == "classification") {
+      probs <- net$predict_proba(df_new)
+      if (is.matrix(probs) && ncol(probs) >= 2) probs[, 2] else as.numeric(probs)
+    } else if (task == "multiclass") {
+      as.matrix(net$predict_proba(df_new))
+    }
+  },
+
+  cleanup_func = function(model) {
+    if (requireNamespace("torch", quietly = TRUE)) {
+      if (torch::cuda_is_available()) torch::cuda_empty_cache()
+      gc(verbose = FALSE)
+    }
+  }
+)
+

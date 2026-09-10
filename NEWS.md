@@ -3,6 +3,7 @@
 ## New Features
 
 * **Stacked ensembling (`method = "stack"`)** in `ensemble_islands()`: a non-negative elastic-net meta-learner (via `glmnet`, `stack_alpha` default `0.5`) fits island weights on out-of-fold predictions, with an honest nested cross-validated performance estimate (`stack_cv_fitness`). The evolution fold partition is reused when available; otherwise internal balanced folds are used. Weights are sparse and normalized to sum to 1, and the existing lazy-training and weighted-prediction paths are shared with Caruana selection.
+* **RealMLP evaluator (`evaluator = "realmlp"`)**: Added support for RealMLP neural networks via the `frankiethull/realmlp` R package and `torch`. Supports regression, binary classification, and multiclass tasks, with optional MPS/CUDA/CPU device acceleration and conditional early stopping aligned with LightGBM and XGBoost.
 * **Multi-threaded UMAP SGD optimization**: `umap`, `umap_genie`, and `umap_lumbermark` now configure `n_sgd_threads = "auto"` in `uwot::umap()` and `uwot::umap_transform()` for parallelized SGD layout optimization.
 
 ## Bug Fixes
