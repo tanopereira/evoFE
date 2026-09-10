@@ -785,6 +785,11 @@ register_evaluator(
     y_val <- extra_params$y_val
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
+    seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else 42L
+    if (!is.null(seed_val) && is.numeric(seed_val)) {
+      torch::torch_manual_seed(seed_val)
+    }
+
     opt_verbose <- getOption("evoFE.verbose", 0)
     verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
     show_log <- isTRUE(verbose_arg) || (is.numeric(verbose_arg) && verbose_arg >= 1) || isTRUE(opt_verbose) || (is.numeric(opt_verbose) && opt_verbose >= 1)
