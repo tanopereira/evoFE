@@ -756,7 +756,11 @@ register_evaluator(
     extra_params <- list(...)
     y_val <- extra_params$y_val
     early_stopping_rounds <- extra_params$early_stopping_rounds
-    verbose <- if (!is.null(extra_params$verbose)) extra_params$verbose else FALSE
+
+    opt_verbose <- getOption("evoFE.verbose", 0)
+    verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
+    show_log <- isTRUE(verbose_arg) || (is.numeric(verbose_arg) && verbose_arg >= 1) || isTRUE(opt_verbose) || (is.numeric(opt_verbose) && opt_verbose >= 1)
+    is_detail <- isTRUE(verbose_arg >= 2) || isTRUE(opt_verbose >= 2)
 
     # Respect early_stopping_rounds consistent with LightGBM and XGBoost
     use_es <- !is.null(early_stopping_rounds) && early_stopping_rounds > 0 && !is.null(x_val) && !is.null(y_val)
@@ -842,12 +846,16 @@ register_evaluator(
       stop(sprintf("Unsupported task '%s' for RealMLP evaluator.", task))
     }
 
-    if (verbose) {
+    if (show_log) {
       elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-      message(sprintf("    [RealMLP %s] Fitted on %s (Early stopping: %s, %.2fs)",
-                      task, device,
-                      if (use_es) paste0("patience=", early_stopping_rounds) else "OFF",
-                      elapsed))
+      msg <- sprintf("    [RealMLP %s] Fitted %d rows on %s (Early stopping: %s, %.3fs)",
+                     task, nrow(df_train), device,
+                     if (use_es) paste0("patience=", early_stopping_rounds) else "OFF",
+                     elapsed)
+      if (is_detail) {
+        msg <- sprintf("%s [Features: %d]", msg, ncol(df_train))
+      }
+      message(msg)
     }
 
     wrapped_model <- list(
