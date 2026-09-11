@@ -912,13 +912,30 @@ register_evaluator(
       message(msg)
     }
 
+    importances <- tryCatch({
+      m <- net$model_$model_
+      s <- as.numeric(m[[1]]$scale$abs()$cpu())
+      w1 <- as.matrix(m[[2]]$weight$cpu())
+      imp <- s * sqrt(rowSums(w1^2))
+      if (length(imp) == ncol(df_train)) {
+        names(imp) <- colnames(df_train)
+        sum_imp <- sum(imp)
+        if (is.finite(sum_imp) && sum_imp > 0) {
+          imp <- imp / sum_imp
+        }
+        imp
+      } else {
+        NULL
+      }
+    }, error = function(e) NULL)
+
     wrapped_model <- list(
       net = net,
       col_meds = col_meds,
       levels_target = if (task %in% c("classification", "multiclass")) levels_target else NULL
     )
 
-    list(model = wrapped_model, predictions = preds, importances = NULL)
+    list(model = wrapped_model, predictions = preds, importances = importances)
   },
 
   predict_func = function(model, x_new, task, ...) {

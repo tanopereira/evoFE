@@ -50,3 +50,29 @@ test_that("compute_calibrated_mae works correctly", {
   # valid pairs are c(1, 2, 4) vs c(1, 2, 4) -> perfect
   expect_equal(val_na, 0.0, tolerance = 1e-5)
 })
+
+test_that("realmlp evaluator returns non-null feature importances", {
+  skip_if_not_installed("realmlp")
+  skip_if_not_installed("torch")
+
+  set.seed(42)
+  d <- data.frame(
+    x1 = rnorm(50),
+    x2 = rnorm(50),
+    y = rnorm(50)
+  )
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  res <- ev$train_func(
+    x_train = d[, c("x1", "x2")],
+    y_train = d$y,
+    task = "regression",
+    seed = 42
+  )
+
+  expect_true(!is.null(res$importances))
+  expect_equal(length(res$importances), 2)
+  expect_named(res$importances, c("x1", "x2"))
+  expect_equal(sum(res$importances), 1.0, tolerance = 1e-5)
+  expect_true(all(res$importances >= 0))
+})
