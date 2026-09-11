@@ -3,6 +3,7 @@
 #' Handles data.frames, factors/characters, non-finites (Inf, -Inf, NaN),
 #' and numbers exceeding 32-bit single-precision float range (~3.402823e38),
 #' converting all out-of-bounds or non-finite values to NA_real_.
+#' @noRd
 .sanitize_feature_matrix <- function(x) {
   if (is.null(x)) return(NULL)
   if (!is.matrix(x)) {

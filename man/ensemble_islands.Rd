@@ -2,13 +2,13 @@
 % Please edit documentation in R/ensemble.R
 \name{ensemble_islands}
 \alias{ensemble_islands}
-\title{Caruana and Stacked Island Ensembling}
+\title{Caruana, Stacked, and Equal-Weight Island Ensembling}
 \usage{
 ensemble_islands(
   recipe,
   data,
   target_col = NULL,
-  method = c("caruana", "stack"),
+  method = c("caruana", "stack", "equal"),
   caruana_rounds = 50,
   bag_samples = FALSE,
   sample_ratio = 0.8,
@@ -30,9 +30,10 @@ during evolution. Required for lazy final model training of surviving islands.}
 it is inferred from the recipe or data.}
 
 \item{method}{Character string. Ensembling strategy: \code{"caruana"} (greedy forward
-selection with replacement) or \code{"stack"} (non-negative elastic-net stacking of
+selection with replacement), \code{"stack"} (non-negative elastic-net stacking of
 out-of-fold island predictions with an honest nested cross-validated performance
-estimate). Default: \code{"caruana"}.}
+estimate), or \code{"equal"} (uniform weighting across all islands; aliases \code{"uniform"},
+\code{"average"}). Default: \code{"caruana"}.}
 
 \item{caruana_rounds}{Positive integer. Number of greedy selection rounds (default: 50).
 Only used when \code{method = "caruana"}.}
@@ -79,9 +80,10 @@ An \code{evo_ensemble} object containing:
 }
 \description{
 Performs ensemble selection over the validation/out-of-fold predictions from evolved
-islands, creating an optimal multi-model ensemble. Two methods are available:
-Caruana greedy forward selection with replacement (default), or non-negative
-elastic-net stacking with an honest nested cross-validated performance estimate.
+islands, creating an optimal multi-model ensemble. Three methods are available:
+Caruana greedy forward selection with replacement (default), non-negative
+elastic-net stacking with an honest nested cross-validated performance estimate,
+or equal/uniform weighting ($w_j = 1/K$).
 }
 \examples{
 \donttest{

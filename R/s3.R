@@ -318,6 +318,8 @@ print.evo_ensemble <- function(x, ...) {
   method <- if (!is.null(x$method)) x$method else "caruana"
   method_str <- if (method == "stack") {
     "Stacked"
+  } else if (method %in% c("equal", "uniform", "average")) {
+    "Equal Weights"
   } else if (method == "metacv") {
     "MetaCV"
   } else {
@@ -415,6 +417,8 @@ print.summary_evo_ensemble <- function(x, ...) {
   method <- if (is.null(x$method)) "caruana" else x$method
   method_str <- if (method == "stack") {
     "Stacked"
+  } else if (method %in% c("equal", "uniform", "average")) {
+    "Equal Weights"
   } else if (method == "metacv") {
     "MetaCV"
   } else {

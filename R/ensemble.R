@@ -1,9 +1,10 @@
-#' Caruana and Stacked Island Ensembling
+#' Caruana, Stacked, and Equal-Weight Island Ensembling
 #'
 #' Performs ensemble selection over the validation/out-of-fold predictions from evolved
-#' islands, creating an optimal multi-model ensemble. Two methods are available:
-#' Caruana greedy forward selection with replacement (default), or non-negative
-#' elastic-net stacking with an honest nested cross-validated performance estimate.
+#' islands, creating an optimal multi-model ensemble. Three methods are available:
+#' Caruana greedy forward selection with replacement (default), non-negative
+#' elastic-net stacking with an honest nested cross-validated performance estimate,
+#' or equal/uniform weighting ($w_j = 1/K$).
 #'
 #' @param recipe An \code{evo_recipe} object produced by \code{\link{evolve_features}}.
 #' @param data A data.frame or data.table containing the original training data used
@@ -11,9 +12,10 @@
 #' @param target_col Character string. Name of the target column. If \code{NULL},
 #'   it is inferred from the recipe or data.
 #' @param method Character string. Ensembling strategy: \code{"caruana"} (greedy forward
-#'   selection with replacement) or \code{"stack"} (non-negative elastic-net stacking of
+#'   selection with replacement), \code{"stack"} (non-negative elastic-net stacking of
 #'   out-of-fold island predictions with an honest nested cross-validated performance
-#'   estimate). Default: \code{"caruana"}.
+#'   estimate), or \code{"equal"} (uniform weighting across all islands; aliases \code{"uniform"},
+#'   \code{"average"}). Default: \code{"caruana"}.
 #' @param caruana_rounds Positive integer. Number of greedy selection rounds (default: 50).
 #'   Only used when \code{method = "caruana"}.
 #' @param bag_samples Logical. If \code{TRUE}, uses multi-bag bootstrap sampling of validation
@@ -73,7 +75,7 @@
 #' }
 #' @export
 ensemble_islands <- function(recipe, data, target_col = NULL,
-                             method = c("caruana", "stack"),
+                             method = c("caruana", "stack", "equal"),
                              caruana_rounds = 50,
                              bag_samples = FALSE,
                              sample_ratio = 0.8,
@@ -82,17 +84,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              seed = NULL,
                              threads = 2,
                              verbose = TRUE, ...) {
-  # Handle positional method passed in 3rd argument (e.g. ensemble_islands(rec, data, "stack"))
-  if (is.character(target_col) && length(target_col) == 1 &&
-      target_col %in% c("caruana", "stack") && !target_col %in% names(data)) {
-    method <- target_col
-    target_col <- NULL
-  }
-  method <- match.arg(method, c("caruana", "stack"))
-  old_threads <- getOption("evoFE.threads")
-  on.exit(options(evoFE.threads = old_threads), add = TRUE)
-  options(evoFE.threads = threads)
-
   # Normalize recipe input: single evo_recipe or list of evo_recipe objects
   if (inherits(recipe, "evo_recipe")) {
     recipe_list <- list(recipe1 = recipe)
@@ -107,14 +98,30 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     stop("Input 'recipe' must be an object of class 'evo_recipe' or a list of 'evo_recipe' objects.")
   }
 
+  if (missing(data) || is.null(data)) {
+    stop("Argument 'data' (full training dataset) is required for lazy final model fitting.")
+  }
+
+  # Handle positional method passed in 3rd argument (e.g. ensemble_islands(rec, data, "equal"))
+  valid_methods <- c("caruana", "stack", "equal", "uniform", "average")
+  if (is.character(target_col) && length(target_col) == 1 &&
+      target_col %in% valid_methods && !target_col %in% names(data)) {
+    method <- target_col
+    target_col <- NULL
+  }
+  if (is.character(method) && length(method) > 1) {
+    method <- method[1]
+  }
+  method <- match.arg(method, valid_methods)
+  if (method %in% c("uniform", "average")) method <- "equal"
+  old_threads <- getOption("evoFE.threads")
+  on.exit(options(evoFE.threads = old_threads), add = TRUE)
+  options(evoFE.threads = threads)
+
   if (!is.numeric(caruana_rounds) || caruana_rounds < 1) {
     stop("'caruana_rounds' must be a positive integer >= 1.")
   }
   caruana_rounds <- as.integer(caruana_rounds)
-
-  if (missing(data) || is.null(data)) {
-    stop("Argument 'data' (full training dataset) is required for lazy final model fitting.")
-  }
 
   first_recipe <- recipe_list[[1]]
 
@@ -193,12 +200,40 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   cand_has_na <- any(vapply(val_preds_list, anyNA, logical(1)))
 
   # Check if row counts are inhomogeneous, contain NAs, or don't cover the full dataset when mixing recipes or in metacv
-  needs_harmonization <- cand_has_na ||
+  is_metacv_equal <- (method == "equal" &&
+                      identical(first_recipe$evaluation_strategy, "metacv") &&
+                      !is.null(first_recipe$metacv_island_oof_preds) &&
+                      length(recipe_list) == 1L)
+
+  needs_harmonization <- !is_metacv_equal && (
+    cand_has_na ||
     length(unique(cand_row_counts)) > 1L ||
     (length(recipe_list) > 1L && any(cand_row_counts != nrow(data))) ||
     (identical(first_recipe$evaluation_strategy, "metacv") && any(cand_row_counts != nrow(data)))
+  )
 
   stored_folds <- first_recipe$fold_ids
+
+  # Persistent in-place alignment caching
+  alignment_cache <- first_recipe$alignment_cache
+  if (is.null(alignment_cache) || !is.environment(alignment_cache)) {
+    alignment_cache <- new.env(hash = TRUE, parent = emptyenv())
+    first_recipe$alignment_cache <- alignment_cache
+  }
+
+  cache_key <- digest::digest(list(dim(data), target_col, names(val_preds_list)), algo = "xxhash64")
+
+  if (needs_harmonization && exists(cache_key, envir = alignment_cache, inherits = FALSE)) {
+    if (verbose) {
+      message("  [Cache Hit] Using cached aligned out-of-fold validation predictions (0.000 s)...")
+    }
+    cached <- get(cache_key, envir = alignment_cache, inherits = FALSE)
+    val_preds_list <- cached$val_preds_list
+    cand_metadata <- cached$cand_metadata
+    stored_folds <- cached$stored_folds
+    y_val <- cached$y_val
+    needs_harmonization <- FALSE
+  }
 
   if (needs_harmonization) {
     if (verbose) {
@@ -249,13 +284,31 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         data[[target_col]]
       }
     }
-  } else {
-    y_val <- cand_metadata[[1]]$ind$y_val
-    if (is.null(y_val) || any(is.na(y_val))) {
-      y_val <- if (task == "multiclass") {
+
+    # Store aligned results in alignment_cache by reference
+    assign(cache_key, list(
+      val_preds_list = val_preds_list,
+      cand_metadata = cand_metadata,
+      stored_folds = stored_folds,
+      y_val = y_val
+    ), envir = alignment_cache)
+  } else if (!exists("y_val", inherits = FALSE)) {
+    y_val <- if (is_metacv_equal) {
+      if (task == "multiclass") {
         as.integer(factor(data[[target_col]], levels = classes)) - 1
       } else {
         data[[target_col]]
+      }
+    } else {
+      y_cand <- cand_metadata[[1]]$ind$y_val
+      if (is.null(y_cand) || any(is.na(y_cand))) {
+        if (task == "multiclass") {
+          as.integer(factor(data[[target_col]], levels = classes)) - 1
+        } else {
+          data[[target_col]]
+        }
+      } else {
+        y_cand
       }
     }
   }
@@ -284,9 +337,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   if (verbose) {
+    method_title <- if (method == "caruana") "Caruana" else if (method == "stack") "stacked" else "equal-weight"
     message(sprintf("\nStarting %s ensemble selection across %d candidate island models...",
-                    if (method == "caruana") "Caruana" else "stacked",
-                    length(val_preds_list)))
+                    method_title, length(val_preds_list)))
   }
 
   n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
@@ -305,7 +358,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       num_class = num_class,
       verbose = verbose
     )
-  } else {
+  } else if (method == "stack") {
     if (!requireNamespace("glmnet", quietly = TRUE)) {
       stop("Package 'glmnet' is required for method = \"stack\". ",
            "Install it or use method = \"caruana\".")
@@ -337,6 +390,35 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       alpha = stack_alpha,
       seed = seed,
       verbose = verbose
+    )
+  } else if (method == "equal") {
+    weights <- rep(1 / length(val_preds_list), length(val_preds_list))
+    names(weights) <- names(val_preds_list)
+    ens_preds <- if (is_metacv_equal) {
+      first_recipe$metacv_island_oof_preds
+    } else {
+      if (task == "multiclass") {
+        res_mat <- matrix(0, nrow = nrow(val_preds_list[[1]]), ncol = ncol(val_preds_list[[1]]))
+        for (nm in names(weights)) {
+          res_mat <- res_mat + weights[[nm]] * val_preds_list[[nm]]
+        }
+        res_mat
+      } else {
+        res_vec <- numeric(length(val_preds_list[[1]]))
+        for (nm in names(weights)) {
+          res_vec <- res_vec + weights[[nm]] * val_preds_list[[nm]]
+        }
+        res_vec
+      }
+    }
+    final_fitness <- if (task == "multiclass") {
+      compute_metric(y_val, ens_preds, task, metric, num_class)
+    } else {
+      compute_metric(y_val, ens_preds, task, metric)
+    }
+    selection_res <- list(
+      weights = weights,
+      final_fitness = final_fitness
     )
   }
 

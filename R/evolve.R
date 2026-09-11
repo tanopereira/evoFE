@@ -163,11 +163,12 @@ tournament_select <- function(pop, k = 3) {
 #'   Default \code{0.5}.
 #' @param row_split_islands Logical. If TRUE, splits data rows across islands (default FALSE).
 #' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
-#' @param metacv_mode Strategy to finalize MetaCV after evolution: \code{"ensemble"}
-#'   (default) fits each island's winning recipe on the full dataset (K fits total) and returns an
-#'   \code{evo_ensemble} object combining all K island models with equal weights ($w_j = 1/K$),
-#'   skipping the $K^2$ CV tournament entirely; \code{"tournament"} runs full K-fold CV on each
-#'   island's best candidate ($K^2$ model fits) to select 1 single global champion recipe.
+#' @param metacv_selection Strategy to select the winning recipe after MetaCV evolution: \code{"fitness"}
+#'   (default, selects the island recipe with the highest absolute validation fitness; zero extra CV fits),
+#'   \code{"tournament"} (runs full K-fold CV on each island's best candidate, $K^2$ model fits, to select
+#'   1 single global champion recipe across identical folds), or \code{"headroom"} (selects the recipe with
+#'   the highest normalized headroom closed).
+#' @param metacv_mode Deprecated alias for \code{metacv_selection}.
 #' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
 #' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
 #' @param ... Additional arguments passed to the underlying evaluator training
@@ -234,7 +235,8 @@ evolve_features <- function(data, target_col, task = "classification",
                             mask_temp_factor = 0.5,
                             row_split_islands = FALSE,
                             per_island_validation = FALSE,
-                            metacv_mode = c("ensemble", "tournament"),
+                            metacv_selection = c("fitness", "tournament", "headroom"),
+                            metacv_mode = NULL,
                             record = FALSE,
                             port = NULL, ...) {
   # Validate complexity arguments
@@ -246,7 +248,15 @@ evolve_features <- function(data, target_col, task = "classification",
     stop("'complexity_floor' must be a numeric value between 0 and 1.")
   }
   complexity_target <- match.arg(complexity_target, c("all_features", "genes"))
-  metacv_mode <- match.arg(metacv_mode, c("ensemble", "tournament"))
+  if (!is.null(metacv_mode)) {
+    warning("Argument 'metacv_mode' is deprecated; please use 'metacv_selection' instead.")
+    if (metacv_mode == "tournament") {
+      metacv_selection <- "tournament"
+    } else {
+      metacv_selection <- "fitness"
+    }
+  }
+  metacv_selection <- match.arg(metacv_selection, c("fitness", "tournament", "headroom"))
 
   # Normalize evaluation_strategy
   if (is.character(evaluation_strategy) && length(evaluation_strategy) == 1) {
@@ -2351,26 +2361,33 @@ evolve_features <- function(data, target_col, task = "classification",
       compute_metric(y_eval_oof, metacv_island_oof_preds, task, metric)
     }
 
-    if (metacv_mode == "ensemble") {
-      # ENSEMBLE MODE: Skip the K^2 CV tournament.
+    if (metacv_selection %in% c("fitness", "headroom")) {
+      # FAST SELECTION: Skip the K^2 CV tournament.
       oof_preds <- metacv_island_oof_preds
       island_best_fitness <- vapply(island_best_individual, function(ind) ind$fitness, numeric(1))
 
-      ideal_metric <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
-      island_headrooms <- vapply(seq_len(islands), function(j) {
-        b_fit <- if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
-        denom <- ideal_metric - b_fit
-        if (abs(denom) < 1e-6) 0.0 else (island_best_fitness[j] - b_fit) / denom
-      }, numeric(1))
-      winner_idx <- which.max(island_headrooms)
-      if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- which.max(island_best_fitness)
+      if (metacv_selection == "fitness") {
+        winner_idx <- which.max(island_best_fitness)
+        if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- 1L
+      } else {
+        ideal_metric <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
+        island_headrooms <- vapply(seq_len(islands), function(j) {
+          b_fit <- if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
+          denom <- ideal_metric - b_fit
+          if (abs(denom) < 1e-6) 0.0 else (island_best_fitness[j] - b_fit) / denom
+        }, numeric(1))
+        winner_idx <- which.max(island_headrooms)
+        if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- which.max(island_best_fitness)
+      }
       best_ind <- island_best_individual[[winner_idx]]
       best_ind_source <- paste0("Island ", winner_idx)
 
       if (verbose) {
-        message(sprintf("\nFinalizing MetaCV with Island Ensemble across %d islands (zero CV tournament overhead)...", islands))
-        message(sprintf("  Ensemble OOF Fitness: %.4f (Single Best Island %d: %.4f, Baseline: %.4f)",
-                        ensemble_oof_fitness, winner_idx, best_ind$fitness, baseline_ind$fitness))
+        sel_desc <- if (metacv_selection == "fitness") "validation fitness" else "headroom closed"
+        message(sprintf("\nFinalizing MetaCV: selected champion recipe from Island %d by %s (zero CV tournament overhead)...",
+                        winner_idx, sel_desc))
+        message(sprintf("  Winning Recipe Fitness: %.4f (Baseline: %.4f | Stitched OOF Fitness: %.4f)",
+                        best_ind$fitness, baseline_ind$fitness, ensemble_oof_fitness))
       }
       tournament_fitness <- island_best_fitness
       candidates <- island_best_individual
@@ -2677,9 +2694,9 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (verbose) {
-    if (evaluation_strategy == "metacv" && metacv_mode == "ensemble") {
-      message(sprintf("\nEvolution Complete. MetaCV Island Ensemble Validation Score: %.4f (Single Best Island %d: %.4f)",
-                      ensemble_oof_fitness, winner_idx, best_ind$fitness))
+    if (evaluation_strategy == "metacv") {
+      message(sprintf("\nEvolution Complete. Winning Island %d Validation Score: %.4f (MetaCV Stitched OOF Score: %.4f)",
+                      winner_idx, best_ind$fitness, ensemble_oof_fitness))
     } else if (!is.null(best_ind$raw_fitness) && !is.na(best_ind$raw_fitness)) {
       if (!is.null(best_ind$penalty) && is.finite(best_ind$penalty) && best_ind$penalty > 0) {
         message(sprintf("\nEvolution Complete. Best Validation Score: %.4f (Penalized Selection Fitness: %.4f)", best_ind$raw_fitness, best_ind$fitness))
@@ -2699,162 +2716,69 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  if (evaluation_strategy == "metacv" && metacv_mode == "ensemble") {
-    if (verbose) {
-      message(sprintf("Training final MetaCV island models on full dataset (%d models)...", islands))
-    }
+  if (verbose) {
+    message("Training final model on full dataset...")
+  }
+  best_params <- best_ind$best_params
+  res_full <- apply_individual(best_ind, shared_full, NULL, target_col, state_cache = state_cache)
+  best_ind <- res_full$ind
 
-    active_recipes <- list()
-    active_models <- list()
-    active_evaluators <- list()
-    ensemble_weights <- rep(1 / islands, islands)
-    names(ensemble_weights) <- paste0("island_", seq_len(islands))
+  gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
+  features <- c(best_ind$numeric_cols, best_ind$categorical_cols, best_ind$datetime_cols, gene_cols)
 
-    for (j in seq_len(islands)) {
-      cand_name <- paste0("island_", j)
-      ind_j <- island_best_individual[[j]]
-      eval_j <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
+  x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
+  y_full <- res_full$train[[target_col]]
+  if (task == "multiclass") {
+    y_full <- as.integer(factor(y_full, levels = classes)) - 1
+  }
 
-      res_full_j <- apply_individual(ind_j, shared_full, NULL, target_col, state_cache = state_cache)
-      applied_ind_j <- res_full_j$ind
+  best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+  res_model <- train_model(x_full, y_full,
+    task = task, evaluator = best_evaluator,
+    threads = threads, num_class = num_class, metric = metric,
+    verbose = verbose, best_params = best_params, seed = seed, ...
+  )
+  best_model <- res_model$model
 
-      gene_cols_j <- if (length(applied_ind_j$genes) > 0) vapply(applied_ind_j$genes, function(g) g$output_col, character(1)) else character(0)
-      features_j <- unique(c(applied_ind_j$numeric_cols, applied_ind_j$categorical_cols, applied_ind_j$datetime_cols, gene_cols_j))
-      features_j <- setdiff(features_j, target_col)
-
-      x_full_j <- .sanitize_feature_matrix(res_full_j$train[, features_j, with = FALSE])
-      y_full_j <- res_full_j$train[[target_col]]
-      if (task == "multiclass") {
-        y_full_j <- as.integer(factor(y_full_j, levels = classes)) - 1
-      }
-
-      res_m_j <- train_model(
-        x_full_j, y_full_j,
-        task = task, evaluator = eval_j,
-        threads = threads, num_class = num_class, metric = metric,
-        verbose = FALSE, best_params = applied_ind_j$best_params, seed = seed, ...
+  if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
+    if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
+    conf_fitness <- NA_real_
+    res_conf <- tryCatch(
+      apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
+      error = function(e) NULL
+    )
+    if (!is.null(res_conf)) {
+      conf_features <- c(res_conf$ind$numeric_cols, res_conf$ind$categorical_cols,
+        res_conf$ind$datetime_cols,
+        if (length(res_conf$ind$genes) > 0) vapply(res_conf$ind$genes, function(g) g$output_col, character(1)) else character(0)
       )
-
-      active_recipes[[cand_name]] <- applied_ind_j
-      active_models[[cand_name]] <- res_m_j$model
-      active_evaluators[[cand_name]] <- eval_j
-    }
-
-    winner_name <- paste0("island_", winner_idx)
-    applied_winner <- active_recipes[[winner_name]]
-    for (nm in names(best_ind)) {
-      if (is.null(applied_winner[[nm]])) {
-        applied_winner[[nm]] <- best_ind[[nm]]
-      }
-    }
-    best_ind <- applied_winner
-    best_model <- active_models[[winner_name]]
-    best_evaluator <- active_evaluators[[winner_name]]
-
-    if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
-      if (verbose) message("Scoring final MetaCV ensemble on the untouched confirmation holdout...")
-      conf_fitness <- NA_real_
-      ens_temp <- structure(
-        list(
-          active_recipes = active_recipes,
-          active_models = active_models,
-          active_evaluators = active_evaluators,
-          weights = ensemble_weights,
-          task = task,
-          evaluator = best_evaluator,
-          target_col = target_col,
-          classes = classes,
-          metric = metric
-        ),
-        class = "evo_ensemble"
-      )
+      x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
       preds_conf <- tryCatch(
-        predict_model(ens_temp, confirmation_dt),
+        evo_evaluators[[best_evaluator]]$predict_func(best_model, x_conf, task = task),
         error = function(e) NULL
       )
       if (!is.null(preds_conf)) {
         y_conf <- confirmation_dt[[target_col]]
         if (task == "multiclass") {
           y_conf_enc <- as.integer(factor(y_conf, levels = classes)) - 1
+          if (!is.matrix(preds_conf)) {
+            preds_conf <- matrix(preds_conf, ncol = num_class, byrow = TRUE)
+          }
           conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class)
         } else {
           conf_fitness <- compute_metric(y_conf, preds_conf, task, metric)
         }
         best_ind$holdout_fitness <- conf_fitness
       }
-      if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
     }
-  } else {
-    if (verbose) {
-      message("Training final model on full dataset...")
-    }
-    best_params <- best_ind$best_params
-    res_full <- apply_individual(best_ind, shared_full, NULL, target_col, state_cache = state_cache)
-    best_ind <- res_full$ind
-
-    gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
-    features <- c(best_ind$numeric_cols, best_ind$categorical_cols, best_ind$datetime_cols, gene_cols)
-
-    x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
-    y_full <- res_full$train[[target_col]]
-    if (task == "multiclass") {
-      y_full <- as.integer(factor(y_full, levels = classes)) - 1
-    }
-
-    best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-    res_model <- train_model(x_full, y_full,
-      task = task, evaluator = best_evaluator,
-      threads = threads, num_class = num_class, metric = metric,
-      verbose = verbose, best_params = best_params, seed = seed, ...
-    )
-    best_model <- res_model$model
-
-    if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
-      if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
-      conf_fitness <- NA_real_
-      res_conf <- tryCatch(
-        apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
-        error = function(e) NULL
-      )
-      if (!is.null(res_conf)) {
-        conf_features <- c(res_conf$ind$numeric_cols, res_conf$ind$categorical_cols,
-          res_conf$ind$datetime_cols,
-          if (length(res_conf$ind$genes) > 0) vapply(res_conf$ind$genes, function(g) g$output_col, character(1)) else character(0)
-        )
-        x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
-        preds_conf <- tryCatch(
-          evo_evaluators[[best_evaluator]]$predict_func(best_model, x_conf, task = task),
-          error = function(e) NULL
-        )
-        if (!is.null(preds_conf)) {
-          y_conf <- confirmation_dt[[target_col]]
-          if (task == "multiclass") {
-            y_conf_enc <- as.integer(factor(y_conf, levels = classes)) - 1
-            if (!is.matrix(preds_conf)) {
-              preds_conf <- matrix(preds_conf, ncol = num_class, byrow = TRUE)
-            }
-            conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class)
-          } else {
-            conf_fitness <- compute_metric(y_conf, preds_conf, task, metric)
-          }
-          best_ind$holdout_fitness <- conf_fitness
-        }
-      }
-      if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
-    }
+    if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
   }
 
-  effective_fitness <- if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness)) {
-    ensemble_oof_fitness
-  } else {
-    best_ind$fitness
-  }
+  effective_fitness <- best_ind$fitness
 
   search_gap <- NULL
   if (!is.null(best_ind$holdout_fitness) && !is.na(best_ind$holdout_fitness)) {
-    val_score <- if (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness)) {
-      ensemble_oof_fitness
-    } else if (!is.null(best_ind$raw_fitness) && is.finite(best_ind$raw_fitness)) {
+    val_score <- if (!is.null(best_ind$raw_fitness) && is.finite(best_ind$raw_fitness)) {
       best_ind$raw_fitness
     } else {
       effective_fitness
@@ -2928,13 +2852,6 @@ evolve_features <- function(data, target_col, task = "classification",
 
   ideal_recipe <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
 
-  is_metacv_ensemble <- (evaluation_strategy == "metacv" && metacv_mode == "ensemble" && !is.null(ensemble_oof_fitness))
-  ens_impr <- if (is_metacv_ensemble) ensemble_oof_fitness - baseline_ind$fitness else NULL
-  ens_hd <- if (is_metacv_ensemble && !is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
-    h_denom <- ideal_recipe - baseline_ind$fitness
-    if (abs(h_denom) < 1e-6) 0.0 else (ensemble_oof_fitness - baseline_ind$fitness) / h_denom
-  } else NULL
-
   res_obj <- list(
     best_individual = best_ind,
     history = pop,
@@ -2946,10 +2863,8 @@ evolve_features <- function(data, target_col, task = "classification",
     classes = classes,
     metric = metric,
     baseline_fitness = baseline_ind$fitness,
-    improvement = if (is_metacv_ensemble) ens_impr else (best_ind$fitness - baseline_ind$fitness),
-    headroom_closed = if (is_metacv_ensemble) {
-      ens_hd
-    } else if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+    improvement = best_ind$fitness - baseline_ind$fitness,
+    headroom_closed = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
       h_denom <- ideal_recipe - baseline_ind$fitness
       if (abs(h_denom) < 1e-6) 0.0 else (best_ind$fitness - baseline_ind$fitness) / h_denom
     } else NULL,
@@ -2958,8 +2873,11 @@ evolve_features <- function(data, target_col, task = "classification",
       h_denom <- ideal_recipe - baseline_ind$fitness
       if (abs(h_denom) < 1e-6) 0.0 else (best_ind$fitness - baseline_ind$fitness) / h_denom
     } else NULL,
-    ensemble_improvement = ens_impr,
-    ensemble_headroom_closed = ens_hd,
+    ensemble_improvement = if (evaluation_strategy == "metacv" && !is.null(ensemble_oof_fitness)) ensemble_oof_fitness - baseline_ind$fitness else NULL,
+    ensemble_headroom_closed = if (evaluation_strategy == "metacv" && !is.null(ensemble_oof_fitness) && !is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness)) {
+      h_denom <- ideal_recipe - baseline_ind$fitness
+      if (abs(h_denom) < 1e-6) 0.0 else (ensemble_oof_fitness - baseline_ind$fitness) / h_denom
+    } else NULL,
     island_baselines = if (islands > 1 && length(island_baseline_inds) == islands) {
       vapply(island_baseline_inds, function(x) x$fitness, numeric(1))
     } else NULL,
@@ -2977,27 +2895,17 @@ evolve_features <- function(data, target_col, task = "classification",
     search_gap = search_gap,
     cv_strategy = cv_strategy,
     evaluation_strategy = evaluation_strategy,
-    metacv_mode = if (evaluation_strategy == "metacv") metacv_mode else NULL,
+    metacv_selection = if (evaluation_strategy == "metacv") metacv_selection else NULL,
     fold_ids = if (evaluation_strategy %in% c("cv", "metacv")) fold_ids else NULL,
     split_ids = if (evaluation_strategy == "split" && !is.null(split_ids_val)) split_ids_val else NULL,
     oof_preds = oof_preds,
     metacv_island_oof_preds = if (evaluation_strategy == "metacv") metacv_island_oof_preds else NULL,
+    metacv_oof_fitness = if (evaluation_strategy == "metacv") ensemble_oof_fitness else NULL,
     island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),
-    evolution_log = if (record) evolution_log else NULL
+    evolution_log = if (record) evolution_log else NULL,
+    alignment_cache = new.env(hash = TRUE, parent = emptyenv())
   )
 
-  if (evaluation_strategy == "metacv" && metacv_mode == "ensemble") {
-    res_obj$active_recipes <- active_recipes
-    res_obj$active_models <- active_models
-    res_obj$active_evaluators <- active_evaluators
-    res_obj$weights <- ensemble_weights
-    res_obj$single_best_fitness <- best_ind$fitness
-    res_obj$ensemble_val_fitness <- ensemble_oof_fitness
-    res_obj$method <- "metacv"
-    class(res_obj) <- c("evo_ensemble", "evo_recipe")
-  } else {
-    class(res_obj) <- "evo_recipe"
-  }
-
+  class(res_obj) <- "evo_recipe"
   res_obj
 }

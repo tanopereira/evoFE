@@ -52,6 +52,8 @@ evolve_features(
   mask_temp_factor = 0.5,
   row_split_islands = FALSE,
   per_island_validation = FALSE,
+  metacv_selection = c("fitness", "tournament", "headroom"),
+  metacv_mode = NULL,
   record = FALSE,
   port = NULL,
   ...
@@ -220,6 +222,14 @@ Default \code{0.5}.}
 
 \item{per_island_validation}{Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).}
 
+\item{metacv_selection}{Strategy to select the winning recipe after MetaCV evolution: \code{"fitness"}
+(default, selects the island recipe with the highest absolute validation fitness; zero extra CV fits),
+\code{"tournament"} (runs full K-fold CV on each island's best candidate, $K^2$ model fits, to select
+1 single global champion recipe across identical folds), or \code{"headroom"} (selects the recipe with
+the highest normalized headroom closed).}
+
+\item{metacv_mode}{Deprecated alias for \code{metacv_selection}.}
+
 \item{record}{Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).}
 
 \item{port}{Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').}
@@ -250,13 +260,10 @@ set.seed(42)
 recipe <- evolve_features(
   data = df,
   target_col = "am",
-  task = "classification",
-  evaluator = "xgboost",
   generations = 2,
-  pop_size = 2,
+  pop_size = 5,
   cv_folds = 2,
   verbose = FALSE
 )
-print(recipe)
 }
 }

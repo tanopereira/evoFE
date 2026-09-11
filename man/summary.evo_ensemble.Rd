@@ -15,5 +15,5 @@
 An object of class \code{summary_evo_ensemble} containing detailed ensemble statistics.
 }
 \description{
-Computes and formats a detailed summary of the Caruana island ensemble.
+Computes and formats a detailed summary of the island ensemble (Caruana, Stacked, or MetaCV).
 }

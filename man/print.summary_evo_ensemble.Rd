@@ -15,5 +15,5 @@
 Invisible \code{x}. Called for its side effect of printing the ensemble summary.
 }
 \description{
-Prints summary details of the Caruana island ensemble.
+Prints summary details of the island ensemble (Caruana, Stacked, or MetaCV).
 }

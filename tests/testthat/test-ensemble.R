@@ -324,7 +324,7 @@ test_that("ensemble_islands method = 'stack' handles metacv tournament recipes w
     iris, "Species",
     task = "multiclass",
     evaluation_strategy = "metacv",
-    metacv_mode = "tournament",
+    metacv_selection = "tournament",
     islands = 3,
     generations = 1,
     pop_size = 3,
@@ -338,6 +338,76 @@ test_that("ensemble_islands method = 'stack' handles metacv tournament recipes w
   expect_true(is.finite(ens$ensemble_val_fitness))
   expect_true(ens$ensemble_val_fitness > -Inf)
   expect_equal(sum(ens$weights), 1, tolerance = 1e-8)
+})
+
+test_that("ensemble_islands method = 'equal' and 'uniform' work on standard and metacv recipes", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  rec <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_selection = "fitness",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    verbose = FALSE
+  )
+
+  # Test method = 'equal'
+  ens_eq <- ensemble_islands(rec, df, method = "equal", verbose = FALSE)
+  expect_s3_class(ens_eq, "evo_ensemble")
+  expect_equal(ens_eq$method, "equal")
+  expect_equal(length(ens_eq$weights), 3)
+  expect_equal(unname(ens_eq$weights), rep(1 / 3, 3), tolerance = 1e-8)
+
+  # Test alias method = 'uniform'
+  ens_uni <- ensemble_islands(rec, df, method = "uniform", verbose = FALSE)
+  expect_s3_class(ens_uni, "evo_ensemble")
+  expect_equal(ens_uni$method, "equal")
+
+  # Predict model on new data works
+  preds_eq <- predict_model(ens_eq, df[1:4, ])
+  expect_equal(length(preds_eq), 4)
+  expect_true(is.numeric(preds_eq))
+})
+
+test_that("ensemble_islands caches aligned predictions by reference in recipe$alignment_cache", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  rec <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_selection = "fitness",
+    islands = 3,
+    generations = 1,
+    pop_size = 2,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(rec$alignment_cache))
+  expect_true(is.environment(rec$alignment_cache))
+
+  # First call with Caruana runs alignment
+  out_first <- testthat::capture_messages({
+    ens1 <- ensemble_islands(rec, df, method = "caruana", caruana_rounds = 5, verbose = TRUE)
+  })
+  expect_true(any(grepl("Aligning out-of-fold validation predictions", out_first)))
+
+  # Second call with Stacking hits the cache
+  out_second <- testthat::capture_messages({
+    ens2 <- ensemble_islands(rec, df, method = "stack", verbose = TRUE)
+  })
+  expect_true(any(grepl("\\[Cache Hit\\] Using cached aligned", out_second)))
+  expect_s3_class(ens2, "evo_ensemble")
+  expect_equal(ens2$method, "stack")
 })
 
 
