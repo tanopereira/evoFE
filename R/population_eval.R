@@ -11,7 +11,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
                          complexity_floor = 0.20, complexity_target = "all_features",
                          baseline_fitness = NULL, n_samples = NULL, island = NULL,
                          fidelity_tag = "", cv_strategy = "random", time_col = NULL,
-                         group_col = NULL, ...) {
+                         group_col = NULL, ind_indices = NULL, ...) {
   # Initialize running_best_fitness taking into account any already evaluated individuals in pop
   existing_fits <- vapply(pop, function(ind) if (is.null(ind$fitness) || is.na(ind$fitness)) -Inf else ind$fitness, double(1))
   if (length(existing_fits) > 0 && any(!is.infinite(existing_fits))) {
@@ -23,6 +23,8 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
 
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) next
+
+    ind_idx <- if (!is.null(ind_indices) && length(ind_indices) >= i) ind_indices[i] else i
 
     recipe_str <- individual_to_recipe_string(pop[[i]])
     cache_key <- digest::digest(paste0(evaluator, "::", recipe_str, fidelity_tag), algo = "md5", serialize = FALSE)
@@ -64,12 +66,12 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
       if (!is.null(island)) {
         msg <- sprintf(
           "  [Island %d] Tested Individual %d%s -> Fitness: %.4f%s",
-          island, i, new_best_str, pop[[i]]$fitness, cache_str
+          island, ind_idx, new_best_str, pop[[i]]$fitness, cache_str
         )
       } else {
         msg <- sprintf(
           "  Tested Individual %d%s -> Fitness: %.4f%s",
-          i, new_best_str, pop[[i]]$fitness, cache_str
+          ind_idx, new_best_str, pop[[i]]$fitness, cache_str
         )
       }
       message(paste0(msg_color, msg, color_reset))
@@ -143,7 +145,7 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
                             lf_shared_splits = NULL,
                             lf_shared_folds = NULL, lf_shared_full = NULL,
                             mf_promote_frac = 0.5, ...) {
-  .do_eval <- function(p, sh_splits, sh_folds, sh_full, tag, vb, rb) {
+  .do_eval <- function(p, sh_splits, sh_folds, sh_full, tag, vb, rb, indices = NULL) {
     evaluate_pop(p, data, target_col, task, cv_folds, evaluation_strategy,
       split_ids, sh_splits, evaluator,
       fold_ids, sh_folds, sh_full, state_cache,
@@ -156,12 +158,13 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
       baseline_fitness = baseline_fitness,
       n_samples = n_samples, island = island,
       fidelity_tag = tag,
-      cv_strategy = cv_strategy, time_col = time_col, group_col = group_col, ...
+      cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+      ind_indices = indices, ...
     )
   }
 
   if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_full) && is.null(lf_shared_splits))) {
-    return(.do_eval(pop, shared_splits, shared_folds, shared_full, "", verbose, running_best_fitness))
+    return(.do_eval(pop, shared_splits, shared_folds, shared_full, "", verbose, running_best_fitness, indices = seq_along(pop)))
   }
 
   rb_in <- running_best_fitness
@@ -170,8 +173,11 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
   lf_folds_eff <- if (!is.null(lf_shared_folds)) lf_shared_folds else shared_folds
   lf_full_eff <- if (!is.null(lf_shared_full)) lf_shared_full else shared_full
 
+  # Track which individuals were already evaluated with full-fidelity fitness
+  already_evaluated <- !vapply(pop, function(x) is.null(x$fitness) || is.na(x$fitness), logical(1))
+
   # Pass 1: cheap screen on subsampled folds/splits (silent; values are not final)
-  res_lf <- .do_eval(pop, lf_splits_eff, lf_folds_eff, lf_full_eff, ":lf", FALSE, -Inf)
+  res_lf <- .do_eval(pop, lf_splits_eff, lf_folds_eff, lf_full_eff, ":lf", FALSE, -Inf, indices = seq_along(pop))
   pop_lf <- res_lf$pop
 
   fits <- vapply(pop_lf, function(x) {
@@ -187,8 +193,13 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
 
   # Pass 2: full-fidelity re-evaluation of promoted individuals only
   promoted <- pop_lf[promo_idx]
-  for (i in seq_along(promoted)) promoted[[i]]$fitness <- NA
-  res_ff <- .do_eval(promoted, shared_splits, shared_folds, shared_full, "", verbose, rb_in)
+  for (i in seq_along(promoted)) {
+    orig_i <- promo_idx[i]
+    if (!already_evaluated[orig_i]) {
+      promoted[[i]]$fitness <- NA_real_
+    }
+  }
+  res_ff <- .do_eval(promoted, shared_splits, shared_folds, shared_full, "", verbose, rb_in, indices = promo_idx)
 
   pop_out <- pop_lf
   pop_out[promo_idx] <- res_ff$pop

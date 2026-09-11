@@ -1806,6 +1806,8 @@ evolve_features <- function(data, target_col, task = "classification",
               )
             }
             if (effective_rate > 0) {
+              worst_start <- length(pop_list[[dest]]) - effective_rate + 1
+              worst_end <- length(pop_list[[dest]])
               migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
               if (row_split_islands || per_island_validation || evaluation_strategy == "metacv" || island_evaluators[src] != island_evaluators[dest]) {
@@ -1829,14 +1831,13 @@ evolve_features <- function(data, target_col, task = "classification",
                   complexity_floor = complexity_floor,
                   complexity_target = complexity_target,
                   baseline_fitness = if (!is.null(island_baseline_inds[[dest]])) island_baseline_inds[[dest]]$fitness else baseline_ind$fitness,
-                  n_samples = nrow(data), island = dest, ...
+                  n_samples = nrow(data), island = dest,
+                  ind_indices = worst_start:worst_end, ...
                 )
                 migrant_inds <- eval_migrant$pop
               }
 
               # Replace the worst individuals of the target population
-              worst_start <- length(pop_list[[dest]]) - effective_rate + 1
-              worst_end <- length(pop_list[[dest]])
               pop_list[[dest]][worst_start:worst_end] <- migrant_inds
 
               # Re-sort destination population immediately by fitness (highest first)

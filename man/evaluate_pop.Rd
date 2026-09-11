@@ -35,6 +35,7 @@ evaluate_pop(
   cv_strategy = "random",
   time_col = NULL,
   group_col = NULL,
+  ind_indices = NULL,
   ...
 )
 }

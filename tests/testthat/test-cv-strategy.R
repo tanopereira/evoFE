@@ -142,3 +142,38 @@ test_that("invalid new arguments produce clear errors", {
     regexp = "mf_sample_frac"
   )
 })
+
+test_that("multi-fidelity and evaluate_pop correctly index tested individuals", {
+  skip_on_cran()
+  set.seed(42)
+  n <- 100
+  d <- data.frame(
+    x1 = rnorm(n),
+    x2 = runif(n),
+    y = rnorm(n)
+  )
+
+  # Unit check: evaluate_pop respects ind_indices
+  pop <- list(
+    structure(list(genes = list(), all_numeric_cols = c("x1", "x2"), all_categorical_cols = character(0), all_datetime_cols = character(0), fitness = NA_real_), class = "evo_individual"),
+    structure(list(genes = list(), all_numeric_cols = c("x1", "x2"), all_categorical_cols = character(0), all_datetime_cols = character(0), fitness = NA_real_), class = "evo_individual")
+  )
+  cache <- new.env(hash = TRUE, parent = emptyenv())
+  state <- new.env(hash = TRUE, parent = emptyenv())
+
+  msgs <- testthat::capture_messages({
+    res <- evaluate_pop(
+      pop = pop, data = d, target_col = "y", task = "regression", cv_folds = 2,
+      evaluation_strategy = "cv", split_ids = NULL, shared_splits = NULL,
+      evaluator = "lightgbm", fold_ids = NULL, shared_folds = NULL, shared_full = NULL,
+      state_cache = state, fitness_cache = cache, threads = 1, verbose = TRUE,
+      running_best_fitness = -Inf, island = 3, ind_indices = c(4, 7)
+    )
+  })
+
+  expect_true(any(grepl("\\[Island 3\\] Tested Individual 4", msgs)))
+  expect_true(any(grepl("\\[Island 3\\] Tested Individual 7", msgs)))
+  expect_false(any(grepl("\\[Island 3\\] Tested Individual 1", msgs)))
+  expect_false(any(grepl("\\[Island 3\\] Tested Individual 2", msgs)))
+})
+
