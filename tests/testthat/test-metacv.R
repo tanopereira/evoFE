@@ -373,6 +373,12 @@ test_that("metacv_selection validation and task coverage for fitness, headroom, 
   )
   expect_s3_class(rec_warn, "evo_recipe")
 
+  expect_warning(
+    rec_warn_hd <- evolve_features(df, "am", evaluation_strategy = "metacv", islands = 3, metacv_mode = "headroom", generations = 1, pop_size = 2, verbose = FALSE),
+    "metacv_mode' is deprecated"
+  )
+  expect_equal(rec_warn_hd$metacv_selection, "headroom")
+
   # Regression with metacv_selection = 'fitness'
   rec_reg <- evolve_features(
     mtcars, "mpg",

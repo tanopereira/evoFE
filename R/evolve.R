@@ -252,6 +252,8 @@ evolve_features <- function(data, target_col, task = "classification",
     warning("Argument 'metacv_mode' is deprecated; please use 'metacv_selection' instead.")
     if (metacv_mode == "tournament") {
       metacv_selection <- "tournament"
+    } else if (metacv_mode == "headroom") {
+      metacv_selection <- "headroom"
     } else {
       metacv_selection <- "fitness"
     }
@@ -2320,10 +2322,6 @@ evolve_features <- function(data, target_col, task = "classification",
   oof_preds <- NULL
   metacv_island_oof_preds <- NULL
   ensemble_oof_fitness <- NULL
-  active_recipes <- NULL
-  active_models <- NULL
-  active_evaluators <- NULL
-  ensemble_weights <- NULL
 
   if (evaluation_strategy == "metacv") {
     # Stitch Out-Of-Fold predictions from each island best (heterogeneous island composite)

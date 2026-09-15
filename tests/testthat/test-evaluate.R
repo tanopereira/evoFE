@@ -76,3 +76,45 @@ test_that("realmlp evaluator returns non-null feature importances", {
   expect_equal(sum(res$importances), 1.0, tolerance = 1e-5)
   expect_true(all(res$importances >= 0))
 })
+
+test_that("realmlp evaluator emits progress messages when verbose and stays silent when not", {
+  skip_if_not_installed("realmlp")
+  skip_if_not_installed("torch")
+
+  set.seed(42)
+  d <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    y = rnorm(40)
+  )
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  # 1. Verbose mode emits starting, epoch progress, and completion messages
+  msgs <- testthat::capture_messages({
+    res_verb <- ev$train_func(
+      x_train = d[, c("x1", "x2")],
+      y_train = d$y,
+      task = "regression",
+      seed = 42,
+      verbose = TRUE
+    )
+  })
+
+  expect_true(any(grepl("Starting training:.*256 epochs", msgs)))
+  expect_true(any(grepl("Epoch\\s+\\d+/256", msgs)))
+  expect_true(any(grepl("Fitted.*rows", msgs)))
+
+  # 2. Silent mode emits no messages
+  msgs_silent <- testthat::capture_messages({
+    res_quiet <- ev$train_func(
+      x_train = d[, c("x1", "x2")],
+      y_train = d$y,
+      task = "regression",
+      seed = 42,
+      verbose = FALSE
+    )
+  })
+
+  expect_equal(length(msgs_silent), 0)
+})

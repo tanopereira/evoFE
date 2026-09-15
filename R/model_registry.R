@@ -745,6 +745,304 @@ register_evaluator(
 # Internal session environment for RealMLP evaluator state
 .realmlp_env <- new.env(parent = emptyenv())
 
+#' Get or create progress-enabled RealMLP classes lazily
+#' @noRd
+.get_progress_realmlp_classes <- function() {
+  if (!is.null(.realmlp_env$ProgressRealMLPRegressor) && !is.null(.realmlp_env$ProgressRealMLPClassifier)) {
+    return(list(
+      ProgressRealMLPRegressor = .realmlp_env$ProgressRealMLPRegressor,
+      ProgressRealMLPClassifier = .realmlp_env$ProgressRealMLPClassifier
+    ))
+  }
+
+  realmlp_ns <- asNamespace("realmlp")
+
+  ProgressSimpleMLP <- R6::R6Class(
+    "ProgressSimpleMLP",
+    inherit = realmlp_ns$SimpleMLP,
+    public = list(
+      show_log = FALSE,
+      is_detail = FALSE,
+      task_name = "regression",
+      early_stopping_rounds = NULL,
+      stopped_early = FALSE,
+      stopped_epoch = 256L,
+
+      fit = function(X, y, X_val = NULL, y_val = NULL) {
+        stopifnot(is.matrix(X))
+        X <- as.matrix(X)
+        storage.mode(X) <- "double"
+        input_dim <- ncol(X)
+        is_cls <- self$is_classification
+
+        if (is_cls) {
+          y_fac <- as.factor(y)
+          self$classes_ <- levels(y_fac)
+          y_idx <- as.integer(y_fac)
+          output_dim <- length(self$classes_)
+        } else {
+          y_mat <- if (is.matrix(y) || is.data.frame(y)) as.matrix(y) else matrix(as.numeric(y), ncol = 1)
+          storage.mode(y_mat) <- "double"
+          self$y_mean_ <- colMeans(y_mat)
+          self$y_std_ <- apply(y_mat, 2, stats::sd)
+          y_std_safe <- self$y_std_ + 1e-30
+          y_mat <- sweep(y_mat, 2, self$y_mean_, "-")
+          y_mat <- sweep(y_mat, 2, y_std_safe, "/")
+          output_dim <- ncol(y_mat)
+          if (!is.null(y_val)) {
+            yv <- if (is.matrix(y_val) || is.data.frame(y_val)) as.matrix(y_val) else matrix(as.numeric(y_val), ncol = 1)
+            storage.mode(yv) <- "double"
+            yv <- sweep(yv, 2, self$y_mean_, "-")
+            y_val <- sweep(yv, 2, y_std_safe, "/")
+          }
+        }
+
+        act <- if (is_cls) torch::nn_selu else realmlp_ns$Mish
+        model <- torch::nn_sequential(
+          realmlp_ns$ScalingLayer(input_dim),
+          realmlp_ns$NTPLinear(input_dim, 256),
+          act(),
+          realmlp_ns$NTPLinear(256, 256),
+          act(),
+          realmlp_ns$NTPLinear(256, 256),
+          act(),
+          realmlp_ns$NTPLinear(256, output_dim, zero_init = TRUE)
+        )$to(device = self$device)
+
+        criterion <- if (is_cls) {
+          realmlp_ns$make_classification_loss(label_smoothing = 0.1)
+        } else {
+          function(pred, target) torch::nnf_mse_loss(pred, target, reduction = "mean")
+        }
+
+        params <- model$parameters
+        scale_params <- list(params[[1]])
+        weights <- params[seq(2, length(params), by = 2)]
+        biases <- params[seq(3, length(params), by = 2)]
+        opt <- torch::optim_adam(
+          params = list(list(params = scale_params), list(params = weights), list(params = biases)),
+          betas = c(0.9, 0.95)
+        )
+
+        x_train <- torch::torch_tensor(X, dtype = torch::torch_float())
+        y_train <- if (is_cls) {
+          torch::torch_tensor(y_idx, dtype = torch::torch_long())
+        } else {
+          torch::torch_tensor(y_mat, dtype = torch::torch_float())
+        }
+
+        if (!is.null(X_val) && !is.null(y_val)) {
+          X_val <- as.matrix(X_val)
+          storage.mode(X_val) <- "double"
+          x_valid <- torch::torch_tensor(X_val, dtype = torch::torch_float())
+          y_valid <- if (is_cls) {
+            yv_fac <- factor(y_val, levels = self$classes_)
+            yv_idx <- as.integer(yv_fac)
+            yv_idx[is.na(yv_idx)] <- 1L
+            torch::torch_tensor(yv_idx, dtype = torch::torch_long())
+          } else {
+            torch::torch_tensor(as.matrix(y_val), dtype = torch::torch_float())
+          }
+        } else {
+          x_valid <- x_train[1:0, ]
+          y_valid <- if (is_cls) y_train[1:0] else y_train[1:0, ]
+        }
+
+        n_train <- x_train$size()[1]
+        n_valid <- x_valid$size()[1]
+        n_epochs <- 256L
+        train_batch_size <- as.integer(min(256L, n_train))
+        n_train_batches <- as.integer(floor(n_train / train_batch_size))
+        if (n_train_batches < 1L) n_train_batches <- 1L
+        valid_batch_size <- as.integer(max(1L, min(1024L, n_valid)))
+        base_lr <- if (is_cls) 0.04 else 0.07
+
+        best_valid_loss <- Inf
+        best_valid_params <- NULL
+        no_improve <- 0L
+
+        valid_metric <- function(y_pred, y_true) {
+          if (is_cls) {
+            pred_idx <- y_pred$argmax(dim = 2)
+            as.numeric((pred_idx != y_true)$sum()$item()) / max(1L, length(y_true))
+          } else {
+            as.numeric(torch::nnf_mse_loss(y_pred, y_true, reduction = "mean")$item())
+          }
+        }
+
+        log_interval <- if (self$is_detail) 32L else 64L
+
+        for (epoch in 0:(n_epochs - 1L)) {
+          model$train()
+          perm <- sample.int(n_train, size = n_train, replace = FALSE)
+          epoch_loss_sum <- 0.0
+
+          for (batch_idx in 0:(n_train_batches - 1L)) {
+            start <- batch_idx * train_batch_size + 1L
+            end <- min(start + train_batch_size - 1L, n_train)
+            if (end > n_train) break
+            idx <- perm[start:end]
+
+            x_batch <- x_train[idx, ]$to(device = self$device)
+            y_batch <- if (is_cls) y_train[idx]$to(device = self$device) else y_train[idx, ]$to(device = self$device)
+
+            t <- (epoch * n_train_batches + batch_idx) / (n_epochs * n_train_batches)
+            lr_sched_value <- 0.5 - 0.5 * cos(2 * pi * log2(1 + 15 * t))
+            lr <- base_lr * lr_sched_value
+            opt$param_groups[[1]]$lr <- 6 * lr
+            opt$param_groups[[2]]$lr <- lr
+            opt$param_groups[[3]]$lr <- 0.1 * lr
+
+            opt$zero_grad()
+            y_pred <- model(x_batch)
+            loss <- criterion(y_pred, y_batch)
+            loss$backward()
+            opt$step()
+            epoch_loss_sum <- epoch_loss_sum + as.numeric(loss$item())
+          }
+
+          avg_train_loss <- epoch_loss_sum / n_train_batches
+          valid_loss <- NA_real_
+
+          model$eval()
+          torch::with_no_grad({
+            if (n_valid > 0) {
+              preds <- list()
+              for (start in seq(1L, n_valid, by = valid_batch_size)) {
+                end <- min(n_valid, start + valid_batch_size - 1L)
+                xb <- x_valid[start:end, ]$to(device = self$device)
+                preds[[length(preds) + 1L]] <- model(xb)$detach()$cpu()
+              }
+              y_pred_valid <- torch::torch_cat(preds, dim = 1)
+              valid_loss <- valid_metric(y_pred_valid, y_valid$to(device = torch::torch_device("cpu")))
+
+              if (valid_loss <= best_valid_loss) {
+                best_valid_loss <- valid_loss
+                best_valid_params <- lapply(model$parameters, function(p) p$detach()$clone())
+                no_improve <- 0L
+              } else {
+                no_improve <- no_improve + 1L
+              }
+            }
+          })
+
+          cur_epoch <- epoch + 1L
+          should_log <- self$show_log && (
+            cur_epoch %% log_interval == 0 ||
+            cur_epoch == 1L ||
+            cur_epoch == n_epochs ||
+            (self$is_detail && !is.na(valid_loss) && no_improve == 0L)
+          )
+
+          if (should_log) {
+            if (!is.na(valid_loss)) {
+              metric_label <- if (is_cls) "Val error" else "Val loss"
+              best_star <- if (no_improve == 0L) "*" else ""
+              message(sprintf("    [RealMLP %s] Epoch %3d/%d | Train loss: %.4f | %s: %.4f (best: %.4f%s)",
+                              self$task_name, cur_epoch, n_epochs, avg_train_loss, metric_label, valid_loss, best_valid_loss, best_star))
+            } else {
+              message(sprintf("    [RealMLP %s] Epoch %3d/%d | Train loss: %.4f",
+                              self$task_name, cur_epoch, n_epochs, avg_train_loss))
+            }
+          }
+
+          # Early stopping
+          if (!is.null(self$early_stopping_rounds) && self$early_stopping_rounds > 0 && n_valid > 0) {
+            if (no_improve >= self$early_stopping_rounds) {
+              self$stopped_early <- TRUE
+              self$stopped_epoch <- cur_epoch
+              if (self$show_log) {
+                message(sprintf("    [RealMLP %s] Early stopping triggered at epoch %d (patience = %d, best val: %.4f)",
+                                self$task_name, cur_epoch, self$early_stopping_rounds, best_valid_loss))
+              }
+              break
+            }
+          }
+        }
+
+        torch::with_no_grad({
+          if (!is.null(best_valid_params)) {
+            for (i in seq_along(model$parameters)) {
+              model$parameters[[i]]$set_(best_valid_params[[i]])
+            }
+          }
+        })
+
+        self$model_ <- model
+        invisible(self)
+      }
+    )
+  )
+
+  ProgressRealMLPRegressor <- R6::R6Class(
+    "ProgressRealMLPRegressor",
+    inherit = realmlp_ns$Standalone_RealMLP_TD_S_Regressor,
+    public = list(
+      show_log = FALSE,
+      is_detail = FALSE,
+      early_stopping_rounds = NULL,
+      stopped_early = FALSE,
+      stopped_epoch = 256L,
+
+      fit = function(X, y, X_val = NULL, y_val = NULL) {
+        self$prep_ <- realmlp_ns$get_realmlp_td_s_pipeline()
+        self$model_ <- ProgressSimpleMLP$new(is_classification = FALSE, device = self$device)
+        self$model_$show_log <- self$show_log
+        self$model_$is_detail <- self$is_detail
+        self$model_$task_name <- "regression"
+        self$model_$early_stopping_rounds <- self$early_stopping_rounds
+
+        Xp <- realmlp_ns$prep_fit_transform(self$prep_, X)
+        Xvp <- if (!is.null(X_val)) realmlp_ns$prep_transform(self$prep_, X_val) else NULL
+
+        self$model_$fit(Xp, y, X_val = Xvp, y_val = y_val)
+        self$stopped_early <- self$model_$stopped_early
+        self$stopped_epoch <- self$model_$stopped_epoch
+        invisible(self)
+      }
+    )
+  )
+
+  ProgressRealMLPClassifier <- R6::R6Class(
+    "ProgressRealMLPClassifier",
+    inherit = realmlp_ns$Standalone_RealMLP_TD_S_Classifier,
+    public = list(
+      show_log = FALSE,
+      is_detail = FALSE,
+      task_name = "classification",
+      early_stopping_rounds = NULL,
+      stopped_early = FALSE,
+      stopped_epoch = 256L,
+
+      fit = function(X, y, X_val = NULL, y_val = NULL) {
+        self$prep_ <- realmlp_ns$get_realmlp_td_s_pipeline()
+        self$model_ <- ProgressSimpleMLP$new(is_classification = TRUE, device = self$device)
+        self$model_$show_log <- self$show_log
+        self$model_$is_detail <- self$is_detail
+        self$model_$task_name <- self$task_name
+        self$model_$early_stopping_rounds <- self$early_stopping_rounds
+
+        Xp <- realmlp_ns$prep_fit_transform(self$prep_, X)
+        Xvp <- if (!is.null(X_val)) realmlp_ns$prep_transform(self$prep_, X_val) else NULL
+
+        self$model_$fit(Xp, y, X_val = Xvp, y_val = y_val)
+        self$classes_ <- self$model_$classes_
+        self$stopped_early <- self$model_$stopped_early
+        self$stopped_epoch <- self$model_$stopped_epoch
+        invisible(self)
+      }
+    )
+  )
+
+  .realmlp_env$ProgressRealMLPRegressor <- ProgressRealMLPRegressor
+  .realmlp_env$ProgressRealMLPClassifier <- ProgressRealMLPClassifier
+
+  list(
+    ProgressRealMLPRegressor = ProgressRealMLPRegressor,
+    ProgressRealMLPClassifier = ProgressRealMLPClassifier
+  )
+}
+
 # 6. RealMLP Evaluator (frankiethull/realmlp with torch)
 register_evaluator(
   "realmlp",
@@ -793,7 +1091,7 @@ register_evaluator(
     }
 
     seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else 42L
-    if (!is.null(seed_val) && is.numeric(seed_val) && requireNamespace("torch", quietly = TRUE)) {
+    if (requireNamespace("torch", quietly = TRUE)) {
       torch::torch_manual_seed(seed_val)
     }
 
@@ -840,9 +1138,21 @@ register_evaluator(
     realmlp_ns <- asNamespace("realmlp")
     t0 <- Sys.time()
 
+    if (show_log) {
+      es_str <- if (use_es) sprintf(" (early stopping patience=%d)", early_stopping_rounds) else ""
+      msg_start <- sprintf("    [RealMLP %s] Starting training: %d rows (%d features) on %s (256 epochs%s)...",
+                           task, nrow(df_train), ncol(df_train), device, es_str)
+      message(msg_start)
+    }
+
+    classes <- .get_progress_realmlp_classes()
+
     # 1. Regression
     if (task == "regression") {
-      net <- realmlp_ns$Standalone_RealMLP_TD_S_Regressor$new(device = device)
+      net <- classes$ProgressRealMLPRegressor$new(device = device)
+      net$show_log <- show_log
+      net$is_detail <- is_detail
+      net$early_stopping_rounds <- if (use_es) early_stopping_rounds else NULL
 
       net$fit(
         X = df_train,
@@ -855,7 +1165,11 @@ register_evaluator(
 
     # 2. Classification (Binary & Multiclass)
     } else if (task %in% c("classification", "multiclass")) {
-      net <- realmlp_ns$Standalone_RealMLP_TD_S_Classifier$new(device = device)
+      net <- classes$ProgressRealMLPClassifier$new(device = device)
+      net$show_log <- show_log
+      net$is_detail <- is_detail
+      net$task_name <- task
+      net$early_stopping_rounds <- if (use_es) early_stopping_rounds else NULL
 
       levels_target <- if (task == "classification") {
         if (is.factor(y_train)) levels(y_train) else c(0, 1)
@@ -902,10 +1216,15 @@ register_evaluator(
 
     if (show_log) {
       elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+      es_status <- if (isTRUE(net$stopped_early)) {
+        sprintf("stopped at epoch %d (patience=%d)", net$stopped_epoch, early_stopping_rounds)
+      } else if (use_es) {
+        sprintf("patience=%d", early_stopping_rounds)
+      } else {
+        "OFF"
+      }
       msg <- sprintf("    [RealMLP %s] Fitted %d rows on %s (Early stopping: %s, %.3fs)",
-                     task, nrow(df_train), device,
-                     if (use_es) paste0("patience=", early_stopping_rounds) else "OFF",
-                     elapsed)
+                     task, nrow(df_train), device, es_status, elapsed)
       if (is_detail) {
         msg <- sprintf("%s [Features: %d]", msg, ncol(df_train))
       }

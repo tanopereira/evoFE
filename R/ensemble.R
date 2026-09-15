@@ -153,6 +153,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   # Collect validation prediction vectors, targets, and evaluators across all recipes
   val_preds_list <- list()
   cand_metadata <- list()
+  y_val <- NULL
 
   for (r_idx in seq_along(recipe_list)) {
     rec <- recipe_list[[r_idx]]
@@ -292,7 +293,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       stored_folds = stored_folds,
       y_val = y_val
     ), envir = alignment_cache)
-  } else if (!exists("y_val", inherits = FALSE)) {
+  } else if (is.null(y_val)) {
     y_val <- if (is_metacv_equal) {
       if (task == "multiclass") {
         as.integer(factor(data[[target_col]], levels = classes)) - 1
@@ -527,7 +528,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   )
 }
 
-#' Internal Caruana Greedy Selection Engine
 #' Internal Caruana Greedy Selection Engine
 #' @keywords internal
 #' @noRd

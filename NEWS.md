@@ -1,13 +1,19 @@
-# evoFE 1.0.0 (development)
+# evoFE 1.1.0
 
 ## New Features
 
+* **RealMLP training progress verbosity & early stopping**: Added start-of-training logging, periodic epoch/loss progress tracking (patterned after PyTabKit / RealMLP-TD-S), and active early stopping rounds break to avoid idle waits during RealMLP model fitting.
+* **Equal-weight island ensembling (`method = "equal"`)**: Uniform weighting ($w_j = 1/K$) across all island models in `ensemble_islands()`, with aliases `"uniform"` and `"average"`.
+* **Persistent in-place alignment cache**: Cached harmonized out-of-fold predictions on `recipe$alignment_cache` to accelerate repeated ensembling calls.
 * **Stacked ensembling (`method = "stack"`)** in `ensemble_islands()`: a non-negative elastic-net meta-learner (via `glmnet`, `stack_alpha` default `0.5`) fits island weights on out-of-fold predictions, with an honest nested cross-validated performance estimate (`stack_cv_fitness`). The evolution fold partition is reused when available; otherwise internal balanced folds are used. Weights are sparse and normalized to sum to 1, and the existing lazy-training and weighted-prediction paths are shared with Caruana selection.
 * **RealMLP evaluator (`evaluator = "realmlp"`)**: Added support for RealMLP neural networks via the `frankiethull/realmlp` R package and `torch`. Supports regression, binary classification, and multiclass tasks, with optional MPS/CUDA/CPU device acceleration and conditional early stopping aligned with LightGBM and XGBoost.
 * **Multi-threaded UMAP SGD optimization**: `umap`, `umap_genie`, and `umap_lumbermark` now configure `n_sgd_threads = "auto"` in `uwot::umap()` and `uwot::umap_transform()` for parallelized SGD layout optimization.
 
 ## Bug Fixes
 
+* `ensemble_islands()`: Explicitly initialized `y_val <- NULL` and replaced fragile `exists("y_val", inherits = FALSE)` check with `is.null(y_val)` to protect against scoping bugs during prediction harmonization.
+* `evolve_features()`: Fixed `metacv_mode` deprecation mapping to explicitly support `metacv_mode = "headroom"`.
+* Removed dead variable assignments in `R/evolve.R` and cleaned up duplicate roxygen documentation in `R/ensemble.R`.
 * Fixed stacked ensembling (`method = "stack"`) producing `-Inf` fitness on MetaCV tournament recipes by enabling `allow_prune = TRUE` during tournament CV evaluations, and adding `anyNA` detection with defensive non-finite handling in `ensemble_islands()` and `.stack_select()`'s `blend_with()` helper.
 * `ensemble_islands()`: Automatically aligns and harmonizes validation prediction dimensions across mixed recipes and evaluation strategies (e.g. combining `split` with `cv` recipes, or `row_split_islands`), ensuring conformable prediction arrays and ground-truth targets in both Caruana and Stacking selection.
 * `ensemble_islands()` now reports `single_best_fitness` using the unpenalized validation score (`raw_fitness`) of the best island model instead of the complexity-penalized selection fitness, so the comparison with `ensemble_val_fitness` is apples-to-apples.
