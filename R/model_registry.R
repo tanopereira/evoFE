@@ -751,7 +751,7 @@ register_evaluator(
     y_val <- extra_params$y_val
     early_stopping_rounds <- if (!is.null(extra_params$early_stopping_rounds)) as.integer(extra_params$early_stopping_rounds) else 0L
 
-    seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else 42L
+    seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else sample.int(1000000L, 1L)
     n_epochs <- if (!is.null(extra_params$n_epochs)) as.integer(extra_params$n_epochs) else as.integer(nrounds)
     batch_size <- if (!is.null(extra_params$batch_size)) as.integer(extra_params$batch_size) else 256L
     lr_val <- if (!is.null(extra_params$lr)) as.numeric(extra_params$lr) else -1.0

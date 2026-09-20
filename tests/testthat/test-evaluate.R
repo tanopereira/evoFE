@@ -248,3 +248,33 @@ test_that("realmlp evaluator trains and achieves high accuracy on iris", {
   expect_gt(acc, 0.85)
 })
 
+test_that("realmlp evaluator respects seed parameter and global set.seed", {
+  data(iris)
+  train_idx <- 1:100
+  test_idx <- 101:150
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  # 1. Explicit seed reproducibility
+  fit_s1 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", seed = 42, nrounds = 20, verbose = FALSE)
+  fit_s2 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", seed = 42, nrounds = 20, verbose = FALSE)
+  p1 <- ev$predict_func(fit_s1$model, iris[test_idx, 1:4], task = "multiclass")
+  p2 <- ev$predict_func(fit_s2$model, iris[test_idx, 1:4], task = "multiclass")
+  expect_identical(p1, p2)
+
+  # 2. Different seeds produce different results
+  fit_s3 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", seed = 999, nrounds = 20, verbose = FALSE)
+  p3 <- ev$predict_func(fit_s3$model, iris[test_idx, 1:4], task = "multiclass")
+  expect_false(identical(p1, p3))
+
+  # 3. Global set.seed reproducibility when seed parameter is omitted
+  set.seed(777)
+  fit_g1 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", nrounds = 20, verbose = FALSE)
+  p_g1 <- ev$predict_func(fit_g1$model, iris[test_idx, 1:4], task = "multiclass")
+
+  set.seed(777)
+  fit_g2 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", nrounds = 20, verbose = FALSE)
+  p_g2 <- ev$predict_func(fit_g2$model, iris[test_idx, 1:4], task = "multiclass")
+
+  expect_identical(p_g1, p_g2)
+})
+
