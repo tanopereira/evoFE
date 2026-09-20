@@ -250,6 +250,9 @@ public:
   double y_mean;
   double y_std;
 
+  Eigen::VectorXd x_mean;
+  Eigen::VectorXd x_std;
+
   PBLDEmbedder embedder;
   AdamParam front_scale;
   AdamParam W1, b1;
@@ -266,6 +269,9 @@ public:
     n_features = n_feat;
     output_dim = out_dim;
     hidden_dim = h_dim;
+
+    x_mean = Eigen::VectorXd::Zero(n_features);
+    x_std = Eigen::VectorXd::Ones(n_features);
 
     std::mt19937 rng(static_cast<unsigned int>(seed));
     embedder.init(n_features, rng, 16, 4, 0.1);
@@ -296,7 +302,7 @@ public:
     init_linear(W1, b1, in_dim, hidden_dim, false);
     init_linear(W2, b2, hidden_dim, hidden_dim, false);
     init_linear(W3, b3, hidden_dim, hidden_dim, false);
-    init_linear(W4, b4, hidden_dim, output_dim, true);
+    init_linear(W4, b4, hidden_dim, output_dim, false);
   }
 
   // Fast forward pass through MLP
@@ -338,8 +344,17 @@ public:
   }
 
   // Full prediction on test data
-  Eigen::MatrixXd predict(const Eigen::MatrixXd& X) const {
-    Eigen::MatrixXd E = embedder.forward(X);
+  Eigen::MatrixXd predict(const Eigen::MatrixXd& X, bool normalize_input = true) const {
+    Eigen::MatrixXd X_in = X;
+    if (normalize_input && x_mean.size() == X.cols() && x_std.size() == X.cols()) {
+      for (int j = 0; j < X.cols(); ++j) {
+        double s = x_std(j);
+        if (s > 1e-12) {
+          X_in.col(j) = (X.col(j).array() - x_mean(j)) / s;
+        }
+      }
+    }
+    Eigen::MatrixXd E = embedder.forward(X_in);
     Eigen::MatrixXd logits = forward_mlp(E);
 
     if (task == "regression") {
@@ -394,6 +409,7 @@ public:
   struct StateSnapshot {
     PBLDEmbedder embedder;
     AdamParam front_scale, W1, b1, W2, b2, W3, b3, W4, b4;
+    Eigen::VectorXd x_mean, x_std;
   };
 
   StateSnapshot get_snapshot() const {
@@ -404,6 +420,8 @@ public:
     s.W2 = W2; s.b2 = b2;
     s.W3 = W3; s.b3 = b3;
     s.W4 = W4; s.b4 = b4;
+    s.x_mean = x_mean;
+    s.x_std = x_std;
     return s;
   }
 
@@ -414,6 +432,8 @@ public:
     W2 = s.W2; b2 = s.b2;
     W3 = s.W3; b3 = s.b3;
     W4 = s.W4; b4 = s.b4;
+    x_mean = s.x_mean;
+    x_std = s.x_std;
   }
 };
 

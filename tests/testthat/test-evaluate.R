@@ -225,3 +225,26 @@ test_that("realmlp evaluator early stopping works with validation data", {
   expect_equal(length(fit$predictions), 30)
   expect_true(!is.null(fit$importances))
 })
+
+test_that("realmlp evaluator trains and achieves high accuracy on iris", {
+  data(iris)
+  set.seed(42)
+  train_idx <- c(1:40, 51:90, 101:140)
+  test_idx <- c(41:50, 91:100, 141:150)
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = iris[train_idx, 1:4],
+    y_train = iris$Species[train_idx],
+    task = "multiclass",
+    seed = 42,
+    nrounds = 50,
+    verbose = FALSE
+  )
+
+  preds <- ev$predict_func(fit$model, iris[test_idx, 1:4], task = "multiclass")
+  pred_cls <- colnames(preds)[max.col(preds)]
+  acc <- mean(pred_cls == as.character(iris$Species[test_idx]))
+  expect_gt(acc, 0.85)
+})
+

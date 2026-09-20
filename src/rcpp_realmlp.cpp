@@ -35,6 +35,20 @@ inline NumericMatrix to_rcpp(const Eigen::MatrixXd& emat) {
   return mat;
 }
 
+inline NumericVector to_rcpp_vec(const Eigen::VectorXd& evec) {
+  int n = static_cast<int>(evec.size());
+  NumericVector vec(n);
+  for (int i = 0; i < n; ++i) vec[i] = evec[i];
+  return vec;
+}
+
+inline Eigen::VectorXd to_eigen_vec(const NumericVector& vec) {
+  int n = vec.size();
+  Eigen::VectorXd evec(n);
+  for (int i = 0; i < n; ++i) evec[i] = vec[i];
+  return evec;
+}
+
 // Convert model state to an Rcpp::List with explicit names
 List model_to_list(const RealMLPModel& m) {
   List W_proj_list(m.embedder.n_features);
@@ -59,6 +73,8 @@ List model_to_list(const RealMLPModel& m) {
     Named("hidden_dim") = m.hidden_dim,
     Named("y_mean") = m.y_mean,
     Named("y_std") = m.y_std,
+    Named("x_mean") = to_rcpp_vec(m.x_mean),
+    Named("x_std") = to_rcpp_vec(m.x_std),
     Named("embedder") = p_embed,
     Named("front_scale") = to_rcpp(m.front_scale.val),
     Named("W1") = to_rcpp(m.W1.val),
@@ -84,6 +100,11 @@ RealMLPModel list_to_model(const List& lst) {
   m.hidden_dim = as<int>(lst["hidden_dim"]);
   m.y_mean = as<double>(lst["y_mean"]);
   m.y_std = as<double>(lst["y_std"]);
+
+  if (lst.containsElementNamed("x_mean") && lst.containsElementNamed("x_std")) {
+    m.x_mean = to_eigen_vec(as<NumericVector>(lst["x_mean"]));
+    m.x_std = to_eigen_vec(as<NumericVector>(lst["x_std"]));
+  }
 
   List p_embed = lst["embedder"];
   m.embedder.n_features = m.n_features;
@@ -170,6 +191,27 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
   Eigen::MatrixXd X_tr = to_eigen(x_train);
 
+  // Standardize training features
+  Eigen::VectorXd x_mean(D);
+  Eigen::VectorXd x_std(D);
+  for (int j = 0; j < D; ++j) {
+    double sum = 0.0;
+    for (int i = 0; i < N; ++i) sum += X_tr(i, j);
+    double mean_j = sum / N;
+    double sum_sq = 0.0;
+    for (int i = 0; i < N; ++i) {
+      double diff = X_tr(i, j) - mean_j;
+      sum_sq += diff * diff;
+    }
+    double std_j = std::sqrt(sum_sq / std::max(1, N - 1));
+    if (std_j < 1e-8 || !std::isfinite(std_j)) std_j = 1.0;
+    x_mean(j) = mean_j;
+    x_std(j) = std_j;
+    for (int i = 0; i < N; ++i) {
+      X_tr(i, j) = (X_tr(i, j) - mean_j) / std_j;
+    }
+  }
+
   // Targets processing
   Eigen::MatrixXd Y_tr(N, out_dim);
   double y_mean = 0.0;
@@ -219,6 +261,13 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     X_v = to_eigen(xv);
     y_v_vec = NumericVector(y_val);
     N_val = static_cast<int>(X_v.rows());
+    for (int j = 0; j < D; ++j) {
+      double mean_j = x_mean(j);
+      double std_j = x_std(j);
+      for (int i = 0; i < N_val; ++i) {
+        X_v(i, j) = (X_v(i, j) - mean_j) / std_j;
+      }
+    }
   }
 
   // Initialize model
@@ -226,9 +275,14 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   model.init(D, out_dim, task, seed, 256);
   model.y_mean = y_mean;
   model.y_std = y_std;
+  model.x_mean = x_mean;
+  model.x_std = x_std;
 
   // Training parameters
   int actual_batch_size = std::max(1, std::min(batch_size, N));
+  if (actual_batch_size == N && N > 32) {
+    actual_batch_size = std::min(64, std::max(16, N / 4));
+  }
   int n_batches = std::max(1, N / actual_batch_size);
   int total_steps = n_epochs * n_batches;
 
@@ -320,13 +374,14 @@ List rcpp_realmlp_train(NumericMatrix x_train,
           if (sum_exp > 0.0) {
             P.row(i) = exp_row / sum_exp;
           } else {
-            P.row(i).setZero();
+            P.row(i).fill(1.0 / out_dim);
           }
           for (int c = 0; c < out_dim; ++c) {
             batch_loss -= Y_batch(i, c) * std::log(std::max(1e-15, P(i, c)));
           }
         }
         batch_loss /= cur_B;
+        grad_out = (1.0 / cur_B) * (P - Y_batch);
       }
       double max_g = grad_out.array().abs().maxCoeff();
       if (max_g > 10.0) {
@@ -339,17 +394,17 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       Eigen::MatrixXd grad_W4 = H3.transpose() * grad_out;
       Eigen::MatrixXd grad_b4 = grad_out.colwise().sum();
       Eigen::MatrixXd delta3 = grad_out * model.W4.val.transpose();
-      apply_activation_grad(A3, delta3, is_cls);
+      apply_activation_grad(A3, delta3, model.is_classification);
 
       Eigen::MatrixXd grad_W3 = H2.transpose() * delta3;
       Eigen::MatrixXd grad_b3 = delta3.colwise().sum();
       Eigen::MatrixXd delta2 = delta3 * model.W3.val.transpose();
-      apply_activation_grad(A2, delta2, is_cls);
+      apply_activation_grad(A2, delta2, model.is_classification);
 
       Eigen::MatrixXd grad_W2 = H1.transpose() * delta2;
       Eigen::MatrixXd grad_b2 = delta2.colwise().sum();
       Eigen::MatrixXd delta1 = delta2 * model.W2.val.transpose();
-      apply_activation_grad(A1, delta1, is_cls);
+      apply_activation_grad(A1, delta1, model.is_classification);
 
       Eigen::MatrixXd grad_W1 = H0.transpose() * delta1;
       Eigen::MatrixXd grad_b1 = delta1.colwise().sum();
@@ -360,7 +415,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
       // 5. Backprop PBLD Embeddings and Adam update
       model.embedder.backward_and_update(X_batch, delta_E, cache_Z, cache_Theta,
-                                         cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+                                         cur_lr, beta1, beta2, eps, b1_corr, b2_corr);
 
       // 6. Adam update MLP
       model.front_scale.update(grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
@@ -378,7 +433,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     double val_score = std::numeric_limits<double>::quiet_NaN();
 
     if (has_val && N_val > 0) {
-      Eigen::MatrixXd val_preds = model.predict(X_v);
+      Eigen::MatrixXd val_preds = model.predict(X_v, false);
 
       if (task == "regression") {
         double sum_se = 0.0;
