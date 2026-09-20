@@ -55,6 +55,8 @@ export(policy_gibbs_push)
 export(policy_push_uniform)
 export(policy_tiered_admission)
 export(predict_model)
+export(rcpp_realmlp_predict)
+export(rcpp_realmlp_train)
 export(register_evaluator)
 export(register_transformer)
 export(resolve_migration_transactions)
@@ -69,27 +71,23 @@ export(tournament_select)
 export(union_crossover)
 export(view)
 import(data.table)
-importFrom(bbotk,
-  ObjectiveRFun,
-  OptimInstanceBatchSingleCrit,
-  opt,
-  trm
-)
+importFrom(Rcpp,evalCpp)
+importFrom(bbotk,ObjectiveRFun)
+importFrom(bbotk,OptimInstanceBatchSingleCrit)
+importFrom(bbotk,opt)
+importFrom(bbotk,trm)
 importFrom(genieclust,genie)
 importFrom(lhs,maximinLHS)
 importFrom(lightgbm,lgb.train)
-importFrom(paradox,
-  generate_design_lhs,
-  p_dbl,
-  p_fct,
-  p_int,
-  ps
-)
+importFrom(paradox,generate_design_lhs)
+importFrom(paradox,p_dbl)
+importFrom(paradox,p_fct)
+importFrom(paradox,p_int)
+importFrom(paradox,ps)
 importFrom(stats,predict)
-importFrom(utils,
-  head,
-  modifyList,
-  tail
-)
+importFrom(utils,head)
+importFrom(utils,modifyList)
+importFrom(utils,tail)
 importFrom(uwot,umap)
 importFrom(xgboost,xgb.train)
+useDynLib(evoFE, .registration = TRUE)

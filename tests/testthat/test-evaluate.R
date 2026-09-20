@@ -52,9 +52,6 @@ test_that("compute_calibrated_mae works correctly", {
 })
 
 test_that("realmlp evaluator returns non-null feature importances", {
-  skip_if_not_installed("realmlp")
-  skip_if_not_installed("torch")
-
   set.seed(42)
   d <- data.frame(
     x1 = rnorm(50),
@@ -78,9 +75,6 @@ test_that("realmlp evaluator returns non-null feature importances", {
 })
 
 test_that("realmlp evaluator emits progress messages when verbose and stays silent when not", {
-  skip_if_not_installed("realmlp")
-  skip_if_not_installed("torch")
-
   set.seed(42)
   d <- data.frame(
     x1 = rnorm(40),
@@ -91,30 +85,143 @@ test_that("realmlp evaluator emits progress messages when verbose and stays sile
   ev <- evoFE::evo_evaluators[["realmlp"]]
 
   # 1. Verbose mode emits starting, epoch progress, and completion messages
-  msgs <- testthat::capture_messages({
-    res_verb <- ev$train_func(
-      x_train = d[, c("x1", "x2")],
-      y_train = d$y,
-      task = "regression",
-      seed = 42,
-      verbose = TRUE
-    )
+  out_verb <- testthat::capture_output({
+    msgs <- testthat::capture_messages({
+      res_verb <- ev$train_func(
+        x_train = d[, c("x1", "x2")],
+        y_train = d$y,
+        task = "regression",
+        seed = 42,
+        nrounds = 20,
+        verbose = TRUE
+      )
+    })
   })
 
-  expect_true(any(grepl("Starting training:.*256 epochs", msgs)))
-  expect_true(any(grepl("Epoch\\s+\\d+/256", msgs)))
-  expect_true(any(grepl("Fitted.*rows", msgs)))
+  expect_true(any(grepl("\\[RealMLP C\\+\\+ regression\\] Fitted.*rows", msgs)))
+  expect_true(grepl("\\[RealMLP C\\+\\+ regression\\] Starting training:", out_verb))
+  expect_true(grepl("Epoch\\s+\\d+/20", out_verb))
 
-  # 2. Silent mode emits no messages
-  msgs_silent <- testthat::capture_messages({
-    res_quiet <- ev$train_func(
-      x_train = d[, c("x1", "x2")],
-      y_train = d$y,
-      task = "regression",
-      seed = 42,
-      verbose = FALSE
-    )
+  # 2. Silent mode emits no messages or stdout
+  out_silent <- testthat::capture_output({
+    msgs_silent <- testthat::capture_messages({
+      res_quiet <- ev$train_func(
+        x_train = d[, c("x1", "x2")],
+        y_train = d$y,
+        task = "regression",
+        seed = 42,
+        nrounds = 20,
+        verbose = FALSE
+      )
+    })
   })
 
   expect_equal(length(msgs_silent), 0)
+  expect_equal(nchar(out_silent), 0)
+})
+
+test_that("realmlp evaluator works for binary classification and predict_func", {
+  set.seed(42)
+  n <- 60
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  prob <- 1 / (1 + exp(-(1.5 * x1 - 2.0 * x2)))
+  y_bin <- as.factor(ifelse(prob > 0.5, "yes", "no"))
+  d <- data.frame(x1 = x1, x2 = x2, y = y_bin)
+
+  train_idx <- 1:45
+  val_idx <- 46:60
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = d[train_idx, c("x1", "x2")],
+    y_train = d$y[train_idx],
+    x_val = d[val_idx, c("x1", "x2")],
+    task = "classification",
+    seed = 42,
+    nrounds = 30,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$model))
+  expect_equal(length(fit$predictions), length(val_idx))
+  expect_true(all(fit$predictions >= 0 & fit$predictions <= 1))
+  expect_equal(length(fit$importances), 2)
+  expect_equal(sum(fit$importances), 1.0, tolerance = 1e-5)
+
+  # Test predict_func on new data
+  new_preds <- ev$predict_func(fit$model, d[val_idx, c("x1", "x2")], task = "classification")
+  expect_equal(new_preds, fit$predictions, tolerance = 1e-6)
+
+  # Test NA imputation in predict_func
+  d_na <- d[val_idx, c("x1", "x2")]
+  d_na[1, 1] <- NA
+  preds_with_na <- ev$predict_func(fit$model, d_na, task = "classification")
+  expect_true(!is.na(preds_with_na[1]))
+})
+
+test_that("realmlp evaluator works for multiclass classification", {
+  set.seed(123)
+  n <- 90
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  # 3 distinct classes
+  y_cat <- factor(
+    ifelse(x1 + x2 > 0.5, "ClassA",
+           ifelse(x1 - x2 > 0.5, "ClassB", "ClassC")),
+    levels = c("ClassA", "ClassB", "ClassC")
+  )
+  d <- data.frame(x1 = x1, x2 = x2, y = y_cat)
+
+  train_idx <- 1:70
+  val_idx <- 71:90
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = d[train_idx, c("x1", "x2")],
+    y_train = d$y[train_idx],
+    x_val = d[val_idx, c("x1", "x2")],
+    task = "multiclass",
+    seed = 123,
+    nrounds = 30,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$model))
+  expect_true(is.matrix(fit$predictions))
+  expect_equal(nrow(fit$predictions), length(val_idx))
+  expect_equal(ncol(fit$predictions), 3)
+  expect_equal(colnames(fit$predictions), c("ClassA", "ClassB", "ClassC"))
+  expect_equal(rowSums(fit$predictions), rep(1.0, length(val_idx)), tolerance = 1e-4)
+
+  # Test predict_func
+  new_preds <- ev$predict_func(fit$model, d[val_idx, c("x1", "x2")], task = "multiclass")
+  expect_equal(new_preds, fit$predictions, tolerance = 1e-6)
+})
+
+test_that("realmlp evaluator early stopping works with validation data", {
+  set.seed(42)
+  n <- 80
+  d <- data.frame(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    y = rnorm(n)
+  )
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = d[1:50, c("x1", "x2")],
+    y_train = d$y[1:50],
+    x_val = d[51:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 50,
+    early_stopping_rounds = 5,
+    y_val = d$y[51:80],
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$model))
+  expect_equal(length(fit$predictions), 30)
+  expect_true(!is.null(fit$importances))
 })

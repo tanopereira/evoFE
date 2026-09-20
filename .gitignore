@@ -25,3 +25,9 @@ catboost_info/
 /*.log
 /vignettes/*.R
 /vignettes/*.html
+
+# Compiled object files and shared libraries
+src/*.o
+src/*.so
+src/*.dll
+src/*.dylib

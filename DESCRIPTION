@@ -37,7 +37,12 @@ Imports:
     paradox,
     bbotk,
     mlr3mbo,
-    lhs
+    lhs,
+    Rcpp (>= 1.0.0)
+LinkingTo: 
+    Rcpp,
+    RcppEigen
+SystemRequirements: C++17
 Suggests: 
     glmnet,
     RhpcBLASctl,

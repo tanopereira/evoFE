@@ -1,4 +1,6 @@
 #' @keywords internal
+#' @useDynLib evoFE, .registration = TRUE
+#' @importFrom Rcpp evalCpp
 "_PACKAGE"
 
 #' evoFE: Evolutionary Feature Engineering

@@ -6,7 +6,7 @@
 * **Equal-weight island ensembling (`method = "equal"`)**: Uniform weighting ($w_j = 1/K$) across all island models in `ensemble_islands()`, with aliases `"uniform"` and `"average"`.
 * **Persistent in-place alignment cache**: Cached harmonized out-of-fold predictions on `recipe$alignment_cache` to accelerate repeated ensembling calls.
 * **Stacked ensembling (`method = "stack"`)** in `ensemble_islands()`: a non-negative elastic-net meta-learner (via `glmnet`, `stack_alpha` default `0.5`) fits island weights on out-of-fold predictions, with an honest nested cross-validated performance estimate (`stack_cv_fitness`). The evolution fold partition is reused when available; otherwise internal balanced folds are used. Weights are sparse and normalized to sum to 1, and the existing lazy-training and weighted-prediction paths are shared with Caruana selection.
-* **RealMLP evaluator (`evaluator = "realmlp"`)**: Added support for RealMLP neural networks via the `frankiethull/realmlp` R package and `torch`. Supports regression, binary classification, and multiclass tasks, with optional MPS/CUDA/CPU device acceleration and conditional early stopping aligned with LightGBM and XGBoost.
+* **Native C++ RealMLP evaluator (`evaluator = "realmlp"`)**: Replaced slow external `torch` / `frankiethull/realmlp` dependency with a standalone, high-performance C++ implementation via `Rcpp` and `RcppEigen`. Features Periodic Bias Linear DenseNet (PBLD) numerical embeddings ($k=16$ periodic frequencies, phase shift, $d=4$ linear projection, DenseNet skip connections), NTP parameter initialization, Mish/SELU activations, vectorized Adam optimizer with log-cosine annealing schedule, validation loss tracking, early stopping, and gradient-norm feature importance extraction.
 * **Multi-threaded UMAP SGD optimization**: `umap`, `umap_genie`, and `umap_lumbermark` now configure `n_sgd_threads = "auto"` in `uwot::umap()` and `uwot::umap_transform()` for parallelized SGD layout optimization.
 
 ## Bug Fixes
@@ -18,7 +18,7 @@
 * `ensemble_islands()`: Automatically aligns and harmonizes validation prediction dimensions across mixed recipes and evaluation strategies (e.g. combining `split` with `cv` recipes, or `row_split_islands`), ensuring conformable prediction arrays and ground-truth targets in both Caruana and Stacking selection.
 * `ensemble_islands()` now reports `single_best_fitness` using the unpenalized validation score (`raw_fitness`) of the best island model instead of the complexity-penalized selection fitness, so the comparison with `ensemble_val_fitness` is apples-to-apples.
 * `ensemble_islands()`: Fixed data leakage in nested CV fallback when regularized coefficients are all zero, protected stratified fold generation against sparse classes, and scoped `evoFE.threads` during lazy feature evaluation.
-* `realmlp` evaluator: Fixed binary and multiclass target label level ordering and column alignment in `train_func` and `predict_func`. Fixed inverted probability indexing where class levels derived from row-order via `unique()` caused fold-dependent inverted predictions and collapsed classification fitness scores. Guaranteed `torch` package attachment when running RealMLP models.
+* `realmlp` evaluator: Completely eliminated external `{torch}` runtime requirements; native C++ implementation operates in-memory with zero overhead and full CRAN compliance. Fixed binary and multiclass target label level ordering and column alignment in `train_func` and `predict_func`.
 
 # evoFE 1.0.0
 
