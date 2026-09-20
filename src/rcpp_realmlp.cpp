@@ -135,6 +135,135 @@ RealMLPModel list_to_model(const List& lst) {
   return m;
 }
 
+struct MetricResult {
+  double score;
+  std::string name;
+  bool higher_is_better;
+};
+
+inline MetricResult compute_val_metric(
+    const Eigen::MatrixXd& val_preds,
+    const NumericVector& y_v_vec,
+    const std::string& task,
+    const std::string& metric_req,
+    int out_dim) {
+
+  int N_val = static_cast<int>(val_preds.rows());
+  std::string m = metric_req;
+  std::transform(m.begin(), m.end(), m.begin(), ::tolower);
+
+  if (task == "regression") {
+    if (m == "mae") {
+      double sum_ae = 0.0;
+      for (int i = 0; i < N_val; ++i) {
+        sum_ae += std::abs(val_preds(i, 0) - y_v_vec[i]);
+      }
+      return { sum_ae / N_val, "Val MAE", false };
+    }
+    double sum_se = 0.0;
+    for (int i = 0; i < N_val; ++i) {
+      double diff = val_preds(i, 0) - y_v_vec[i];
+      sum_se += diff * diff;
+    }
+    return { std::sqrt(sum_se / N_val), "Val RMSE", false };
+  }
+
+  if (task == "classification") {
+    if (m == "accuracy" || m == "acc") {
+      int correct = 0;
+      for (int i = 0; i < N_val; ++i) {
+        int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
+        int true_class = (y_v_vec[i] > 0.0) ? 1 : 0;
+        if (pred_class == true_class) correct++;
+      }
+      return { static_cast<double>(correct) / N_val, "Val accuracy", true };
+    }
+    if (m == "auc") {
+      std::vector<std::pair<double, int>> pairs(N_val);
+      int n_pos = 0;
+      for (int i = 0; i < N_val; ++i) {
+        int y = (y_v_vec[i] > 0.0) ? 1 : 0;
+        if (y == 1) n_pos++;
+        pairs[i] = { val_preds(i, 0), y };
+      }
+      int n_neg = N_val - n_pos;
+      if (n_pos == 0 || n_neg == 0) return { 0.5, "Val AUC", true };
+      std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+      });
+      double rank_sum_pos = 0.0;
+      for (int i = 0; i < N_val; ++i) {
+        if (pairs[i].second == 1) {
+          rank_sum_pos += (i + 1);
+        }
+      }
+      double u = rank_sum_pos - (static_cast<double>(n_pos) * (n_pos + 1)) / 2.0;
+      double auc = u / (static_cast<double>(n_pos) * n_neg);
+      return { auc, "Val AUC", true };
+    }
+    if (m == "error" || m == "err") {
+      int errors = 0;
+      for (int i = 0; i < N_val; ++i) {
+        int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
+        int true_class = (y_v_vec[i] > 0.0) ? 1 : 0;
+        if (pred_class != true_class) errors++;
+      }
+      return { static_cast<double>(errors) / N_val, "Val error", false };
+    }
+    // Default for binary classification: logloss
+    double ll_sum = 0.0;
+    for (int i = 0; i < N_val; ++i) {
+      double p = std::clamp(val_preds(i, 0), 1e-15, 1.0 - 1e-15);
+      double y = (y_v_vec[i] > 0.0) ? 1.0 : 0.0;
+      ll_sum -= (y * std::log(p) + (1.0 - y) * std::log(1.0 - p));
+    }
+    return { ll_sum / N_val, "Val logloss", false };
+  }
+
+  // task == "multiclass"
+  if (m == "accuracy" || m == "acc") {
+    int correct = 0;
+    for (int i = 0; i < N_val; ++i) {
+      int best_c = 0;
+      double max_p = val_preds(i, 0);
+      for (int c = 1; c < out_dim; ++c) {
+        if (val_preds(i, c) > max_p) {
+          max_p = val_preds(i, c);
+          best_c = c;
+        }
+      }
+      if (best_c == static_cast<int>(y_v_vec[i])) correct++;
+    }
+    return { static_cast<double>(correct) / N_val, "Val accuracy", true };
+  }
+  if (m == "error" || m == "err") {
+    int errors = 0;
+    for (int i = 0; i < N_val; ++i) {
+      int best_c = 0;
+      double max_p = val_preds(i, 0);
+      for (int c = 1; c < out_dim; ++c) {
+        if (val_preds(i, c) > max_p) {
+          max_p = val_preds(i, c);
+          best_c = c;
+        }
+      }
+      if (best_c != static_cast<int>(y_v_vec[i])) errors++;
+    }
+    return { static_cast<double>(errors) / N_val, "Val error", false };
+  }
+  // Default for multiclass: multi-logloss
+  double ll_sum = 0.0;
+  for (int i = 0; i < N_val; ++i) {
+    int true_c = static_cast<int>(y_v_vec[i]);
+    double p = 1e-15;
+    if (true_c >= 0 && true_c < out_dim) {
+      p = std::clamp(val_preds(i, true_c), 1e-15, 1.0);
+    }
+    ll_sum -= std::log(p);
+  }
+  return { ll_sum / N_val, "Val logloss", false };
+}
+
 //' Train RealMLP Model in C++
 //'
 //' @param x_train Numeric matrix of training features.
@@ -149,6 +278,8 @@ RealMLPModel list_to_model(const List& lst) {
 //' @param seed Integer: random seed.
 //' @param verbose Integer: verbosity level (0 = silent, 1 = normal, 2 = detailed).
 //' @param num_classes Integer: number of classes for multiclass task.
+//' @param threads Integer: number of threads for parallel computation.
+//' @param metric String: validation metric to optimize and report ("default", "logloss", "accuracy", "auc", "rmse", "mae", "error").
 //' @return A List containing model weights, training statistics, and feature importances.
 //' @export
 // [[Rcpp::export]]
@@ -163,7 +294,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
                         int early_stopping_rounds = 0,
                         int seed = 42,
                         int verbose = 0,
-                        int num_classes = 0) {
+                        int num_classes = 0,
+                        int threads = 1,
+                        std::string metric = "default") {
 
   int N = x_train.nrow();
   int D = x_train.ncol();
@@ -294,7 +427,15 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   std::vector<int> perm(N);
   for (int i = 0; i < N; ++i) perm[i] = i;
 
-  double best_val_score = std::numeric_limits<double>::infinity();
+#ifdef _OPENMP
+  if (threads > 0) {
+    omp_set_num_threads(threads);
+  }
+#endif
+  Eigen::setNbThreads(threads > 0 ? threads : 1);
+
+  double best_val_score = std::numeric_limits<double>::quiet_NaN();
+  std::string val_metric_nm = "Val metric";
   RealMLPModel::StateSnapshot best_snapshot;
   bool has_best_snapshot = false;
   int no_improve_epochs = 0;
@@ -434,39 +575,19 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
     if (has_val && N_val > 0) {
       Eigen::MatrixXd val_preds = model.predict(X_v, false);
+      MetricResult m_res = compute_val_metric(val_preds, y_v_vec, task, metric, out_dim);
+      val_score = m_res.score;
+      val_metric_nm = m_res.name;
 
-      if (task == "regression") {
-        double sum_se = 0.0;
-        for (int i = 0; i < N_val; ++i) {
-          double diff = val_preds(i, 0) - y_v_vec[i];
-          sum_se += diff * diff;
-        }
-        val_score = std::sqrt(sum_se / N_val);
-      } else if (is_cls) {
-        int errors = 0;
-        for (int i = 0; i < N_val; ++i) {
-          int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
-          int true_class = (y_v_vec[i] > 0.0) ? 1 : 0;
-          if (pred_class != true_class) errors++;
-        }
-        val_score = static_cast<double>(errors) / N_val;
-      } else {
-        int errors = 0;
-        for (int i = 0; i < N_val; ++i) {
-          int best_c = 0;
-          double max_p = val_preds(i, 0);
-          for (int c = 1; c < out_dim; ++c) {
-            if (val_preds(i, c) > max_p) {
-              max_p = val_preds(i, c);
-              best_c = c;
-            }
-          }
-          if (best_c != static_cast<int>(y_v_vec[i])) errors++;
-        }
-        val_score = static_cast<double>(errors) / N_val;
+      if (std::isnan(best_val_score)) {
+        best_val_score = m_res.higher_is_better ? -std::numeric_limits<double>::infinity()
+                                                : std::numeric_limits<double>::infinity();
       }
 
-      if (val_score <= best_val_score) {
+      bool is_better = m_res.higher_is_better ? (val_score > best_val_score + 1e-6)
+                                              : (val_score < best_val_score - 1e-6);
+
+      if (is_better) {
         best_val_score = val_score;
         best_snapshot = model.get_snapshot();
         has_best_snapshot = true;
@@ -487,10 +608,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
     if (should_log) {
       if (has_val) {
-        std::string metric_nm = is_cls ? "Val error" : (is_multi ? "Val error" : "Val RMSE");
         std::string star = is_best ? "*" : "";
         Rprintf("    [RealMLP C++ %s] Epoch %3d/%d | Train loss: %.4f | %s: %.4f (best: %.4f%s)\n",
-                task.c_str(), cur_epoch, n_epochs, avg_train_loss, metric_nm.c_str(),
+                task.c_str(), cur_epoch, n_epochs, avg_train_loss, val_metric_nm.c_str(),
                 val_score, best_val_score, star.c_str());
       } else {
         Rprintf("    [RealMLP C++ %s] Epoch %3d/%d | Train loss: %.4f\n",

@@ -814,6 +814,8 @@ register_evaluator(
       stop(sprintf("Unsupported task '%s' for RealMLP evaluator.", task))
     }
 
+    metric_arg <- if (!is.null(extra_params$metric)) as.character(extra_params$metric) else "default"
+
     # Call native C++ RealMLP trainer
     fit_res <- rcpp_realmlp_train(
       x_train = x_train,
@@ -827,7 +829,9 @@ register_evaluator(
       early_stopping_rounds = es_rounds_to_pass,
       seed = seed_val,
       verbose = verbose_int,
-      num_classes = num_classes_int
+      num_classes = num_classes_int,
+      threads = as.integer(threads),
+      metric = metric_arg
     )
 
     preds <- NULL

@@ -8,6 +8,9 @@
 #include <random>
 #include <algorithm>
 #include <string>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace realmlp {
 
@@ -175,6 +178,9 @@ public:
     int out_dim = total_out_dim();
     Eigen::MatrixXd E(B, out_dim);
 
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
       // 1. DenseNet connection: raw feature column
@@ -216,6 +222,9 @@ public:
     Eigen::MatrixXd grad_b = Eigen::MatrixXd::Zero(n_features, k_freq);
     Eigen::MatrixXd grad_beta = Eigen::MatrixXd::Zero(n_features, d_proj);
 
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
       Eigen::MatrixXd grad_U = grad_E.block(0, out_col_start + 1, B, d_proj);
