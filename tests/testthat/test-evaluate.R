@@ -278,3 +278,37 @@ test_that("realmlp evaluator respects seed parameter and global set.seed", {
   expect_identical(p_g1, p_g2)
 })
 
+test_that("realmlp evaluator errors gracefully on unsupported task", {
+  set.seed(42)
+  d <- data.frame(x1 = rnorm(20), x2 = rnorm(20), y = rnorm(20))
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  expect_error(
+    ev$train_func(d[, c("x1", "x2")], d$y, task = "unknown", nrounds = 5, verbose = FALSE),
+    "Unsupported task"
+  )
+})
+
+test_that("realmlp evaluator handles NA values in training data", {
+  set.seed(42)
+  n <- 60
+  d <- data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  # Inject NAs into training features
+  d$x1[c(1, 5, 10)] <- NA
+  d$x2[c(3, 7)] <- NA
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = d[1:40, c("x1", "x2")],
+    y_train = d$y[1:40],
+    x_val = d[41:60, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 10,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$model))
+  expect_equal(length(fit$predictions), 20)
+  expect_true(!any(is.na(fit$predictions)))
+})

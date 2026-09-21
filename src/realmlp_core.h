@@ -12,6 +12,11 @@
 #include <omp.h>
 #endif
 
+// M_PI is POSIX, not C++17 standard — provide fallback for strict compilers
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace realmlp {
 
 // Helper: safe softplus for Mish activation
@@ -113,7 +118,7 @@ struct AdamParam {
       double v_val = beta2 * v_ptr[i] + (1.0 - beta2) * g * g;
       m_ptr[i] = m_val;
       v_ptr[i] = v_val;
-      val_ptr[i] -= alpha * m_val / (std::sqrt(v_val) + eps_scaled);
+      val_ptr[i] -= alpha * m_val / (std::sqrt(std::max(0.0, v_val)) + eps_scaled);
     }
   }
 };

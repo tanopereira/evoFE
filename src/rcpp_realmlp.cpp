@@ -427,11 +427,14 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   std::vector<int> perm(N);
   for (int i = 0; i < N; ++i) perm[i] = i;
 
+  // Save previous thread state for CRAN-compliant restoration
 #ifdef _OPENMP
+  int old_omp_threads = omp_get_max_threads();
   if (threads > 0) {
     omp_set_num_threads(threads);
   }
 #endif
+  int old_eigen_threads = Eigen::nbThreads();
   Eigen::setNbThreads(threads > 0 ? threads : 1);
 
   double best_val_score = std::numeric_limits<double>::quiet_NaN();
@@ -638,6 +641,12 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   }
 
   std::vector<double> importances = model.compute_importances();
+
+  // Restore previous thread state (CRAN requirement)
+#ifdef _OPENMP
+  omp_set_num_threads(old_omp_threads);
+#endif
+  Eigen::setNbThreads(old_eigen_threads);
 
   List res = List::create(
     Named("model_state") = model_to_list(model),

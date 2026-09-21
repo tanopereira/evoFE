@@ -742,6 +742,63 @@ register_evaluator(
   }
 )
 
+# --- RealMLP helpers (keep train_func concise) ---
+
+#' Compute column medians and impute NA/non-finite values in a matrix
+#' @param mat Numeric matrix to impute.
+#' @param col_meds Precomputed column medians (computed from training set).
+#' @return A list with `mat` (imputed matrix) and `col_meds`.
+#' @keywords internal
+.realmlp_impute_matrix <- function(mat, col_meds = NULL) {
+  if (is.null(mat)) return(list(mat = NULL, col_meds = col_meds))
+  if (is.null(col_meds)) {
+    col_meds <- apply(mat, 2, function(col) {
+      m <- stats::median(col[!is.na(col) & is.finite(col)])
+      if (is.na(m) || !is.finite(m)) 0 else m
+    })
+  }
+  for (j in seq_len(ncol(mat))) {
+    na_mask <- is.na(mat[, j]) | !is.finite(mat[, j])
+    if (any(na_mask)) mat[na_mask, j] <- col_meds[j]
+  }
+  list(mat = mat, col_meds = col_meds)
+}
+
+#' Encode target variable to numeric for the C++ engine
+#' @param y Target vector (factor, numeric, or character).
+#' @param task One of "regression", "classification", "multiclass".
+#' @param num_class Optional integer number of classes.
+#' @return A list with `y_num`, `levels_target`, and `num_classes_int`.
+#' @keywords internal
+.realmlp_prepare_target <- function(y, task, num_class = NULL) {
+  levels_target <- NULL
+  num_classes_int <- 0L
+  if (task == "regression") {
+    y_num <- as.numeric(y)
+  } else if (task == "classification") {
+    if (is.factor(y)) {
+      levels_target <- levels(y)
+      y_num <- as.numeric(y) - 1.0
+    } else {
+      levels_target <- c("0", "1")
+      y_num <- ifelse(y > 0, 1.0, 0.0)
+    }
+  } else if (task == "multiclass") {
+    levels_target <- if (!is.null(num_class)) {
+      seq(0, num_class - 1)
+    } else if (is.factor(y)) {
+      levels(y)
+    } else {
+      sort(unique(y))
+    }
+    num_classes_int <- as.integer(length(levels_target))
+    y_num <- as.numeric(factor(y, levels = levels_target)) - 1.0
+  } else {
+    stop(sprintf("Unsupported task '%s' for RealMLP evaluator.", task))
+  }
+  list(y_num = y_num, levels_target = levels_target, num_classes_int = num_classes_int)
+}
+
 # 6. RealMLP Evaluator (Native C++ with PBLD Embeddings)
 register_evaluator(
   "realmlp",
@@ -768,83 +825,39 @@ register_evaluator(
     x_train <- .sanitize_feature_matrix(x_train)
     x_val   <- .sanitize_feature_matrix(x_val)
 
-    # Impute missing values with column medians
-    col_meds <- apply(x_train, 2, function(col) {
-      m <- stats::median(col[!is.na(col) & is.finite(col)])
-      if (is.na(m) || !is.finite(m)) 0 else m
-    })
-
-    impute_mat <- function(mat) {
-      if (is.null(mat)) return(NULL)
-      for (j in seq_len(ncol(mat))) {
-        na_mask <- is.na(mat[, j]) | !is.finite(mat[, j])
-        if (any(na_mask)) mat[na_mask, j] <- col_meds[j]
-      }
-      mat
-    }
-
-    x_train <- impute_mat(x_train)
-    x_val   <- impute_mat(x_val)
+    imp <- .realmlp_impute_matrix(x_train)
+    x_train  <- imp$mat
+    col_meds <- imp$col_meds
+    x_val <- .realmlp_impute_matrix(x_val, col_meds)$mat
 
     t0 <- Sys.time()
 
-    levels_target <- NULL
-    num_classes_int <- 0L
-
-    if (task == "regression") {
-      y_tr <- as.numeric(y_train)
-      y_v  <- if (!is.null(y_val)) as.numeric(y_val) else NULL
-    } else if (task == "classification") {
-      if (is.factor(y_train)) {
-        levels_target <- levels(y_train)
-        y_tr <- as.numeric(y_train) - 1.0
-      } else {
-        levels_target <- c("0", "1")
-        y_tr <- ifelse(y_train > 0, 1.0, 0.0)
-      }
-      y_v <- if (!is.null(y_val)) {
-        if (is.factor(y_val)) as.numeric(factor(y_val, levels = levels_target)) - 1.0 else ifelse(y_val > 0, 1.0, 0.0)
-      } else NULL
-    } else if (task == "multiclass") {
-      levels_target <- if (!is.null(num_class)) seq(0, num_class - 1) else if (is.factor(y_train)) levels(y_train) else sort(unique(y_train))
-      num_classes_int <- as.integer(length(levels_target))
-      y_tr <- as.numeric(factor(y_train, levels = levels_target)) - 1.0
-      y_v  <- if (!is.null(y_val)) as.numeric(factor(y_val, levels = levels_target)) - 1.0 else NULL
-    } else {
-      stop(sprintf("Unsupported task '%s' for RealMLP evaluator.", task))
-    }
+    target <- .realmlp_prepare_target(y_train, task, num_class)
+    y_train_num   <- target$y_num
+    levels_target <- target$levels_target
+    y_val_num <- if (!is.null(y_val)) .realmlp_prepare_target(y_val, task, num_class)$y_num else NULL
 
     metric_arg <- if (!is.null(extra_params$metric)) as.character(extra_params$metric) else "default"
 
-    # Call native C++ RealMLP trainer
     fit_res <- rcpp_realmlp_train(
-      x_train = x_train,
-      y_train = y_tr,
+      x_train = x_train, y_train = y_train_num,
       x_val = if (use_es) x_val else NULL,
-      y_val = if (use_es) y_v else NULL,
-      task = task,
-      n_epochs = n_epochs,
-      batch_size = batch_size,
-      lr = lr_val,
-      early_stopping_rounds = es_rounds_to_pass,
-      seed = seed_val,
-      verbose = verbose_int,
-      num_classes = num_classes_int,
-      threads = as.integer(threads),
-      metric = metric_arg
+      y_val = if (use_es) y_val_num else NULL,
+      task = task, n_epochs = n_epochs, batch_size = batch_size, lr = lr_val,
+      early_stopping_rounds = es_rounds_to_pass, seed = seed_val,
+      verbose = verbose_int, num_classes = target$num_classes_int,
+      threads = as.integer(threads), metric = metric_arg
     )
 
     preds <- NULL
     if (!is.null(x_val)) {
       raw_preds <- rcpp_realmlp_predict(fit_res$model_state, x_val)
-      if (task == "regression") {
-        preds <- as.numeric(raw_preds)
-      } else if (task == "classification") {
-        preds <- as.numeric(raw_preds) # probability of class 1
-      } else if (task == "multiclass") {
+      if (task == "multiclass") {
         probs <- as.matrix(raw_preds)
         colnames(probs) <- as.character(levels_target)
         preds <- probs
+      } else {
+        preds <- as.numeric(raw_preds)
       }
     }
 
@@ -859,9 +872,7 @@ register_evaluator(
       }
       msg <- sprintf("    [RealMLP C++ %s] Fitted %d rows (Early stopping: %s, %.3fs)",
                      task, nrow(x_train), es_status, elapsed)
-      if (is_detail) {
-        msg <- sprintf("%s [Features: %d]", msg, ncol(x_train))
-      }
+      if (is_detail) msg <- sprintf("%s [Features: %d]", msg, ncol(x_train))
       message(msg)
     }
 
