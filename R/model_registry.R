@@ -838,6 +838,7 @@ register_evaluator(
     y_val_num <- if (!is.null(y_val)) .realmlp_prepare_target(y_val, task, num_class)$y_num else NULL
 
     metric_arg <- if (!is.null(extra_params$metric)) as.character(extra_params$metric) else "default"
+    hidden_dim_val <- if (!is.null(extra_params$hidden_dim)) as.integer(extra_params$hidden_dim) else 256L
 
     fit_res <- rcpp_realmlp_train(
       x_train = x_train, y_train = y_train_num,
@@ -846,7 +847,8 @@ register_evaluator(
       task = task, n_epochs = n_epochs, batch_size = batch_size, lr = lr_val,
       early_stopping_rounds = es_rounds_to_pass, seed = seed_val,
       verbose = verbose_int, num_classes = target$num_classes_int,
-      threads = as.integer(threads), metric = metric_arg
+      threads = as.integer(threads), metric = metric_arg,
+      hidden_dim = hidden_dim_val
     )
 
     preds <- NULL

@@ -312,3 +312,24 @@ test_that("realmlp evaluator handles NA values in training data", {
   expect_equal(length(fit$predictions), 20)
   expect_true(!any(is.na(fit$predictions)))
 })
+
+test_that("realmlp evaluator supports configurable hidden_dim parameter", {
+  set.seed(42)
+  d <- data.frame(x1 = rnorm(30), x2 = rnorm(30), y = rnorm(30))
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  fit_128 <- ev$train_func(
+    x_train = d[1:20, c("x1", "x2")],
+    y_train = d$y[1:20],
+    x_val = d[21:30, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 5,
+    hidden_dim = 128,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit_128$model))
+  expect_equal(fit_128$model$model_state$hidden_dim, 128L)
+  expect_equal(length(fit_128$predictions), 10)
+})

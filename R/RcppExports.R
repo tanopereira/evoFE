@@ -16,11 +16,12 @@
 #' @param verbose Integer: verbosity level (0 = silent, 1 = normal, 2 = detailed).
 #' @param num_classes Integer: number of classes for multiclass task.
 #' @param threads Integer: number of threads for parallel computation.
-#' @param metric String: validation metric to optimize and report ("default", "logloss", "accuracy", "auc", "rmse", "mae", "error").
+#' @param metric String: validation metric to optimize and report.
+#' @param hidden_dim Integer: hidden layer dimension (default 256).
 #' @return A List containing model weights, training statistics, and feature importances.
 #' @export
-rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = 256L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default") {
-    .Call(`_evoFE_rcpp_realmlp_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric)
+rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = 256L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", hidden_dim = 256L) {
+    .Call(`_evoFE_rcpp_realmlp_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric, hidden_dim)
 }
 
 #' Predict with RealMLP Model in C++

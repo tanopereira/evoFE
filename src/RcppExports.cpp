@@ -12,8 +12,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // rcpp_realmlp_train
-List rcpp_realmlp_train(NumericMatrix x_train, NumericVector y_train, Nullable<NumericMatrix> x_val, Nullable<NumericVector> y_val, std::string task, int n_epochs, int batch_size, double lr, int early_stopping_rounds, int seed, int verbose, int num_classes, int threads, std::string metric);
-RcppExport SEXP _evoFE_rcpp_realmlp_train(SEXP x_trainSEXP, SEXP y_trainSEXP, SEXP x_valSEXP, SEXP y_valSEXP, SEXP taskSEXP, SEXP n_epochsSEXP, SEXP batch_sizeSEXP, SEXP lrSEXP, SEXP early_stopping_roundsSEXP, SEXP seedSEXP, SEXP verboseSEXP, SEXP num_classesSEXP, SEXP threadsSEXP, SEXP metricSEXP) {
+List rcpp_realmlp_train(NumericMatrix x_train, NumericVector y_train, Nullable<NumericMatrix> x_val, Nullable<NumericVector> y_val, std::string task, int n_epochs, int batch_size, double lr, int early_stopping_rounds, int seed, int verbose, int num_classes, int threads, std::string metric, int hidden_dim);
+RcppExport SEXP _evoFE_rcpp_realmlp_train(SEXP x_trainSEXP, SEXP y_trainSEXP, SEXP x_valSEXP, SEXP y_valSEXP, SEXP taskSEXP, SEXP n_epochsSEXP, SEXP batch_sizeSEXP, SEXP lrSEXP, SEXP early_stopping_roundsSEXP, SEXP seedSEXP, SEXP verboseSEXP, SEXP num_classesSEXP, SEXP threadsSEXP, SEXP metricSEXP, SEXP hidden_dimSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -31,7 +31,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type num_classes(num_classesSEXP);
     Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
     Rcpp::traits::input_parameter< std::string >::type metric(metricSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpp_realmlp_train(x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric));
+    Rcpp::traits::input_parameter< int >::type hidden_dim(hidden_dimSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_realmlp_train(x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric, hidden_dim));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -49,7 +50,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_evoFE_rcpp_realmlp_train", (DL_FUNC) &_evoFE_rcpp_realmlp_train, 14},
+    {"_evoFE_rcpp_realmlp_train", (DL_FUNC) &_evoFE_rcpp_realmlp_train, 15},
     {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 2},
     {NULL, NULL, 0}
 };

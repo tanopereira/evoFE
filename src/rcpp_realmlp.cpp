@@ -1,25 +1,23 @@
 #include <Rcpp.h>
 #include <RcppEigen.h>
 #include "realmlp_core.h"
-#include <chrono>
 
 // [[Rcpp::depends(RcppEigen)]]
 
 using namespace Rcpp;
 using namespace realmlp;
 
-// Helper to convert Rcpp NumericMatrix to Eigen::MatrixXd
-inline Eigen::MatrixXd to_eigen(const NumericMatrix& mat) {
-  int r = mat.nrow();
-  int c = mat.ncol();
-  Eigen::MatrixXd emat(r, c);
-  for (int j = 0; j < c; ++j) {
-    for (int i = 0; i < r; ++i) {
-      double v = mat(i, j);
-      emat(i, j) = std::isnan(v) ? 0.0 : v;
-    }
-  }
-  return emat;
+// Zero-copy Eigen::Map from R NumericMatrix (column-major compatible)
+inline Eigen::Map<Eigen::MatrixXd> map_eigen(NumericMatrix& mat) {
+  return Eigen::Map<Eigen::MatrixXd>(mat.begin(), mat.nrow(), mat.ncol());
+}
+
+// Deep copy with NaN sanitization (only used when NaN cleanup is needed)
+inline Eigen::MatrixXd copy_eigen_sanitized(const NumericMatrix& mat) {
+  Eigen::Map<const Eigen::MatrixXd> mapped(mat.begin(), mat.nrow(), mat.ncol());
+  Eigen::MatrixXd out = mapped;
+  out = out.array().isNaN().select(0.0, out.array());
+  return out;
 }
 
 // Helper to convert Eigen::MatrixXd to Rcpp NumericMatrix
@@ -27,11 +25,7 @@ inline NumericMatrix to_rcpp(const Eigen::MatrixXd& emat) {
   int r = static_cast<int>(emat.rows());
   int c = static_cast<int>(emat.cols());
   NumericMatrix mat(r, c);
-  for (int j = 0; j < c; ++j) {
-    for (int i = 0; i < r; ++i) {
-      mat(i, j) = emat(i, j);
-    }
-  }
+  Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat;
   return mat;
 }
 
@@ -112,25 +106,34 @@ RealMLPModel list_to_model(const List& lst) {
   m.embedder.d_proj = as<int>(p_embed["d_proj"]);
   m.embedder.sigma = as<double>(p_embed["sigma"]);
 
-  m.embedder.omega.val = to_eigen(as<NumericMatrix>(p_embed["omega"]));
-  m.embedder.b_phase.val = to_eigen(as<NumericMatrix>(p_embed["b_phase"]));
-  m.embedder.beta_proj.val = to_eigen(as<NumericMatrix>(p_embed["beta_proj"]));
+  NumericMatrix om = as<NumericMatrix>(p_embed["omega"]);
+  m.embedder.omega.val = copy_eigen_sanitized(om);
+  NumericMatrix bp = as<NumericMatrix>(p_embed["b_phase"]);
+  m.embedder.b_phase.val = copy_eigen_sanitized(bp);
+  NumericMatrix bt = as<NumericMatrix>(p_embed["beta_proj"]);
+  m.embedder.beta_proj.val = copy_eigen_sanitized(bt);
 
   List W_proj_list = p_embed["W_proj"];
   m.embedder.W_proj.resize(m.n_features);
   for (int j = 0; j < m.n_features; ++j) {
-    m.embedder.W_proj[j].val = to_eigen(as<NumericMatrix>(W_proj_list[j]));
+    NumericMatrix wj = as<NumericMatrix>(W_proj_list[j]);
+    m.embedder.W_proj[j].val = copy_eigen_sanitized(wj);
   }
 
-  m.front_scale.val = to_eigen(as<NumericMatrix>(lst["front_scale"]));
-  m.W1.val = to_eigen(as<NumericMatrix>(lst["W1"]));
-  m.b1.val = to_eigen(as<NumericMatrix>(lst["b1"]));
-  m.W2.val = to_eigen(as<NumericMatrix>(lst["W2"]));
-  m.b2.val = to_eigen(as<NumericMatrix>(lst["b2"]));
-  m.W3.val = to_eigen(as<NumericMatrix>(lst["W3"]));
-  m.b3.val = to_eigen(as<NumericMatrix>(lst["b3"]));
-  m.W4.val = to_eigen(as<NumericMatrix>(lst["W4"]));
-  m.b4.val = to_eigen(as<NumericMatrix>(lst["b4"]));
+  auto load_param = [](const List& l, const char* name) {
+    NumericMatrix mat = as<NumericMatrix>(l[name]);
+    return copy_eigen_sanitized(mat);
+  };
+
+  m.front_scale.val = load_param(lst, "front_scale");
+  m.W1.val = load_param(lst, "W1");
+  m.b1.val = load_param(lst, "b1");
+  m.W2.val = load_param(lst, "W2");
+  m.b2.val = load_param(lst, "b2");
+  m.W3.val = load_param(lst, "W3");
+  m.b3.val = load_param(lst, "b3");
+  m.W4.val = load_param(lst, "W4");
+  m.b4.val = load_param(lst, "b4");
 
   return m;
 }
@@ -279,7 +282,8 @@ inline MetricResult compute_val_metric(
 //' @param verbose Integer: verbosity level (0 = silent, 1 = normal, 2 = detailed).
 //' @param num_classes Integer: number of classes for multiclass task.
 //' @param threads Integer: number of threads for parallel computation.
-//' @param metric String: validation metric to optimize and report ("default", "logloss", "accuracy", "auc", "rmse", "mae", "error").
+//' @param metric String: validation metric to optimize and report.
+//' @param hidden_dim Integer: hidden layer dimension (default 256).
 //' @return A List containing model weights, training statistics, and feature importances.
 //' @export
 // [[Rcpp::export]]
@@ -296,7 +300,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
                         int verbose = 0,
                         int num_classes = 0,
                         int threads = 1,
-                        std::string metric = "default") {
+                        std::string metric = "default",
+                        int hidden_dim = 256) {
 
   int N = x_train.nrow();
   int D = x_train.ncol();
@@ -322,49 +327,42 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     base_lr = (is_cls || is_multi) ? 0.01 : 0.005;
   }
 
-  Eigen::MatrixXd X_tr = to_eigen(x_train);
+  // Zero-copy map, then sanitize NaN in-place and standardize
+  Eigen::MatrixXd X_tr = copy_eigen_sanitized(x_train);
 
   // Standardize training features
   Eigen::VectorXd x_mean(D);
   Eigen::VectorXd x_std(D);
   for (int j = 0; j < D; ++j) {
-    double sum = 0.0;
-    for (int i = 0; i < N; ++i) sum += X_tr(i, j);
-    double mean_j = sum / N;
-    double sum_sq = 0.0;
-    for (int i = 0; i < N; ++i) {
-      double diff = X_tr(i, j) - mean_j;
-      sum_sq += diff * diff;
-    }
-    double std_j = std::sqrt(sum_sq / std::max(1, N - 1));
-    if (std_j < 1e-8 || !std::isfinite(std_j)) std_j = 1.0;
-    x_mean(j) = mean_j;
-    x_std(j) = std_j;
-    for (int i = 0; i < N; ++i) {
-      X_tr(i, j) = (X_tr(i, j) - mean_j) / std_j;
-    }
+    double col_mean = X_tr.col(j).mean();
+    double sum_sq = (X_tr.col(j).array() - col_mean).square().sum();
+    double col_std = std::sqrt(sum_sq / std::max(1, N - 1));
+    if (col_std < 1e-8 || !std::isfinite(col_std)) col_std = 1.0;
+    x_mean(j) = col_mean;
+    x_std(j) = col_std;
+    X_tr.col(j) = (X_tr.col(j).array() - col_mean) / col_std;
   }
 
   // Targets processing
   Eigen::MatrixXd Y_tr(N, out_dim);
-  double y_mean = 0.0;
-  double y_std = 1.0;
+  double y_mean_val = 0.0;
+  double y_std_val = 1.0;
 
   if (task == "regression") {
     double sum = 0.0;
     for (int i = 0; i < N; ++i) sum += y_train[i];
-    y_mean = sum / N;
+    y_mean_val = sum / N;
 
     double sum_sq = 0.0;
     for (int i = 0; i < N; ++i) {
-      double diff = y_train[i] - y_mean;
+      double diff = y_train[i] - y_mean_val;
       sum_sq += diff * diff;
     }
-    y_std = std::sqrt(sum_sq / std::max(1, N - 1));
-    if (y_std < 1e-12) y_std = 1.0;
+    y_std_val = std::sqrt(sum_sq / std::max(1, N - 1));
+    if (y_std_val < 1e-12) y_std_val = 1.0;
 
     for (int i = 0; i < N; ++i) {
-      Y_tr(i, 0) = (y_train[i] - y_mean) / y_std;
+      Y_tr(i, 0) = (y_train[i] - y_mean_val) / y_std_val;
     }
   } else if (is_cls) {
     for (int i = 0; i < N; ++i) {
@@ -372,13 +370,13 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       Y_tr(i, 0) = y_val_raw * 0.9 + 0.05;
     }
   } else {
-    double eps = 0.1;
-    double smooth_base = eps / out_dim;
+    double eps_smooth = 0.1;
+    double smooth_base = eps_smooth / out_dim;
     Y_tr.fill(smooth_base);
     for (int i = 0; i < N; ++i) {
       int c = static_cast<int>(y_train[i]);
       if (c >= 0 && c < out_dim) {
-        Y_tr(i, c) += (1.0 - eps);
+        Y_tr(i, c) += (1.0 - eps_smooth);
       }
     }
   }
@@ -391,25 +389,23 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
   if (has_val) {
     NumericMatrix xv(x_val);
-    X_v = to_eigen(xv);
+    X_v = copy_eigen_sanitized(xv);
     y_v_vec = NumericVector(y_val);
     N_val = static_cast<int>(X_v.rows());
     for (int j = 0; j < D; ++j) {
-      double mean_j = x_mean(j);
-      double std_j = x_std(j);
-      for (int i = 0; i < N_val; ++i) {
-        X_v(i, j) = (X_v(i, j) - mean_j) / std_j;
-      }
+      X_v.col(j) = (X_v.col(j).array() - x_mean(j)) / x_std(j);
     }
   }
 
   // Initialize model
   RealMLPModel model;
-  model.init(D, out_dim, task, seed, 256);
-  model.y_mean = y_mean;
-  model.y_std = y_std;
+  model.init(D, out_dim, task, seed, hidden_dim);
+  model.y_mean = y_mean_val;
+  model.y_std = y_std_val;
   model.x_mean = x_mean;
   model.x_std = x_std;
+
+  int embed_dim = model.embedder.total_out_dim();
 
   // Training parameters
   int actual_batch_size = std::max(1, std::min(batch_size, N));
@@ -450,17 +446,33 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   if (verbose >= 1) {
     std::string es_info = (early_stopping_rounds > 0 && has_val) ?
       (" (early stopping patience=" + std::to_string(early_stopping_rounds) + ")") : "";
-    Rprintf("    [RealMLP C++ %s] Starting training: %d rows (%d features) (epochs: %d, batch: %d%s)...\n",
-            task.c_str(), N, D, n_epochs, actual_batch_size, es_info.c_str());
+    Rprintf("    [RealMLP C++ %s] Starting training: %d rows (%d features) (epochs: %d, batch: %d, hidden: %d%s)...\n",
+            task.c_str(), N, D, n_epochs, actual_batch_size, hidden_dim, es_info.c_str());
   }
 
-  std::vector<Eigen::MatrixXd> cache_Z(D);
-  std::vector<Eigen::MatrixXd> cache_Theta(D);
+  // ===== Pre-allocate ALL workspace (the key optimization) =====
+  // Compute max batch size (last batch may be larger)
+  int max_B = 0;
+  for (int b = 0; b < n_batches; ++b) {
+    int start = b * actual_batch_size;
+    int end = (b == n_batches - 1) ? N : std::min(start + actual_batch_size, N);
+    max_B = std::max(max_B, end - start);
+  }
+
+  TrainWorkspace ws;
+  ws.allocate(max_B, D, out_dim, hidden_dim, embed_dim,
+              D, model.embedder.k_freq, model.embedder.d_proj, N);
 
   int step = 0;
 
   for (int epoch = 0; epoch < n_epochs; ++epoch) {
+    // Shuffle dataset once per epoch, then use contiguous blocks
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
+    for (int i = 0; i < N; ++i) {
+      ws.X_shuf.row(i) = X_tr.row(perm[i]);
+      ws.Y_shuf.row(i) = Y_tr.row(perm[i]);
+    }
+
     double epoch_loss_sum = 0.0;
 
     for (int b = 0; b < n_batches; ++b) {
@@ -470,107 +482,127 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       int cur_B = end - start;
       if (cur_B <= 0) break;
 
-      Eigen::MatrixXd X_batch(cur_B, D);
-      Eigen::MatrixXd Y_batch(cur_B, out_dim);
-      for (int i = 0; i < cur_B; ++i) {
-        int idx = perm[start + i];
-        X_batch.row(i) = X_tr.row(idx);
-        Y_batch.row(i) = Y_tr.row(idx);
-      }
+      // View into shuffled data — no copy needed
+      auto X_batch = ws.X_shuf.middleRows(start, cur_B);
+      auto Y_batch = ws.Y_shuf.middleRows(start, cur_B);
 
       double t_norm = static_cast<double>(step - 1) / static_cast<double>(std::max(1, total_steps - 1));
       double cur_lr = base_lr * coslog4_schedule(t_norm);
       double b1_corr = 1.0 - std::pow(beta1, step);
       double b2_corr = 1.0 - std::pow(beta2, step);
 
-      // 1. Forward PBLD
-      Eigen::MatrixXd E = model.embedder.forward(X_batch, &cache_Z, &cache_Theta);
+      // 1. Forward PBLD — writes into ws.E, ws.cache_Z, ws.cache_Theta
+      // Resize PBLD caches for current batch (no realloc if <= max_B)
+      for (int j = 0; j < D; ++j) {
+        ws.cache_Z[j].conservativeResize(cur_B, model.embedder.k_freq);
+        ws.cache_Theta[j].conservativeResize(cur_B, model.embedder.k_freq);
+      }
+      ws.E.conservativeResize(cur_B, embed_dim);
+      model.embedder.forward(X_batch, ws.E, ws.cache_Z, ws.cache_Theta, true);
 
-      // 2. Forward MLP
-      Eigen::MatrixXd H0, A1, H1, A2, H2, A3, H3;
-      Eigen::MatrixXd Out = model.forward_mlp(E, &H0, &A1, &H1, &A2, &H2, &A3, &H3);
+      // 2. Forward MLP — writes into ws.H0..H3, ws.Out
+      model.forward_mlp(ws.E, cur_B, ws.H0, ws.A1, ws.H1, ws.A2, ws.H2, ws.A3, ws.H3, ws.Out);
+
+      // Views for current batch size
+      auto Out_b = ws.Out.topRows(cur_B);
+      auto grad_out_b = ws.grad_out.topRows(cur_B);
 
       // 3. Loss & output gradient
-      Eigen::MatrixXd grad_out(cur_B, out_dim);
       double batch_loss = 0.0;
 
       if (task == "regression") {
-        Eigen::MatrixXd diff = Out - Y_batch;
-        grad_out = (2.0 / cur_B) * diff;
-        batch_loss = diff.squaredNorm() / cur_B;
+        grad_out_b.noalias() = Out_b - Y_batch;
+        batch_loss = grad_out_b.squaredNorm() / cur_B;
+        grad_out_b *= (2.0 / cur_B);
       } else if (is_cls) {
-        Eigen::MatrixXd P = Out.unaryExpr([](double z) {
+        auto P_b = ws.P.topRows(cur_B);
+        P_b = Out_b.unaryExpr([](double z) {
           return 1.0 / (1.0 + std::exp(-std::clamp(z, -30.0, 30.0)));
         });
-        grad_out = (1.0 / cur_B) * (P - Y_batch);
+        grad_out_b.noalias() = (1.0 / cur_B) * (P_b - Y_batch);
         for (int i = 0; i < cur_B; ++i) {
-          double p = std::clamp(P(i, 0), 1e-15, 1.0 - 1e-15);
+          double p = std::clamp(P_b(i, 0), 1e-15, 1.0 - 1e-15);
           double y = Y_batch(i, 0);
           batch_loss -= (y * std::log(p) + (1.0 - y) * std::log(1.0 - p));
         }
         batch_loss /= cur_B;
       } else {
-        Eigen::MatrixXd P(cur_B, out_dim);
+        auto P_b = ws.P.topRows(cur_B);
         for (int i = 0; i < cur_B; ++i) {
-          double max_val = Out.row(i).maxCoeff();
-          Eigen::RowVectorXd exp_row = (Out.row(i).array() - max_val).exp();
+          double max_val = Out_b.row(i).maxCoeff();
+          Eigen::RowVectorXd exp_row = (Out_b.row(i).array() - max_val).exp();
           double sum_exp = exp_row.sum();
           if (sum_exp > 0.0) {
-            P.row(i) = exp_row / sum_exp;
+            P_b.row(i) = exp_row / sum_exp;
           } else {
-            P.row(i).fill(1.0 / out_dim);
+            P_b.row(i).fill(1.0 / out_dim);
           }
           for (int c = 0; c < out_dim; ++c) {
-            batch_loss -= Y_batch(i, c) * std::log(std::max(1e-15, P(i, c)));
+            batch_loss -= Y_batch(i, c) * std::log(std::max(1e-15, P_b(i, c)));
           }
         }
         batch_loss /= cur_B;
-        grad_out = (1.0 / cur_B) * (P - Y_batch);
+        grad_out_b.noalias() = (1.0 / cur_B) * (P_b - Y_batch);
       }
-      double max_g = grad_out.array().abs().maxCoeff();
+      double max_g = grad_out_b.array().abs().maxCoeff();
       if (max_g > 10.0) {
-        grad_out *= (10.0 / max_g);
+        grad_out_b *= (10.0 / max_g);
       }
 
       epoch_loss_sum += batch_loss;
 
-      // 4. Backprop MLP
-      Eigen::MatrixXd grad_W4 = H3.transpose() * grad_out;
-      Eigen::MatrixXd grad_b4 = grad_out.colwise().sum();
-      Eigen::MatrixXd delta3 = grad_out * model.W4.val.transpose();
-      apply_activation_grad(A3, delta3, model.is_classification);
+      // 4. Backprop MLP — use pre-allocated workspace
+      auto H3_b = ws.H3.topRows(cur_B);
+      auto H2_b = ws.H2.topRows(cur_B);
+      auto H1_b = ws.H1.topRows(cur_B);
+      auto H0_b = ws.H0.topRows(cur_B);
+      auto E_b = ws.E.topRows(cur_B);
 
-      Eigen::MatrixXd grad_W3 = H2.transpose() * delta3;
-      Eigen::MatrixXd grad_b3 = delta3.colwise().sum();
-      Eigen::MatrixXd delta2 = delta3 * model.W3.val.transpose();
-      apply_activation_grad(A2, delta2, model.is_classification);
+      ws.grad_W4.noalias() = H3_b.transpose() * grad_out_b;
+      ws.grad_b4 = grad_out_b.colwise().sum();
+      ws.delta3.topRows(cur_B).noalias() = grad_out_b * model.W4.val.transpose();
+      auto A3_b = ws.A3.topRows(cur_B);
+      auto delta3_b = ws.delta3.topRows(cur_B);
+      apply_activation_grad_inplace(A3_b, delta3_b, model.is_classification);
 
-      Eigen::MatrixXd grad_W2 = H1.transpose() * delta2;
-      Eigen::MatrixXd grad_b2 = delta2.colwise().sum();
-      Eigen::MatrixXd delta1 = delta2 * model.W2.val.transpose();
-      apply_activation_grad(A1, delta1, model.is_classification);
+      ws.grad_W3.noalias() = H2_b.transpose() * delta3_b;
+      ws.grad_b3 = delta3_b.colwise().sum();
+      ws.delta2.topRows(cur_B).noalias() = delta3_b * model.W3.val.transpose();
+      auto A2_b = ws.A2.topRows(cur_B);
+      auto delta2_b = ws.delta2.topRows(cur_B);
+      apply_activation_grad_inplace(A2_b, delta2_b, model.is_classification);
 
-      Eigen::MatrixXd grad_W1 = H0.transpose() * delta1;
-      Eigen::MatrixXd grad_b1 = delta1.colwise().sum();
-      Eigen::MatrixXd delta0 = delta1 * model.W1.val.transpose();
+      ws.grad_W2.noalias() = H1_b.transpose() * delta2_b;
+      ws.grad_b2 = delta2_b.colwise().sum();
+      ws.delta1.topRows(cur_B).noalias() = delta2_b * model.W2.val.transpose();
+      auto A1_b = ws.A1.topRows(cur_B);
+      auto delta1_b = ws.delta1.topRows(cur_B);
+      apply_activation_grad_inplace(A1_b, delta1_b, model.is_classification);
 
-      Eigen::MatrixXd grad_scale = (E.cwiseProduct(delta0)).colwise().sum();
-      Eigen::MatrixXd delta_E = delta0.cwiseProduct(model.front_scale.val.replicate(cur_B, 1));
+      ws.grad_W1.noalias() = H0_b.transpose() * delta1_b;
+      ws.grad_b1 = delta1_b.colwise().sum();
+      ws.delta0.topRows(cur_B).noalias() = delta1_b * model.W1.val.transpose();
+      auto delta0_b = ws.delta0.topRows(cur_B);
+
+      ws.grad_scale = (E_b.cwiseProduct(delta0_b)).colwise().sum();
+      ws.delta_E.topRows(cur_B).noalias() = delta0_b.cwiseProduct(model.front_scale.val.replicate(cur_B, 1));
 
       // 5. Backprop PBLD Embeddings and Adam update
-      model.embedder.backward_and_update(X_batch, delta_E, cache_Z, cache_Theta,
+      model.embedder.backward_and_update(X_batch, ws.delta_E.topRows(cur_B),
+                                         ws.cache_Z, ws.cache_Theta,
+                                         ws.grad_omega, ws.grad_b, ws.grad_beta,
                                          cur_lr, beta1, beta2, eps, b1_corr, b2_corr);
 
       // 6. Adam update MLP
-      model.front_scale.update(grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W1.update(grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b1.update(grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W2.update(grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b2.update(grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W3.update(grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b3.update(grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W4.update(grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b4.update(grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.front_scale.update(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W1.update(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b1.update(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W2.update(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b2.update(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W3.update(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b3.update(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W4.update(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b4.update(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
     }
 
     double avg_train_loss = epoch_loss_sum / n_batches;
@@ -668,7 +700,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 // [[Rcpp::export]]
 NumericMatrix rcpp_realmlp_predict(List model_state, NumericMatrix x_new) {
   RealMLPModel model = list_to_model(model_state);
-  Eigen::MatrixXd X_n = to_eigen(x_new);
+  Eigen::MatrixXd X_n = copy_eigen_sanitized(x_new);
   Eigen::MatrixXd preds = model.predict(X_n);
   return to_rcpp(preds);
 }
