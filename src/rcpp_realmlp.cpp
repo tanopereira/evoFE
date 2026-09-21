@@ -407,11 +407,17 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
   int embed_dim = model.embedder.total_out_dim();
 
-  // Training parameters
-  int actual_batch_size = std::max(1, std::min(batch_size, N));
-  if (actual_batch_size == N && N > 32) {
-    actual_batch_size = std::min(64, std::max(16, N / 4));
+  // Training parameters: if batch_size > 0, use user choice (clamped to N); if <= 0, use smart auto defaults
+  int actual_batch_size = 256;
+  if (batch_size > 0) {
+    actual_batch_size = std::min(batch_size, N);
+  } else {
+    actual_batch_size = std::min(256, N);
+    if (actual_batch_size == N && N > 32) {
+      actual_batch_size = std::min(64, std::max(16, N / 4));
+    }
   }
+  actual_batch_size = std::max(1, actual_batch_size);
   int n_batches = std::max(1, N / actual_batch_size);
   int total_steps = n_epochs * n_batches;
 

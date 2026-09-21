@@ -333,3 +333,40 @@ test_that("realmlp evaluator supports configurable hidden_dim parameter", {
   expect_equal(fit_128$model$model_state$hidden_dim, 128L)
   expect_equal(length(fit_128$predictions), 10)
 })
+
+test_that("realmlp evaluator supports configurable batch_size parameter", {
+  set.seed(42)
+  d <- data.frame(x1 = rnorm(80), x2 = rnorm(80), y = rnorm(80))
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  # Test custom batch_size = 16
+  fit_b16 <- ev$train_func(
+    x_train = d[1:60, c("x1", "x2")],
+    y_train = d$y[1:60],
+    x_val = d[61:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 5,
+    batch_size = 16,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit_b16$model))
+  expect_equal(length(fit_b16$predictions), 20)
+
+  # Test large batch_size (full-batch equivalent)
+  fit_b60 <- ev$train_func(
+    x_train = d[1:60, c("x1", "x2")],
+    y_train = d$y[1:60],
+    x_val = d[61:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 5,
+    batch_size = 60,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit_b60$model))
+  expect_equal(length(fit_b60$predictions), 20)
+})
+
