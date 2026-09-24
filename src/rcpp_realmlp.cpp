@@ -678,7 +678,21 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     model.restore_snapshot(best_snapshot);
   }
 
-  std::vector<double> importances = model.compute_importances();
+  // Compute feature importances via Mean Occlusion Ablation in C++
+  // Use validation set if provided, else training set (capped at 1,000 rows for lightning speed)
+  const Eigen::MatrixXd& X_imp_source = (has_val && N_val > 0) ? X_v : X_tr;
+  int N_avail = static_cast<int>(X_imp_source.rows());
+  int N_eval = std::min(N_avail, 1000);
+
+  Eigen::MatrixXd X_eval = X_imp_source.topRows(N_eval);
+  std::vector<double> y_eval(N_eval);
+  if (has_val && N_val > 0) {
+    for (int i = 0; i < N_eval; ++i) y_eval[i] = y_v_vec[i];
+  } else {
+    for (int i = 0; i < N_eval; ++i) y_eval[i] = y_train[i];
+  }
+
+  std::vector<double> importances = model.compute_importances(X_eval, y_eval);
 
   // Restore previous thread state (CRAN requirement)
 #ifdef _OPENMP

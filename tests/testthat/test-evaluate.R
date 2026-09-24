@@ -370,3 +370,27 @@ test_that("realmlp evaluator supports configurable batch_size parameter", {
   expect_equal(length(fit_b60$predictions), 20)
 })
 
+test_that("realmlp feature importances sharply separate signal from noise", {
+  set.seed(42)
+  n <- 200
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  y <- 5 * x1 + rnorm(n, sd = 0.1)
+  d <- data.frame(x1 = x1, x2 = x2, y = y)
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = d[1:150, c("x1", "x2")],
+    y_train = d$y[1:150],
+    x_val = d[151:200, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 30,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$importances))
+  expect_true(fit$importances["x1"] > 0.70)
+  expect_true(fit$importances["x1"] > 5 * fit$importances["x2"])
+})
+

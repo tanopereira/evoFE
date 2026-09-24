@@ -434,29 +434,83 @@ public:
     }
   }
 
-  // Compute feature importances
-  std::vector<double> compute_importances() const {
-    std::vector<double> imp(n_features, 0.0);
-    int dp = embedder.d_proj;
+  // Compute feature importances via Mean Occlusion (Zero-Out Ablation)
+  std::vector<double> compute_importances(
+      const Eigen::MatrixXd& X_eval,
+      const std::vector<double>& y_eval) const {
 
-    for (int j = 0; j < n_features; ++j) {
-      int start_col = j * (1 + dp);
-      double feat_norm = 0.0;
-      for (int c = start_col; c <= start_col + dp; ++c) {
-        double sc = std::abs(front_scale.val(0, c));
-        double row_norm = W1.val.row(c).norm();
-        feat_norm += sc * row_norm;
-      }
-      imp[j] = feat_norm;
+    int D = n_features;
+    std::vector<double> imp(D, 1.0 / std::max(1, D));
+    int N_eval = static_cast<int>(X_eval.rows());
+    if (D <= 0 || N_eval <= 0 || static_cast<int>(y_eval.size()) < N_eval) {
+      return imp;
     }
 
+    auto compute_loss = [&](const Eigen::MatrixXd& preds) -> double {
+      if (task == "regression") {
+        double sum_sq = 0.0;
+        for (int i = 0; i < N_eval; ++i) {
+          double diff = preds(i, 0) - y_eval[i];
+          sum_sq += diff * diff;
+        }
+        return sum_sq / N_eval;
+      } else if (task == "classification") {
+        double ll = 0.0;
+        for (int i = 0; i < N_eval; ++i) {
+          double p = std::clamp(preds(i, 0), 1e-15, 1.0 - 1e-15);
+          double y = (y_eval[i] > 0.0) ? 1.0 : 0.0;
+          ll -= (y * std::log(p) + (1.0 - y) * std::log(1.0 - p));
+        }
+        return ll / N_eval;
+      } else {
+        // multiclass
+        double ll = 0.0;
+        for (int i = 0; i < N_eval; ++i) {
+          int c = static_cast<int>(y_eval[i]);
+          double p = 1e-15;
+          if (c >= 0 && c < output_dim) {
+            p = std::clamp(preds(i, c), 1e-15, 1.0);
+          }
+          ll -= std::log(p);
+        }
+        return ll / N_eval;
+      }
+    };
+
+    // 1. Baseline loss (normalize_input = false because X_eval is already standardized)
+    Eigen::MatrixXd p_base = predict(X_eval, false);
+    double base_loss = compute_loss(p_base);
+
+    // 2. Mean occlusion: since X_eval is standardized, mean of each feature is 0.0
+    Eigen::MatrixXd X_occ = X_eval;
+    for (int j = 0; j < D; ++j) {
+      Eigen::VectorXd orig_col = X_occ.col(j);
+      X_occ.col(j).setZero();
+
+      Eigen::MatrixXd p_occ = predict(X_occ, false);
+      double loss_occ = compute_loss(p_occ);
+
+      X_occ.col(j) = orig_col;
+
+      double delta_loss = std::max(0.0, loss_occ - base_loss);
+      imp[j] = delta_loss;
+    }
+
+    // 3. Normalize importances to sum to 1.0
     double sum_imp = 0.0;
     for (double v : imp) sum_imp += v;
-    if (sum_imp > 0.0 && std::isfinite(sum_imp)) {
-      for (int j = 0; j < n_features; ++j) imp[j] /= sum_imp;
+    if (sum_imp > 1e-12 && std::isfinite(sum_imp)) {
+      for (int j = 0; j < D; ++j) imp[j] /= sum_imp;
+    } else {
+      std::fill(imp.begin(), imp.end(), 1.0 / D);
     }
 
     return imp;
+  }
+
+  // Fallback overload if called without arguments
+  std::vector<double> compute_importances() const {
+    return std::vector<double>(n_features, 1.0 / std::max(1, n_features));
   }
 
   struct StateSnapshot {
