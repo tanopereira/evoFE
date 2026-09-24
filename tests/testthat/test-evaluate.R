@@ -394,3 +394,60 @@ test_that("realmlp feature importances sharply separate signal from noise", {
   expect_true(fit$importances["x1"] > 5 * fit$importances["x2"])
 })
 
+test_that("realmlp is numerically robust against near-zero variance features, Inf, and OOD validation outliers", {
+  set.seed(42)
+  n_tr <- 100
+  n_val <- 30
+
+  # x1: real signal
+  # x2: normal noise
+  # x3: near-zero variance feature (std ~ 1e-7, below standard deviation threshold 1e-5)
+  x_tr <- data.frame(
+    x1 = rnorm(n_tr),
+    x2 = rnorm(n_tr),
+    x3 = 1.0 + rnorm(n_tr) * 1e-7
+  )
+  y_tr <- 73000 + 30000 * x_tr$x1 + rnorm(n_tr, sd = 1000)
+
+  x_v <- data.frame(
+    x1 = rnorm(n_val),
+    x2 = rnorm(n_val),
+    x3 = rnorm(n_val)
+  )
+  # Inject extreme values and Infs in validation set
+  x_v$x3[1] <- 100.0
+  x_v$x2[2] <- Inf
+  x_v$x1[3] <- -Inf
+
+  y_v <- 73000 + 30000 * x_v$x1 + rnorm(n_val, sd = 1000)
+  y_v[3] <- 73000
+
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+  fit <- ev$train_func(
+    x_train = x_tr,
+    y_train = y_tr,
+    x_val = x_v,
+    y_val = y_v,
+    task = "regression",
+    seed = 42,
+    nrounds = 10,
+    early_stopping_rounds = 3,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$model))
+  expect_equal(length(fit$predictions), n_val)
+  expect_true(all(is.finite(fit$predictions)))
+  expect_lt(max(abs(fit$predictions)), 1e7)
+
+  # Check predict_func also handles OOD and non-finite safely
+  x_test <- data.frame(
+    x1 = c(1.0, NaN, 1e8),
+    x2 = c(Inf, -Inf, 0.0),
+    x3 = c(50.0, 1.0, -100.0)
+  )
+  preds_test <- ev$predict_func(fit$model, x_test, task = "regression")
+  expect_true(all(is.finite(preds_test)))
+  expect_lt(max(abs(preds_test)), 1e7)
+})
+

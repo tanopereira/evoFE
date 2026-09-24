@@ -393,14 +393,21 @@ public:
 
   // Full prediction on test data (allocates freely — not in hot loop)
   Eigen::MatrixXd predict(const Eigen::MatrixXd& X, bool normalize_input = true) const {
-    Eigen::MatrixXd X_in = X;
+    Eigen::MatrixXd X_in = X.unaryExpr([](double v) {
+      return std::isfinite(v) ? v : 0.0;
+    });
     if (normalize_input && x_mean.size() == X.cols() && x_std.size() == X.cols()) {
       for (int j = 0; j < X.cols(); ++j) {
         double s = x_std(j);
-        if (s > 1e-12) {
-          X_in.col(j) = (X.col(j).array() - x_mean(j)) / s;
+        if (s > 1e-5 && std::isfinite(s)) {
+          X_in.col(j) = ((X_in.col(j).array() - x_mean(j)) / s).max(-30.0).min(30.0);
+        } else {
+          X_in.col(j).setZero();
         }
       }
+    } else {
+      // Even if already standardized, clamp to prevent OOD explosions
+      X_in = X_in.array().max(-30.0).min(30.0);
     }
     Eigen::MatrixXd E = embedder.forward_nocache(X_in);
     int B = E.rows();
@@ -412,7 +419,10 @@ public:
     forward_mlp(E, B, H0, A1, H1, A2, H2, A3, H3, Out);
 
     if (task == "regression") {
-      return (Out.topRows(B).array() * y_std + y_mean).matrix();
+      double ys = (std::isfinite(y_std) && y_std > 1e-8) ? y_std : 1.0;
+      double ym = std::isfinite(y_mean) ? y_mean : 0.0;
+      auto clamped_out = Out.topRows(B).array().max(-50.0).min(50.0);
+      return (clamped_out * ys + ym).matrix();
     } else if (task == "classification") {
       return Out.topRows(B).unaryExpr([](double z) {
         return 1.0 / (1.0 + std::exp(-std::clamp(z, -30.0, 30.0)));

@@ -12,12 +12,12 @@ inline Eigen::Map<Eigen::MatrixXd> map_eigen(NumericMatrix& mat) {
   return Eigen::Map<Eigen::MatrixXd>(mat.begin(), mat.nrow(), mat.ncol());
 }
 
-// Deep copy with NaN sanitization (only used when NaN cleanup is needed)
+// Deep copy with NaN/Inf sanitization (replaces non-finite values with 0.0)
 inline Eigen::MatrixXd copy_eigen_sanitized(const NumericMatrix& mat) {
   Eigen::Map<const Eigen::MatrixXd> mapped(mat.begin(), mat.nrow(), mat.ncol());
-  Eigen::MatrixXd out = mapped;
-  out = out.array().isNaN().select(0.0, out.array());
-  return out;
+  return mapped.unaryExpr([](double v) {
+    return std::isfinite(v) ? v : 0.0;
+  });
 }
 
 // Helper to convert Eigen::MatrixXd to Rcpp NumericMatrix
@@ -330,17 +330,17 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   // Zero-copy map, then sanitize NaN in-place and standardize
   Eigen::MatrixXd X_tr = copy_eigen_sanitized(x_train);
 
-  // Standardize training features
+  // Standardize training features (variance floor 1e-5; clamp standardized inputs to [-30.0, 30.0])
   Eigen::VectorXd x_mean(D);
   Eigen::VectorXd x_std(D);
   for (int j = 0; j < D; ++j) {
     double col_mean = X_tr.col(j).mean();
     double sum_sq = (X_tr.col(j).array() - col_mean).square().sum();
     double col_std = std::sqrt(sum_sq / std::max(1, N - 1));
-    if (col_std < 1e-8 || !std::isfinite(col_std)) col_std = 1.0;
+    if (col_std < 1e-5 || !std::isfinite(col_std)) col_std = 1.0;
     x_mean(j) = col_mean;
     x_std(j) = col_std;
-    X_tr.col(j) = (X_tr.col(j).array() - col_mean) / col_std;
+    X_tr.col(j) = ((X_tr.col(j).array() - col_mean) / col_std).max(-30.0).min(30.0);
   }
 
   // Targets processing
@@ -359,7 +359,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       sum_sq += diff * diff;
     }
     y_std_val = std::sqrt(sum_sq / std::max(1, N - 1));
-    if (y_std_val < 1e-12) y_std_val = 1.0;
+    if (y_std_val < 1e-8 || !std::isfinite(y_std_val)) y_std_val = 1.0;
 
     for (int i = 0; i < N; ++i) {
       Y_tr(i, 0) = (y_train[i] - y_mean_val) / y_std_val;
@@ -393,7 +393,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     y_v_vec = NumericVector(y_val);
     N_val = static_cast<int>(X_v.rows());
     for (int j = 0; j < D; ++j) {
-      X_v.col(j) = (X_v.col(j).array() - x_mean(j)) / x_std(j);
+      X_v.col(j) = ((X_v.col(j).array() - x_mean(j)) / x_std(j)).max(-30.0).min(30.0);
     }
   }
 
