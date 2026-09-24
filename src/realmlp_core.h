@@ -175,6 +175,9 @@ public:
     int out_dim = total_out_dim();
     Eigen::MatrixXd E(B, out_dim);
 
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
       E.col(out_col_start) = x.col(j);
@@ -391,26 +394,34 @@ public:
     Out.topRows(cur_B).rowwise() += b4.val.row(0);
   }
 
-  // Full prediction on test data (allocates freely — not in hot loop)
+  // Full prediction on test data (zero-copy when already standardized)
   Eigen::MatrixXd predict(const Eigen::MatrixXd& X, bool normalize_input = true) const {
-    Eigen::MatrixXd X_in = X.unaryExpr([](double v) {
-      return std::isfinite(v) ? v : 0.0;
-    });
-    if (normalize_input && x_mean.size() == X.cols() && x_std.size() == X.cols()) {
-      for (int j = 0; j < X.cols(); ++j) {
+    int B = static_cast<int>(X.rows());
+    int D = static_cast<int>(X.cols());
+    Eigen::MatrixXd X_norm;
+    const Eigen::MatrixXd* pX = &X;
+
+    if (normalize_input && x_mean.size() == D && x_std.size() == D) {
+      X_norm.resize(B, D);
+      for (int j = 0; j < D; ++j) {
         double s = x_std(j);
         if (s > 1e-5 && std::isfinite(s)) {
-          X_in.col(j) = ((X_in.col(j).array() - x_mean(j)) / s).max(-30.0).min(30.0);
+          double m = x_mean(j);
+          double inv_s = 1.0 / s;
+          for (int i = 0; i < B; ++i) {
+            double v = X(i, j);
+            if (!std::isfinite(v)) v = 0.0;
+            double z = (v - m) * inv_s;
+            X_norm(i, j) = std::clamp(z, -30.0, 30.0);
+          }
         } else {
-          X_in.col(j).setZero();
+          X_norm.col(j).setZero();
         }
       }
-    } else {
-      // Even if already standardized, clamp to prevent OOD explosions
-      X_in = X_in.array().max(-30.0).min(30.0);
+      pX = &X_norm;
     }
-    Eigen::MatrixXd E = embedder.forward_nocache(X_in);
-    int B = E.rows();
+
+    Eigen::MatrixXd E = embedder.forward_nocache(*pX);
     Eigen::MatrixXd H0, A1, H1, A2, H2, A3, H3, Out;
     H0.resize(B, E.cols()); A1.resize(B, hidden_dim); H1.resize(B, hidden_dim);
     A2.resize(B, hidden_dim); H2.resize(B, hidden_dim);
@@ -421,8 +432,12 @@ public:
     if (task == "regression") {
       double ys = (std::isfinite(y_std) && y_std > 1e-8) ? y_std : 1.0;
       double ym = std::isfinite(y_mean) ? y_mean : 0.0;
-      auto clamped_out = Out.topRows(B).array().max(-50.0).min(50.0);
-      return (clamped_out * ys + ym).matrix();
+      Eigen::MatrixXd result = Out.topRows(B);
+      for (int i = 0; i < B; ++i) {
+        double z = std::clamp(result(i, 0), -50.0, 50.0);
+        result(i, 0) = z * ys + ym;
+      }
+      return result;
     } else if (task == "classification") {
       return Out.topRows(B).unaryExpr([](double z) {
         return 1.0 / (1.0 + std::exp(-std::clamp(z, -30.0, 30.0)));

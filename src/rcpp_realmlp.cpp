@@ -12,12 +12,25 @@ inline Eigen::Map<Eigen::MatrixXd> map_eigen(NumericMatrix& mat) {
   return Eigen::Map<Eigen::MatrixXd>(mat.begin(), mat.nrow(), mat.ncol());
 }
 
-// Deep copy with NaN/Inf sanitization (replaces non-finite values with 0.0)
-inline Eigen::MatrixXd copy_eigen_sanitized(const NumericMatrix& mat) {
+// Direct copy without sanitization (for model weights — memcpy speed)
+inline Eigen::MatrixXd copy_eigen_fast(const NumericMatrix& mat) {
   Eigen::Map<const Eigen::MatrixXd> mapped(mat.begin(), mat.nrow(), mat.ncol());
-  return mapped.unaryExpr([](double v) {
-    return std::isfinite(v) ? v : 0.0;
-  });
+  return mapped;
+}
+
+// Deep copy with fast contiguous NaN/Inf sanitization (replaces non-finite values with 0.0)
+inline Eigen::MatrixXd copy_eigen_sanitized(const NumericMatrix& mat) {
+  int r = mat.nrow();
+  int c = mat.ncol();
+  Eigen::MatrixXd out(r, c);
+  const double* src = mat.begin();
+  double* dst = out.data();
+  int total = r * c;
+  for (int i = 0; i < total; ++i) {
+    double v = src[i];
+    dst[i] = std::isfinite(v) ? v : 0.0;
+  }
+  return out;
 }
 
 // Helper to convert Eigen::MatrixXd to Rcpp NumericMatrix
@@ -107,22 +120,22 @@ RealMLPModel list_to_model(const List& lst) {
   m.embedder.sigma = as<double>(p_embed["sigma"]);
 
   NumericMatrix om = as<NumericMatrix>(p_embed["omega"]);
-  m.embedder.omega.val = copy_eigen_sanitized(om);
+  m.embedder.omega.val = copy_eigen_fast(om);
   NumericMatrix bp = as<NumericMatrix>(p_embed["b_phase"]);
-  m.embedder.b_phase.val = copy_eigen_sanitized(bp);
+  m.embedder.b_phase.val = copy_eigen_fast(bp);
   NumericMatrix bt = as<NumericMatrix>(p_embed["beta_proj"]);
-  m.embedder.beta_proj.val = copy_eigen_sanitized(bt);
+  m.embedder.beta_proj.val = copy_eigen_fast(bt);
 
   List W_proj_list = p_embed["W_proj"];
   m.embedder.W_proj.resize(m.n_features);
   for (int j = 0; j < m.n_features; ++j) {
     NumericMatrix wj = as<NumericMatrix>(W_proj_list[j]);
-    m.embedder.W_proj[j].val = copy_eigen_sanitized(wj);
+    m.embedder.W_proj[j].val = copy_eigen_fast(wj);
   }
 
   auto load_param = [](const List& l, const char* name) {
     NumericMatrix mat = as<NumericMatrix>(l[name]);
-    return copy_eigen_sanitized(mat);
+    return copy_eigen_fast(mat);
   };
 
   m.front_scale.val = load_param(lst, "front_scale");
