@@ -239,6 +239,13 @@ evolve_features <- function(data, target_col, task = "classification",
                             metacv_mode = NULL,
                             record = FALSE,
                             port = NULL, ...) {
+  # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
+  extra_args_top <- list(...)
+  if (!is.null(extra_args_top$nthreads)) threads <- as.integer(extra_args_top$nthreads)
+  if (!is.null(extra_args_top$nthread)) threads <- as.integer(extra_args_top$nthread)
+  if (!is.null(extra_args_top$num_threads)) threads <- as.integer(extra_args_top$num_threads)
+  if (!is.null(extra_args_top$n_jobs)) threads <- as.integer(extra_args_top$n_jobs)
+
   # Validate complexity arguments
   if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1 || complexity_penalty < 0) {
     stop("'complexity_penalty' must be a non-negative number.")

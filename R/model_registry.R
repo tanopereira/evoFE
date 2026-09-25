@@ -102,6 +102,11 @@ register_evaluator(
     x_val   <- .sanitize_feature_matrix(x_val)
     dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
     extra_params <- list(...)
+    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
@@ -149,7 +154,7 @@ register_evaluator(
       params$metric <- "None"
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -253,8 +258,13 @@ register_evaluator(
     }
     x_train <- .sanitize_feature_matrix(x_train)
     x_val   <- .sanitize_feature_matrix(x_val)
-    dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA, nthread = threads)
     extra_params <- list(...)
+    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+    dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA, nthread = threads)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
@@ -304,7 +314,7 @@ register_evaluator(
       params$eval_metric <- NULL
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
