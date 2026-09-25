@@ -19,11 +19,14 @@
 
 namespace realmlp {
 
-// Vectorized activation: Mish(x) = x * tanh(softplus(x)) or SELU
+// Vectorized activation: Mish(x) = x * tanh(softplus(x)) or SELU (stride-aware for blocks)
 inline void apply_activation(const Eigen::Ref<const Eigen::MatrixXd>& in, Eigen::Ref<Eigen::MatrixXd> out, bool is_cls) {
-  int sz = static_cast<int>(in.size());
-  const double* in_ptr = in.data();
-  double* out_ptr = out.data();
+  int R = static_cast<int>(in.rows());
+  int C = static_cast<int>(in.cols());
+  int in_stride = static_cast<int>(in.outerStride());
+  int out_stride = static_cast<int>(out.outerStride());
+  const double* in_data = in.data();
+  double* out_data = out.data();
 
   if (is_cls) {
     // SELU: lambda * (x if x > 0 else alpha * expm1(x))
@@ -31,51 +34,70 @@ inline void apply_activation(const Eigen::Ref<const Eigen::MatrixXd>& in, Eigen:
     constexpr double ALPHA  = 1.6732632423543772848170429916717;
     constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (sz >= 2048)
+#pragma omp parallel for schedule(static) if (C >= 4)
 #endif
-    for (int i = 0; i < sz; ++i) {
-      double z = in_ptr[i];
-      out_ptr[i] = (z > 0.0) ? (LAMBDA * z) : (LAMBDA_ALPHA * std::expm1(z));
+    for (int c = 0; c < C; ++c) {
+      const double* in_col = in_data + c * in_stride;
+      double* out_col = out_data + c * out_stride;
+      for (int r = 0; r < R; ++r) {
+        double z = in_col[r];
+        out_col[r] = (z > 0.0) ? (LAMBDA * z) : (LAMBDA_ALPHA * std::expm1(z));
+      }
     }
   } else {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (sz >= 2048)
+#pragma omp parallel for schedule(static) if (C >= 4)
 #endif
-    for (int i = 0; i < sz; ++i) {
-      double z = in_ptr[i];
-      double sp = (z > 20.0) ? z : ((z < -20.0) ? std::exp(z) : std::log1p(std::exp(z)));
-      out_ptr[i] = z * std::tanh(sp);
+    for (int c = 0; c < C; ++c) {
+      const double* in_col = in_data + c * in_stride;
+      double* out_col = out_data + c * out_stride;
+      for (int r = 0; r < R; ++r) {
+        double z = in_col[r];
+        double sp = (z > 20.0) ? z : ((z < -20.0) ? std::exp(z) : std::log1p(std::exp(z)));
+        out_col[r] = z * std::tanh(sp);
+      }
     }
   }
 }
 
 inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXd>& act_in, Eigen::Ref<Eigen::MatrixXd> delta, bool is_cls) {
-  int sz = static_cast<int>(delta.size());
-  const double* a_ptr = act_in.data();
-  double* d_ptr = delta.data();
+  int R = static_cast<int>(delta.rows());
+  int C = static_cast<int>(delta.cols());
+  int a_stride = static_cast<int>(act_in.outerStride());
+  int d_stride = static_cast<int>(delta.outerStride());
+  const double* a_data = act_in.data();
+  double* d_data = delta.data();
 
   if (is_cls) {
     constexpr double LAMBDA = 1.0507009873554804934193349852946;
     constexpr double ALPHA  = 1.6732632423543772848170429916717;
     constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (sz >= 2048)
+#pragma omp parallel for schedule(static) if (C >= 4)
 #endif
-    for (int i = 0; i < sz; ++i) {
-      double a = a_ptr[i];
-      d_ptr[i] *= (a > 0.0) ? LAMBDA : (LAMBDA_ALPHA * std::exp(a));
+    for (int c = 0; c < C; ++c) {
+      const double* a_col = a_data + c * a_stride;
+      double* d_col = d_data + c * d_stride;
+      for (int r = 0; r < R; ++r) {
+        double a = a_col[r];
+        d_col[r] *= (a > 0.0) ? LAMBDA : (LAMBDA_ALPHA * std::exp(a));
+      }
     }
   } else {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (sz >= 2048)
+#pragma omp parallel for schedule(static) if (C >= 4)
 #endif
-    for (int i = 0; i < sz; ++i) {
-      double a = a_ptr[i];
-      double sp = (a > 20.0) ? a : ((a < -20.0) ? std::exp(a) : std::log1p(std::exp(a)));
-      double tsp = std::tanh(sp);
-      double clamped_a = std::clamp(a, -30.0, 30.0);
-      double sig = 1.0 / (1.0 + std::exp(-clamped_a));
-      d_ptr[i] *= (tsp + a * sig * (1.0 - tsp * tsp));
+    for (int c = 0; c < C; ++c) {
+      const double* a_col = a_data + c * a_stride;
+      double* d_col = d_data + c * d_stride;
+      for (int r = 0; r < R; ++r) {
+        double a = a_col[r];
+        double sp = (a > 20.0) ? a : ((a < -20.0) ? std::exp(a) : std::log1p(std::exp(a)));
+        double tsp = std::tanh(sp);
+        double clamped_a = std::clamp(a, -30.0, 30.0);
+        double sig = 1.0 / (1.0 + std::exp(-clamped_a));
+        d_col[r] *= (tsp + a * sig * (1.0 - tsp * tsp));
+      }
     }
   }
 }

@@ -437,7 +437,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     }
   }
   actual_batch_size = std::max(1, actual_batch_size);
-  int n_batches = std::max(1, N / actual_batch_size);
+  int n_batches = (N + actual_batch_size - 1) / actual_batch_size;
   int total_steps = n_epochs * n_batches;
 
   double beta1 = 0.9;
@@ -476,13 +476,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   }
 
   // ===== Pre-allocate ALL workspace (the key optimization) =====
-  // Compute max batch size (last batch may be larger)
-  int max_B = 0;
-  for (int b = 0; b < n_batches; ++b) {
-    int start = b * actual_batch_size;
-    int end = (b == n_batches - 1) ? N : std::min(start + actual_batch_size, N);
-    max_B = std::max(max_B, end - start);
-  }
+  int max_B = actual_batch_size;
 
   TrainWorkspace ws;
   ws.allocate(max_B, D, out_dim, hidden_dim, embed_dim,
@@ -506,7 +500,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     for (int b = 0; b < n_batches; ++b) {
       step++;
       int start = b * actual_batch_size;
-      int end = (b == n_batches - 1) ? N : std::min(start + actual_batch_size, N);
+      int end = std::min(start + actual_batch_size, N);
       int cur_B = end - start;
       if (cur_B <= 0) break;
 
@@ -544,23 +538,16 @@ List rcpp_realmlp_train(NumericMatrix x_train,
         grad_out_b *= (2.0 / cur_B);
       } else if (is_cls) {
         auto P_b = ws.P.topRows(cur_B);
-        const double* out_ptr = Out_b.data();
-        const double* y_ptr = Y_batch.data();
-        double* p_ptr = P_b.data();
-        double* g_ptr = grad_out_b.data();
         double loss_sum = 0.0;
         double inv_B = 1.0 / cur_B;
 
-#if defined(_OPENMP)
-#pragma omp parallel for reduction(+:loss_sum) schedule(static) if (cur_B >= 1024)
-#endif
         for (int i = 0; i < cur_B; ++i) {
-          double z = std::clamp(out_ptr[i], -30.0, 30.0);
+          double z = std::clamp(Out_b(i, 0), -30.0, 30.0);
           double p = 1.0 / (1.0 + std::exp(-z));
-          p_ptr[i] = p;
-          g_ptr[i] = inv_B * (p - y_ptr[i]);
+          P_b(i, 0) = p;
+          double y = Y_batch(i, 0);
+          grad_out_b(i, 0) = inv_B * (p - y);
           double p_clamped = std::clamp(p, 1e-15, 1.0 - 1e-15);
-          double y = y_ptr[i];
           loss_sum -= (y * std::log(p_clamped) + (1.0 - y) * std::log(1.0 - p_clamped));
         }
         batch_loss = loss_sum * inv_B;
