@@ -190,11 +190,12 @@ register_evaluator(
       )
     })
 
+    best_it <- if (!is.null(model$best_iter) && model$best_iter > 0) model$best_iter else NULL
     preds <- if (!is.null(x_val)) {
-      if (!is.null(model$best_iter) && model$best_iter > 0) {
-        stats::predict(model, x_val, num_iteration = model$best_iter)
+      if (!is.null(best_it)) {
+        stats::predict(model, x_val, num_iteration = best_it, params = list(num_threads = threads))
       } else {
-        stats::predict(model, x_val)
+        stats::predict(model, x_val, params = list(num_threads = threads))
       }
     } else {
       NULL
@@ -202,11 +203,25 @@ register_evaluator(
 
     importances <- tryCatch(
       {
-        sh <- stats::predict(model, as.matrix(x_train), type = "contrib")
+        n_tr <- nrow(x_train)
+        if (n_tr > 2000L) {
+          sub_idx <- sample.int(n_tr, 2000L)
+          x_sub <- as.matrix(x_train[sub_idx, , drop = FALSE])
+          sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
+        } else {
+          sh <- stats::predict(model, as.matrix(x_train), type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
+        }
         .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {
-        NULL
+        tryCatch({
+          df_imp <- lightgbm::lgb.importance(model)
+          imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
+          if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
+            imp[df_imp$Feature] <- df_imp$Gain
+          }
+          imp
+        }, error = function(e2) NULL)
       }
     )
 
@@ -218,10 +233,12 @@ register_evaluator(
       stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
     }
     x_new <- .sanitize_feature_matrix(x_new)
+    extra_args <- list(...)
+    th <- if (!is.null(extra_args$threads)) extra_args$threads else 2
     if (!is.null(model$best_iter) && model$best_iter > 0) {
-      stats::predict(model, x_new, num_iteration = model$best_iter)
+      stats::predict(model, x_new, num_iteration = model$best_iter, params = list(num_threads = th))
     } else {
-      stats::predict(model, x_new)
+      stats::predict(model, x_new, params = list(num_threads = th))
     }
   }
 )
@@ -236,7 +253,7 @@ register_evaluator(
     }
     x_train <- .sanitize_feature_matrix(x_train)
     x_val   <- .sanitize_feature_matrix(x_val)
-    dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA)
+    dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA, nthread = threads)
     extra_params <- list(...)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
@@ -297,18 +314,16 @@ register_evaluator(
       params$nthread <- 1
     }
 
-    evals <- list(train = dtrain)
     dval_metric <- NULL
     # Early stopping requires a validation set in `evals`; add one whenever
     # validation data is available and a custom metric or early stopping is used.
     needs_val <- use_custom_eval ||
       (!is.null(early_stopping_rounds) && early_stopping_rounds > 0)
     if (needs_val && !is.null(x_val) && !is.null(y_val)) {
-      dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val, missing = NA)
-      evals$val <- dval_metric
-    }
-    if (length(evals) <= 1L) {
-      # No validation set available: disable early stopping (mirrors lightgbm path)
+      dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val, missing = NA, nthread = threads)
+      evals <- list(val = dval_metric)
+    } else {
+      evals <- list(train = dtrain)
       early_stopping_rounds <- NULL
     }
 
@@ -342,7 +357,7 @@ register_evaluator(
     best_iter <- .xgb_best_iter(model)
 
     preds <- if (!is.null(x_val)) {
-      dval <- xgboost::xgb.DMatrix(data = x_val, missing = NA)
+      dval <- xgboost::xgb.DMatrix(data = x_val, missing = NA, nthread = threads)
       p <- if (!is.null(best_iter) && best_iter >= 1) {
         stats::predict(model, dval, iterationrange = c(1, best_iter + 1))
       } else {
@@ -356,11 +371,27 @@ register_evaluator(
 
     importances <- tryCatch(
       {
-        sh <- stats::predict(model, dtrain, predcontrib = TRUE)
+        best_it_range <- if (!is.null(best_iter) && best_iter >= 1) c(1, best_iter + 1) else NULL
+        n_tr <- nrow(x_train)
+        if (n_tr > 2000L) {
+          sub_idx <- sample.int(n_tr, 2000L)
+          dsub <- xgboost::xgb.DMatrix(data = x_train[sub_idx, , drop = FALSE], missing = NA, nthread = threads)
+          sh <- stats::predict(model, dsub, predcontrib = TRUE, iterationrange = best_it_range)
+          rm(dsub)
+        } else {
+          sh <- stats::predict(model, dtrain, predcontrib = TRUE, iterationrange = best_it_range)
+        }
         .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {
-        NULL
+        tryCatch({
+          df_imp <- xgboost::xgb.importance(model = model)
+          imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
+          if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
+            imp[df_imp$Feature] <- df_imp$Gain
+          }
+          imp
+        }, error = function(e2) NULL)
       }
     )
 
@@ -373,8 +404,10 @@ register_evaluator(
       stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
     }
     x_new <- .sanitize_feature_matrix(x_new)
+    extra_args <- list(...)
+    th <- if (!is.null(extra_args$threads)) extra_args$threads else 2
     best_iter <- .xgb_best_iter(model)
-    dmatrix <- xgboost::xgb.DMatrix(data = x_new, missing = NA)
+    dmatrix <- xgboost::xgb.DMatrix(data = x_new, missing = NA, nthread = th)
     preds <- if (!is.null(best_iter) && best_iter >= 1) {
       stats::predict(model, dmatrix, iterationrange = c(1, best_iter + 1))
     } else {
@@ -467,7 +500,14 @@ register_evaluator(
     # Fetch feature importance and map column names
     importances <- tryCatch(
       {
-        sh <- catboost::catboost.get_feature_importance(model, pool = dtrain, type = "ShapValues")
+        n_tr <- nrow(df_train)
+        pool_imp <- if (n_tr > 2000L) {
+          sub_idx <- sample.int(n_tr, 2000L)
+          catboost::catboost.load_pool(data = df_train[sub_idx, , drop = FALSE], label = y_train[sub_idx])
+        } else {
+          dtrain
+        }
+        sh <- catboost::catboost.get_feature_importance(model, pool = pool_imp, type = "ShapValues")
         .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) {

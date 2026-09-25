@@ -6,6 +6,7 @@
 #' @noRd
 .sanitize_feature_matrix <- function(x) {
   if (is.null(x)) return(NULL)
+  if (isTRUE(attr(x, "sanitized", exact = TRUE))) return(x)
   if (!is.matrix(x)) {
     x <- if (is.data.frame(x)) data.matrix(x) else as.matrix(x)
   }
@@ -17,6 +18,7 @@
   # to fail with: Check failed: valid: Input data contains `inf` or a value too large
   max_float <- 3.402823e38
   x[!is.finite(x) | abs(x) > max_float] <- NA_real_
+  attr(x, "sanitized") <- TRUE
   x
 }
 
