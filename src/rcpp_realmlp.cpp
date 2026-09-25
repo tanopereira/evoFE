@@ -425,9 +425,15 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   if (batch_size > 0) {
     actual_batch_size = std::min(batch_size, N);
   } else {
-    actual_batch_size = std::min(256, N);
-    if (actual_batch_size == N && N > 32) {
-      actual_batch_size = std::min(64, std::max(16, N / 4));
+    // Smart auto batch sizing based on dataset size for peak throughput & convergence
+    if (N >= 32000) {
+      actual_batch_size = 1024;
+    } else if (N >= 8000) {
+      actual_batch_size = 512;
+    } else if (N > 32) {
+      actual_batch_size = std::min(256, std::max(32, N / 4));
+    } else {
+      actual_batch_size = std::max(1, N);
     }
   }
   actual_batch_size = std::max(1, actual_batch_size);
@@ -487,6 +493,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   for (int epoch = 0; epoch < n_epochs; ++epoch) {
     // Shuffle dataset once per epoch, then use contiguous blocks
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static)
+#endif
     for (int i = 0; i < N; ++i) {
       ws.X_shuf.row(i) = X_tr.row(perm[i]);
       ws.Y_shuf.row(i) = Y_tr.row(perm[i]);
@@ -535,16 +544,26 @@ List rcpp_realmlp_train(NumericMatrix x_train,
         grad_out_b *= (2.0 / cur_B);
       } else if (is_cls) {
         auto P_b = ws.P.topRows(cur_B);
-        P_b = Out_b.unaryExpr([](double z) {
-          return 1.0 / (1.0 + std::exp(-std::clamp(z, -30.0, 30.0)));
-        });
-        grad_out_b.noalias() = (1.0 / cur_B) * (P_b - Y_batch);
+        const double* out_ptr = Out_b.data();
+        const double* y_ptr = Y_batch.data();
+        double* p_ptr = P_b.data();
+        double* g_ptr = grad_out_b.data();
+        double loss_sum = 0.0;
+        double inv_B = 1.0 / cur_B;
+
+#if defined(_OPENMP)
+#pragma omp parallel for reduction(+:loss_sum) schedule(static) if (cur_B >= 1024)
+#endif
         for (int i = 0; i < cur_B; ++i) {
-          double p = std::clamp(P_b(i, 0), 1e-15, 1.0 - 1e-15);
-          double y = Y_batch(i, 0);
-          batch_loss -= (y * std::log(p) + (1.0 - y) * std::log(1.0 - p));
+          double z = std::clamp(out_ptr[i], -30.0, 30.0);
+          double p = 1.0 / (1.0 + std::exp(-z));
+          p_ptr[i] = p;
+          g_ptr[i] = inv_B * (p - y_ptr[i]);
+          double p_clamped = std::clamp(p, 1e-15, 1.0 - 1e-15);
+          double y = y_ptr[i];
+          loss_sum -= (y * std::log(p_clamped) + (1.0 - y) * std::log(1.0 - p_clamped));
         }
-        batch_loss /= cur_B;
+        batch_loss = loss_sum * inv_B;
       } else {
         auto P_b = ws.P.topRows(cur_B);
         for (int i = 0; i < cur_B; ++i) {

@@ -19,36 +19,64 @@
 
 namespace realmlp {
 
-// Vectorized activation: Mish(x) = x * tanh(softplus(x))
+// Vectorized activation: Mish(x) = x * tanh(softplus(x)) or SELU
 inline void apply_activation(const Eigen::Ref<const Eigen::MatrixXd>& in, Eigen::Ref<Eigen::MatrixXd> out, bool is_cls) {
-  const auto& arr = in.array();
+  int sz = static_cast<int>(in.size());
+  const double* in_ptr = in.data();
+  double* out_ptr = out.data();
+
   if (is_cls) {
     // SELU: lambda * (x if x > 0 else alpha * expm1(x))
     constexpr double LAMBDA = 1.0507009873554804934193349852946;
     constexpr double ALPHA  = 1.6732632423543772848170429916717;
-    out.array() = (arr > 0.0).select(LAMBDA * arr, LAMBDA * ALPHA * arr.exp() - LAMBDA * ALPHA);
+    constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (sz >= 2048)
+#endif
+    for (int i = 0; i < sz; ++i) {
+      double z = in_ptr[i];
+      out_ptr[i] = (z > 0.0) ? (LAMBDA * z) : (LAMBDA_ALPHA * std::expm1(z));
+    }
   } else {
-    // Mish: x * tanh(softplus(x))  — softplus clamped for stability
-    auto sp = (arr > 20.0).select(arr, (arr < -20.0).select(arr.exp(), (1.0 + arr.exp()).log()));
-    out.array() = arr * sp.tanh();
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (sz >= 2048)
+#endif
+    for (int i = 0; i < sz; ++i) {
+      double z = in_ptr[i];
+      double sp = (z > 20.0) ? z : ((z < -20.0) ? std::exp(z) : std::log1p(std::exp(z)));
+      out_ptr[i] = z * std::tanh(sp);
+    }
   }
 }
 
 inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXd>& act_in, Eigen::Ref<Eigen::MatrixXd> delta, bool is_cls) {
-  const auto& a = act_in.array();
+  int sz = static_cast<int>(delta.size());
+  const double* a_ptr = act_in.data();
+  double* d_ptr = delta.data();
+
   if (is_cls) {
     constexpr double LAMBDA = 1.0507009873554804934193349852946;
     constexpr double ALPHA  = 1.6732632423543772848170429916717;
-    delta.array() *= (a > 0.0).select(
-      Eigen::ArrayXXd::Constant(delta.rows(), delta.cols(), LAMBDA),
-      LAMBDA * ALPHA * a.exp()
-    );
+    constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (sz >= 2048)
+#endif
+    for (int i = 0; i < sz; ++i) {
+      double a = a_ptr[i];
+      d_ptr[i] *= (a > 0.0) ? LAMBDA : (LAMBDA_ALPHA * std::exp(a));
+    }
   } else {
-    // Mish grad: tanh(sp) + x * sigmoid(x) * (1 - tanh²(sp))
-    auto sp = (a > 20.0).select(a, (a < -20.0).select(a.exp(), (1.0 + a.exp()).log()));
-    auto tsp = sp.tanh();
-    auto sig = 1.0 / (1.0 + (-a.max(-30.0).min(30.0)).exp());
-    delta.array() *= tsp + a * sig * (1.0 - tsp * tsp);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (sz >= 2048)
+#endif
+    for (int i = 0; i < sz; ++i) {
+      double a = a_ptr[i];
+      double sp = (a > 20.0) ? a : ((a < -20.0) ? std::exp(a) : std::log1p(std::exp(a)));
+      double tsp = std::tanh(sp);
+      double clamped_a = std::clamp(a, -30.0, 30.0);
+      double sig = 1.0 / (1.0 + std::exp(-clamped_a));
+      d_ptr[i] *= (tsp + a * sig * (1.0 - tsp * tsp));
+    }
   }
 }
 
@@ -81,6 +109,9 @@ struct AdamParam {
     double* v_ptr = v.data();
     const double* g_ptr = grad.data();
 
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (sz >= 1024)
+#endif
     for (int i = 0; i < sz; ++i) {
       double g = g_ptr[i];
       double m_val = beta1 * m_ptr[i] + (1.0 - beta1) * g;
