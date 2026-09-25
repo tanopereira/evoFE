@@ -107,6 +107,15 @@ register_evaluator(
     if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
     if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
     if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
+    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
@@ -154,7 +163,7 @@ register_evaluator(
       params$metric <- "None"
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -264,6 +273,15 @@ register_evaluator(
     if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
     if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
     if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
+    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
     dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA, nthread = threads)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
@@ -314,7 +332,7 @@ register_evaluator(
       params$eval_metric <- NULL
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -445,6 +463,20 @@ register_evaluator(
     dtrain <- catboost::catboost.load_pool(data = df_train, label = y_train)
 
     extra_params <- list(...)
+    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
+    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
     y_val            <- extra_params$y_val
     metric_arg       <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
@@ -469,7 +501,8 @@ register_evaluator(
 
     control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
                         "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds",
-                        "device", "realmlp_device")
+                        "device", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads",
+                        "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -688,6 +721,15 @@ register_evaluator(
     
     # Extract tunable parameters from ... with defaults
     extra_params <- list(...)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
+    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
     nn_layers <- if (!is.null(extra_params$nn_layers)) extra_params$nn_layers else 2
     nn_units <- if (!is.null(extra_params$nn_units)) extra_params$nn_units else 64
     nn_dropout <- if (!is.null(extra_params$nn_dropout)) extra_params$nn_dropout else 0.2
@@ -855,11 +897,25 @@ register_evaluator(
   train_func = function(x_train, y_train, x_val = NULL, task = "regression",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
     extra_params <- list(...)
+    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
+    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
     y_val <- extra_params$y_val
     early_stopping_rounds <- if (!is.null(extra_params$early_stopping_rounds)) as.integer(extra_params$early_stopping_rounds) else 0L
 
     seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else sample.int(1000000L, 1L)
-    n_epochs <- if (!is.null(extra_params$n_epochs)) as.integer(extra_params$n_epochs) else as.integer(nrounds)
+    n_epochs <- as.integer(nrounds)
     batch_size <- if (!is.null(extra_params$batch_size)) as.integer(extra_params$batch_size) else -1L
     lr_val <- if (!is.null(extra_params$lr)) as.numeric(extra_params$lr) else -1.0
 

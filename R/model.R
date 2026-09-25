@@ -52,6 +52,22 @@ train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                  evaluator, paste(names(evo_evaluators), collapse = ", ")))
   }
 
+  extra_args <- list(...)
+  if (!is.null(extra_args$threads)) threads <- as.integer(extra_args$threads)
+  if (!is.null(extra_args$nthreads)) threads <- as.integer(extra_args$nthreads)
+  if (!is.null(extra_args$nthread)) threads <- as.integer(extra_args$nthread)
+  if (!is.null(extra_args$num_threads)) threads <- as.integer(extra_args$num_threads)
+  if (!is.null(extra_args$n_jobs)) threads <- as.integer(extra_args$n_jobs)
+  if (!is.null(extra_args$nrounds)) nrounds <- as.integer(extra_args$nrounds)
+  if (!is.null(extra_args$num_rounds)) nrounds <- as.integer(extra_args$num_rounds)
+  if (!is.null(extra_args$n_rounds)) nrounds <- as.integer(extra_args$n_rounds)
+  if (!is.null(extra_args$num_round)) nrounds <- as.integer(extra_args$num_round)
+  if (!is.null(extra_args$nround)) nrounds <- as.integer(extra_args$nround)
+  if (!is.null(extra_args$epochs)) nrounds <- as.integer(extra_args$epochs)
+  if (!is.null(extra_args$n_epochs)) nrounds <- as.integer(extra_args$n_epochs)
+  if (!is.null(extra_args$iterations)) nrounds <- as.integer(extra_args$iterations)
+  if (!is.null(extra_args$n_iterations)) nrounds <- as.integer(extra_args$n_iterations)
+
   x_train <- .sanitize_feature_matrix(x_train)
   x_val   <- .sanitize_feature_matrix(x_val)
 
