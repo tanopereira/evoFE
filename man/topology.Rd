@@ -29,7 +29,7 @@ topology_torus(islands = 10, rows = NULL, cols = NULL)
 
 topology_hypercube(islands = NULL, dimension = NULL)
 
-topology_tiered(islands = 10, tiers = 3)
+topology_tiered(islands = 10, tiers = NULL)
 
 topology_complete(islands = 10)
 
@@ -64,7 +64,7 @@ get_in_neighbors(topology, island_id, state = NULL, ...)
 
 \item{dimension}{Optional integer. Hypercube dimension.}
 
-\item{tiers}{Integer. Number of tiers for pyramid topology (default: 3).}
+\item{tiers}{Optional integer. Number of tiers for pyramid topology. If \code{NULL} (the default), automatically computed as approximately \code{log2(islands)}.}
 
 \item{topology}{An \code{evo_topology} object.}
 

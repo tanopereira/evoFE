@@ -8,7 +8,7 @@
 #' @param rows Optional integer. Number of grid rows.
 #' @param cols Optional integer. Number of grid columns.
 #' @param dimension Optional integer. Hypercube dimension.
-#' @param tiers Integer. Number of tiers for pyramid topology (default: 3).
+#' @param tiers Optional integer. Number of tiers for pyramid topology. If \code{NULL} (the default), automatically computed as approximately \code{log2(islands)}.
 #' @param topology An \code{evo_topology} object.
 #' @param island_id Integer. 1-indexed island ID (1 to \code{islands}).
 #' @param state Optional list containing runtime evolution state (populations, fitnesses, stagnation counts).
@@ -260,9 +260,14 @@ topology_hypercube <- function(islands = NULL, dimension = NULL) {
   .populate_adjacency(top, function(i) .hypercube_neighbors_calc(top, i))
 }
 
-.partition_k_tiers <- function(islands, tiers = 3) {
+.partition_k_tiers <- function(islands, tiers = NULL) {
   islands <- as.integer(islands)
-  tiers <- max(2L, min(as.integer(tiers), islands))
+  if (is.null(tiers)) {
+    tiers <- if (is.na(islands) || islands < 2L) 2L else max(2L, as.integer(round(log2(islands))))
+  } else {
+    tiers <- as.integer(tiers)
+  }
+  tiers <- max(2L, min(tiers, islands))
 
   if (islands <= 1L) {
     res <- vector("list", tiers)
@@ -331,11 +336,15 @@ topology_hypercube <- function(islands = NULL, dimension = NULL) {
 
 #' @rdname topology
 #' @export
-topology_tiered <- function(islands = 10, tiers = 3) {
+topology_tiered <- function(islands = 10, tiers = NULL) {
   islands <- as.integer(islands)
-  tiers <- as.integer(tiers)
   if (is.na(islands) || islands < 1L) stop("islands must be a positive integer")
-  if (is.na(tiers) || tiers < 2L) stop("tiers must be an integer >= 2")
+  if (!is.null(tiers)) {
+    tiers <- as.integer(tiers)
+    if (is.na(tiers) || tiers < 2L) stop("tiers must be an integer >= 2")
+  } else {
+    tiers <- max(2L, as.integer(round(log2(islands))))
+  }
 
   tier_partition <- .partition_k_tiers(islands, tiers)
   top <- structure(

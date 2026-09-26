@@ -896,12 +896,6 @@ evolve_features <- function(data, target_col, task = "classification",
   viewer <- NULL
   evolution_log <- NULL
 
-  tiers_count <- if (!is.null(migration) && inherits(migration, "evo_migration_config") && !is.null(migration$topology$tiers)) {
-    migration$topology$tiers
-  } else {
-    3L
-  }
-
   topo_obj <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
     migration$topology
   } else {
@@ -909,12 +903,18 @@ evolve_features <- function(data, target_col, task = "classification",
       "grid" = topology_grid(islands),
       "torus" = topology_torus(islands),
       "hypercube" = topology_hypercube(islands),
-      "tiered" = topology_tiered(islands, tiers = tiers_count),
-      "hfc" = topology_tiered(islands, tiers = tiers_count),
+      "tiered" = topology_tiered(islands),
+      "hfc" = topology_tiered(islands),
       "complete" = topology_complete(islands),
       "feature_distance" = topology_feature_distance(islands),
       topology_ring(islands)
     )
+  }
+
+  tiers_count <- if (!is.null(topo_obj$tiers)) {
+    topo_obj$tiers
+  } else {
+    3L
   }
 
   adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL

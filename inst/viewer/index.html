@@ -1736,7 +1736,7 @@
             // -- layout by topology -------------------------------------
 
             if (topo === "tiered" || topo === "hfc") {
-                const nTiers = Math.max(2, (config && (config.tiers || config.topology_tiers)) || 3);
+                const nTiers = Math.max(2, (config && (config.tiers || config.topology_tiers)) || Math.round(Math.log2(nIslands || 10)));
                 
                 function partitionKTiers(islands, tiers) {
                     const n = Math.max(1, islands);

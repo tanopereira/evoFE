@@ -209,3 +209,30 @@ test_that("topology_torus connects horizontal and vertical wrap-around neighbors
   n9 <- get_neighbors(torus9, 9)
   expect_setequal(n9, c(3, 6, 7, 8))
 })
+
+test_that("topology_tiered defaults to approx log2 tiers and respects custom tiers", {
+  # N = 7 defaults to 3 tiers (4-2-1)
+  t7 <- topology_tiered(7)
+  expect_equal(t7$tiers, 3L)
+  expect_equal(vapply(t7$tier_partition, length, integer(1)), c(tier0 = 4L, tier1 = 2L, tier2 = 1L))
+
+  # N = 15 defaults to 4 tiers (8-4-2-1)
+  t15 <- topology_tiered(15)
+  expect_equal(t15$tiers, 4L)
+  expect_equal(vapply(t15$tier_partition, length, integer(1)), c(tier0 = 8L, tier1 = 4L, tier2 = 2L, tier3 = 1L))
+
+  # N = 10 defaults to 3 tiers (6-3-1)
+  t10 <- topology_tiered(10)
+  expect_equal(t10$tiers, 3L)
+  expect_equal(vapply(t10$tier_partition, length, integer(1)), c(tier0 = 6L, tier1 = 3L, tier2 = 1L))
+
+  # N = 15 with explicit tiers = 3 retains 9-4-2
+  t15_custom <- topology_tiered(15, tiers = 3)
+  expect_equal(t15_custom$tiers, 3L)
+  expect_equal(vapply(t15_custom$tier_partition, length, integer(1)), c(tier0 = 9L, tier1 = 4L, tier2 = 2L))
+
+  # N = 31 defaults to 5 tiers (16-8-4-2-1)
+  t31 <- topology_tiered(31)
+  expect_equal(t31$tiers, 5L)
+  expect_equal(vapply(t31$tier_partition, length, integer(1)), c(tier0 = 16L, tier1 = 8L, tier2 = 4L, tier3 = 2L, tier4 = 1L))
+})
