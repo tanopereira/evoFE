@@ -2553,6 +2553,9 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(super_ind$best_iteration) && !is.null(best_ind$best_iteration)) {
         super_ind$best_iteration <- best_ind$best_iteration
       }
+      if (is.null(super_ind$train_size) && !is.null(best_ind$train_size)) {
+        super_ind$train_size <- best_ind$train_size
+      }
 
       if (!is.na(super_ind$fitness) && (is.na(best_ind$fitness) || super_ind$fitness > best_ind$fitness)) {
         if (verbose) {
@@ -2658,6 +2661,9 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(super_ind_hist$best_iteration) && !is.null(best_ind$best_iteration)) {
         super_ind_hist$best_iteration <- best_ind$best_iteration
       }
+      if (is.null(super_ind_hist$train_size) && !is.null(best_ind$train_size)) {
+        super_ind_hist$train_size <- best_ind$train_size
+      }
 
       if (!is.na(super_ind_hist$fitness) && (is.na(best_ind$fitness) || super_ind_hist$fitness > best_ind$fitness)) {
         if (verbose) {
@@ -2734,10 +2740,14 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   best_params <- best_ind$best_params
   best_iteration <- best_ind$best_iteration
+  train_size <- best_ind$train_size
   res_full <- apply_individual(best_ind, shared_full, NULL, target_col, state_cache = state_cache)
   best_ind <- res_full$ind
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration
+  }
+  if (!is.null(train_size)) {
+    best_ind$train_size <- train_size
   }
 
   gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
@@ -2751,12 +2761,35 @@ evolve_features <- function(data, target_col, task = "classification",
 
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
   final_model_args <- list(...)
+  target_iters <- NULL
   if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
       is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
-    target_iters <- as.integer(round(best_ind$best_iteration))
+    is_tree <- grepl("lightgbm|xgboost|catboost", tolower(best_evaluator))
+    total_data_size <- nrow(x_full)
+    training_size <- if (!is.null(best_ind$train_size) && is.numeric(best_ind$train_size) && best_ind$train_size > 0) {
+      as.numeric(best_ind$train_size)
+    } else if (evaluation_strategy == "cv" && !is.null(cv_folds) && cv_folds > 1) {
+      round(total_data_size * (cv_folds - 1) / cv_folds)
+    } else if (!is.null(split_ratio) && length(split_ratio) >= 2) {
+      round(total_data_size * split_ratio[1] / sum(split_ratio[1:2]))
+    } else {
+      total_data_size
+    }
+
+    scale_factor <- if (is_tree && training_size > 0 && total_data_size > training_size) {
+      total_data_size / training_size
+    } else {
+      1.0
+    }
+    target_iters <- as.integer(max(1L, round(best_ind$best_iteration * scale_factor)))
     if (verbose) {
-      iter_label <- if (best_evaluator == "realmlp") "epochs" else "iterations/rounds"
-      message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
+      if (is_tree && scale_factor > 1.0) {
+        message(sprintf("  Using best validation iterations scaled by data size (%.2fx: %d -> %d) for final model",
+                        scale_factor, best_ind$best_iteration, target_iters))
+      } else {
+        iter_label <- if (best_evaluator == "realmlp") "epochs" else "iterations/rounds"
+        message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
+      }
     }
     iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
                       "epochs", "n_epochs", "iterations", "n_iterations")
@@ -2904,7 +2937,7 @@ evolve_features <- function(data, target_col, task = "classification",
     fitness_history = fitness_history,
     task = task,
     best_model = best_model,
-    best_iteration = if (!is.null(best_ind$best_iteration)) best_ind$best_iteration else NULL,
+    best_iteration = if (!is.null(target_iters)) target_iters else if (!is.null(best_ind$best_iteration)) best_ind$best_iteration else NULL,
     evaluator = best_evaluator,
     target_col = target_col,
     classes = classes,

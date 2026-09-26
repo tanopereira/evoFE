@@ -260,6 +260,41 @@ test_that("evolve_features trains final model with best_iteration when early sto
   expect_true(!is.null(recipe$best_model))
 })
 
+test_that("evolve_features scales best_iteration by data size for tree evaluators", {
+  skip_if_not_installed("lightgbm")
+  set.seed(42)
+  n <- 100
+  df <- data.frame(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    y = rnorm(n)
+  )
+
+  recipe <- evolve_features(
+    data = df,
+    target_col = "y",
+    task = "regression",
+    evaluator = "lightgbm",
+    generations = 1,
+    pop_size = 2,
+    evaluation_strategy = "split",
+    split_ratio = c(0.8, 0.2, 0),
+    nrounds = 100,
+    early_stopping_rounds = 3,
+    verbose = FALSE,
+    seed = 42
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_true(!is.null(recipe$best_iteration))
+  expect_true(!is.null(recipe$best_individual$best_iteration))
+  expect_true(!is.null(recipe$best_individual$train_size))
+  expect_equal(recipe$best_individual$train_size, 80)
+  # Scaled by 100 / 80 = 1.25
+  expected_scaled <- as.integer(round(recipe$best_individual$best_iteration * 1.25))
+  expect_equal(recipe$best_iteration, expected_scaled)
+})
+
 test_that("realmlp evaluator trains and achieves high accuracy on iris", {
   data(iris)
   set.seed(42)

@@ -500,7 +500,21 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       final_args_i <- list(...)
       if (!is.null(ind_i$best_iteration) && is.numeric(ind_i$best_iteration) &&
           is.finite(ind_i$best_iteration) && ind_i$best_iteration > 0) {
-        target_iters <- as.integer(round(ind_i$best_iteration))
+        is_tree_i <- grepl("lightgbm|xgboost|catboost", tolower(eval_i))
+        total_data_size <- nrow(x_full)
+        training_size <- if (!is.null(ind_i$train_size) && is.numeric(ind_i$train_size) && ind_i$train_size > 0) {
+          as.numeric(ind_i$train_size)
+        } else if (!is.null(recipe$best_individual$train_size) && is.numeric(recipe$best_individual$train_size) && recipe$best_individual$train_size > 0) {
+          as.numeric(recipe$best_individual$train_size)
+        } else {
+          total_data_size
+        }
+        scale_factor <- if (is_tree_i && training_size > 0 && total_data_size > training_size) {
+          total_data_size / training_size
+        } else {
+          1.0
+        }
+        target_iters <- as.integer(max(1L, round(ind_i$best_iteration * scale_factor)))
         iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
                           "epochs", "n_epochs", "iterations", "n_iterations")
         for (alias in iter_aliases) {

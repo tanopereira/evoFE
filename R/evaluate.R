@@ -527,6 +527,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
       ind$best_iteration <- as.integer(round(iter_val))
     }
+    ind$train_size <- nrow(train_fold)
 
     # Validation score -> raw_fitness
     if (task == "multiclass") {
@@ -613,6 +614,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
 
     fold_best_iters <- integer(0)
+    fold_train_sizes <- integer(0)
 
     for (fi in seq_along(unique_folds)) {
       f <- unique_folds[fi]
@@ -626,6 +628,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         train_fold <- dt[train_idx, ]
         val_fold <- dt[val_idx, ]
       }
+      fold_train_sizes <- c(fold_train_sizes, nrow(train_fold))
 
       res <- tryCatch(
         {
@@ -756,6 +759,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     ind$y_val <- oof_y
     if (length(fold_best_iters) > 0) {
       ind$best_iteration <- as.integer(round(mean(fold_best_iters)))
+    }
+    if (length(fold_train_sizes) > 0) {
+      ind$train_size <- as.integer(round(mean(fold_train_sizes)))
     }
 
     # Complexity penalty: discourage long recipes (parsimony pressure)
@@ -928,6 +934,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
     ind$best_iteration <- as.integer(round(iter_val))
   }
+  ind$train_size <- nrow(train_fold)
 
   res_holdout <- tryCatch(
     {
