@@ -465,6 +465,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   int no_improve_epochs = 0;
   bool stopped_early = false;
   int stopped_epoch = n_epochs;
+  int best_epoch = n_epochs;
 
   int log_interval = (verbose >= 2) ? 32 : 64;
 
@@ -651,6 +652,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
         best_val_score = val_score;
         best_snapshot = model.get_snapshot();
         has_best_snapshot = true;
+        if (early_stopping_rounds > 0) {
+          best_epoch = epoch + 1;
+        }
         no_improve_epochs = 0;
       } else {
         no_improve_epochs++;
@@ -682,8 +686,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       stopped_early = true;
       stopped_epoch = cur_epoch;
       if (verbose >= 1) {
-        Rprintf("    [RealMLP C++ %s] Early stopping triggered at epoch %d (patience = %d, best val: %.4f)\n",
-                task.c_str(), cur_epoch, early_stopping_rounds, best_val_score);
+        Rprintf("    [RealMLP C++ %s] Early stopping triggered at epoch %d (patience = %d, best epoch = %d, best val: %.4f)\n",
+                task.c_str(), cur_epoch, early_stopping_rounds, best_epoch, best_val_score);
       }
       break;
     }
@@ -724,6 +728,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     Named("importances") = wrap(importances),
     Named("stopped_early") = stopped_early,
     Named("stopped_epoch") = stopped_epoch,
+    Named("best_epoch") = best_epoch,
+    Named("best_iteration") = best_epoch,
     Named("best_val_score") = best_val_score
   );
 

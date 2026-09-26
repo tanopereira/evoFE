@@ -179,6 +179,7 @@ tournament_select <- function(pop, k = 3) {
 #'   \code{best_individual} (the top-scoring \code{evo_individual}),
 #'   \code{history} (list of all evaluated individuals across generations),
 #'   \code{task}, \code{best_model} (the trained model object),
+#'   \code{best_iteration} (the optimal number of iterations/epochs determined from validation/early stopping),
 #'   \code{evaluator}, and \code{classes} (class levels for multiclass tasks,
 #'   otherwise \code{NULL}).
 #' @examples
@@ -2549,6 +2550,9 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
         super_ind$best_params <- best_ind$best_params
       }
+      if (is.null(super_ind$best_iteration) && !is.null(best_ind$best_iteration)) {
+        super_ind$best_iteration <- best_ind$best_iteration
+      }
 
       if (!is.na(super_ind$fitness) && (is.na(best_ind$fitness) || super_ind$fitness > best_ind$fitness)) {
         if (verbose) {
@@ -2651,6 +2655,9 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(super_ind_hist$best_params) && !is.null(best_ind$best_params)) {
         super_ind_hist$best_params <- best_ind$best_params
       }
+      if (is.null(super_ind_hist$best_iteration) && !is.null(best_ind$best_iteration)) {
+        super_ind_hist$best_iteration <- best_ind$best_iteration
+      }
 
       if (!is.na(super_ind_hist$fitness) && (is.na(best_ind$fitness) || super_ind_hist$fitness > best_ind$fitness)) {
         if (verbose) {
@@ -2726,8 +2733,12 @@ evolve_features <- function(data, target_col, task = "classification",
     message("Training final model on full dataset...")
   }
   best_params <- best_ind$best_params
+  best_iteration <- best_ind$best_iteration
   res_full <- apply_individual(best_ind, shared_full, NULL, target_col, state_cache = state_cache)
   best_ind <- res_full$ind
+  if (!is.null(best_iteration)) {
+    best_ind$best_iteration <- best_iteration
+  }
 
   gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
   features <- c(best_ind$numeric_cols, best_ind$categorical_cols, best_ind$datetime_cols, gene_cols)
@@ -2739,11 +2750,40 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-  res_model <- train_model(x_full, y_full,
-    task = task, evaluator = best_evaluator,
-    threads = threads, num_class = num_class, metric = metric,
-    verbose = verbose, best_params = best_params, seed = seed, ...
-  )
+  final_model_args <- list(...)
+  if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
+      is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
+    target_iters <- as.integer(round(best_ind$best_iteration))
+    if (verbose) {
+      iter_label <- if (best_evaluator == "realmlp") "epochs" else "iterations/rounds"
+      message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
+    }
+    iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
+                      "epochs", "n_epochs", "iterations", "n_iterations")
+    for (alias in iter_aliases) {
+      if (alias %in% names(final_model_args)) {
+        final_model_args[[alias]] <- target_iters
+      }
+    }
+    if (!any(c("epochs", "n_epochs") %in% names(final_model_args)) && best_evaluator == "realmlp") {
+      final_model_args$epochs <- target_iters
+    }
+    if (!any(c("nrounds", "iterations") %in% names(final_model_args))) {
+      final_model_args$nrounds <- target_iters
+    }
+    final_model_args$early_stopping_rounds <- 0L
+    final_model_args$early_stopping_round <- 0L
+  }
+
+  res_model <- do.call(train_model, c(
+    list(
+      x_train = x_full, y_train = y_full,
+      task = task, evaluator = best_evaluator,
+      threads = threads, num_class = num_class, metric = metric,
+      verbose = verbose, best_params = best_params, seed = seed
+    ),
+    final_model_args
+  ))
   best_model <- res_model$model
 
   if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
@@ -2864,6 +2904,7 @@ evolve_features <- function(data, target_col, task = "classification",
     fitness_history = fitness_history,
     task = task,
     best_model = best_model,
+    best_iteration = if (!is.null(best_ind$best_iteration)) best_ind$best_iteration else NULL,
     evaluator = best_evaluator,
     target_col = target_col,
     classes = classes,

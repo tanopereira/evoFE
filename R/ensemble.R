@@ -497,12 +497,36 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
 
       # Train model using candidate's specific evaluator and best params
-      res_m <- train_model(
-        x_full, y_full,
-        task = task, evaluator = eval_i,
-        threads = threads, num_class = num_class, metric = metric,
-        verbose = verbose, best_params = ind_i$best_params, ...
-      )
+      final_args_i <- list(...)
+      if (!is.null(ind_i$best_iteration) && is.numeric(ind_i$best_iteration) &&
+          is.finite(ind_i$best_iteration) && ind_i$best_iteration > 0) {
+        target_iters <- as.integer(round(ind_i$best_iteration))
+        iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
+                          "epochs", "n_epochs", "iterations", "n_iterations")
+        for (alias in iter_aliases) {
+          if (alias %in% names(final_args_i)) {
+            final_args_i[[alias]] <- target_iters
+          }
+        }
+        if (!any(c("epochs", "n_epochs") %in% names(final_args_i)) && eval_i == "realmlp") {
+          final_args_i$epochs <- target_iters
+        }
+        if (!any(c("nrounds", "iterations") %in% names(final_args_i))) {
+          final_args_i$nrounds <- target_iters
+        }
+        final_args_i$early_stopping_rounds <- 0L
+        final_args_i$early_stopping_round <- 0L
+      }
+
+      res_m <- do.call(train_model, c(
+        list(
+          x_train = x_full, y_train = y_full,
+          task = task, evaluator = eval_i,
+          threads = threads, num_class = num_class, metric = metric,
+          verbose = verbose, best_params = ind_i$best_params
+        ),
+        final_args_i
+      ))
       active_models[[name]] <- res_m$model
     }
   }

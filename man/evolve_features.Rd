@@ -243,6 +243,7 @@ An \code{evo_recipe} S3 object:
   \code{best_individual} (the top-scoring \code{evo_individual}),
   \code{history} (list of all evaluated individuals across generations),
   \code{task}, \code{best_model} (the trained model object),
+  \code{best_iteration} (the optimal number of iterations/epochs determined from validation/early stopping),
   \code{evaluator}, and \code{classes} (class levels for multiclass tasks,
   otherwise \code{NULL}).
 }

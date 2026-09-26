@@ -240,7 +240,7 @@ register_evaluator(
     )
 
     rm(dtrain)
-    list(model = model, predictions = preds, importances = importances)
+    list(model = model, predictions = preds, importances = importances, best_iteration = best_it)
   },
   predict_func = function(model, x_new, task, ...) {
     if (!requireNamespace("lightgbm", quietly = TRUE)) {
@@ -425,7 +425,7 @@ register_evaluator(
 
     rm(dtrain)
     if (!is.null(dval_metric)) rm(dval_metric)
-    list(model = model, predictions = preds, importances = importances)
+    list(model = model, predictions = preds, importances = importances, best_iteration = best_iter)
   },
   predict_func = function(model, x_new, task, ...) {
     if (!requireNamespace("xgboost", quietly = TRUE)) {
@@ -553,12 +553,14 @@ register_evaluator(
         sh <- catboost::catboost.get_feature_importance(model, pool = pool_imp, type = "ShapValues")
         .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
-      error = function(e) {
-        NULL
-      }
+      error = function(e) NULL
     )
 
-    list(model = model, predictions = preds, importances = importances)
+    best_it <- tryCatch(
+      if (!is.null(model$tree_count) && model$tree_count > 0) as.integer(model$tree_count) else NULL,
+      error = function(e) NULL
+    )
+    list(model = model, predictions = preds, importances = importances, best_iteration = best_it)
   },
   predict_func = function(model, x_new, task, ...) {
     if (system.file(package = "catboost") == "") {
@@ -969,12 +971,20 @@ register_evaluator(
       }
     }
 
+    best_it <- if (use_es && !is.null(fit_res$best_epoch) && fit_res$best_epoch > 0) {
+      as.integer(fit_res$best_epoch)
+    } else if (use_es && !is.null(fit_res$stopped_epoch) && fit_res$stopped_epoch > 0) {
+      as.integer(fit_res$stopped_epoch)
+    } else {
+      NULL
+    }
+
     if (show_log) {
       elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
       es_status <- if (isTRUE(fit_res$stopped_early)) {
-        sprintf("stopped at epoch %d (patience=%d)", fit_res$stopped_epoch, early_stopping_rounds)
+        sprintf("stopped at epoch %d, best epoch %d (patience=%d)", fit_res$stopped_epoch, fit_res$best_epoch, early_stopping_rounds)
       } else if (use_es) {
-        sprintf("patience=%d", early_stopping_rounds)
+        sprintf("best epoch %d (patience=%d)", fit_res$best_epoch, early_stopping_rounds)
       } else {
         "OFF"
       }
@@ -994,10 +1004,13 @@ register_evaluator(
     wrapped_model <- list(
       model_state = fit_res$model_state,
       col_meds = col_meds,
-      levels_target = levels_target
+      levels_target = levels_target,
+      best_iteration = best_it,
+      best_epoch = best_it
     )
 
-    list(model = wrapped_model, predictions = preds, importances = importances)
+    list(model = wrapped_model, predictions = preds, importances = importances,
+         best_iteration = best_it, best_epoch = best_it)
   },
 
   predict_func = function(model, x_new, task, ...) {

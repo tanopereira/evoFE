@@ -224,6 +224,40 @@ test_that("realmlp evaluator early stopping works with validation data", {
   expect_true(!is.null(fit$model))
   expect_equal(length(fit$predictions), 30)
   expect_true(!is.null(fit$importances))
+  expect_true(!is.null(fit$best_iteration))
+  expect_true(fit$best_iteration <= 50)
+  expect_equal(fit$best_iteration, fit$model$best_iteration)
+})
+
+test_that("evolve_features trains final model with best_iteration when early stopping triggers", {
+  set.seed(42)
+  n <- 60
+  df <- data.frame(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    y = rnorm(n)
+  )
+
+  recipe <- evolve_features(
+    data = df,
+    target_col = "y",
+    task = "regression",
+    evaluator = "realmlp",
+    generations = 1,
+    pop_size = 2,
+    evaluation_strategy = "split",
+    split_ratio = c(0.7, 0.3, 0),
+    epochs = 100,
+    early_stopping_rounds = 3,
+    verbose = FALSE,
+    seed = 42
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_true(!is.null(recipe$best_iteration))
+  expect_true(recipe$best_iteration < 100)
+  expect_equal(recipe$best_individual$best_iteration, recipe$best_iteration)
+  expect_true(!is.null(recipe$best_model))
 })
 
 test_that("realmlp evaluator trains and achieves high accuracy on iris", {

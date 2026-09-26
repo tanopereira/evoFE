@@ -511,6 +511,23 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$best_params <- res_model$best_params
     }
 
+    iter_val <- if (!is.null(res_model$best_iteration)) {
+      res_model$best_iteration
+    } else if (!is.null(res_model$best_epoch)) {
+      res_model$best_epoch
+    } else if (!is.null(res_model$model$best_iteration)) {
+      res_model$model$best_iteration
+    } else if (!is.null(res_model$model$best_epoch)) {
+      res_model$model$best_epoch
+    } else if (!is.null(res_model$model$best_iter)) {
+      res_model$model$best_iter
+    } else {
+      NULL
+    }
+    if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
+      ind$best_iteration <- as.integer(round(iter_val))
+    }
+
     # Validation score -> raw_fitness
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
@@ -595,6 +612,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       oof_y <- vector(mode = typeof(dt[[target_col]]), length = n_total)
     }
 
+    fold_best_iters <- integer(0)
+
     for (fi in seq_along(unique_folds)) {
       f <- unique_folds[fi]
       if (use_shared) {
@@ -678,6 +697,23 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         ind$best_params <- res_model$best_params
       }
 
+      iter_val <- if (!is.null(res_model$best_iteration)) {
+        res_model$best_iteration
+      } else if (!is.null(res_model$best_epoch)) {
+        res_model$best_epoch
+      } else if (!is.null(res_model$model$best_iteration)) {
+        res_model$model$best_iteration
+      } else if (!is.null(res_model$model$best_epoch)) {
+        res_model$model$best_epoch
+      } else if (!is.null(res_model$model$best_iter)) {
+        res_model$model$best_iter
+      } else {
+        NULL
+      }
+      if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
+        fold_best_iters <- c(fold_best_iters, as.integer(round(iter_val)))
+      }
+
       if (task == "multiclass") {
         y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
         metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
@@ -718,6 +754,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     ind$penalty <- 0.0
     ind$val_preds <- oof_preds
     ind$y_val <- oof_y
+    if (length(fold_best_iters) > 0) {
+      ind$best_iteration <- as.integer(round(mean(fold_best_iters)))
+    }
 
     # Complexity penalty: discourage long recipes (parsimony pressure)
     if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
@@ -871,6 +910,23 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 
   if (!is.null(res_model$best_params)) {
     ind$best_params <- res_model$best_params
+  }
+
+  iter_val <- if (!is.null(res_model$best_iteration)) {
+    res_model$best_iteration
+  } else if (!is.null(res_model$best_epoch)) {
+    res_model$best_epoch
+  } else if (!is.null(res_model$model$best_iteration)) {
+    res_model$model$best_iteration
+  } else if (!is.null(res_model$model$best_epoch)) {
+    res_model$model$best_epoch
+  } else if (!is.null(res_model$model$best_iter)) {
+    res_model$model$best_iter
+  } else {
+    NULL
+  }
+  if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
+    ind$best_iteration <- as.integer(round(iter_val))
   }
 
   res_holdout <- tryCatch(
