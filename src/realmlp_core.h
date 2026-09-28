@@ -222,23 +222,39 @@ public:
     }
   }
 
-  // Forward pass without caching (for prediction)
+  // Forward pass without caching (for prediction & validation — zero per-feature heap allocations)
   Eigen::MatrixXd forward_nocache(const Eigen::MatrixXd& x) const {
-    int B = x.rows();
+    int B = static_cast<int>(x.rows());
     int out_dim = total_out_dim();
     Eigen::MatrixXd E(B, out_dim);
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static)
-#endif
+#pragma omp parallel
+    {
+      Eigen::MatrixXd Z_buf(B, k_freq);
+#pragma omp for schedule(static)
+      for (int j = 0; j < n_features; ++j) {
+        int out_col_start = j * (1 + d_proj);
+        E.col(out_col_start) = x.col(j);
+        Z_buf.noalias() = 2.0 * M_PI * x.col(j) * omega.val.row(j);
+        Z_buf.rowwise() += b_phase.val.row(j);
+        Z_buf.array() = Z_buf.array().cos();
+        E.block(0, out_col_start + 1, B, d_proj).noalias() = Z_buf * W_proj[j].val;
+        E.block(0, out_col_start + 1, B, d_proj).rowwise() += beta_proj.val.row(j);
+      }
+    }
+#else
+    Eigen::MatrixXd Z_buf(B, k_freq);
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
       E.col(out_col_start) = x.col(j);
-      Eigen::MatrixXd Theta = (2.0 * M_PI * x.col(j) * omega.val.row(j)).rowwise() + b_phase.val.row(j);
-      Eigen::MatrixXd Z = Theta.array().cos().matrix();
-      E.block(0, out_col_start + 1, B, d_proj).noalias() = Z * W_proj[j].val;
+      Z_buf.noalias() = 2.0 * M_PI * x.col(j) * omega.val.row(j);
+      Z_buf.rowwise() += b_phase.val.row(j);
+      Z_buf.array() = Z_buf.array().cos();
+      E.block(0, out_col_start + 1, B, d_proj).noalias() = Z_buf * W_proj[j].val;
       E.block(0, out_col_start + 1, B, d_proj).rowwise() += beta_proj.val.row(j);
     }
+#endif
     return E;
   }
 
