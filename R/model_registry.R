@@ -107,15 +107,15 @@ register_evaluator(
     if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
     if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
     if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
-    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
-    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
-    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
-    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
-    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
     if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
     if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
     if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
     if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
@@ -273,15 +273,15 @@ register_evaluator(
     if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
     if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
     if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
-    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
-    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
-    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
-    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
-    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
     if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
     if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
     if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
     if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
+    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
     dtrain <- xgboost::xgb.DMatrix(data = x_train, label = y_train, missing = NA, nthread = threads)
     y_val <- extra_params$y_val
     metric_arg <- extra_params$metric
@@ -909,17 +909,18 @@ register_evaluator(
     if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
     if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
     if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
-    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
-    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
     if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
     if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
+    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+    if (!is.null(extra_params$realmlp_epochs)) nrounds <- as.integer(extra_params$realmlp_epochs)
     y_val <- extra_params$y_val
     early_stopping_rounds <- if (!is.null(extra_params$early_stopping_rounds)) as.integer(extra_params$early_stopping_rounds) else 0L
 
     seed_val <- if (!is.null(extra_params$seed)) as.integer(extra_params$seed) else sample.int(1000000L, 1L)
     n_epochs <- as.integer(nrounds)
     batch_size <- if (!is.null(extra_params$batch_size)) as.integer(extra_params$batch_size) else -1L
-    lr_val <- if (!is.null(extra_params$lr)) as.numeric(extra_params$lr) else -1.0
+    lr_val <- if (!is.null(extra_params$realmlp_lr)) as.numeric(extra_params$realmlp_lr) else if (!is.null(extra_params$lr)) as.numeric(extra_params$lr) else -1.0
 
     opt_verbose <- getOption("evoFE.verbose", 0)
     verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
