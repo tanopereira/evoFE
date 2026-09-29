@@ -2741,7 +2741,7 @@ evolve_features <- function(data, target_col, task = "classification",
   best_params <- best_ind$best_params
   best_iteration <- best_ind$best_iteration
   train_size <- best_ind$train_size
-  res_full <- apply_individual(best_ind, shared_full, NULL, target_col, state_cache = state_cache)
+  res_full <- apply_individual(best_ind, data.table::copy(shared_full), NULL, target_col, state_cache = state_cache)
   best_ind <- res_full$ind
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration

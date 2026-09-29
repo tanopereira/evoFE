@@ -2574,6 +2574,42 @@ test_that("xgboost and lightgbm regression evaluators support cal_mae and cal_rm
   expect_true(is.numeric(preds_lgb_mae))
 })
 
+test_that("predict and predict_model do not mutate newdata in-place", {
+  library(data.table)
+  gene1 <- create_gene("log", "mpg")
+  gene2 <- create_gene("multiply", c("mpg", "disp"))
+  ind <- create_individual(genes = list(gene1, gene2), numeric_cols = c("mpg", "disp"))
+
+  recipe <- list(
+    best_individual = ind,
+    best_model = list(),
+    evaluator = "lightgbm",
+    task = "regression"
+  )
+  class(recipe) <- "evo_recipe"
+
+  test_dt <- as.data.table(mtcars[1:5, ])
+  orig_names <- copy(names(test_dt))
+  orig_cols_count <- ncol(test_dt)
+
+  # Test predict.evo_recipe
+  res_feats <- predict(recipe, test_dt)
+  expect_equal(names(test_dt), orig_names)
+  expect_equal(ncol(test_dt), orig_cols_count)
+
+  # Test predict.evo_ensemble
+  ens <- list(
+    active_recipes = list(r1 = ind),
+    weights = c(r1 = 1.0)
+  )
+  class(ens) <- "evo_ensemble"
+
+  res_ens <- predict(ens, test_dt)
+  expect_equal(names(test_dt), orig_names)
+  expect_equal(ncol(test_dt), orig_cols_count)
+})
+
+
 
 
 

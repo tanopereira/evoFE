@@ -482,7 +482,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         message(sprintf("  [%s] Evaluator: %s | Weight: %5.1f%% | Lazily training final model on full dataset...", name, eval_i, weights[[name]] * 100))
       }
 
-      res_full <- apply_individual(ind_i, dt_full, NULL, target_col, state_cache = state_cache, allow_prune = TRUE)
+      dt_i <- data.table::copy(dt_full)
+      res_full <- apply_individual(ind_i, dt_i, NULL, target_col, state_cache = state_cache, allow_prune = TRUE)
       applied_ind <- res_full$ind
       active_recipes[[name]] <- applied_ind
 

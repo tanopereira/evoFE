@@ -32,7 +32,8 @@
 predict.evo_recipe <- function(object, newdata, ...) {
   ind <- object$best_individual
   
-  res <- apply_individual(ind, newdata, val_data = NULL, target_col = NULL, allow_prune = TRUE)
+  dt_input <- data.table::copy(data.table::as.data.table(newdata))
+  res <- apply_individual(ind, dt_input, val_data = NULL, target_col = NULL, allow_prune = TRUE)
   applied_ind <- res$ind
   
   gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
@@ -55,12 +56,13 @@ predict.evo_ensemble <- function(object, newdata, ...) {
   }
 
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  dt_new <- data.table::as.data.table(newdata)
-  out_dt <- data.table::copy(dt_new)
+  dt_input <- data.table::as.data.table(newdata)
+  out_dt <- data.table::copy(dt_input)
 
   for (name in names(object$active_recipes)) {
     ind_i <- object$active_recipes[[name]]
-    res_i <- apply_individual(ind_i, dt_new, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
+    dt_i <- data.table::copy(dt_input)
+    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
     sub_dt <- res_i$train
     new_cols <- setdiff(names(sub_dt), names(out_dt))
     if (length(new_cols) > 0) {
@@ -153,7 +155,7 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
   }
 
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  dt_new <- data.table::as.data.table(newdata)
+  dt_input <- data.table::as.data.table(newdata)
   weighted_preds <- NULL
 
   for (name in active_names) {
@@ -168,7 +170,8 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
                    eval_i, paste(names(evo_evaluators), collapse = ", ")))
     }
 
-    res_i <- apply_individual(ind_i, dt_new, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
+    dt_i <- data.table::copy(dt_input)
+    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
     applied_ind <- res_i$ind
 
     gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
