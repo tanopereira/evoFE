@@ -517,7 +517,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         }
         target_iters <- as.integer(max(1L, round(ind_i$best_iteration * scale_factor)))
         iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
-                          "epochs", "n_epochs", "iterations", "n_iterations")
+                          "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
         for (alias in iter_aliases) {
           if (alias %in% names(final_args_i)) {
             final_args_i[[alias]] <- target_iters

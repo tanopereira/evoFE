@@ -2792,7 +2792,7 @@ evolve_features <- function(data, target_col, task = "classification",
       }
     }
     iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
-                      "epochs", "n_epochs", "iterations", "n_iterations")
+                      "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
     for (alias in iter_aliases) {
       if (alias %in% names(final_model_args)) {
         final_model_args[[alias]] <- target_iters
