@@ -845,15 +845,22 @@ register_evaluator(
 #' @keywords internal
 .realmlp_impute_matrix <- function(mat, col_meds = NULL) {
   if (is.null(mat)) return(list(mat = NULL, col_meds = col_meds))
+  has_na <- anyNA(mat)
   if (is.null(col_meds)) {
-    col_meds <- apply(mat, 2, function(col) {
-      m <- stats::median(col[!is.na(col) & is.finite(col)])
-      if (is.na(m) || !is.finite(m)) 0 else m
-    })
+    if (!has_na) {
+      col_meds <- rep(0.0, ncol(mat))
+    } else {
+      col_meds <- apply(mat, 2, function(col) {
+        m <- stats::median(col[!is.na(col) & is.finite(col)])
+        if (is.na(m) || !is.finite(m)) 0 else m
+      })
+    }
   }
-  for (j in seq_len(ncol(mat))) {
-    na_mask <- is.na(mat[, j]) | !is.finite(mat[, j])
-    if (any(na_mask)) mat[na_mask, j] <- col_meds[j]
+  if (has_na) {
+    for (j in seq_len(ncol(mat))) {
+      na_mask <- is.na(mat[, j]) | !is.finite(mat[, j])
+      if (any(na_mask)) mat[na_mask, j] <- col_meds[j]
+    }
   }
   list(mat = mat, col_meds = col_meds)
 }
@@ -1018,7 +1025,7 @@ register_evaluator(
     col_meds <- model$col_meds
     x_new <- .sanitize_feature_matrix(x_new)
 
-    if (!is.null(col_meds)) {
+    if (!is.null(col_meds) && anyNA(x_new)) {
       for (j in seq_len(ncol(x_new))) {
         if (j <= length(col_meds)) {
           na_mask <- is.na(x_new[, j]) | !is.finite(x_new[, j])

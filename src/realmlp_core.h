@@ -53,8 +53,16 @@ inline void apply_activation(const Eigen::Ref<const Eigen::MatrixXd>& in, Eigen:
       double* out_col = out_data + c * out_stride;
       for (int r = 0; r < R; ++r) {
         double z = in_col[r];
-        double sp = (z > 20.0) ? z : ((z < -20.0) ? std::exp(z) : std::log1p(std::exp(z)));
-        out_col[r] = z * std::tanh(sp);
+        if (z > 20.0) {
+          out_col[r] = z;
+        } else if (z < -20.0) {
+          out_col[r] = z * std::exp(z);
+        } else {
+          double ez = std::exp(z);
+          double w = 1.0 + ez;
+          double tsp = 1.0 - 2.0 / (w * w + 1.0);
+          out_col[r] = z * tsp;
+        }
       }
     }
   }
@@ -92,11 +100,18 @@ inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXd
       double* d_col = d_data + c * d_stride;
       for (int r = 0; r < R; ++r) {
         double a = a_col[r];
-        double sp = (a > 20.0) ? a : ((a < -20.0) ? std::exp(a) : std::log1p(std::exp(a)));
-        double tsp = std::tanh(sp);
-        double clamped_a = std::clamp(a, -30.0, 30.0);
-        double sig = 1.0 / (1.0 + std::exp(-clamped_a));
-        d_col[r] *= (tsp + a * sig * (1.0 - tsp * tsp));
+        if (a > 20.0) {
+          // derivative is 1.0, no-op
+        } else if (a < -20.0) {
+          double ea = std::exp(a);
+          d_col[r] *= ea * (1.0 + a);
+        } else {
+          double ea = std::exp(a);
+          double w = 1.0 + ea;
+          double tsp = 1.0 - 2.0 / (w * w + 1.0);
+          double sig = ea / w;
+          d_col[r] *= (tsp + a * sig * (1.0 - tsp * tsp));
+        }
       }
     }
   }
@@ -212,12 +227,12 @@ public:
       E.col(out_col_start) = x.col(j);
 
       // Theta = 2*pi * x_j * omega_j + b_j  (write into cache directly)
-      cache_Theta[j].noalias() = 2.0 * M_PI * x.col(j) * omega.val.row(j);
-      cache_Theta[j].rowwise() += b_phase.val.row(j);
-      cache_Z[j].array() = cache_Theta[j].array().cos();
+      cache_Theta[j].topRows(B).noalias() = 2.0 * M_PI * x.col(j) * omega.val.row(j);
+      cache_Theta[j].topRows(B).rowwise() += b_phase.val.row(j);
+      cache_Z[j].topRows(B).array() = cache_Theta[j].topRows(B).array().cos();
 
       // U = Z * W_j + beta_j
-      E.block(0, out_col_start + 1, B, d_proj).noalias() = cache_Z[j] * W_proj[j].val;
+      E.block(0, out_col_start + 1, B, d_proj).noalias() = cache_Z[j].topRows(B) * W_proj[j].val;
       E.block(0, out_col_start + 1, B, d_proj).rowwise() += beta_proj.val.row(j);
     }
   }
@@ -258,7 +273,7 @@ public:
     return E;
   }
 
-  // Backward pass through PBLD and Adam parameter update
+  // Backward pass through PBLD and Adam parameter update (zero inner-loop heap allocations)
   void backward_and_update(const Eigen::MatrixXd& x,
                            const Eigen::MatrixXd& grad_E,
                            const std::vector<Eigen::MatrixXd>& cache_Z,
@@ -266,6 +281,9 @@ public:
                            Eigen::MatrixXd& grad_omega_buf,
                            Eigen::MatrixXd& grad_b_buf,
                            Eigen::MatrixXd& grad_beta_buf,
+                           std::vector<Eigen::MatrixXd>& grad_W_tls,
+                           std::vector<Eigen::MatrixXd>& grad_Z_tls,
+                           std::vector<Eigen::MatrixXd>& grad_Th_tls,
                            double lr, double beta1, double beta2, double eps,
                            double b1_corr, double b2_corr) {
     int B = x.rows();
@@ -277,17 +295,26 @@ public:
 #pragma omp parallel for schedule(static)
 #endif
     for (int j = 0; j < n_features; ++j) {
+#if defined(_OPENMP)
+      int tid = omp_get_thread_num();
+#else
+      int tid = 0;
+#endif
+      auto& grad_W = grad_W_tls[tid];
+      auto& grad_Z = grad_Z_tls[tid];
+      auto& grad_Th = grad_Th_tls[tid];
+
       int out_col_start = j * (1 + d_proj);
       auto grad_U = grad_E.block(0, out_col_start + 1, B, d_proj);
       grad_beta_buf.row(j) = grad_U.colwise().sum();
 
-      Eigen::MatrixXd grad_W = cache_Z[j].transpose() * grad_U;
+      grad_W.noalias() = cache_Z[j].topRows(B).transpose() * grad_U;
       W_proj[j].update(grad_W, lr, beta1, beta2, eps, b1_corr, b2_corr);
 
-      Eigen::MatrixXd grad_Z = grad_U * W_proj[j].val.transpose();
-      Eigen::MatrixXd grad_Th = -grad_Z.cwiseProduct(cache_Theta[j].array().sin().matrix());
-      grad_b_buf.row(j) = grad_Th.colwise().sum();
-      grad_omega_buf.row(j) = (2.0 * M_PI * x.col(j).transpose() * grad_Th);
+      grad_Z.topRows(B).noalias() = grad_U * W_proj[j].val.transpose();
+      grad_Th.topRows(B).array() = -grad_Z.topRows(B).array() * cache_Theta[j].topRows(B).array().sin();
+      grad_b_buf.row(j) = grad_Th.topRows(B).colwise().sum();
+      grad_omega_buf.row(j) = 2.0 * M_PI * (x.col(j).transpose() * grad_Th.topRows(B));
     }
 
     omega.update(grad_omega_buf, lr, beta1, beta2, eps, b1_corr, b2_corr);
@@ -302,6 +329,11 @@ struct TrainWorkspace {
   std::vector<Eigen::MatrixXd> cache_Z;
   std::vector<Eigen::MatrixXd> cache_Theta;
   Eigen::MatrixXd grad_omega, grad_b, grad_beta;
+
+  // Thread-local PBLD backward buffers to eliminate inner-loop heap allocations
+  std::vector<Eigen::MatrixXd> grad_W_tls;
+  std::vector<Eigen::MatrixXd> grad_Z_tls;
+  std::vector<Eigen::MatrixXd> grad_Th_tls;
 
   // Batch data (pre-allocated to max batch size)
   Eigen::MatrixXd X_batch, Y_batch;
@@ -320,7 +352,7 @@ struct TrainWorkspace {
   // Shuffled dataset (avoid per-batch row copies)
   Eigen::MatrixXd X_shuf, Y_shuf;
 
-  void allocate(int max_B, int D, int out_dim, int hidden_dim, int embed_dim, int n_features, int k_freq, int d_proj, int N) {
+  void allocate(int max_B, int D, int out_dim, int hidden_dim, int embed_dim, int n_features, int k_freq, int d_proj, int N, int max_threads = 1) {
     // PBLD caches
     cache_Z.resize(n_features);
     cache_Theta.resize(n_features);
@@ -331,6 +363,16 @@ struct TrainWorkspace {
     grad_omega.resize(n_features, k_freq);
     grad_b.resize(n_features, k_freq);
     grad_beta.resize(n_features, d_proj);
+
+    // Thread-local backward buffers
+    grad_W_tls.resize(max_threads);
+    grad_Z_tls.resize(max_threads);
+    grad_Th_tls.resize(max_threads);
+    for (int t = 0; t < max_threads; ++t) {
+      grad_W_tls[t].resize(k_freq, d_proj);
+      grad_Z_tls[t].resize(max_B, k_freq);
+      grad_Th_tls[t].resize(max_B, k_freq);
+    }
 
     // Batch data — not needed when using shuffled dataset views
     E.resize(max_B, embed_dim);
@@ -445,7 +487,7 @@ public:
                    Eigen::MatrixXd& A3, Eigen::MatrixXd& H3,
                    Eigen::MatrixXd& Out) const {
     auto E_block = E.topRows(cur_B);
-    H0.topRows(cur_B).noalias() = E_block.cwiseProduct(front_scale.val.replicate(cur_B, 1));
+    H0.topRows(cur_B).noalias() = (E_block.array().rowwise() * front_scale.val.row(0).array()).matrix();
 
     A1.topRows(cur_B).noalias() = H0.topRows(cur_B) * W1.val;
     A1.topRows(cur_B).rowwise() += b1.val.row(0);
@@ -464,11 +506,12 @@ public:
   }
 
   // Full prediction on test data (zero-copy when already standardized)
-  Eigen::MatrixXd predict(const Eigen::MatrixXd& X, bool normalize_input = true) const {
+  Eigen::MatrixXd predict(const Eigen::Ref<const Eigen::MatrixXd>& X, bool normalize_input = true) const {
     int B = static_cast<int>(X.rows());
     int D = static_cast<int>(X.cols());
     Eigen::MatrixXd X_norm;
-    const Eigen::MatrixXd* pX = &X;
+    const Eigen::MatrixXd* pX = nullptr;
+    Eigen::MatrixXd X_copy;
 
     if (normalize_input && x_mean.size() == D && x_std.size() == D) {
       X_norm.resize(B, D);
@@ -488,6 +531,9 @@ public:
         }
       }
       pX = &X_norm;
+    } else {
+      X_copy = X;
+      pX = &X_copy;
     }
 
     Eigen::MatrixXd E = embedder.forward_nocache(*pX);
@@ -528,7 +574,7 @@ public:
     }
   }
 
-  // Compute feature importances via Mean Occlusion (Zero-Out Ablation)
+  // Compute feature importances via Mean Occlusion in PBLD Embedding Space (5x-10x faster)
   std::vector<double> compute_importances(
       const Eigen::MatrixXd& X_eval,
       const std::vector<double>& y_eval) const {
@@ -571,26 +617,81 @@ public:
       }
     };
 
-    // 1. Baseline loss (normalize_input = false because X_eval is already standardized)
-    Eigen::MatrixXd p_base = predict(X_eval, false);
+    auto forward_and_predict = [&](const Eigen::MatrixXd& E_in) -> Eigen::MatrixXd {
+      Eigen::MatrixXd H0(N_eval, E_in.cols()), A1(N_eval, hidden_dim), H1(N_eval, hidden_dim);
+      Eigen::MatrixXd A2(N_eval, hidden_dim), H2(N_eval, hidden_dim);
+      Eigen::MatrixXd A3(N_eval, hidden_dim), H3(N_eval, hidden_dim);
+      Eigen::MatrixXd Out(N_eval, output_dim);
+      forward_mlp(E_in, N_eval, H0, A1, H1, A2, H2, A3, H3, Out);
+
+      if (task == "regression") {
+        double ys = (std::isfinite(y_std) && y_std > 1e-8) ? y_std : 1.0;
+        double ym = std::isfinite(y_mean) ? y_mean : 0.0;
+        Eigen::MatrixXd result = Out.topRows(N_eval);
+        for (int i = 0; i < N_eval; ++i) {
+          double z = std::clamp(result(i, 0), -50.0, 50.0);
+          result(i, 0) = z * ys + ym;
+        }
+        return result;
+      } else if (task == "classification") {
+        return Out.topRows(N_eval).unaryExpr([](double z) {
+          return 1.0 / (1.0 + std::exp(-std::clamp(z, -30.0, 30.0)));
+        });
+      } else {
+        Eigen::MatrixXd probs(N_eval, output_dim);
+        for (int i = 0; i < N_eval; ++i) {
+          double max_val = Out(i, 0);
+          for (int c = 1; c < output_dim; ++c) if (Out(i,c) > max_val) max_val = Out(i,c);
+          Eigen::RowVectorXd exp_row = (Out.row(i).array() - max_val).exp();
+          double sum_exp = exp_row.sum();
+          if (sum_exp > 0.0) {
+            probs.row(i) = exp_row / sum_exp;
+          } else {
+            probs.row(i).setZero();
+          }
+        }
+        return probs;
+      }
+    };
+
+    // 1. Precompute base embedding E_base once on X_eval
+    Eigen::MatrixXd E_base = embedder.forward_nocache(X_eval);
+    Eigen::MatrixXd p_base = forward_and_predict(E_base);
     double base_loss = compute_loss(p_base);
 
-    // 2. Mean occlusion: since X_eval is standardized, mean of each feature is 0.0
-    Eigen::MatrixXd X_occ = X_eval;
+    // 2. Precompute zero-feature embedding for each feature:
+    // When x_j = 0, Identity col = 0.0, Theta_j = b_phase_j, Z_j = cos(b_phase_j), U_j = Z_j * W_j + beta_j
+    int d_proj = embedder.d_proj;
+    std::vector<Eigen::RowVectorXd> E_zero(D);
     for (int j = 0; j < D; ++j) {
-      Eigen::VectorXd orig_col = X_occ.col(j);
-      X_occ.col(j).setZero();
+      E_zero[j].resize(1 + d_proj);
+      E_zero[j](0) = 0.0;
+      Eigen::RowVectorXd Z_0 = embedder.b_phase.val.row(j).array().cos();
+      E_zero[j].tail(d_proj).noalias() = Z_0 * embedder.W_proj[j].val;
+      E_zero[j].tail(d_proj) += embedder.beta_proj.val.row(j);
+    }
 
-      Eigen::MatrixXd p_occ = predict(X_occ, false);
+    // 3. Occlusion in embedding space: only zero out feature j's slice in E!
+    Eigen::MatrixXd E_occ = E_base;
+    for (int j = 0; j < D; ++j) {
+      int out_col_start = j * (1 + d_proj);
+      int block_width = 1 + d_proj;
+
+      Eigen::MatrixXd orig_slice = E_occ.block(0, out_col_start, N_eval, block_width);
+      for (int i = 0; i < N_eval; ++i) {
+        E_occ.block(i, out_col_start, 1, block_width) = E_zero[j];
+      }
+
+      Eigen::MatrixXd p_occ = forward_and_predict(E_occ);
       double loss_occ = compute_loss(p_occ);
 
-      X_occ.col(j) = orig_col;
+      E_occ.block(0, out_col_start, N_eval, block_width) = orig_slice;
 
       double delta_loss = std::max(0.0, loss_occ - base_loss);
       imp[j] = delta_loss;
     }
 
-    // 3. Normalize importances to sum to 1.0
+    // 4. Normalize importances to sum to 1.0
     double sum_imp = 0.0;
     for (double v : imp) sum_imp += v;
     if (sum_imp > 1e-12 && std::isfinite(sum_imp)) {

@@ -479,21 +479,32 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   // ===== Pre-allocate ALL workspace (the key optimization) =====
   int max_B = actual_batch_size;
 
+  int max_threads = (threads > 0) ? threads : 1;
+#ifdef _OPENMP
+  max_threads = std::max(1, omp_get_max_threads());
+#endif
+
   TrainWorkspace ws;
   ws.allocate(max_B, D, out_dim, hidden_dim, embed_dim,
-              D, model.embedder.k_freq, model.embedder.d_proj, N);
+              D, model.embedder.k_freq, model.embedder.d_proj, N, max_threads);
 
   int step = 0;
 
   for (int epoch = 0; epoch < n_epochs; ++epoch) {
-    // Shuffle dataset once per epoch, then use contiguous blocks
+    // Shuffle dataset once per epoch: column-contiguous for hardware prefetching
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static)
 #endif
-    for (int i = 0; i < N; ++i) {
-      ws.X_shuf.row(i) = X_tr.row(perm[i]);
-      ws.Y_shuf.row(i) = Y_tr.row(perm[i]);
+    for (int j = 0; j < D; ++j) {
+      for (int i = 0; i < N; ++i) {
+        ws.X_shuf(i, j) = X_tr(perm[i], j);
+      }
+    }
+    for (int c = 0; c < out_dim; ++c) {
+      for (int i = 0; i < N; ++i) {
+        ws.Y_shuf(i, c) = Y_tr(perm[i], c);
+      }
     }
 
     double epoch_loss_sum = 0.0;
@@ -514,13 +525,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       double b1_corr = 1.0 - std::pow(beta1, step);
       double b2_corr = 1.0 - std::pow(beta2, step);
 
-      // 1. Forward PBLD — writes into ws.E, ws.cache_Z, ws.cache_Theta
-      // Resize PBLD caches for current batch (no realloc if <= max_B)
-      for (int j = 0; j < D; ++j) {
-        ws.cache_Z[j].conservativeResize(cur_B, model.embedder.k_freq);
-        ws.cache_Theta[j].conservativeResize(cur_B, model.embedder.k_freq);
-      }
-      ws.E.conservativeResize(cur_B, embed_dim);
+      // 1. Forward PBLD — writes into ws.E, ws.cache_Z, ws.cache_Theta (zero realloc)
       model.embedder.forward(X_batch, ws.E, ws.cache_Z, ws.cache_Theta, true);
 
       // 2. Forward MLP — writes into ws.H0..H3, ws.Out
@@ -611,12 +616,13 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       auto delta0_b = ws.delta0.topRows(cur_B);
 
       ws.grad_scale = (E_b.cwiseProduct(delta0_b)).colwise().sum();
-      ws.delta_E.topRows(cur_B).noalias() = delta0_b.cwiseProduct(model.front_scale.val.replicate(cur_B, 1));
+      ws.delta_E.topRows(cur_B).noalias() = (delta0_b.array().rowwise() * model.front_scale.val.row(0).array()).matrix();
 
-      // 5. Backprop PBLD Embeddings and Adam update
+      // 5. Backprop PBLD Embeddings and Adam update (zero inner-loop heap allocations)
       model.embedder.backward_and_update(X_batch, ws.delta_E.topRows(cur_B),
                                          ws.cache_Z, ws.cache_Theta,
                                          ws.grad_omega, ws.grad_b, ws.grad_beta,
+                                         ws.grad_W_tls, ws.grad_Z_tls, ws.grad_Th_tls,
                                          cur_lr, beta1, beta2, eps, b1_corr, b2_corr);
 
       // 6. Adam update MLP
@@ -745,7 +751,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 // [[Rcpp::export]]
 NumericMatrix rcpp_realmlp_predict(List model_state, NumericMatrix x_new) {
   RealMLPModel model = list_to_model(model_state);
-  Eigen::MatrixXd X_n = copy_eigen_sanitized(x_new);
-  Eigen::MatrixXd preds = model.predict(X_n);
+  Eigen::Map<const Eigen::MatrixXd> X_map(x_new.begin(), x_new.nrow(), x_new.ncol());
+  Eigen::MatrixXd preds = model.predict(X_map);
   return to_rcpp(preds);
 }
