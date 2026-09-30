@@ -491,3 +491,125 @@ test_that("metacv_selection validation and task coverage for fitness, headroom, 
   )
 })
 
+test_that("strip_individual_state properly clears fitness and fitted transformer states", {
+  g1 <- create_gene("target_encode", "cyl")
+  g1$state <- list(mean = 0.5, encodings = c("4" = 0.8, "6" = 0.4, "8" = 0.2))
+  g2 <- create_gene("log", "hp")
+  
+  ind <- create_individual(
+    genes = list(g1, g2),
+    numeric_cols = c("mpg", "disp"),
+    categorical_cols = "cyl",
+    all_numeric_cols = c("mpg", "disp", "hp"),
+    all_categorical_cols = "cyl"
+  )
+  ind$fitness <- 0.85
+  ind$raw_fitness <- 0.88
+  ind$penalty <- 0.03
+  ind$val_preds <- c(0.1, 0.9)
+  ind$y_val <- c(0L, 1L)
+
+  stripped <- strip_individual_state(ind)
+
+  expect_true(is.na(stripped$fitness))
+  expect_true(is.na(stripped$raw_fitness))
+  expect_equal(stripped$penalty, 0.0)
+  expect_null(stripped$val_preds)
+  expect_null(stripped$y_val)
+  expect_null(stripped$genes[[1]]$state)
+  expect_null(stripped$genes[[2]]$state)
+})
+
+test_that("apply_gene refits state when target_col is provided instead of reusing stale state (leakage prevention)", {
+  d1 <- data.table::data.table(
+    cat_col = factor(c("A", "A", "A", "B", "B", "B")),
+    target = c(1, 1, 1, 0, 0, 0)
+  )
+  d2 <- data.table::data.table(
+    cat_col = factor(c("A", "A", "A", "B", "B", "B")),
+    target = c(0, 0, 0, 1, 1, 1)
+  )
+
+  g <- create_gene("target_encode", "cat_col")
+  # Fit on dataset 1
+  res1 <- withr::with_options(list(evoFE.redundancy_cor_threshold = 1.0), {
+    apply_gene(g, d1, val_data = NULL, target_col = "target")
+  })
+  val_a1 <- res1$gene$state$mapping[x == "A", smoothed]
+  expect_true(val_a1 > 0.5)
+
+  # Now call apply_gene with dataset 2 using res1$gene (which already has state from d1)
+  # It MUST refit on d2, producing val_a2 < 0.5 rather than reusing state from d1
+  res2 <- withr::with_options(list(evoFE.redundancy_cor_threshold = 1.0), {
+    apply_gene(res1$gene, d2, val_data = NULL, target_col = "target")
+  })
+  val_a2 <- res2$gene$state$mapping[x == "A", smoothed]
+  expect_true(val_a2 < 0.5)
+})
+
+test_that("UMAP refits state when target_col is provided instead of reusing stale training manifold", {
+  skip_if_not_installed("uwot")
+
+  set.seed(42)
+  d1 <- data.table::data.table(
+    x1 = stats::rnorm(25, mean = 0),
+    x2 = stats::rnorm(25, mean = 0),
+    x3 = stats::rnorm(25, mean = 0),
+    x4 = stats::rnorm(25, mean = 0),
+    y = stats::rbinom(25, 1, 0.5)
+  )
+  d2 <- data.table::data.table(
+    x1 = stats::rnorm(25, mean = 100),
+    x2 = stats::rnorm(25, mean = 100),
+    x3 = stats::rnorm(25, mean = 100),
+    x4 = stats::rnorm(25, mean = 100),
+    y = stats::rbinom(25, 1, 0.5)
+  )
+
+  g <- create_gene("umap", c("x1", "x2", "x3", "x4"))
+  res1 <- withr::with_options(list(evoFE.redundancy_cor_threshold = 1.0), {
+    apply_gene(g, d1, val_data = NULL, target_col = "y")
+  })
+  expect_true(!is.null(res1$gene$state$model))
+  expect_equal(nrow(res1$gene$state$x_train), 25)
+  expect_true(mean(res1$gene$state$x_train[, "x1"]) < 10)
+
+  # Applying to d2 with target_col MUST refit the manifold on d2 rather than reusing d1
+  res2 <- withr::with_options(list(evoFE.redundancy_cor_threshold = 1.0), {
+    apply_gene(res1$gene, d2, val_data = NULL, target_col = "y")
+  })
+  expect_true(!is.null(res2$gene$state$model))
+  expect_true(mean(res2$gene$state$x_train[, "x1"]) > 50)
+})
+
+test_that("MetaCV with full_individual migration executes cleanly without state contamination", {
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  mig_cfg <- migration_config(
+    topology = topology_ring(islands = 3),
+    policy = policy_push_uniform(),
+    payload = "full_individual"
+  )
+
+  recipe <- evolve_features(
+    df, "am",
+    task = "classification",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    migration = mig_cfg,
+    generations = 2,
+    pop_size = 3,
+    verbose = FALSE
+  )
+
+  expect_s3_class(recipe, "evo_recipe")
+  expect_equal(recipe$evaluation_strategy, "metacv")
+  expect_equal(length(recipe$island_bests), 3)
+  for (best in recipe$island_bests) {
+    expect_true(is.finite(best$fitness))
+  }
+})
+
+

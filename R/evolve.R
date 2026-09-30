@@ -1820,12 +1820,24 @@ evolve_features <- function(data, target_col, task = "classification",
               worst_end <- length(pop_list[[dest]])
               migrant_inds <- old_pop_list[[src]][1:effective_rate]
 
-              if (row_split_islands || per_island_validation || evaluation_strategy == "metacv" || island_evaluators[src] != island_evaluators[dest]) {
-                # Fitness was evaluated on src local split or evaluator — must re-evaluate on dest local split/evaluator
-                migrant_inds <- lapply(migrant_inds, function(ind) {
-                  ind$fitness <- NA_real_
-                  ind
-                })
+              data_differs <- row_split_islands || per_island_validation || evaluation_strategy == "metacv"
+              eval_differs <- island_evaluators[src] != island_evaluators[dest]
+
+              if (data_differs || eval_differs) {
+                if (data_differs) {
+                  # Data partition differs: strip both fitness and transformer states to prevent cross-split leakage
+                  migrant_inds <- lapply(migrant_inds, strip_individual_state)
+                } else {
+                  # Data partition is identical, only evaluator differs:
+                  # Feature transformations are data-dependent and model-agnostic; preserve states and only reset fitness
+                  migrant_inds <- lapply(migrant_inds, function(ind) {
+                    ind$fitness <- NA_real_
+                    ind$raw_fitness <- NA_real_
+                    ind$val_preds <- NULL
+                    ind$y_val <- NULL
+                    ind
+                  })
+                }
                 eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
                   split_ids_val,
                   if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[dest]] else shared_splits,
@@ -1931,6 +1943,11 @@ evolve_features <- function(data, target_col, task = "classification",
                 # Limit to top 20 most important new genes
                 if (length(new_genes) > 20) {
                   new_genes <- new_genes[1:20]
+                }
+
+                # Strip fitted states before adding to destination pool to prevent stale/leaked states
+                for (k in seq_along(new_genes)) {
+                  new_genes[[k]]$state <- NULL
                 }
 
                 migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], new_genes)
@@ -2424,7 +2441,7 @@ evolve_features <- function(data, target_col, task = "classification",
           }
         } else {
           ind <- island_best_individual[[j]]
-          ind$fitness <- NA_real_
+          ind <- strip_individual_state(ind)
           cand_eval <- cand_evals[j]
           ind <- evaluate_fitness(
             ind, data, target_col,
@@ -2503,6 +2520,7 @@ evolve_features <- function(data, target_col, task = "classification",
     deduped_genes <- list()
     for (gene in all_genes) {
       if (gene$output_col %in% unique_cols) {
+        gene$state <- NULL
         deduped_genes[[gene$output_col]] <- gene
         unique_cols <- setdiff(unique_cols, gene$output_col)
       }
@@ -2614,6 +2632,7 @@ evolve_features <- function(data, target_col, task = "classification",
       unique_cols_hist <- unique(vapply(historical_best_genes, function(g) g$output_col, character(1)))
       for (gene in historical_best_genes) {
         if (gene$output_col %in% unique_cols_hist) {
+          gene$state <- NULL
           deduped_historical_genes[[gene$output_col]] <- gene
           unique_cols_hist <- setdiff(unique_cols_hist, gene$output_col)
         }

@@ -1118,3 +1118,26 @@ union_crossover <- function(ind1, ind2, verbose = FALSE) {
     all_datetime_cols = ind1$all_datetime_cols
   )
 }
+
+#' Strip fitted transformer state and fitness from an individual
+#'
+#' Resets fitness, raw_fitness, predictions, and clears fitted states
+#' from all genes so that the individual can be evaluated cleanly on a
+#' new data split or fold without data leakage.
+#'
+#' @param ind An \code{evo_individual} object.
+#' @return The modified \code{evo_individual}.
+#' @export
+strip_individual_state <- function(ind) {
+  ind$fitness <- NA_real_
+  ind$raw_fitness <- NA_real_
+  ind$penalty <- 0.0
+  ind$val_preds <- NULL
+  ind$y_val <- NULL
+  if (length(ind$genes) > 0) {
+    for (i in seq_along(ind$genes)) {
+      ind$genes[[i]]$state <- NULL
+    }
+  }
+  ind
+}

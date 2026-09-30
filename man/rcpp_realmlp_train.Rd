@@ -16,7 +16,10 @@ rcpp_realmlp_train(
   early_stopping_rounds = 0L,
   seed = 42L,
   verbose = 0L,
-  num_classes = 0L
+  num_classes = 0L,
+  threads = 1L,
+  metric = "default",
+  hidden_dim = 256L
 )
 }
 \arguments{
@@ -43,6 +46,12 @@ rcpp_realmlp_train(
 \item{verbose}{Integer: verbosity level (0 = silent, 1 = normal, 2 = detailed).}
 
 \item{num_classes}{Integer: number of classes for multiclass task.}
+
+\item{threads}{Integer: number of threads for parallel computation.}
+
+\item{metric}{String: validation metric to optimize and report.}
+
+\item{hidden_dim}{Integer: hidden layer dimension (default 256).}
 }
 \value{
 A List containing model weights, training statistics, and feature importances.

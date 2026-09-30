@@ -39,18 +39,14 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 
   # If we are fitting (target_col provided) and it's stateful
   if (!has_cached_state && !is.null(t_def$fit_func) && !is.null(target_col)) {
-    if (!is.null(gene$state)) {
-      state <- gene$state
+    # Skip fitting in CV folds if columns already exist
+    if (is.null(state_cache) && col_exists_train && col_exists_val) {
+      # Skip fitting, state remains NULL
     } else {
-      # Skip fitting in CV folds if columns already exist
-      if (is.null(state_cache) && col_exists_train && col_exists_val) {
-        # Skip fitting, state remains NULL
-      } else {
-        state <- t_def$fit_func(train_data, gene, target_col)
-        gene$state <- state
-        if (!is.null(cache_key)) {
-          assign(cache_key, state, envir = state_cache)
-        }
+      state <- t_def$fit_func(train_data, gene, target_col)
+      gene$state <- state
+      if (!is.null(cache_key)) {
+        assign(cache_key, state, envir = state_cache)
       }
     }
   } else if (!is.null(gene$state)) {
@@ -79,10 +75,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.95)
     if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
       num_mask <- vapply(train_data, is.numeric, logical(1))
-      existing_num_cols <- names(train_data)[num_mask]
-      if (gene$output_col %in% existing_num_cols) {
-        existing_num_cols <- existing_num_cols[existing_num_cols != gene$output_col]
-      }
+      existing_num_cols <- setdiff(names(train_data)[num_mask], c(gene$output_col, target_col))
       if (length(existing_num_cols) > 0) {
         new_is_finite <- is.finite(new_col_train)
         if (sum(new_is_finite) > 2 && suppressWarnings(stats::sd(new_col_train[new_is_finite])) > 0) {
