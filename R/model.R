@@ -32,11 +32,7 @@ train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
                         task = "classification", evaluator = "lightgbm",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
 
-  evaluator_entry <- evo_evaluators[[evaluator]]
-  if (is.null(evaluator_entry)) {
-    stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s", 
-                 evaluator, paste(names(evo_evaluators), collapse = ", ")))
-  }
+  evaluator_entry <- get_evaluator(evaluator)
 
   extra_args <- list(...)
   if (!is.null(extra_args$threads)) threads <- as.integer(extra_args$threads)

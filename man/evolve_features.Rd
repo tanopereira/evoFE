@@ -28,7 +28,7 @@ evolve_features(
   dynamic_population_growth_rate = 1.5,
   dynamic_population_decay_rate = 0.7,
   crossover_type = "both",
-  threads = 2,
+  threads = max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE),
   max_clustering_size = 5000,
   verbose = TRUE,
   metric = "default",

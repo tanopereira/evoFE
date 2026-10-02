@@ -124,11 +124,7 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   x_new <- .sanitize_feature_matrix(features_dt)
   
   # Step 3: Run prediction
-  evaluator_entry <- evo_evaluators[[object$evaluator]]
-  if (is.null(evaluator_entry)) {
-    stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s", 
-                 object$evaluator, paste(names(evo_evaluators), collapse = ", ")))
-  }
+  evaluator_entry <- get_evaluator(object$evaluator)
   preds <- evaluator_entry$predict_func(object$best_model, x_new, task = object$task)
   
   if (!is.null(object$classes)) {
@@ -164,11 +160,7 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     mod_i <- object$active_models[[name]]
     eval_i <- if (!is.null(object$active_evaluators[[name]])) object$active_evaluators[[name]] else object$evaluator
 
-    evaluator_entry <- evo_evaluators[[eval_i]]
-    if (is.null(evaluator_entry)) {
-      stop(sprintf("Unknown evaluator '%s'. Registered evaluators are: %s",
-                   eval_i, paste(names(evo_evaluators), collapse = ", ")))
-    }
+    evaluator_entry <- get_evaluator(eval_i)
 
     dt_i <- data.table::copy(dt_input)
     res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)

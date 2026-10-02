@@ -737,8 +737,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }
 
       # Clean up the model if the evaluator provides a cleanup function (e.g. to prevent TF memory leaks)
-      if (!is.null(evo_evaluators[[evaluator]]$cleanup_func)) {
-        evo_evaluators[[evaluator]]$cleanup_func(res_model$model)
+      eval_entry <- get_evaluator(evaluator)
+      if (!is.null(eval_entry$cleanup_func)) {
+        eval_entry$cleanup_func(res_model$model)
       }
     }
 
@@ -888,11 +889,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   # data, and must NEVER be used to drive parameter tuning. Therefore, we bypass the tuner (e.g.
   # lightgbm_mbo) and train the base evaluator (e.g. lightgbm) directly using the best parameters
   # found during evolution.
-  final_evaluator <- evaluator
-  eval_entry <- evo_evaluators[[evaluator]]
-  if (!is.null(eval_entry) && !is.null(eval_entry$base_evaluator)) {
-    final_evaluator <- eval_entry$base_evaluator
-  }
+  final_evaluator <- unwrap_evaluator(evaluator)
 
   # Merge best_params into ...
   final_args <- utils::modifyList(list(...), as.list(ind$best_params))
@@ -939,13 +936,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   if (!is.null(res_holdout)) {
     x_holdout <- .sanitize_feature_matrix(res_holdout$train[, features, with = FALSE])
 
-    evaluator_entry <- evo_evaluators[[evaluator]]
-    if (is.null(evaluator_entry)) {
-      stop(sprintf(
-        "Unknown evaluator '%s'. Registered evaluators are: %s",
-        evaluator, paste(names(evo_evaluators), collapse = ", ")
-      ))
-    }
+    evaluator_entry <- get_evaluator(evaluator)
     preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task)
 
     if (task == "multiclass") {

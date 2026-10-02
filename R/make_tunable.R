@@ -86,12 +86,7 @@
 #' }
 #' @export
 make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base_model_name, "_mbo")) {
-  # 1. Retrieve the base model configuration
-  if (!exists(base_model_name, envir = evo_evaluators)) {
-    stop(sprintf("Model '%s' is not registered in evo_evaluators. Registered models: %s", 
-                 base_model_name, paste(names(evo_evaluators), collapse = ", ")))
-  }
-  base_evaluator <- evo_evaluators[[base_model_name]]
+  base_evaluator <- get_evaluator(base_model_name)
   
   # 2. Separate tunable and fixed parameters
   tunable_defs <- list()
@@ -311,6 +306,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     name = tuner_name,
     train_func = tuned_train_func,
     predict_func = base_evaluator$predict_func,
-    base_evaluator = base_model_name
+    base_evaluator = base_model_name,
+    traits = if (!is.null(base_evaluator$traits)) base_evaluator$traits else list()
   )
 }

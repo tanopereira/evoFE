@@ -9,7 +9,8 @@ register_evaluator(
   train_func,
   predict_func,
   base_evaluator = NULL,
-  cleanup_func = NULL
+  cleanup_func = NULL,
+  traits = list()
 )
 }
 \arguments{
@@ -27,9 +28,13 @@ vector or matrix of predictions.}
 \item{base_evaluator}{Optional character name of the base registered model.}
 
 \item{cleanup_func}{Optional function to clean up model resources/states after evaluation.}
+
+\item{traits}{Optional named list of evaluator capabilities/traits.}
 }
 \value{
 Invisible NULL. Called for the side effect of registering the evaluator in \code{evo_evaluators}.
+
+Invisible entry list. Called for the side effect of registering the evaluator in \code{evo_evaluators}.
 }
 \description{
 Register a model evaluator

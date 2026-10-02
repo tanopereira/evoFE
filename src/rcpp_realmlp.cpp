@@ -364,6 +364,16 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     base_lr = (is_cls || is_multi) ? 0.01 : 0.005;
   }
 
+  // Save previous thread state for CRAN-compliant restoration
+#ifdef _OPENMP
+  int old_omp_threads = omp_get_max_threads();
+  if (threads > 0) {
+    omp_set_num_threads(threads);
+  }
+#endif
+  int old_eigen_threads = Eigen::nbThreads();
+  Eigen::setNbThreads(threads > 0 ? threads : 1);
+
   // Fast single-pass fused standardization
   const double* x_train_ptr = x_train.begin();
   Eigen::MatrixXd X_tr(N, D);
@@ -372,7 +382,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   Eigen::VectorXd x_inv_std(D);
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (D >= 4)
+#pragma omp parallel for schedule(static) if (D >= 2)
 #endif
   for (int j = 0; j < D; ++j) {
     const double* col_ptr = x_train_ptr + static_cast<size_t>(j) * N;
@@ -476,15 +486,6 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   std::vector<int> perm(N);
   for (int i = 0; i < N; ++i) perm[i] = i;
 
-  // Save previous thread state for CRAN-compliant restoration
-#ifdef _OPENMP
-  int old_omp_threads = omp_get_max_threads();
-  if (threads > 0) {
-    omp_set_num_threads(threads);
-  }
-#endif
-  int old_eigen_threads = Eigen::nbThreads();
-  Eigen::setNbThreads(threads > 0 ? threads : 1);
 
   double best_val_score = std::numeric_limits<double>::quiet_NaN();
   std::string val_metric_nm = "Val metric";

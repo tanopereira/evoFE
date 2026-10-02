@@ -83,9 +83,188 @@ evo_evaluators <- new.env(parent = emptyenv())
 #'
 #' # Verify it is registered
 #' exists("mock_eval", envir = evo_evaluators)
+#' @param traits Optional named list of evaluator capabilities/traits.
+#' @return Invisible entry list. Called for the side effect of registering the evaluator in \code{evo_evaluators}.
 #' @export
-register_evaluator <- function(name, train_func, predict_func, base_evaluator = NULL, cleanup_func = NULL) {
-  assign(name, list(train_func = train_func, predict_func = predict_func, base_evaluator = base_evaluator, cleanup_func = cleanup_func), envir = evo_evaluators)
+register_evaluator <- function(name, train_func, predict_func, base_evaluator = NULL, cleanup_func = NULL, traits = list()) {
+  entry <- list(
+    train_func = train_func,
+    predict_func = predict_func,
+    base_evaluator = base_evaluator,
+    cleanup_func = cleanup_func,
+    traits = traits
+  )
+  assign(name, entry, envir = evo_evaluators)
+  invisible(entry)
+}
+
+#' Check if an Evaluator is Registered
+#'
+#' @param name Character name of the evaluator.
+#' @return Logical scalar indicating if the evaluator is present in \code{evo_evaluators}.
+#' @export
+has_evaluator <- function(name) {
+  if (missing(name) || is.null(name) || !is.character(name) || length(name) != 1 || is.na(name)) {
+    return(FALSE)
+  }
+  exists(name, envir = evo_evaluators)
+}
+
+#' List All Registered Evaluators
+#'
+#' @return Character vector of names of registered evaluators.
+#' @export
+list_evaluators <- function() {
+  names(evo_evaluators)
+}
+
+#' Retrieve a Registered Model Evaluator
+#'
+#' @param name Character name of the evaluator.
+#' @return List containing evaluator entry components (\code{train_func},
+#'   \code{predict_func}, \code{base_evaluator}, \code{cleanup_func}, \code{traits}).
+#' @export
+get_evaluator <- function(name) {
+  if (missing(name) || is.null(name) || !is.character(name) || length(name) != 1 || is.na(name) || !exists(name, envir = evo_evaluators)) {
+    stop(sprintf("Model '%s' is not registered in evo_evaluators. Registered models: %s",
+                 if (missing(name) || is.null(name) || length(name) == 0 || is.na(name)) "" else name,
+                 paste(names(evo_evaluators), collapse = ", ")))
+  }
+  get(name, envir = evo_evaluators)
+}
+
+#' Get Base Evaluator Name
+#'
+#' Resolves tuner wrappers to find their underlying base evaluator name.
+#'
+#' @param evaluator Character name or evaluator list object.
+#' @return Character name of the base evaluator (or the original evaluator name if not tuned).
+#' @export
+get_base_evaluator <- function(evaluator) {
+  if (is.list(evaluator) && !is.null(evaluator$base_evaluator)) {
+    return(evaluator$base_evaluator)
+  }
+  if (is.character(evaluator) && length(evaluator) == 1 && !is.na(evaluator) && has_evaluator(evaluator)) {
+    ev <- get_evaluator(evaluator)
+    if (!is.null(ev$base_evaluator)) return(ev$base_evaluator)
+    return(evaluator)
+  }
+  evaluator
+}
+
+#' Recursively Unwrap Wrapped or Tuned Evaluators
+#'
+#' Resolves tuning or wrapping layers to find the canonical base evaluator name.
+#'
+#' @param evaluator Character name of evaluator or tuner.
+#' @return Character name of the base evaluator.
+#' @export
+unwrap_evaluator <- function(evaluator) {
+  if (!is.character(evaluator) || length(evaluator) != 1 || is.na(evaluator)) {
+    return(evaluator)
+  }
+  curr <- evaluator
+  visited <- character(0)
+  while (is.character(curr) && length(curr) == 1 && !is.na(curr) && has_evaluator(curr) && !(curr %in% visited)) {
+    visited <- c(visited, curr)
+    entry <- get_evaluator(curr)
+    if (!is.null(entry$base_evaluator) && is.character(entry$base_evaluator) &&
+        length(entry$base_evaluator) == 1 && !is.na(entry$base_evaluator) &&
+        entry$base_evaluator != curr) {
+      curr <- entry$base_evaluator
+    } else {
+      break
+    }
+  }
+  curr
+}
+
+#' Check if an Evaluator is Tree-Based
+#'
+#' Inspects the traits of the evaluator (or its unwrapped base evaluator) to determine
+#' if it is a tree-based algorithm (e.g. LightGBM, XGBoost, CatBoost).
+#'
+#' @param evaluator Character name or evaluator list object.
+#' @return Logical scalar TRUE if tree-based, FALSE otherwise.
+#' @export
+is_tree_evaluator <- function(evaluator) {
+  if (is.list(evaluator)) {
+    if (!is.null(evaluator$traits) && !is.null(evaluator$traits$is_tree)) {
+      return(isTRUE(evaluator$traits$is_tree))
+    }
+    if (!is.null(evaluator$base_evaluator)) {
+      return(is_tree_evaluator(evaluator$base_evaluator))
+    }
+    return(FALSE)
+  }
+  if (!is.character(evaluator) || length(evaluator) != 1 || is.na(evaluator)) {
+    return(FALSE)
+  }
+  base_name <- unwrap_evaluator(evaluator)
+  if (has_evaluator(base_name)) {
+    ev <- get_evaluator(base_name)
+    if (!is.null(ev$traits) && !is.null(ev$traits$is_tree)) {
+      return(isTRUE(ev$traits$is_tree))
+    }
+  }
+  grepl("lightgbm|xgboost|catboost", tolower(evaluator))
+}
+
+#' Scale Evaluator Iterations with Dataset Size
+#'
+#' Scales tree-based iteration/round counts proportionally when moving from validation fold
+#' to the full dataset during final model fitting.
+#'
+#' @param evaluator Character name or evaluator list object.
+#' @param iters Integer initial number of iterations (e.g. \code{best_iteration}).
+#' @param train_size Optional numeric size of training partition.
+#' @param total_size Optional numeric total dataset size.
+#' @param factor Optional numeric explicit scaling factor (defaults to \code{total_size / train_size}).
+#' @return Integer scaled iterations, or original \code{iters} if not scaled.
+#' @export
+scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, total_size = NULL, factor = NULL) {
+  if (is.null(iters) || is.na(iters) || !is.numeric(iters) || iters <= 0) return(iters)
+  
+  if (is.null(factor)) {
+    if (!is.null(train_size) && !is.null(total_size) &&
+        is.numeric(train_size) && is.numeric(total_size) &&
+        train_size > 0 && total_size > train_size) {
+      factor <- as.numeric(total_size) / as.numeric(train_size)
+    } else {
+      factor <- 1.0
+    }
+  }
+  
+  if (factor <= 1.0) return(as.integer(iters))
+  
+  should_scale <- FALSE
+  if (is.character(evaluator) && length(evaluator) == 1 && !is.na(evaluator)) {
+    base_name <- unwrap_evaluator(evaluator)
+    if (has_evaluator(base_name)) {
+      ev <- get_evaluator(base_name)
+      if (!is.null(ev$traits$scale_iterations_with_data)) {
+        should_scale <- isTRUE(ev$traits$scale_iterations_with_data)
+      } else {
+        should_scale <- is_tree_evaluator(evaluator)
+      }
+    } else {
+      should_scale <- is_tree_evaluator(evaluator)
+    }
+  } else if (is.list(evaluator)) {
+    if (!is.null(evaluator$traits$scale_iterations_with_data)) {
+      should_scale <- isTRUE(evaluator$traits$scale_iterations_with_data)
+    } else {
+      should_scale <- is_tree_evaluator(evaluator)
+    }
+  } else {
+    should_scale <- is_tree_evaluator(evaluator)
+  }
+  
+  if (should_scale) {
+    as.integer(max(1L, round(iters * factor)))
+  } else {
+    as.integer(iters)
+  }
 }
 
 # --- Register Default Evaluators ---
@@ -254,7 +433,8 @@ register_evaluator(
     } else {
       stats::predict(model, x_new, params = list(num_threads = th))
     }
-  }
+  },
+  traits = list(is_tree = TRUE, iteration_param = "nrounds", scale_iterations_with_data = TRUE)
 )
 
 # 2. XGBoost Evaluator
@@ -443,7 +623,8 @@ register_evaluator(
     }
     rm(dmatrix)
     preds
-  }
+  },
+  traits = list(is_tree = TRUE, iteration_param = "nrounds", scale_iterations_with_data = TRUE)
 )
 
 # 3. CatBoost Evaluator
@@ -579,7 +760,8 @@ register_evaluator(
       # The predict_model function checks and reshapes as well.
     }
     preds
-  }
+  },
+  traits = list(is_tree = TRUE, iteration_param = "iterations", scale_iterations_with_data = TRUE)
 )
 
 ## 4. LM/GLM Evaluator (Penalized)
@@ -699,7 +881,8 @@ register_evaluator(
       p_array <- stats::predict(model, newx = x_mat, s = "lambda.min", type = "response")
       p_array[, , 1]
     }
-  }
+  },
+  traits = list(is_tree = FALSE, iteration_param = NULL, scale_iterations_with_data = FALSE)
 )
 
 # 5. Keras 3 Feed-Forward Neural Network Evaluator
@@ -833,7 +1016,8 @@ register_evaluator(
         tryCatch(keras3::k_clear_session(), error = function(e) NULL)
       }
     }
-  }
+  },
+  traits = list(is_tree = FALSE, iteration_param = "epochs", scale_iterations_with_data = FALSE)
 )
 
 # --- RealMLP helpers (keep train_func concise) ---
@@ -1051,6 +1235,7 @@ register_evaluator(
 
   cleanup_func = function(model) {
     gc(verbose = FALSE)
-  }
+  },
+  traits = list(is_tree = FALSE, iteration_param = "epochs", scale_iterations_with_data = FALSE)
 )
 
