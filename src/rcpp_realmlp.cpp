@@ -1,5 +1,8 @@
 #include <Rcpp.h>
 #include <RcppEigen.h>
+#include <cstring>
+#include "realmlp_fused.h"
+#include "realmlp_workspace.h"
 #include "realmlp_core.h"
 
 // [[Rcpp::depends(RcppEigen)]]
@@ -45,14 +48,18 @@ inline NumericMatrix to_rcpp(const Eigen::MatrixXd& emat) {
 inline NumericVector to_rcpp_vec(const Eigen::VectorXd& evec) {
   int n = static_cast<int>(evec.size());
   NumericVector vec(n);
-  for (int i = 0; i < n; ++i) vec[i] = evec[i];
+  if (n > 0) {
+    std::memcpy(vec.begin(), evec.data(), n * sizeof(double));
+  }
   return vec;
 }
 
 inline Eigen::VectorXd to_eigen_vec(const NumericVector& vec) {
   int n = vec.size();
   Eigen::VectorXd evec(n);
-  for (int i = 0; i < n; ++i) evec[i] = vec[i];
+  if (n > 0) {
+    std::memcpy(evec.data(), vec.begin(), n * sizeof(double));
+  }
   return evec;
 }
 
@@ -159,10 +166,11 @@ struct MetricResult {
 
 inline MetricResult compute_val_metric(
     const Eigen::MatrixXd& val_preds,
-    const NumericVector& y_v_vec,
+    const double* __restrict__ y_v_ptr,
     const std::string& task,
     const std::string& metric_req,
-    int out_dim) {
+    int out_dim,
+    std::vector<std::pair<double, int>>* auc_pairs_buf = nullptr) {
 
   int N_val = static_cast<int>(val_preds.rows());
   std::string m = metric_req;
@@ -172,13 +180,13 @@ inline MetricResult compute_val_metric(
     if (m == "mae") {
       double sum_ae = 0.0;
       for (int i = 0; i < N_val; ++i) {
-        sum_ae += std::abs(val_preds(i, 0) - y_v_vec[i]);
+        sum_ae += std::abs(val_preds(i, 0) - y_v_ptr[i]);
       }
       return { sum_ae / N_val, "Val MAE", false };
     }
     double sum_se = 0.0;
     for (int i = 0; i < N_val; ++i) {
-      double diff = val_preds(i, 0) - y_v_vec[i];
+      double diff = val_preds(i, 0) - y_v_ptr[i];
       sum_se += diff * diff;
     }
     return { std::sqrt(sum_se / N_val), "Val RMSE", false };
@@ -189,22 +197,27 @@ inline MetricResult compute_val_metric(
       int correct = 0;
       for (int i = 0; i < N_val; ++i) {
         int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
-        int true_class = (y_v_vec[i] > 0.0) ? 1 : 0;
+        int true_class = (y_v_ptr[i] > 0.0) ? 1 : 0;
         if (pred_class == true_class) correct++;
       }
       return { static_cast<double>(correct) / N_val, "Val accuracy", true };
     }
     if (m == "auc") {
-      std::vector<std::pair<double, int>> pairs(N_val);
+      std::vector<std::pair<double, int>> local_pairs;
+      std::vector<std::pair<double, int>>& pairs =
+          (auc_pairs_buf != nullptr) ? *auc_pairs_buf : local_pairs;
+      if (static_cast<int>(pairs.size()) < N_val) {
+        pairs.resize(N_val);
+      }
       int n_pos = 0;
       for (int i = 0; i < N_val; ++i) {
-        int y = (y_v_vec[i] > 0.0) ? 1 : 0;
+        int y = (y_v_ptr[i] > 0.0) ? 1 : 0;
         if (y == 1) n_pos++;
         pairs[i] = { val_preds(i, 0), y };
       }
       int n_neg = N_val - n_pos;
       if (n_pos == 0 || n_neg == 0) return { 0.5, "Val AUC", true };
-      std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) {
+      std::sort(pairs.begin(), pairs.begin() + N_val, [](const auto& a, const auto& b) {
         return a.first < b.first;
       });
       double rank_sum_pos = 0.0;
@@ -221,7 +234,7 @@ inline MetricResult compute_val_metric(
       int errors = 0;
       for (int i = 0; i < N_val; ++i) {
         int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
-        int true_class = (y_v_vec[i] > 0.0) ? 1 : 0;
+        int true_class = (y_v_ptr[i] > 0.0) ? 1 : 0;
         if (pred_class != true_class) errors++;
       }
       return { static_cast<double>(errors) / N_val, "Val error", false };
@@ -230,7 +243,7 @@ inline MetricResult compute_val_metric(
     double ll_sum = 0.0;
     for (int i = 0; i < N_val; ++i) {
       double p = std::clamp(val_preds(i, 0), 1e-15, 1.0 - 1e-15);
-      double y = (y_v_vec[i] > 0.0) ? 1.0 : 0.0;
+      double y = (y_v_ptr[i] > 0.0) ? 1.0 : 0.0;
       ll_sum -= (y * std::log(p) + (1.0 - y) * std::log(1.0 - p));
     }
     return { ll_sum / N_val, "Val logloss", false };
@@ -248,7 +261,7 @@ inline MetricResult compute_val_metric(
           best_c = c;
         }
       }
-      if (best_c == static_cast<int>(y_v_vec[i])) correct++;
+      if (best_c == static_cast<int>(y_v_ptr[i])) correct++;
     }
     return { static_cast<double>(correct) / N_val, "Val accuracy", true };
   }
@@ -263,14 +276,14 @@ inline MetricResult compute_val_metric(
           best_c = c;
         }
       }
-      if (best_c != static_cast<int>(y_v_vec[i])) errors++;
+      if (best_c != static_cast<int>(y_v_ptr[i])) errors++;
     }
     return { static_cast<double>(errors) / N_val, "Val error", false };
   }
   // Default for multiclass: multi-logloss
   double ll_sum = 0.0;
   for (int i = 0; i < N_val; ++i) {
-    int true_c = static_cast<int>(y_v_vec[i]);
+    int true_c = static_cast<int>(y_v_ptr[i]);
     double p = 1e-15;
     if (true_c >= 0 && true_c < out_dim) {
       p = std::clamp(val_preds(i, true_c), 1e-15, 1.0);
@@ -278,6 +291,17 @@ inline MetricResult compute_val_metric(
     ll_sum -= std::log(p);
   }
   return { ll_sum / N_val, "Val logloss", false };
+}
+
+// Backwards-compatible overload
+inline MetricResult compute_val_metric(
+    const Eigen::MatrixXd& val_preds,
+    const NumericVector& y_v_vec,
+    const std::string& task,
+    const std::string& metric_req,
+    int out_dim,
+    std::vector<std::pair<double, int>>* auc_pairs_buf = nullptr) {
+  return compute_val_metric(val_preds, y_v_vec.begin(), task, metric_req, out_dim, auc_pairs_buf);
 }
 
 //' Train RealMLP Model in C++
@@ -340,21 +364,25 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     base_lr = (is_cls || is_multi) ? 0.01 : 0.005;
   }
 
-  // Zero-copy map, then sanitize NaN in-place and standardize
-  Eigen::MatrixXd X_tr = copy_eigen_sanitized(x_train);
-
-  // Standardize training features (variance floor 1e-5; clamp standardized inputs to [-30.0, 30.0])
+  // Fast single-pass fused standardization
+  const double* x_train_ptr = x_train.begin();
+  Eigen::MatrixXd X_tr(N, D);
   Eigen::VectorXd x_mean(D);
   Eigen::VectorXd x_std(D);
+  Eigen::VectorXd x_inv_std(D);
+
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (D >= 4)
+#endif
   for (int j = 0; j < D; ++j) {
-    double col_mean = X_tr.col(j).mean();
-    double sum_sq = (X_tr.col(j).array() - col_mean).square().sum();
-    double col_std = std::sqrt(sum_sq / std::max(1, N - 1));
-    if (col_std < 1e-5 || !std::isfinite(col_std)) col_std = 1.0;
-    x_mean(j) = col_mean;
-    x_std(j) = col_std;
-    X_tr.col(j) = ((X_tr.col(j).array() - col_mean) / col_std).max(-30.0).min(30.0);
+    const double* col_ptr = x_train_ptr + static_cast<size_t>(j) * N;
+    ColumnStats stats = compute_column_stats(col_ptr, N);
+    x_mean(j) = stats.mean;
+    x_std(j) = stats.std_val;
+    x_inv_std(j) = stats.inv_std;
   }
+
+  fuse_standardize_matrix(x_train_ptr, X_tr.data(), N, D, x_mean.data(), x_inv_std.data());
 
   // Targets processing
   Eigen::MatrixXd Y_tr(N, out_dim);
@@ -398,16 +426,16 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   bool has_val = (x_val.isNotNull() && y_val.isNotNull());
   Eigen::MatrixXd X_v;
   NumericVector y_v_vec;
+  const double* y_v_ptr = nullptr;
   int N_val = 0;
 
   if (has_val) {
     NumericMatrix xv(x_val);
-    X_v = copy_eigen_sanitized(xv);
     y_v_vec = NumericVector(y_val);
-    N_val = static_cast<int>(X_v.rows());
-    for (int j = 0; j < D; ++j) {
-      X_v.col(j) = ((X_v.col(j).array() - x_mean(j)) / x_std(j)).max(-30.0).min(30.0);
-    }
+    y_v_ptr = y_v_vec.begin();
+    N_val = xv.nrow();
+    X_v.resize(N_val, D);
+    fuse_standardize_matrix(xv.begin(), X_v.data(), N_val, D, x_mean.data(), x_inv_std.data());
   }
 
   // Initialize model
@@ -487,6 +515,11 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   TrainWorkspace ws;
   ws.allocate(max_B, D, out_dim, hidden_dim, embed_dim,
               D, model.embedder.k_freq, model.embedder.d_proj, N, max_threads);
+
+  ValidationWorkspace val_ws;
+  if (has_val && N_val > 0) {
+    val_ws.allocate(N_val, D, out_dim, hidden_dim, embed_dim, model.embedder.k_freq, max_threads);
+  }
 
   int step = 0;
 
@@ -641,8 +674,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     double val_score = std::numeric_limits<double>::quiet_NaN();
 
     if (has_val && N_val > 0) {
-      Eigen::MatrixXd val_preds = model.predict(X_v, false);
-      MetricResult m_res = compute_val_metric(val_preds, y_v_vec, task, metric, out_dim);
+      model.embedder.forward_nocache(X_v, val_ws.E, val_ws.thread_Z_buf);
+      model.forward_predict_inplace(val_ws.E, N_val, val_ws, val_ws.preds);
+      MetricResult m_res = compute_val_metric(val_ws.preds, y_v_ptr, task, metric, out_dim, &val_ws.auc_pairs);
       val_score = m_res.score;
       val_metric_nm = m_res.name;
 
@@ -713,15 +747,17 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   int N_avail = static_cast<int>(X_imp_source.rows());
   int N_eval = std::min(N_avail, 1000);
 
-  Eigen::MatrixXd X_eval = X_imp_source.topRows(N_eval);
+  auto X_eval = X_imp_source.topRows(N_eval);
   std::vector<double> y_eval(N_eval);
   if (has_val && N_val > 0) {
-    for (int i = 0; i < N_eval; ++i) y_eval[i] = y_v_vec[i];
+    std::memcpy(y_eval.data(), y_v_ptr, N_eval * sizeof(double));
   } else {
-    for (int i = 0; i < N_eval; ++i) y_eval[i] = y_train[i];
+    std::memcpy(y_eval.data(), y_train.begin(), N_eval * sizeof(double));
   }
 
-  std::vector<double> importances = model.compute_importances(X_eval, y_eval);
+  FeatureImportanceWorkspace fi_ws;
+  fi_ws.allocate(N_eval, D, out_dim, hidden_dim, embed_dim, model.embedder.d_proj, model.embedder.k_freq, max_threads);
+  std::vector<double> importances = model.compute_importances(X_eval, y_eval, fi_ws);
 
   // Restore previous thread state (CRAN requirement)
 #ifdef _OPENMP
