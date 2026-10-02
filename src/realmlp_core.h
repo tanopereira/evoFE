@@ -48,7 +48,7 @@ inline void apply_activation(const Eigen::Ref<const Eigen::MatrixXd>& in, Eigen:
     }
   } else {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 4)
+#pragma omp parallel for schedule(static) if (C >= 2)
 #endif
     for (int c = 0; c < C; ++c) {
       const double* in_col = in_data + c * in_stride;
@@ -83,7 +83,7 @@ inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXd
     constexpr double ALPHA  = 1.6732632423543772848170429916717;
     constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 4)
+#pragma omp parallel for schedule(static) if (C >= 2)
 #endif
     for (int c = 0; c < C; ++c) {
       const double* a_col = a_data + c * a_stride;
@@ -95,7 +95,7 @@ inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXd
     }
   } else {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 4)
+#pragma omp parallel for schedule(static) if (C >= 2)
 #endif
     for (int c = 0; c < C; ++c) {
       const double* a_col = a_data + c * a_stride;

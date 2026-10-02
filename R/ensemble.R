@@ -82,7 +82,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              stack_folds = NULL,
                              stack_alpha = 0.5,
                              seed = NULL,
-                             threads = 2,
+                             threads = max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE),
                              verbose = TRUE, ...) {
   # Normalize recipe input: single evo_recipe or list of evo_recipe objects
   if (inherits(recipe, "evo_recipe")) {
@@ -501,7 +501,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       final_args_i <- list(...)
       if (!is.null(ind_i$best_iteration) && is.numeric(ind_i$best_iteration) &&
           is.finite(ind_i$best_iteration) && ind_i$best_iteration > 0) {
-        is_tree_i <- grepl("lightgbm|xgboost|catboost", tolower(eval_i))
         total_data_size <- nrow(x_full)
         training_size <- if (!is.null(ind_i$train_size) && is.numeric(ind_i$train_size) && ind_i$train_size > 0) {
           as.numeric(ind_i$train_size)
@@ -510,12 +509,11 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         } else {
           total_data_size
         }
-        scale_factor <- if (is_tree_i && training_size > 0 && total_data_size > training_size) {
-          total_data_size / training_size
+        target_iters <- if (is_tree_evaluator(eval_i)) {
+          scale_evaluator_iterations(eval_i, ind_i$best_iteration, training_size, total_data_size)
         } else {
-          1.0
+          as.integer(ind_i$best_iteration)
         }
-        target_iters <- as.integer(max(1L, round(ind_i$best_iteration * scale_factor)))
         iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
                           "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
         for (alias in iter_aliases) {
@@ -523,7 +521,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
             final_args_i[[alias]] <- target_iters
           }
         }
-        if (!any(c("epochs", "n_epochs") %in% names(final_args_i)) && eval_i == "realmlp") {
+        if (!any(c("epochs", "n_epochs") %in% names(final_args_i)) && unwrap_evaluator(eval_i) == "realmlp") {
           final_args_i$epochs <- target_iters
         }
         if (!any(c("nrounds", "iterations") %in% names(final_args_i))) {
@@ -533,10 +531,15 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         final_args_i$early_stopping_round <- 0L
       }
 
+      final_eval_i <- unwrap_evaluator(eval_i)
+      if (!is.null(ind_i$best_params) && length(ind_i$best_params) > 0) {
+        final_args_i <- utils::modifyList(final_args_i, as.list(ind_i$best_params))
+      }
+
       res_m <- do.call(train_model, c(
         list(
           x_train = x_full, y_train = y_full,
-          task = task, evaluator = eval_i,
+          task = task, evaluator = final_eval_i,
           threads = threads, num_class = num_class, metric = metric,
           verbose = verbose, best_params = ind_i$best_params
         ),

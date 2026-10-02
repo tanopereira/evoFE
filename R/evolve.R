@@ -214,7 +214,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             dynamic_population_growth_rate = 1.5,
                             dynamic_population_decay_rate = 0.7,
                             crossover_type = "both",
-                            threads = 2, max_clustering_size = 5000,
+                            threads = max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE),
                             verbose = TRUE, metric = "default",
                             model_all_final_genes = FALSE,
                             model_all_historical_genes = FALSE,
@@ -353,12 +353,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   for (ev in island_evaluators) {
-    if (!exists(ev, envir = evo_evaluators)) {
-      stop(sprintf(
-        "Evaluator '%s' is not registered in evo_evaluators. Registered evaluators: %s",
-        ev, paste(names(evo_evaluators), collapse = ", ")
-      ))
-    }
+    get_evaluator(ev)
   }
   evaluator_main <- island_evaluators[1]
 
@@ -2783,7 +2778,6 @@ evolve_features <- function(data, target_col, task = "classification",
   target_iters <- NULL
   if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
       is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
-    is_tree <- grepl("lightgbm|xgboost|catboost", tolower(best_evaluator))
     total_data_size <- nrow(x_full)
     training_size <- if (!is.null(best_ind$train_size) && is.numeric(best_ind$train_size) && best_ind$train_size > 0) {
       as.numeric(best_ind$train_size)
@@ -2795,18 +2789,18 @@ evolve_features <- function(data, target_col, task = "classification",
       total_data_size
     }
 
-    scale_factor <- if (is_tree && training_size > 0 && total_data_size > training_size) {
-      total_data_size / training_size
+    target_iters <- if (is_tree_evaluator(best_evaluator)) {
+      scale_evaluator_iterations(best_evaluator, best_ind$best_iteration, training_size, total_data_size)
     } else {
-      1.0
+      as.integer(best_ind$best_iteration)
     }
-    target_iters <- as.integer(max(1L, round(best_ind$best_iteration * scale_factor)))
     if (verbose) {
-      if (is_tree && scale_factor > 1.0) {
+      scale_factor <- if (training_size > 0 && total_data_size > training_size) total_data_size / training_size else 1.0
+      if (is_tree_evaluator(best_evaluator) && scale_factor > 1.0) {
         message(sprintf("  Using best validation iterations scaled by data size (%.2fx: %d -> %d) for final model",
                         scale_factor, best_ind$best_iteration, target_iters))
       } else {
-        iter_label <- if (best_evaluator == "realmlp") "epochs" else "iterations/rounds"
+        iter_label <- if (unwrap_evaluator(best_evaluator) == "realmlp") "epochs" else "iterations/rounds"
         message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
       }
     }
@@ -2817,7 +2811,7 @@ evolve_features <- function(data, target_col, task = "classification",
         final_model_args[[alias]] <- target_iters
       }
     }
-    if (!any(c("epochs", "n_epochs") %in% names(final_model_args)) && best_evaluator == "realmlp") {
+    if (!any(c("epochs", "n_epochs") %in% names(final_model_args)) && unwrap_evaluator(best_evaluator) == "realmlp") {
       final_model_args$epochs <- target_iters
     }
     if (!any(c("nrounds", "iterations") %in% names(final_model_args))) {
@@ -2827,10 +2821,15 @@ evolve_features <- function(data, target_col, task = "classification",
     final_model_args$early_stopping_round <- 0L
   }
 
+  final_evaluator <- unwrap_evaluator(best_evaluator)
+  if (!is.null(best_params) && length(best_params) > 0) {
+    final_model_args <- utils::modifyList(final_model_args, as.list(best_params))
+  }
+
   res_model <- do.call(train_model, c(
     list(
       x_train = x_full, y_train = y_full,
-      task = task, evaluator = best_evaluator,
+      task = task, evaluator = final_evaluator,
       threads = threads, num_class = num_class, metric = metric,
       verbose = verbose, best_params = best_params, seed = seed
     ),
@@ -2852,7 +2851,7 @@ evolve_features <- function(data, target_col, task = "classification",
       )
       x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
       preds_conf <- tryCatch(
-        evo_evaluators[[best_evaluator]]$predict_func(best_model, x_conf, task = task),
+        get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task),
         error = function(e) NULL
       )
       if (!is.null(preds_conf)) {

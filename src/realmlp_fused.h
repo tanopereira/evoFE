@@ -81,7 +81,7 @@ inline void fuse_standardize_matrix(
   if (N <= 0 || D <= 0) return;
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (D >= 4)
+#pragma omp parallel for schedule(static) if (D >= 2)
 #endif
   for (int j = 0; j < D; ++j) {
     size_t offset = static_cast<size_t>(j) * N;
