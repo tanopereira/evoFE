@@ -5,21 +5,7 @@
 #' converting all out-of-bounds or non-finite values to NA_real_.
 #' @noRd
 .sanitize_feature_matrix <- function(x) {
-  if (is.null(x)) return(NULL)
-  if (isTRUE(attr(x, "sanitized", exact = TRUE))) return(x)
-  if (!is.matrix(x)) {
-    x <- if (is.data.frame(x)) data.matrix(x) else as.matrix(x)
-  }
-  if (!is.numeric(x)) {
-    storage.mode(x) <- "double"
-  }
-  # 32-bit single-precision float limit is ~3.402823e38.
-  # Values exceeding this or non-finite (Inf, -Inf, NaN) cause XGBoost
-  # to fail with: Check failed: valid: Input data contains `inf` or a value too large
-  max_float <- 3.402823e38
-  x[!is.finite(x) | abs(x) > max_float] <- NA_real_
-  attr(x, "sanitized") <- TRUE
-  x
+  sanitize_feature_matrix(x)
 }
 
 #' Train a boosted tree model

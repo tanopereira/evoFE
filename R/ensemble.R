@@ -546,6 +546,33 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
   }
 
+  # Pre-compute presentation metrics for evo_ensemble using calculate_headroom()
+  base_fit <- if (!is.null(first_recipe$baseline_fitness) && is.finite(first_recipe$baseline_fitness)) {
+    first_recipe$baseline_fitness
+  } else {
+    NULL
+  }
+
+  ens_hr <- if (!is.null(base_fit)) {
+    calculate_headroom(selection_res$final_fitness, base_fit, task)
+  } else {
+    NULL
+  }
+
+  # Propagate or pre-compute island breakdown metrics
+  isl_baselines <- first_recipe$island_baselines
+  isl_improvements <- first_recipe$island_improvements
+  isl_headroom_closed <- first_recipe$island_headroom_closed
+
+  if (!is.null(isl_baselines) && (is.null(isl_improvements) || is.null(isl_headroom_closed))) {
+    if (!is.null(first_recipe$island_bests) && length(first_recipe$island_bests) == length(isl_baselines)) {
+      isl_fits <- vapply(first_recipe$island_bests, function(ind) ind$fitness, numeric(1))
+      isl_hr <- calculate_headroom(isl_fits, isl_baselines, task)
+      if (is.null(isl_improvements)) isl_improvements <- isl_hr$improvement
+      if (is.null(isl_headroom_closed)) isl_headroom_closed <- isl_hr$headroom_closed
+    }
+  }
+
   structure(
     list(
       active_recipes = active_recipes,
@@ -555,6 +582,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       caruana_history = selection_res$history,
       single_best_fitness = single_best_fitness,
       ensemble_val_fitness = selection_res$final_fitness,
+      baseline_fitness = base_fit,
+      improvement = if (!is.null(ens_hr)) ens_hr$improvement else NULL,
+      headroom_closed = if (!is.null(ens_hr)) ens_hr$headroom_closed else NULL,
+      ensemble_headroom_closed = if (!is.null(ens_hr)) ens_hr$headroom_closed else NULL,
+      island_baselines = isl_baselines,
+      island_improvements = isl_improvements,
+      island_headroom_closed = isl_headroom_closed,
       method = method,
       stack_cv_fitness = if (!is.null(selection_res$stack_cv_fitness)) selection_res$stack_cv_fitness else NULL,
       task = task,
@@ -598,17 +632,7 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   }
 
   run_with_seed <- function(seed_val, code) {
-    if (is.null(seed_val)) return(code())
-    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-    on.exit({
-      if (!is.null(old_seed)) {
-        assign(".Random.seed", old_seed, envir = .GlobalEnv)
-      } else if (exists(".Random.seed", envir = .GlobalEnv)) {
-        rm(".Random.seed", envir = .GlobalEnv)
-      }
-    }, add = TRUE)
-    set.seed(seed_val)
-    code()
+    with_seed(seed_val, code)
   }
 
   run_greedy_trajectory <- function(y_eval, preds_eval, max_rounds, early_patience, is_verbose = FALSE) {
@@ -760,17 +784,7 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
 
   # Local seed wrapper preserving the user's global RNG state
   run_with_seed <- function(seed_val, code) {
-    if (is.null(seed_val)) return(code())
-    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-    on.exit({
-      if (!is.null(old_seed)) {
-        assign(".Random.seed", old_seed, envir = .GlobalEnv)
-      } else if (exists(".Random.seed", envir = .GlobalEnv)) {
-        rm(".Random.seed", envir = .GlobalEnv)
-      }
-    }, add = TRUE)
-    set.seed(seed_val)
-    code()
+    with_seed(seed_val, code)
   }
 
   # Metric helper (higher is better); NA predictions are masked out

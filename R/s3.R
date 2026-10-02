@@ -26,14 +26,18 @@ print.evo_recipe <- function(x, ...) {
     cat(sprintf("  Best Fitness:     %.4f\n", x$best_individual$fitness))
   }
   if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
-    gain <- if (!is.null(x$improvement)) x$improvement else (x$best_individual$fitness - x$baseline_fitness)
-    headroom_pct <- if (!is.null(x$headroom_closed)) x$headroom_closed * 100 else {
-      ideal <- if (x$task %in% c("classification", "multiclass")) 1.0 else 0.0
-      denom <- ideal - x$baseline_fitness
-      if (abs(denom) > 1e-6) (gain / denom) * 100 else 0.0
+    gain_str <- if (!is.null(x$improvement) && is.finite(x$improvement)) {
+      sprintf("%+.4f", x$improvement)
+    } else {
+      "-"
     }
-    cat(sprintf("  Baseline Score:   %.4f  (Gain: %+.4f | Headroom Closed: %+.1f%%)\n",
-                x$baseline_fitness, gain, headroom_pct))
+    headroom_str <- if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
+      sprintf("%+.1f%%", x$headroom_closed * 100)
+    } else {
+      "-"
+    }
+    cat(sprintf("  Baseline Score:   %.4f  (Gain: %s | Headroom Closed: %s)\n",
+                x$baseline_fitness, gain_str, headroom_str))
   }
   
   gene_count <- length(x$best_individual$genes)
@@ -95,6 +99,7 @@ summary.evo_recipe <- function(object, ...) {
     improvement = object$improvement,
     headroom_closed = object$headroom_closed,
     island_baselines = object$island_baselines,
+    island_best_fitness = object$island_best_fitness,
     island_improvements = object$island_improvements,
     island_headroom_closed = object$island_headroom_closed,
     holdout_fitness = object$best_individual$holdout_fitness,
@@ -149,13 +154,17 @@ print.summary_evo_recipe <- function(x, ...) {
     cat(sprintf("Best CV/Split Fitness:    %.6f\n", x$best_fitness))
   }
   if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
-    gain <- if (!is.null(x$improvement)) x$improvement else (x$best_fitness - x$baseline_fitness)
-    headroom_pct <- if (!is.null(x$headroom_closed)) x$headroom_closed * 100 else {
-      ideal <- if (x$task %in% c("classification", "multiclass")) 1.0 else 0.0
-      denom <- ideal - x$baseline_fitness
-      if (abs(denom) > 1e-6) (gain / denom) * 100 else 0.0
+    gain_str <- if (!is.null(x$improvement) && is.finite(x$improvement)) {
+      sprintf("%+.6f", x$improvement)
+    } else {
+      "-"
     }
-    cat(sprintf("Gain over Baseline:       %+.6f (Headroom Closed: %+.1f%%)\n", gain, headroom_pct))
+    headroom_str <- if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
+      sprintf("%+.1f%%", x$headroom_closed * 100)
+    } else {
+      "-"
+    }
+    cat(sprintf("Gain over Baseline:       %s (Headroom Closed: %s)\n", gain_str, headroom_str))
   }
   if (!is.null(x$holdout_fitness) && !is.na(x$holdout_fitness)) {
     cat(sprintf("Best Holdout Fitness:     %.6f\n", x$holdout_fitness))
@@ -165,7 +174,11 @@ print.summary_evo_recipe <- function(x, ...) {
   }
   if (!is.null(x$island_baselines) && length(x$island_baselines) > 1) {
     cat("\nIsland Baseline & Headroom Breakdown (Migration Drivers):\n")
-    best_vals <- if (!is.null(x$island_improvements)) sprintf("%.4f", x$island_baselines + x$island_improvements) else rep("-", length(x$island_baselines))
+    best_vals <- if (!is.null(x$island_best_fitness)) {
+      sprintf("%.4f", x$island_best_fitness)
+    } else {
+      rep("-", length(x$island_baselines))
+    }
     gain_vals <- if (!is.null(x$island_improvements)) sprintf("%+.4f", x$island_improvements) else rep("-", length(x$island_baselines))
     hd_vals <- if (!is.null(x$island_headroom_closed)) sprintf("%+.1f%%", x$island_headroom_closed * 100) else rep("-", length(x$island_baselines))
     df_islands <- data.frame(
@@ -234,13 +247,19 @@ plot.evo_recipe <- function(x, type = "fitness", ...) {
     x_vals  <- seq_along(y_vals)
     best_g  <- which.max(y_vals)
     baseline <- if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) x$baseline_fitness else y_vals[1]
-    total_gain <- y_vals[best_g] - baseline
-    ideal <- if (identical(x$task, "regression")) 0.0 else 1.0
-    denom <- ideal - baseline
-    headroom_pct <- if (abs(denom) > 1e-6) (total_gain / denom) * 100 else 0.0
     gain_lbl <- if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) "Gain vs Base" else "Gain vs Gen 1"
-    subtitle <- sprintf("Generations: %d  |  Best: %.4f  |  %s: %+.4f (Headroom: %+.1f%%)",
-                        length(y_vals), y_vals[best_g], gain_lbl, total_gain, headroom_pct)
+    gain_str <- if (!is.null(x$improvement) && is.finite(x$improvement)) {
+      sprintf("%+.4f", x$improvement)
+    } else {
+      "-"
+    }
+    headroom_str <- if (!is.null(x$headroom_closed) && is.finite(x$headroom_closed)) {
+      sprintf("%+.1f%%", x$headroom_closed * 100)
+    } else {
+      "-"
+    }
+    subtitle <- sprintf("Generations: %d  |  Best: %.4f  |  %s: %s (Headroom: %s)",
+                        length(y_vals), y_vals[best_g], gain_lbl, gain_str, headroom_str)
 
     y_range <- range(c(y_vals, baseline), na.rm = TRUE)
     y_pad   <- max(0.002, diff(y_range) * 0.12)
@@ -342,7 +361,7 @@ print.evo_ensemble <- function(x, ...) {
 
   if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
     cat(sprintf("  Baseline Score:       %.4f\n", x$baseline_fitness))
-    hr <- if (!is.null(x$ensemble_headroom_closed)) x$ensemble_headroom_closed else x$headroom_closed
+    hr <- if (!is.null(x$headroom_closed)) x$headroom_closed else x$ensemble_headroom_closed
     if (!is.null(hr) && is.finite(hr)) {
       cat(sprintf("  Headroom Closed:      %5.1f%%\n", hr * 100))
     }
@@ -381,7 +400,7 @@ summary.evo_ensemble <- function(object, ...) {
     stringsAsFactors = FALSE
   )
 
-  hr <- if (!is.null(object$ensemble_headroom_closed)) object$ensemble_headroom_closed else object$headroom_closed
+  hr <- if (!is.null(object$headroom_closed)) object$headroom_closed else object$ensemble_headroom_closed
 
   res <- list(
     evaluator = object$evaluator,
@@ -392,9 +411,11 @@ summary.evo_ensemble <- function(object, ...) {
     single_best_fitness = object$single_best_fitness,
     ensemble_val_fitness = object$ensemble_val_fitness,
     baseline_fitness = object$baseline_fitness,
+    improvement = object$improvement,
     headroom_closed = hr,
-    ensemble_headroom_closed = object$ensemble_headroom_closed,
+    ensemble_headroom_closed = hr,
     island_baselines = object$island_baselines,
+    island_improvements = object$island_improvements,
     island_headroom_closed = object$island_headroom_closed,
     active_count = length(active_names),
     total_islands = length(object$weights),
@@ -433,7 +454,7 @@ print.summary_evo_ensemble <- function(x, ...) {
   if (!is.null(x$baseline_fitness)) {
     cat(sprintf("Baseline Metric Score:  %.4f\n", x$baseline_fitness))
   }
-  hr <- if (!is.null(x$ensemble_headroom_closed)) x$ensemble_headroom_closed else x$headroom_closed
+  hr <- if (!is.null(x$headroom_closed)) x$headroom_closed else x$ensemble_headroom_closed
   if (!is.null(hr) && is.finite(hr)) {
     cat(sprintf("Headroom Closed:        %5.1f%%\n", hr * 100))
   }
