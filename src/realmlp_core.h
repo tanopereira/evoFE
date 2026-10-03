@@ -222,7 +222,7 @@ public:
     int B = x.rows();
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) if (n_features >= 4)
 #endif
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
@@ -262,7 +262,7 @@ public:
     }
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) if (n_features >= 4)
 #endif
     for (int j = 0; j < n_features; ++j) {
 #if defined(_OPENMP)
@@ -310,7 +310,7 @@ public:
     grad_beta_buf.setZero();
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) if (n_features >= 4)
 #endif
     for (int j = 0; j < n_features; ++j) {
 #if defined(_OPENMP)

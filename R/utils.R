@@ -394,3 +394,48 @@ canonical_metric_name <- function(metric) {
   }
   m
 }
+
+#' Default Physical Core Thread Count
+#'
+#' @return Integer scalar representing default threads on host machine.
+#' @keywords internal
+#' @noRd
+default_threads <- function() {
+  max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+}
+
+#' Apply Iteration Target to Model Arguments Across Evaluator Aliases
+#'
+#' Sets the target iteration or epoch count in `args` according to the evaluator type,
+#' updating any active iteration aliases and ensuring default fields (epochs for realmlp,
+#' nrounds otherwise) are populated.
+#'
+#' @param args List of model arguments.
+#' @param target_iters Integer target iterations or epochs.
+#' @param evaluator Evaluator name or object.
+#' @return Updated arguments list.
+#' @keywords internal
+#' @noRd
+apply_iteration_target <- function(args, target_iters, evaluator) {
+  if (is.null(target_iters) || !is.numeric(target_iters) || is.na(target_iters) || target_iters <= 0) {
+    return(args)
+  }
+  target_iters <- as.integer(target_iters)
+  iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
+                    "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
+  for (alias in iter_aliases) {
+    if (alias %in% names(args)) {
+      args[[alias]] <- target_iters
+    }
+  }
+  unwrapped <- unwrap_evaluator(evaluator)
+  if (!any(c("epochs", "n_epochs") %in% names(args)) && identical(unwrapped, "realmlp")) {
+    args$epochs <- target_iters
+  }
+  if (!any(c("nrounds", "iterations") %in% names(args))) {
+    args$nrounds <- target_iters
+  }
+  args$early_stopping_rounds <- 0L
+  args$early_stopping_round <- 0L
+  args
+}

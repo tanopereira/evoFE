@@ -166,7 +166,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             dynamic_population_growth_rate = 1.5,
                             dynamic_population_decay_rate = 0.7,
                             crossover_type = "both",
-                            threads = max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE),
+                            threads = default_threads(),
                             max_clustering_size = 5000,
                             verbose = TRUE, metric = "default",
                             model_all_final_genes = FALSE,
@@ -1253,21 +1253,7 @@ evolve_features <- function(data, target_col, task = "classification",
         message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
       }
     }
-    iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
-                      "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
-    for (alias in iter_aliases) {
-      if (alias %in% names(final_model_args)) {
-        final_model_args[[alias]] <- target_iters
-      }
-    }
-    if (!any(c("epochs", "n_epochs") %in% names(final_model_args)) && unwrap_evaluator(best_evaluator) == "realmlp") {
-      final_model_args$epochs <- target_iters
-    }
-    if (!any(c("nrounds", "iterations") %in% names(final_model_args))) {
-      final_model_args$nrounds <- target_iters
-    }
-    final_model_args$early_stopping_rounds <- 0L
-    final_model_args$early_stopping_round <- 0L
+    final_model_args <- apply_iteration_target(final_model_args, target_iters, best_evaluator)
   }
 
   final_evaluator <- unwrap_evaluator(best_evaluator)

@@ -1,11 +1,74 @@
 #include <Rcpp.h>
 #include <RcppEigen.h>
 #include <cstring>
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
 #include "realmlp_fused.h"
 #include "realmlp_workspace.h"
 #include "realmlp_core.h"
 
 // [[Rcpp::depends(RcppEigen)]]
+
+// Dynamic OpenBLAS thread control (safe fallback if OpenBLAS is not loaded or on Windows)
+static inline int get_openblas_threads() {
+#if !defined(_WIN32)
+  typedef int (*openblas_get_threads_fn)();
+  openblas_get_threads_fn fn = (openblas_get_threads_fn)dlsym(RTLD_DEFAULT, "openblas_get_num_threads");
+  if (fn) {
+    return fn();
+  }
+#endif
+  return -1;
+}
+
+static inline void set_openblas_threads(int num_threads) {
+#if !defined(_WIN32)
+  if (num_threads <= 0) return;
+  typedef void (*openblas_set_threads_fn)(int);
+  openblas_set_threads_fn fn = (openblas_set_threads_fn)dlsym(RTLD_DEFAULT, "openblas_set_num_threads");
+  if (fn) {
+    fn(num_threads);
+  }
+#endif
+}
+
+// RAII ThreadGuard to ensure CRAN-compliant thread restoration across OpenMP, Eigen, and OpenBLAS
+struct ThreadGuard {
+  int old_omp = -1;
+  int old_eigen = -1;
+  int old_openblas = -1;
+
+  ThreadGuard(int threads) {
+#ifdef _OPENMP
+    old_omp = omp_get_max_threads();
+    if (threads > 0) {
+      omp_set_num_threads(threads);
+    }
+#endif
+    old_eigen = Eigen::nbThreads();
+    Eigen::setNbThreads(threads > 0 ? threads : 1);
+
+    old_openblas = get_openblas_threads();
+    if (threads > 0) {
+      set_openblas_threads(threads);
+    }
+  }
+
+  ~ThreadGuard() {
+#ifdef _OPENMP
+    if (old_omp > 0) {
+      omp_set_num_threads(old_omp);
+    }
+#endif
+    if (old_eigen > 0) {
+      Eigen::setNbThreads(old_eigen);
+    }
+    if (old_openblas > 0) {
+      set_openblas_threads(old_openblas);
+    }
+  }
+};
 
 using namespace Rcpp;
 using namespace realmlp;
@@ -364,15 +427,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     base_lr = (is_cls || is_multi) ? 0.01 : 0.005;
   }
 
-  // Save previous thread state for CRAN-compliant restoration
-#ifdef _OPENMP
-  int old_omp_threads = omp_get_max_threads();
-  if (threads > 0) {
-    omp_set_num_threads(threads);
-  }
-#endif
-  int old_eigen_threads = Eigen::nbThreads();
-  Eigen::setNbThreads(threads > 0 ? threads : 1);
+  // RAII thread state management across OpenMP, Eigen, and OpenBLAS
+  ThreadGuard thread_guard(threads);
 
   // Fast single-pass fused standardization
   const double* x_train_ptr = x_train.begin();
@@ -528,7 +584,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     // Shuffle dataset once per epoch: column-contiguous for hardware prefetching
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) if (D >= 4)
 #endif
     for (int j = 0; j < D; ++j) {
       for (int i = 0; i < N; ++i) {
@@ -760,11 +816,6 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   fi_ws.allocate(N_eval, D, out_dim, hidden_dim, embed_dim, model.embedder.d_proj, model.embedder.k_freq, max_threads);
   std::vector<double> importances = model.compute_importances(X_eval, y_eval, fi_ws);
 
-  // Restore previous thread state (CRAN requirement)
-#ifdef _OPENMP
-  omp_set_num_threads(old_omp_threads);
-#endif
-  Eigen::setNbThreads(old_eigen_threads);
 
   List res = List::create(
     Named("model_state") = model_to_list(model),

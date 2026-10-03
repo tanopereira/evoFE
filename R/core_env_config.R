@@ -31,11 +31,7 @@ supports_color <- function() {
 #' @return Normalized thread count
 #' @noRd
 resolve_thread_count <- function(threads = 2L, extra_args = list()) {
-  if (!is.null(extra_args$nthreads)) threads <- as.integer(extra_args$nthreads)
-  if (!is.null(extra_args$nthread)) threads <- as.integer(extra_args$nthread)
-  if (!is.null(extra_args$num_threads)) threads <- as.integer(extra_args$num_threads)
-  if (!is.null(extra_args$n_jobs)) threads <- as.integer(extra_args$n_jobs)
-  threads
+  resolve_param_aliases(extra_args, defaults = list(threads = threads))$threads
 }
 
 #' Setup core environment configuration, threads, and RNG seed

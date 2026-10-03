@@ -117,7 +117,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     if (!is.null(first_recipe$threads)) {
       threads <- as.integer(first_recipe$threads)
     } else {
-      threads <- max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+      threads <- default_threads()
     }
   } else {
     threads <- as.integer(threads)
@@ -307,7 +307,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       } else {
         first_recipe$threads
       }
-      if (is.null(cand_threads_eval)) cand_threads_eval <- max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+      if (is.null(cand_threads_eval)) cand_threads_eval <- default_threads()
 
       ind_re <- do.call(evaluate_fitness, c(
         list(
@@ -576,21 +576,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         } else {
           as.integer(ind_i$best_iteration)
         }
-        iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
-                          "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
-        for (alias in iter_aliases) {
-          if (alias %in% names(final_args_i)) {
-            final_args_i[[alias]] <- target_iters
-          }
-        }
-        if (!any(c("epochs", "n_epochs") %in% names(final_args_i)) && unwrap_evaluator(eval_i) == "realmlp") {
-          final_args_i$epochs <- target_iters
-        }
-        if (!any(c("nrounds", "iterations") %in% names(final_args_i))) {
-          final_args_i$nrounds <- target_iters
-        }
-        final_args_i$early_stopping_rounds <- 0L
-        final_args_i$early_stopping_round <- 0L
+        final_args_i <- apply_iteration_target(final_args_i, target_iters, eval_i)
       }
 
       final_eval_i <- unwrap_evaluator(eval_i)
@@ -607,7 +593,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       } else {
         first_recipe$threads
       }
-      if (is.null(cand_threads)) cand_threads <- max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+      if (is.null(cand_threads)) cand_threads <- default_threads()
 
       res_m <- do.call(train_model, c(
         list(

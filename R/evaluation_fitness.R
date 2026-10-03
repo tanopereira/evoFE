@@ -97,16 +97,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     train_fold_feat <- res$train
     val_fold_feat <- res$val
 
-    # Features = original + new
-    gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
-    features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
-
-    # Convert features to numeric matrix
-    has_cat <- length(res$ind$categorical_cols) > 0 || length(res$ind$datetime_cols) > 0 ||
-      any(vapply(res$ind$genes, function(g) {
-        t_def <- evo_transformers[[g$transformer_name]]
-        !is.null(t_def$output_type) && t_def$output_type == "categorical"
-      }, logical(1)))
+    features <- extract_individual_features(res$ind, target_col = target_col)
     dt_sub_tr <- train_fold_feat[, features, with = FALSE]
     dt_sub_va <- val_fold_feat[, features, with = FALSE]
     x_train <- .sanitize_feature_matrix(dt_sub_tr)
@@ -114,8 +105,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     y_train <- train_fold_feat[[target_col]]
     y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
-      y_train <- as.integer(factor(y_train, levels = classes)) - 1
-      y_val <- as.integer(factor(y_val, levels = classes)) - 1
+      y_train <- encode_multiclass_target(y_train, classes)
+      y_val <- encode_multiclass_target(y_val, classes)
     } else if (task == "classification") {
       if (is.factor(y_train)) {
         y_train <- as.integer(y_train) - 1L
@@ -298,16 +289,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       val_fold_feat <- res$val
       if (!is.null(res$ind)) last_fit_genes <- res$ind$genes
 
-      # Features = original + new
-      gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
-      features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
-
-      # Convert features to numeric matrix
-      has_cat <- length(res$ind$categorical_cols) > 0 || length(res$ind$datetime_cols) > 0 ||
-        any(vapply(res$ind$genes, function(g) {
-          t_def <- evo_transformers[[g$transformer_name]]
-          !is.null(t_def$output_type) && t_def$output_type == "categorical"
-        }, logical(1)))
+      features <- extract_individual_features(res$ind, target_col = target_col)
       dt_sub_tr <- train_fold_feat[, features, with = FALSE]
       dt_sub_va <- val_fold_feat[, features, with = FALSE]
       x_train <- .sanitize_feature_matrix(dt_sub_tr)
@@ -315,8 +297,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       y_train <- train_fold_feat[[target_col]]
       y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
-        y_train <- as.integer(factor(y_train, levels = classes)) - 1
-        y_val <- as.integer(factor(y_val, levels = classes)) - 1
+        y_train <- encode_multiclass_target(y_train, classes)
+        y_val <- encode_multiclass_target(y_val, classes)
       } else if (task == "classification") {
         if (is.factor(y_train)) {
           y_train <- as.integer(y_train) - 1L
