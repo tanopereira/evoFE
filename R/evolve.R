@@ -1,51 +1,3 @@
-truncate_cols <- function(cols, max_show = 10) {
-  if (length(cols) <= max_show) {
-    return(paste(cols, collapse = ", "))
-  }
-  paste0(paste(cols[1:max_show], collapse = ", "), ", ... (+ ", length(cols) - max_show, " more)")
-}
-
-# --- Internal helpers ---
-
-#' Check if terminal supports ANSI colors
-#' @keywords internal
-supports_color <- function() {
-  term <- Sys.getenv("TERM")
-  if (term %in% c("dumb", "")) {
-    return(FALSE)
-  }
-  if (.Platform$OS.type == "windows") {
-    return(interactive() || !is.na(Sys.getenv("RSTUDIO", unset = NA)))
-  }
-  isatty(stdout()) || !is.na(Sys.getenv("RSTUDIO", unset = NA))
-}
-#'
-#' Selects the individual with the highest fitness among a randomly chosen tournament of size \code{k}.
-#'
-#' @param pop List of candidate individual objects (each with a numeric \code{fitness} element).
-#' @param k Integer tournament size (number of candidates drawn at random).
-#' @return The winning candidate individual object from \code{pop}.
-#' @keywords internal
-#' @examples
-#' \donttest{
-#' pop <- list(
-#'   list(fitness = 0.5),
-#'   list(fitness = 0.8),
-#'   list(fitness = 0.2)
-#' )
-#' best <- tournament_select(pop, k = 2)
-#' }
-#' @export
-tournament_select <- function(pop, k = 3) {
-  k <- min(k, length(pop))
-  candidates <- sample(seq_along(pop), k)
-  fitnesses <- sapply(candidates, function(i) {
-    f <- pop[[i]]$fitness
-    if (is.na(f)) -Inf else f
-  })
-  pop[[candidates[which.max(fitnesses)]]]
-}
-
 #' Run evolutionary feature engineering
 #'
 #' @param data A data.frame or data.table
@@ -243,10 +195,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             port = NULL, ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
-  if (!is.null(extra_args_top$nthreads)) threads <- as.integer(extra_args_top$nthreads)
-  if (!is.null(extra_args_top$nthread)) threads <- as.integer(extra_args_top$nthread)
-  if (!is.null(extra_args_top$num_threads)) threads <- as.integer(extra_args_top$num_threads)
-  if (!is.null(extra_args_top$n_jobs)) threads <- as.integer(extra_args_top$n_jobs)
+  threads <- resolve_thread_count(threads, extra_args_top)
 
   # Validate complexity arguments
   if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1 || complexity_penalty < 0) {
@@ -257,24 +206,24 @@ evolve_features <- function(data, target_col, task = "classification",
     stop("'complexity_floor' must be a numeric value between 0 and 1.")
   }
   complexity_target <- match.arg(complexity_target, c("all_features", "genes"))
-  if (!is.null(metacv_mode)) {
-    warning("Argument 'metacv_mode' is deprecated; please use 'metacv_selection' instead.")
-    if (metacv_mode == "tournament") {
-      metacv_selection <- "tournament"
-    } else if (metacv_mode == "headroom") {
-      metacv_selection <- "headroom"
-    } else {
-      metacv_selection <- "fitness"
-    }
-  }
-  metacv_selection <- match.arg(metacv_selection, c("fitness", "tournament", "headroom"))
 
-  # Normalize evaluation_strategy
-  if (is.character(evaluation_strategy) && length(evaluation_strategy) == 1) {
-    if (evaluation_strategy %in% c("meta_cv", "metacv")) {
-      evaluation_strategy <- "metacv"
-    }
-  }
+  # Normalize and validate MetaCV arguments
+  meta_conf <- validate_metacv_config(
+    evaluation_strategy = evaluation_strategy,
+    islands = islands,
+    cv_folds = cv_folds,
+    migration = migration,
+    row_split_islands = row_split_islands,
+    per_island_validation = per_island_validation,
+    metacv_selection = metacv_selection,
+    metacv_mode = metacv_mode,
+    missing_islands = missing(islands),
+    missing_cv_folds = missing(cv_folds)
+  )
+  evaluation_strategy <- meta_conf$evaluation_strategy
+  islands <- meta_conf$islands
+  cv_folds <- meta_conf$cv_folds
+  metacv_selection <- meta_conf$metacv_selection
 
   # If custom migration config is provided, sync islands count and topology from migration$topology
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
@@ -284,27 +233,7 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  # Validate metacv islands & cv_folds alignment
-  if (evaluation_strategy == "metacv") {
-    if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
-      islands <- migration$topology$islands
-      cv_folds <- islands
-    } else if (missing(islands) && !missing(cv_folds)) {
-      islands <- cv_folds
-    } else if (!missing(islands) && missing(cv_folds)) {
-      cv_folds <- islands
-    } else if (missing(islands) && missing(cv_folds)) {
-      islands <- 3L
-      cv_folds <- 3L
-    } else if (islands != cv_folds) {
-      stop("'islands' must equal 'cv_folds' when evaluation_strategy is 'metacv'.")
-    }
-    if (islands < 2) {
-      stop("evaluation_strategy = 'metacv' requires at least 2 islands (got 1).")
-    }
-  }
-
-  # Validate island parameters early to support list allowed_transformers validation
+  # Validate island parameters early
   if (!is.numeric(islands) || islands < 1) {
     stop("islands must be a positive integer >= 1.")
   }
@@ -360,49 +289,6 @@ evolve_features <- function(data, target_col, task = "classification",
 
   # Parse allowed_transformers
   all_trans <- names(evo_transformers)
-
-  .resolve_allowed_transformers <- function(at, all_t) {
-    if (is.null(at)) at <- "all"
-    if (length(at) == 1) {
-      if (at == "all") {
-        at <- all_t
-      } else if (at == "basic") {
-        at <- intersect(all_t, c(
-          "add", "subtract", "multiply", "divide",
-          "log", "sqrt", "reciprocal", "power", "displaced_log",
-          "normalized_difference", "frequency_encode",
-          "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
-          "feature_hash",
-          "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
-        ))
-      } else if (at == "clustering") {
-        at <- intersect(all_t, c(
-          "genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist",
-          "mst_score", "deadwood", "umap", "random_projection", "truncated_svd",
-          "pca", "umap_genie", "umap_lumbermark", "mca", "famd", "between_group_pca"
-        ))
-      } else if (at == "robust") {
-        at <- intersect(all_t, c(
-          "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
-          "add", "subtract", "multiply", "divide",
-          "normalized_difference", "log_ratio",
-          "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",
-          "feature_hash",
-          "groupby_mean", "groupby_median", "groupby_sd",
-          "groupby_zscore", "groupby_ratio", "groupby_quantile",
-          "groupby_min", "groupby_max", "groupby_signed_log",
-          "quantile_binning", "pca", "concat", "mca", "famd", "between_group_pca"
-        ))
-      }
-    }
-    at <- intersect(at, all_t)
-    if (length(at) == 0) {
-      warning("No valid transformers found in 'allowed_transformers'. Falling back to 'all'.")
-      at <- all_t
-    }
-    at
-  }
-
   if (is.list(allowed_transformers)) {
     if (islands == 1) {
       if (length(allowed_transformers) > 1) {
@@ -427,88 +313,9 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  # Temporarily configure max clustering size and threads options
-  old_max_size <- getOption("evoFE.max_clustering_size")
-  old_threads <- getOption("evoFE.threads")
-  old_opt_dt <- getOption("datatable.threads")
-  options(evoFE.max_clustering_size = max_clustering_size, evoFE.threads = threads)
-
-  # Query all initial thread settings BEFORE setting any thread limits
-  old_dt <- if (requireNamespace("data.table", quietly = TRUE)) tryCatch(data.table::getDTthreads(), error = function(e) NULL) else NULL
-  old_omp <- if (requireNamespace("RhpcBLASctl", quietly = TRUE)) tryCatch(RhpcBLASctl::omp_get_max_threads(), error = function(e) NULL) else NULL
-  old_blas <- if (requireNamespace("RhpcBLASctl", quietly = TRUE)) tryCatch(RhpcBLASctl::blas_get_num_procs(), error = function(e) NULL) else NULL
-  old_qf <- if (requireNamespace("quitefastmst", quietly = TRUE)) tryCatch(quitefastmst::omp_get_max_threads(), error = function(e) NULL) else NULL
-
-  # Scrupulously register on.exit() restorations in the top-level evolve_features() frame
-  on.exit(
-    {
-      options(evoFE.max_clustering_size = old_max_size)
-      options(evoFE.threads = old_threads)
-      if (!is.null(old_omp) && !is.na(old_omp) && is.numeric(old_omp) && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-        tryCatch(RhpcBLASctl::omp_set_num_threads(old_omp), error = function(e) NULL)
-      }
-      if (!is.null(old_qf) && !is.na(old_qf) && is.numeric(old_qf) && requireNamespace("quitefastmst", quietly = TRUE)) {
-        tryCatch(quitefastmst::omp_set_num_threads(old_qf), error = function(e) NULL)
-      }
-      if (!is.null(old_blas) && !is.na(old_blas) && is.numeric(old_blas) && requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-        tryCatch(RhpcBLASctl::blas_set_num_threads(old_blas), error = function(e) NULL)
-      }
-      if (!is.null(old_dt) && !is.na(old_dt) && is.numeric(old_dt)) {
-        tryCatch(data.table::setDTthreads(old_dt), error = function(e) NULL)
-      }
-      if (!is.null(old_opt_dt) && !is.na(old_opt_dt) && is.numeric(old_opt_dt)) {
-        tryCatch(options(datatable.threads = old_opt_dt), error = function(e) NULL)
-      }
-    },
-    add = TRUE
-  )
-
-  # ---- Reproducible RNG scope (CRAN-safe save/restore of .Random.seed) ----
-  # Registered AFTER the thread-restoration handler above on purpose: multiple
-  # on.exit handlers run in registration order, and
-  # quitefastmst::omp_set_num_threads() recreates .Random.seed as a side
-  # effect, so this restore must be the final one to execute.
-  # Validate seed
-  if (!is.null(seed) && (!is.numeric(seed) || length(seed) != 1 || is.na(seed) ||
-      !is.finite(seed))) {
-    stop("'seed' must be NULL or a single finite number.")
-  }
-  seed <- if (!is.null(seed)) as.integer(seed) else NULL
-  old_seed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-    get(".Random.seed", envir = globalenv(), inherits = FALSE)
-  } else {
-    NULL
-  }
-  on.exit({
-    if (!is.null(old_seed)) {
-      assign(".Random.seed", old_seed, envir = globalenv())
-    } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      rm(".Random.seed", envir = globalenv())
-    }
-  }, add = TRUE)
-  if (!is.null(seed)) {
-    set.seed(seed)
-  }
-
-  # Only AFTER capturing initial values, apply thread modifications if requested
-  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
-    if (!is.null(old_omp) && !is.na(old_omp) && is.numeric(old_omp) && !is.null(threads) && !is.na(threads) && is.numeric(threads)) {
-      tryCatch(RhpcBLASctl::omp_set_num_threads(as.integer(threads)), error = function(e) NULL)
-    }
-    if (!is.null(old_blas) && !is.na(old_blas) && is.numeric(old_blas) && !is.null(threads) && !is.na(threads) && is.numeric(threads)) {
-      tryCatch(RhpcBLASctl::blas_set_num_threads(as.integer(threads)), error = function(e) NULL)
-    }
-  }
-  if (requireNamespace("data.table", quietly = TRUE)) {
-    if (!is.null(threads) && !is.na(threads) && is.numeric(threads)) {
-      tryCatch(data.table::setDTthreads(as.integer(threads)), error = function(e) NULL)
-    }
-  }
-  if (requireNamespace("quitefastmst", quietly = TRUE)) {
-    if (!is.null(old_qf) && !is.na(old_qf) && is.numeric(old_qf) && !is.null(threads) && !is.na(threads) && is.numeric(threads)) {
-      tryCatch(quitefastmst::omp_set_num_threads(as.integer(threads)), error = function(e) NULL)
-    }
-  }
+  # Setup core environment & register CRAN-safe restoration
+  env_state <- setup_core_env(threads = threads, max_clustering_size = max_clustering_size, seed = seed)
+  on.exit(restore_core_env(env_state), add = TRUE)
 
   if (!task %in% c("classification", "multiclass", "regression")) {
     stop("task must be one of: 'classification', 'multiclass', 'regression'.")
@@ -697,6 +504,9 @@ evolve_features <- function(data, target_col, task = "classification",
       message(sprintf("  Original Datetime columns: %s", truncate_cols(datetime_cols)))
     }
   }
+
+  shared_full <- data.table::as.data.table(data)
+
   # Pre-calculate fixed CV folds or split IDs
   fold_ids <- NULL
   shared_folds <- NULL
@@ -709,12 +519,12 @@ evolve_features <- function(data, target_col, task = "classification",
     fold_ids <- .build_cv_folds(data, cv_folds, cv_strategy, time_col, group_col)
 
     if (row_split_islands) {
-      island_shared_folds <- lapply(1:islands, function(j) list())
-      for (f in 1:cv_folds) {
+      island_shared_folds <- lapply(seq_len(islands), function(j) list())
+      for (f in seq_len(cv_folds)) {
         train_indices <- which(fold_ids != f)
         train_indices <- sample(train_indices)
         split_indices <- split(train_indices, cut(seq_along(train_indices), islands, labels = FALSE))
-        for (j in 1:islands) {
+        for (j in seq_len(islands)) {
           island_shared_folds[[j]][[f]] <- list(
             train = data.table::as.data.table(data[split_indices[[j]], ]),
             val = data.table::as.data.table(data[fold_ids == f, ])
@@ -722,9 +532,8 @@ evolve_features <- function(data, target_col, task = "classification",
         }
       }
     } else {
-      # Shared data.table cache for folds and full data to avoid redundant computations
       shared_folds <- list()
-      for (f in 1:cv_folds) {
+      for (f in seq_len(cv_folds)) {
         shared_folds[[f]] <- list(
           train = data.table::as.data.table(data[fold_ids != f, ]),
           val = data.table::as.data.table(data[fold_ids == f, ])
@@ -732,22 +541,10 @@ evolve_features <- function(data, target_col, task = "classification",
       }
     }
   } else if (evaluation_strategy == "metacv") {
-    fold_ids <- .build_cv_folds(data, islands, cv_strategy, time_col, group_col)
-    island_shared_splits <- lapply(1:islands, function(j) {
-      list(
-        train = data.table::as.data.table(data[fold_ids != j, ]),
-        val   = data.table::as.data.table(data[fold_ids == j, ])
-      )
-    })
+    metacv_parts <- build_metacv_partitions(data, islands, cv_strategy, time_col, group_col, verbose)
+    fold_ids <- metacv_parts$fold_ids
+    island_shared_splits <- metacv_parts$island_shared_splits
     shared_splits <- NULL
-    if (verbose) {
-      message(sprintf("  MetaCV partitions -> %d folds mapped across %d islands", islands, islands))
-      for (j in 1:islands) {
-        message(sprintf("    Island %d -> Train: %d rows (Folds -%d), Val: %d rows (Fold %d)",
-                        j, nrow(island_shared_splits[[j]]$train), j,
-                        nrow(island_shared_splits[[j]]$val), j))
-      }
-    }
   } else if (evaluation_strategy == "split") {
     if (is.null(split_ids)) {
       split_ids_val <- stratified_split(data[[target_col]], split_ratio)
@@ -767,10 +564,8 @@ evolve_features <- function(data, target_col, task = "classification",
       train_indices <- sample(train_indices)
       split_indices <- split(train_indices, cut(seq_along(train_indices), islands, labels = FALSE))
       island_shared_splits <- list()
-      for (j in 1:islands) {
+      for (j in seq_len(islands)) {
         if (per_island_validation) {
-          # Carve a local val from within this island's rows.
-          # Use only train+val components of split_ratio; holdout is handled globally.
           local_split_frac <- split_ratio[1] / sum(split_ratio[1:2])
           n_j <- length(split_indices[[j]])
           n_local_train <- max(1L, floor(local_split_frac * n_j))
@@ -798,83 +593,56 @@ evolve_features <- function(data, target_col, task = "classification",
     } else {
       shared_splits <- list(
         train = global_train_dt,
-        val = global_val_dt
+        val = global_val_dt,
+        holdout = global_holdout_dt
       )
-      if (!is.null(global_holdout_dt)) {
-        shared_splits$holdout <- global_holdout_dt
-      }
     }
-
-    if (verbose) {
-      if (row_split_islands) {
-        if (per_island_validation) {
-          local_split_frac <- split_ratio[1] / sum(split_ratio[1:2])
-          n_j_approx <- round(nrow(global_train_dt) / islands)
-          n_local_train_approx <- round(local_split_frac * n_j_approx)
-          n_local_val_approx <- n_j_approx - n_local_train_approx
-          train_size_str <- sprintf(
-            "%d (split into %d islands of ~%d local train / ~%d local val rows)",
-            nrow(global_train_dt), islands, n_local_train_approx, n_local_val_approx
-          )
-          msg_split <- sprintf("  Split sizes -> Train: %s, Global Val (tournament only): %d", train_size_str, nrow(global_val_dt))
-        } else {
-          train_size_str <- sprintf(
-            "%d (split into %d local sets of ~%d rows)",
-            nrow(global_train_dt), islands, round(nrow(global_train_dt) / islands)
-          )
-          msg_split <- sprintf("  Split sizes -> Train: %s, Val: %d", train_size_str, nrow(global_val_dt))
-        }
-      } else {
-        msg_split <- sprintf("  Split sizes -> Train: %d, Val: %d", nrow(global_train_dt), nrow(global_val_dt))
-      }
-      if (!is.null(global_holdout_dt)) {
-        msg_split <- paste0(msg_split, sprintf(", Holdout: %d", nrow(global_holdout_dt)))
-      }
-      message(msg_split)
-    }
-  } else {
-    stop("Unknown evaluation_strategy. Must be 'cv', 'split', or 'metacv'.")
   }
 
-  shared_full <- data.table::as.data.table(data)
-
-  # --- Multi-fidelity evaluation setup ---
-  # During warm-up generations, individuals are screened on row-subsampled
-  # folds; the most promising fraction is then re-evaluated at full fidelity
-  # before any selection decision uses their fitness.
-  mf_warmup_gens <- 0L
-  mf_shared_folds <- NULL
-  mf_island_shared_folds <- NULL
+  # Multi-fidelity screening setup
+  mf_warmup_gens <- ceiling(generations * mf_warmup_frac)
   mf_shared_splits <- NULL
   mf_island_shared_splits <- NULL
+  mf_shared_folds <- NULL
+  mf_island_shared_folds <- NULL
   mf_shared_full <- NULL
+
   if (multi_fidelity) {
-    mf_warmup_gens <- max(1L, as.integer(floor(generations * mf_warmup_frac)))
+    if (!is.numeric(mf_sample_frac) || length(mf_sample_frac) != 1 ||
+        mf_sample_frac <= 0 || mf_sample_frac >= 1) {
+      stop("'mf_sample_frac' must be a numeric value strictly between 0 and 1.")
+    }
+    if (!is.numeric(mf_warmup_frac) || length(mf_warmup_frac) != 1 ||
+        mf_warmup_frac <= 0 || mf_warmup_frac > 1) {
+      stop("'mf_warmup_frac' must be a numeric value in (0, 1].")
+    }
+
     .mf_subsample <- function(part) {
-      if (is.null(part) || nrow(part) < 30L) return(part)
-      k <- max(20L, ceiling(nrow(part) * mf_sample_frac))
-      if (k >= nrow(part)) return(part)
-      part[sample.int(nrow(part), k), ]
+      if (is.null(part) || nrow(part) == 0L) return(part)
+      n_take <- max(30L, ceiling(nrow(part) * mf_sample_frac))
+      n_take <- min(n_take, nrow(part))
+      part[seq_len(n_take), ]
     }
     .mf_subsample_fold <- function(fl) {
-      if (is.null(fl)) return(NULL)
-      res <- list(train = .mf_subsample(fl$train), val = fl$val)
-      if (!is.null(fl$holdout)) res$holdout <- fl$holdout
-      res
+      if (is.null(fl)) return(fl)
+      list(train = .mf_subsample(fl$train), val = fl$val)
+    }
+
+    if (!is.null(shared_splits)) {
+      mf_shared_splits <- list(
+        train = .mf_subsample(shared_splits$train),
+        val = shared_splits$val,
+        holdout = shared_splits$holdout
+      )
+    }
+    if (!is.null(island_shared_splits)) {
+      mf_island_shared_splits <- lapply(island_shared_splits, .mf_subsample_fold)
     }
     if (!is.null(shared_folds)) {
       mf_shared_folds <- lapply(shared_folds, .mf_subsample_fold)
     }
     if (!is.null(island_shared_folds)) {
-      mf_island_shared_folds <- lapply(island_shared_folds, function(per_island) {
-        lapply(per_island, .mf_subsample_fold)
-      })
-    }
-    if (!is.null(shared_splits)) {
-      mf_shared_splits <- .mf_subsample_fold(shared_splits)
-    }
-    if (!is.null(island_shared_splits)) {
-      mf_island_shared_splits <- lapply(island_shared_splits, .mf_subsample_fold)
+      mf_island_shared_folds <- lapply(island_shared_folds, function(isl) lapply(isl, .mf_subsample_fold))
     }
     mf_shared_full <- if (!is.null(shared_full) && nrow(shared_full) > 30L) .mf_subsample(shared_full) else NULL
     if (verbose) {
@@ -885,9 +653,8 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  # Fitness cache to avoid re-evaluating identical recipes
+  # Fitness and state caches
   fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
-  # State cache for full dataset to avoid re-fitting stateful transformers
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
 
   viewer <- NULL
@@ -908,21 +675,14 @@ evolve_features <- function(data, target_col, task = "classification",
     )
   }
 
-  tiers_count <- if (!is.null(topo_obj$tiers)) {
-    topo_obj$tiers
-  } else {
-    3L
-  }
-
+  tiers_count <- if (!is.null(topo_obj$tiers)) topo_obj$tiers else 3L
   adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
 
   policy_str <- "push_uniform"
   policy_thresh_val <- "min_peer"
   payload_str <- "full_individual"
   if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
-    if (!is.null(migration$payload)) {
-      payload_str <- migration$payload
-    }
+    if (!is.null(migration$payload)) payload_str <- migration$payload
     if (!is.null(migration$policy)) {
       pol <- migration$policy
       if (inherits(pol, "evo_policy_push_uniform")) {
@@ -944,8 +704,7 @@ evolve_features <- function(data, target_col, task = "classification",
     evolution_log <- list(
       config = list(
         islands = islands, pop_size = pop_size, generations = generations,
-        tiers = tiers_count,
-        adj_list = adj_list_payload,
+        tiers = tiers_count, adj_list = adj_list_payload,
         task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
@@ -954,8 +713,7 @@ evolve_features <- function(data, target_col, task = "classification",
         migration_payload = payload_str, migration_temperature = migration_temperature,
         pull_stagnation_threshold = pull_stagnation_threshold,
         early_stopping_generations = early_stopping_generations,
-        numeric_cols = numeric_cols,
-        categorical_cols = categorical_cols,
+        numeric_cols = numeric_cols, categorical_cols = categorical_cols,
         datetime_cols = datetime_cols
       ),
       baseline = NULL,
@@ -970,7 +728,6 @@ evolve_features <- function(data, target_col, task = "classification",
     on.exit(if (!is.null(viewer)) tryCatch(viewer$stop(), error = function(e) NULL), add = TRUE)
     if (interactive()) {
       utils::browseURL(viewer$url)
-      # Poll for websocket connection (up to 10 seconds)
       max_wait <- 10.0
       slept <- 0.0
       while (is.null(viewer$get_connection()) && slept < max_wait) {
@@ -986,7 +743,7 @@ evolve_features <- function(data, target_col, task = "classification",
   island_state_caches <- NULL
   island_baseline_inds <- list()
 
-  # 1. Generation 0: Evaluate baseline individual first (original features only)
+  # Generation 0: Baseline individual
   baseline_ind <- create_individual(
     genes = list(),
     numeric_cols = numeric_cols,
@@ -1020,7 +777,6 @@ evolve_features <- function(data, target_col, task = "classification",
       message(sprintf("  Tested Individual 1 -> Fitness: %.4f", baseline_ind$fitness))
     }
 
-    # Cache the baseline individual's fitness
     recipe_str <- individual_to_recipe_string(baseline_ind)
     cache_key <- digest::digest(paste0(evaluator_main, "::", recipe_str), algo = "md5", serialize = FALSE)
     assign(cache_key, baseline_ind, envir = fitness_cache)
@@ -1033,9 +789,9 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (islands > 1) {
-    island_fitness_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
-    island_state_caches <- lapply(1:islands, function(x) new.env(hash = TRUE, parent = emptyenv()))
-    for (j in 1:islands) {
+    island_fitness_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = emptyenv()))
+    island_state_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = emptyenv()))
+    for (j in seq_len(islands)) {
       local_baseline <- create_individual(
         genes = list(),
         numeric_cols = numeric_cols,
@@ -1076,49 +832,27 @@ evolve_features <- function(data, target_col, task = "classification",
     }
 
     if (evaluation_strategy == "metacv") {
-      # Stitch out-of-fold validation predictions and compute honest cross-validated baseline
-      oof_base_preds <- if (task == "multiclass") {
-        matrix(NA_real_, nrow = nrow(data), ncol = num_class)
-      } else {
-        rep(NA_real_, nrow(data))
-      }
-      for (j in 1:islands) {
-        v_idx <- which(fold_ids == j)
-        vp <- island_baseline_inds[[j]]$val_preds
-        if (!is.null(vp)) {
-          if (task == "multiclass") {
-            if (!is.matrix(vp)) vp <- matrix(vp, ncol = num_class, byrow = FALSE)
-            oof_base_preds[v_idx, ] <- vp
-          } else {
-            oof_base_preds[v_idx] <- vp
-          }
-        }
-      }
-      island_base_fits <- vapply(island_baseline_inds, function(ind) ind$fitness, numeric(1))
-      finite_base_fits <- island_base_fits[is.finite(island_base_fits)]
-      mean_base_fit <- if (length(finite_base_fits) > 0) mean(finite_base_fits) else -Inf
-      baseline_ind$fitness <- mean_base_fit
-      baseline_ind$raw_fitness <- mean_base_fit
-      baseline_ind$val_preds <- oof_base_preds
-      baseline_ind$evaluator <- evaluator_main
-
-      recipe_str <- individual_to_recipe_string(baseline_ind)
-      cache_key <- digest::digest(paste0(evaluator_main, "::", recipe_str), algo = "md5", serialize = FALSE)
-      assign(cache_key, baseline_ind, envir = fitness_cache)
-
-      if (verbose) {
-        message(sprintf("  Tested Individual 1 (MetaCV Baseline) -> Fitness: %.4f (mean over %d folds)", baseline_ind$fitness, islands))
-      }
+      baseline_ind <- stitch_metacv_baseline_oof(
+        island_baseline_inds = island_baseline_inds,
+        fold_ids = fold_ids,
+        data = data,
+        task = task,
+        num_class = num_class,
+        evaluator_main = evaluator_main,
+        fitness_cache = fitness_cache,
+        baseline_ind = baseline_ind,
+        islands = islands,
+        verbose = verbose
+      )
     }
   }
 
   if (record) {
-    # Generate 5-row baseline data sample
     res_sample <- tryCatch(
       {
-        apply_individual(baseline_ind, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        apply_individual(baseline_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = state_cache)
       },
-      error = function(e) list(train = head(shared_full, 5))
+      error = function(e) list(train = utils::head(shared_full, 5))
     )
     baseline_dt <- res_sample$train
     baseline_list <- lapply(names(baseline_dt), function(col) {
@@ -1133,7 +867,7 @@ evolve_features <- function(data, target_col, task = "classification",
       sample = baseline_list,
       importances = if (!is.null(baseline_ind$importances)) as.list(baseline_ind$importances) else list(),
       islands = if (islands > 1) {
-        lapply(1:islands, function(j) {
+        lapply(seq_len(islands), function(j) {
           list(
             island = j,
             evaluator = island_evaluators[j],
@@ -1147,1124 +881,100 @@ evolve_features <- function(data, target_col, task = "classification",
     viewer$send(list(type = "baseline", data = evolution_log$baseline))
   }
 
-  best_ind_source <- "Island 1"
-
+  # Initialize initial population(s)
   if (islands == 1) {
-    # 2. Initialize population for Generation 1 using baseline importances
-    pop <- initialize_population(pop_size, numeric_cols, categorical_cols, datetime_cols = datetime_cols, initial_genes = 2, task = task, importances = baseline_ind$importances, allowed_transformers = allowed_transformers, mask_temp_factor = mask_temp_factor)
-    pop[[1]] <- baseline_ind
-
-    global_best_fitness <- baseline_ind$fitness
-    running_best_fitness <- baseline_ind$fitness
-    generations_without_improvement <- 0
-    fitness_history <- numeric(generations)
-
-    historical_best_genes <- list()
-    current_pop_size <- pop_size
-
-    for (g in 1:generations) {
-      if (verbose) {
-        if (global_best_fitness > -Inf) {
-          message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
-        } else {
-          message(sprintf("\n--- Generation %d / %d ---", g, generations))
-        }
-        # Print all individuals in the population for this generation
-        for (i in seq_along(pop)) {
-          fit_str <- if (is.na(pop[[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop[[i]]$fitness)
-          message(sprintf("  Individual %d (%s): %s", i, fit_str, individual_to_recipe_string(pop[[i]])))
-        }
-      }
-
-      if (record) {
-        viewer$send(list(type = "status", data = list(island = 1, status = "evaluating", generation = g)))
-      }
-      # Evaluate fitness
-      eval_res <- evaluate_pop_mf(pop, data, target_col, task, cv_folds, evaluation_strategy,
-        split_ids_val, shared_splits, evaluator,
-        fold_ids, shared_folds, shared_full, state_cache,
-        fitness_cache, threads, verbose, running_best_fitness,
-        metric = metric, complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        baseline_fitness = baseline_ind$fitness,
-        n_samples = nrow(data),
-        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
-        mf_on = multi_fidelity && g <= mf_warmup_gens,
-        lf_shared_splits = mf_shared_splits,
-        lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
-      )
-      pop <- eval_res$pop
-      running_best_fitness <- eval_res$running_best_fitness
-
-      # Sort population by fitness descending
-      fitness_vals <- sapply(pop, function(ind) ind$fitness)
-      pop <- pop[order(fitness_vals, decreasing = TRUE)]
-
-      # Track historical best genes from this generation
-      historical_best_genes <- c(historical_best_genes, pop[[1]]$genes)
-
-      best_fitness <- pop[[1]]$fitness
-      fitness_history[g] <- best_fitness
-      if (verbose) message(sprintf("  Gen %d Best Fitness: %.4f", g, best_fitness))
-      if (verbose) message(sprintf("  Gen %d Best Recipe: %s", g, individual_to_recipe_string(pop[[1]])))
-
-      # Early stopping check
-      if (g == 1 || (!is.na(best_fitness) && (is.na(global_best_fitness) || best_fitness > global_best_fitness))) {
-        global_best_fitness <- best_fitness
-        generations_without_improvement <- 0
-      } else {
-        generations_without_improvement <- generations_without_improvement + 1
-      }
-
-      if (record) {
-        viewer$send(list(type = "island_evaluated", data = list(
-          island = 1,
-          generation = g,
-          best_fitness = pop[[1]]$fitness,
-          stagnation = generations_without_improvement,
-          all_fitness = fitness_vals
-        )))
-      }
-
-      if (record) {
-        # Generate 5-row transformed data sample
-        res_sample <- tryCatch(
-          {
-            apply_individual(pop[[1]], head(shared_full, 5), NULL, NULL, state_cache = state_cache)
-          },
-          error = function(e) list(train = head(shared_full, 5))
-        )
-        best_dt <- res_sample$train
-        best_list <- lapply(names(best_dt), function(col) {
-          val <- best_dt[[col]]
-          if (is.numeric(val)) round(val, 4) else as.character(val)
-        })
-        names(best_list) <- names(best_dt)
-
-        # Prepare serialized genes
-        serialized_genes <- lapply(pop[[1]]$genes, function(gene) {
-          col <- gene$output_col
-          imp_val <- if (!is.null(pop[[1]]$importances) && col %in% names(pop[[1]]$importances)) {
-            as.numeric(pop[[1]]$importances[[col]])
-          } else {
-            0.0
-          }
-          list(
-            formula = gene_to_formula(gene),
-            output_col = col,
-            importance = imp_val
-          )
-        })
-        if (length(serialized_genes) > 0) {
-          gene_imps <- sapply(serialized_genes, function(x) x$importance)
-          serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
-        }
-
-        gen_snapshot <- list(
-          generation = g,
-          islands = list(
-            list(
-              island = 1,
-              best_fitness = best_fitness,
-              stagnation = generations_without_improvement,
-              pop_size = length(pop),
-              population = lapply(head(pop, 5), function(ind) {
-                list(fitness = ind$fitness, n_genes = length(ind$genes))
-              }),
-              all_fitness = sapply(pop, function(ind) ind$fitness)
-            )
-          ),
-          global_best_fitness = global_best_fitness,
-          global_best_recipe = individual_to_recipe_string(pop[[1]]),
-          global_best_n_genes = length(pop[[1]]$genes),
-          global_best_importances = if (!is.null(pop[[1]]$importances)) as.list(pop[[1]]$importances) else list(),
-          global_best_genes = serialized_genes,
-          sample = best_list
-        )
-        evolution_log$generations[[g]] <- gen_snapshot
-        viewer$send(list(type = "generation", data = gen_snapshot))
-      }
-
-      if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
-        message(sprintf("  Early stopping triggered after %d generations without improvement.", early_stopping_generations))
-        fitness_history <- fitness_history[1:g]
-        break
-      }
-
-      if (g == generations) break
-
-      # Selection: keep top 50% of current population
-      num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
-      survivors <- pop[1:num_survivors]
-
-      # Collect outputs from evaluated genes <U+2014> only these are safe for chaining
-      tested_gene_outputs <- unique(unlist(lapply(pop, function(ind) {
-        if (length(ind$genes) == 0) {
-          return(character(0))
-        }
-        vapply(ind$genes, function(g) g$output_col, character(1))
-      })))
-
-      # Aggregate importances from survivors
-      global_importances <- list()
-      for (s in survivors) {
-        if (length(s$importances) > 0) {
-          for (feat in names(s$importances)) {
-            if (is.null(global_importances[[feat]])) {
-              global_importances[[feat]] <- c(s$importances[[feat]])
-            } else {
-              global_importances[[feat]] <- c(global_importances[[feat]], s$importances[[feat]])
-            }
-          }
-        }
-      }
-
-      if (length(global_importances) > 0) {
-        global_importances_vec <- sapply(global_importances, mean)
-      } else {
-        global_importances_vec <- numeric(0)
-      }
-      # Adaptive mutation rate and temperature: increase exploration during stagnation
-      stagnation_ratio <- if (!is.null(early_stopping_generations) && early_stopping_generations > 0) {
-        min(1, generations_without_improvement / early_stopping_generations)
-      } else {
-        0
-      }
-      adaptive_mutation_rate <- 0.3 + 0.4 * stagnation_ratio
-      temperature <- 0.1 + 0.9 * stagnation_ratio
-
-      # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
-      target_pop_size <- pop_size
-      if (dynamic_population) {
-        if (generations_without_improvement > 0) {
-          # Expand population during stagnation relative to current size
-          current_pop_size <- max(current_pop_size + 1, floor(current_pop_size * dynamic_population_growth_rate))
-        } else {
-          # Gradual decay back to pop_size when there is improvement
-          current_pop_size <- max(pop_size, floor(current_pop_size * dynamic_population_decay_rate))
-        }
-        target_pop_size <- min(current_pop_size, pop_size * 5L)
-      }
-
-      # Next generation
-      next_gen <- list()
-      # Elitism: keep best
-      next_gen[[1]] <- survivors[[1]]
-
-      # Fill the rest
-      while (length(next_gen) < target_pop_size) {
-        idx <- length(next_gen) + 1
-        is_expansion <- idx > pop_size
-
-        if (is_expansion) {
-          # Expansion slots: High exploration (no crossover, extremely high temperature)
-          p <- tournament_select(pop, k = 3)
-          child <- mutate(p, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
-        } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
-          # Crossover
-          p1 <- tournament_select(pop, k = 3)
-          p2 <- tournament_select(pop, k = 3)
-
-          # Determine whether to use union or random crossover
-          use_union <- FALSE
-          if (crossover_type == "union") {
-            use_union <- TRUE
-          } else if (crossover_type == "both") {
-            use_union <- stats::runif(1) < 0.5
-          }
-
-          if (use_union) {
-            child <- union_crossover(p1, p2, verbose = FALSE)
-          } else {
-            child <- crossover(p1, p2, verbose = FALSE)
-          }
-
-          if (stats::runif(1) < 0.2) {
-            child <- mutate(child, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
-          }
-        } else {
-          # Mutate
-          p <- tournament_select(pop, k = 3)
-          child <- mutate(p, verbose = FALSE, importances = global_importances_vec, temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
-        }
-
-        # Validation Check: Duplicate in next_gen OR already known to be worse than best
-        attempts <- 0
-        while (is_invalid_individual(child, next_gen, fitness_cache, global_best_fitness) && attempts < 15) {
-          child <- mutate(child, verbose = FALSE, force_add = TRUE, importances = global_importances_vec, temperature = if (is_expansion) 100.0 else temperature, task = task, tested_gene_outputs = tested_gene_outputs, allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob)
-          attempts <- attempts + 1
-        }
-
-        next_gen <- c(next_gen, list(child))
-      }
-      pop <- next_gen
-    }
-
-    # Final evaluation of new individuals
-    eval_res <- evaluate_pop_mf(pop, data, target_col, task, cv_folds, evaluation_strategy,
-      split_ids_val, shared_splits, evaluator,
-      fold_ids, shared_folds, shared_full, state_cache,
-      fitness_cache, threads, verbose, running_best_fitness,
-      metric = metric, complexity_penalty = complexity_penalty,
-      complexity_mode = complexity_mode,
-      complexity_floor = complexity_floor,
-      complexity_target = complexity_target,
-      baseline_fitness = baseline_ind$fitness,
-      n_samples = nrow(data),
-      cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
-      mf_on = multi_fidelity && g <= mf_warmup_gens,
-      lf_shared_splits = mf_shared_splits,
-      lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
+    pop <- initialize_population(
+      pop_size, numeric_cols, categorical_cols,
+      datetime_cols = datetime_cols, initial_genes = 2,
+      task = task, importances = baseline_ind$importances,
+      allowed_transformers = allowed_transformers,
+      mask_temp_factor = mask_temp_factor
     )
-    pop <- eval_res$pop
-    fitness_vals <- sapply(pop, function(ind) ind$fitness)
-    pop <- pop[order(fitness_vals, decreasing = TRUE)]
-
-    best_ind <- pop[[1]]
+    pop[[1]] <- baseline_ind
+    pop_init <- pop
+    pop_list_init <- NULL
+    global_best_fitness_init <- baseline_ind$fitness
+    global_best_individual_init <- baseline_ind
+    best_ind_source_init <- "Island 1"
   } else {
-    # 2. Initialize populations for all islands
-    pop_list <- list()
-    for (j in 1:islands) {
-      # Per-island sub-stream: island j's initial population depends only on
-      # (seed, j), not on how many islands are being run.
-      if (!is.null(seed)) set.seed(seed + 1000L * j)
-      pop_list[[j]] <- initialize_population(
-        pop_size, numeric_cols, categorical_cols,
-        datetime_cols = datetime_cols,
-        initial_genes = 2, task = task, importances = baseline_ind$importances,
-        allowed_transformers = get_island_transformers(j),
-        mask_temp_factor = mask_temp_factor
-      )
-      pop_list[[j]][[1]] <- island_baseline_inds[[j]]
-    }
-
-    # Local trackers for each island
-    island_best_fitness <- vapply(island_baseline_inds, function(ind) ind$fitness, numeric(1))
-    island_best_individual <- lapply(1:islands, function(j) island_baseline_inds[[j]])
-    island_gens_without_improvement <- rep(0, islands)
-    island_improved_by_migration <- rep(FALSE, islands)
-    island_current_pop_size <- rep(pop_size, islands)
-
+    pop_list <- initialize_island_populations(
+      islands = islands, pop_size = pop_size,
+      numeric_cols = numeric_cols, categorical_cols = categorical_cols,
+      datetime_cols = datetime_cols, task = task,
+      baseline_ind = baseline_ind, island_baseline_inds = island_baseline_inds,
+      allowed_transformers = allowed_transformers,
+      mask_temp_factor = mask_temp_factor, seed = seed
+    )
+    pop_init <- NULL
+    pop_list_init <- pop_list
     if (row_split_islands || evaluation_strategy == "metacv") {
-      best_idx <- which.max(island_best_fitness)
-      global_best_fitness <- island_best_fitness[best_idx]
-      global_best_individual <- island_baseline_inds[[best_idx]]
-      best_ind_source <- paste0("Island ", best_idx)
+      best_idx <- which.max(vapply(island_baseline_inds, function(ind) ind$fitness, numeric(1)))
+      global_best_fitness_init <- island_baseline_inds[[best_idx]]$fitness
+      global_best_individual_init <- island_baseline_inds[[best_idx]]
+      best_ind_source_init <- paste0("Island ", best_idx)
     } else {
-      global_best_fitness <- baseline_ind$fitness
-      global_best_individual <- baseline_ind
-      best_ind_source <- "Island 1"
-    }
-
-    # Global trackers
-    generations_without_improvement <- 0
-    fitness_history <- numeric(generations)
-
-    historical_best_genes <- list()
-
-    # Gene-level migration pool: list of lists
-    migrated_genes_pool <- lapply(1:islands, function(x) list())
-
-    for (g in 1:generations) {
-      if (verbose) {
-        if (global_best_fitness > -Inf) {
-          message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
-        } else {
-          message(sprintf("\n--- Generation %d / %d ---", g, generations))
-        }
-      }
-
-      # Evaluate, sort, and breed for each island sequentially
-      for (j in 1:islands) {
-        if (verbose) {
-          message(sprintf("\n  --- [Island %d] (Current Local Best Fitness: %.4f) ---", j, island_best_fitness[j]))
-          # Print all individuals in the population for this island
-          for (i in seq_along(pop_list[[j]])) {
-            fit_str <- if (is.na(pop_list[[j]][[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop_list[[j]][[i]]$fitness)
-            message(sprintf("    [Island %d] Individual %d (%s): %s", j, i, fit_str, individual_to_recipe_string(pop_list[[j]][[i]])))
-          }
-        }
-
-        if (record) {
-          viewer$send(list(type = "status", data = list(island = j, status = "evaluating", generation = g)))
-        }
-        # Evaluate fitness of this island's population
-        eval_res <- evaluate_pop_mf(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
-          split_ids_val,
-          if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
-          island_evaluators[j],
-          fold_ids,
-          if (row_split_islands) island_shared_folds[[j]] else shared_folds,
-          shared_full,
-          if (row_split_islands || evaluation_strategy == "metacv") island_state_caches[[j]] else state_cache,
-          if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache,
-          threads, verbose, island_best_fitness[j],
-          metric = metric, complexity_penalty = complexity_penalty,
-          complexity_mode = complexity_mode,
-          complexity_floor = complexity_floor,
-          complexity_target = complexity_target,
-          baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
-          n_samples = nrow(data), island = j,
-          cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
-          mf_on = multi_fidelity && g <= mf_warmup_gens,
-          lf_shared_splits = if (row_split_islands || evaluation_strategy == "metacv") mf_island_shared_splits[[j]] else mf_shared_splits,
-          lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
-          lf_shared_full = mf_shared_full, ...
-        )
-        pop_list[[j]] <- eval_res$pop
-
-        # Sort population by fitness descending
-        fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
-        pop_list[[j]] <- pop_list[[j]][order(fitness_vals, decreasing = TRUE)]
-
-        # Track historical best genes from this generation
-        historical_best_genes <- c(historical_best_genes, pop_list[[j]][[1]]$genes)
-
-        best_fitness_island <- pop_list[[j]][[1]]$fitness
-        if (verbose) {
-          message(sprintf("    [Island %d] Gen %d Best Fitness: %.4f", j, g, best_fitness_island))
-          message(sprintf("    [Island %d] Gen %d Best Recipe: %s", j, g, individual_to_recipe_string(pop_list[[j]][[1]])))
-        }
-
-        # Local early stopping/progress track for island-specific stagnation
-        if (best_fitness_island > island_best_fitness[j]) {
-          island_best_fitness[j] <- best_fitness_island
-          pop_list[[j]][[1]]$evaluator <- island_evaluators[j]
-          island_best_individual[[j]] <- pop_list[[j]][[1]]
-          island_gens_without_improvement[j] <- 0
-          island_improved_by_migration[j] <- FALSE
-        } else if (island_improved_by_migration[j] && !is.na(best_fitness_island) && best_fitness_island == island_best_fitness[j]) {
-          island_gens_without_improvement[j] <- 0
-          island_improved_by_migration[j] <- FALSE
-        } else {
-          island_gens_without_improvement[j] <- island_gens_without_improvement[j] + 1
-        }
-
-        if (record) {
-          viewer$send(list(type = "island_evaluated", data = list(
-            island = j,
-            generation = g,
-            best_fitness = pop_list[[j]][[1]]$fitness,
-            stagnation = island_gens_without_improvement[j],
-            all_fitness = fitness_vals
-          )))
-        }
-
-        # Track global best across all islands
-        if (best_fitness_island > global_best_fitness) {
-          global_best_fitness <- best_fitness_island
-          global_best_individual <- pop_list[[j]][[1]]
-          best_ind_source <- paste0("Island ", j)
-        }
-      }
-
-      if (record) {
-        # Generate 5-row transformed data sample
-        res_sample <- tryCatch(
-          {
-            apply_individual(global_best_individual, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
-          },
-          error = function(e) list(train = head(shared_full, 5))
-        )
-        best_dt <- res_sample$train
-        best_list <- lapply(names(best_dt), function(col) {
-          val <- best_dt[[col]]
-          if (is.numeric(val)) round(val, 4) else as.character(val)
-        })
-        names(best_list) <- names(best_dt)
-
-        # Prepare serialized genes
-        serialized_genes <- lapply(global_best_individual$genes, function(gene) {
-          col <- gene$output_col
-          imp_val <- if (!is.null(global_best_individual$importances) && col %in% names(global_best_individual$importances)) {
-            as.numeric(global_best_individual$importances[[col]])
-          } else {
-            0.0
-          }
-          list(
-            formula = gene_to_formula(gene),
-            output_col = col,
-            importance = imp_val
-          )
-        })
-        if (length(serialized_genes) > 0) {
-          gene_imps <- sapply(serialized_genes, function(x) x$importance)
-          serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
-        }
-
-        ideal_val <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
-
-        # Find which island contains the global best individual
-        best_island_idx <- 1L
-        for (j in seq_len(islands)) {
-          if (identical(pop_list[[j]][[1]], global_best_individual)) {
-            best_island_idx <- j
-            break
-          }
-        }
-        best_island_baseline <- if (length(island_baseline_inds) >= best_island_idx && !is.null(island_baseline_inds[[best_island_idx]]$fitness)) {
-          island_baseline_inds[[best_island_idx]]$fitness
-        } else {
-          baseline_ind$fitness
-        }
-        best_island_h_denom <- ideal_val - best_island_baseline
-        best_island_headroom_closed <- if (abs(best_island_h_denom) < 1e-6 || is.na(global_best_fitness)) 0.0 else (global_best_fitness - best_island_baseline) / best_island_h_denom
-
-        gen_snapshot <- list(
-          generation = g,
-          islands = lapply(seq_len(islands), function(j) {
-            pop_j <- pop_list[[j]]
-            base_j <- if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]]$fitness)) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
-            h_denom <- ideal_val - base_j
-            h_closed <- if (abs(h_denom) < 1e-6 || is.na(island_best_fitness[j])) 0.0 else (island_best_fitness[j] - base_j) / h_denom
-            list(
-              island = j,
-              best_fitness = island_best_fitness[j],
-              baseline_fitness = base_j,
-              headroom_closed = h_closed,
-              stagnation = island_gens_without_improvement[j],
-              pop_size = length(pop_j),
-              population = lapply(head(pop_j, 5), function(ind) {
-                list(fitness = ind$fitness, n_genes = length(ind$genes))
-              }),
-              all_fitness = sapply(pop_j, function(ind) ind$fitness)
-            )
-          }),
-          global_best_fitness = global_best_fitness,
-          global_best_island = best_island_idx,
-          global_best_island_baseline = best_island_baseline,
-          global_headroom_closed = best_island_headroom_closed,
-          global_best_recipe = individual_to_recipe_string(global_best_individual),
-          global_best_n_genes = length(global_best_individual$genes),
-          global_best_importances = if (!is.null(global_best_individual$importances)) as.list(global_best_individual$importances) else list(),
-          global_best_genes = serialized_genes,
-          sample = best_list
-        )
-        evolution_log$generations[[g]] <- gen_snapshot
-        viewer$send(list(type = "generation", data = gen_snapshot))
-      }
-
-      # Track global improvement
-      fitness_history[g] <- global_best_fitness
-      if (g == 1 || (global_best_fitness > fitness_history[max(1, g - 1)])) {
-        generations_without_improvement <- 0
-      } else {
-        generations_without_improvement <- generations_without_improvement + 1
-      }
-
-      # Early stopping check
-      if (!is.null(early_stopping_generations)) {
-        if (per_island_validation || evaluation_strategy == "metacv") {
-          # Fitness scores are not comparable across islands — stop only when all islands stagnate
-          if (all(island_gens_without_improvement >= early_stopping_generations)) {
-            message(sprintf(
-              "  Early stopping triggered: all %d islands stagnated for %d generations.",
-              islands, early_stopping_generations
-            ))
-            fitness_history <- fitness_history[1:g]
-            break
-          }
-        } else {
-          if (generations_without_improvement >= early_stopping_generations) {
-            message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
-            fitness_history <- fitness_history[1:g]
-            break
-          }
-        }
-      }
-
-      if (g == generations) break
-
-      # --- MIGRATION PHASE ---
-      if (g %% migration_interval == 0) {
-        if (verbose) {
-          message(sprintf("\n*** [Migration Phase] Triggering migration at Generation %d (Topology: %s) ***", g, migration_topology))
-        }
-
-        # Temp copy of populations to avoid using updated destination populations within the same step
-        old_pop_list <- pop_list
-
-        # Build migration transactions list: list of list(from, to, is_pull)
-        migration_txs <- list()
-
-        state <- list(
-          pop_list = pop_list,
-          island_best_fitness = island_best_fitness,
-          island_gens_without_improvement = island_gens_without_improvement
-        )
-
-        # Normalized headroom-closed relative fitness for migration when partitions/folds differ across islands
-        use_rel_fits <- per_island_validation || evaluation_strategy == "metacv"
-        effective_island_fits <- if (use_rel_fits) {
-          ideal_mig <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
-          island_baselines <- vapply(island_baseline_inds, function(x) if (!is.null(x$fitness) && is.finite(x$fitness)) x$fitness else 0, numeric(1))
-          headroom <- ideal_mig - island_baselines
-          headroom[abs(headroom) < 1e-6] <- 1e-6
-          (island_best_fitness - island_baselines) / headroom
-        } else {
-          island_best_fitness
-        }
-
-        if (verbose && use_rel_fits) {
-          headroom_pcts <- paste(sprintf("Island %d: %+.1f%%", seq_len(islands), effective_island_fits * 100), collapse = ", ")
-          message(sprintf("  [Migration Headroom Closed] %s", headroom_pcts))
-        }
-
-        if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
-          migration_txs <- resolve_migration_transactions(migration$policy, migration$topology, state)
-        } else if (migration_topology == "dual_gibbs_pull") {
-          for (j in 1:islands) {
-            s_j <- island_gens_without_improvement[j]
-            p_pull <- 1 / (1 + exp(-(s_j - pull_stagnation_threshold) / migration_temperature))
-            if (stats::runif(1) < p_pull) {
-              candidates <- setdiff(1:islands, j)
-              if (length(candidates) > 0) {
-                donor_fits <- effective_island_fits[candidates]
-                donor_fits[is.na(donor_fits)] <- -Inf
-                max_f <- max(donor_fits)
-                if (is.finite(max_f)) {
-                  logits <- (donor_fits - max_f) / migration_temperature
-                  probs <- exp(logits) / sum(exp(logits))
-                } else {
-                  probs <- rep(1 / length(candidates), length(candidates))
-                }
-                donor <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
-                migration_txs[[length(migration_txs) + 1]] <- list(from = donor, to = j, is_pull = TRUE)
-              }
-            }
-          }
-        } else {
-          for (j in 1:islands) {
-            dest <- j
-            if (migration_topology == "ring") {
-              dest <- (j %% islands) + 1
-            } else if (migration_topology == "random") {
-              candidates <- setdiff(1:islands, j)
-              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1)
-            } else if (migration_topology == "gibbs_stagnation") {
-              candidates <- setdiff(1:islands, j)
-              stags <- island_gens_without_improvement[candidates]
-              max_s <- max(stags)
-              logits <- (stags - max_s) / migration_temperature
-              probs <- exp(logits) / sum(exp(logits))
-              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
-            } else if (migration_topology == "gibbs_fitness") {
-              candidates <- setdiff(1:islands, j)
-              fits <- effective_island_fits[candidates]
-              valid_fits <- fits[!is.na(fits)]
-              if (length(valid_fits) > 0) {
-                fits[is.na(fits)] <- min(valid_fits)
-              } else {
-                fits[] <- 0
-              }
-              max_f <- max(fits)
-              diffs <- max_f - fits
-              max_d <- max(diffs)
-              logits <- (diffs - max_d) / migration_temperature
-              probs <- exp(logits) / sum(exp(logits))
-              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1, prob = probs)
-            } else if (migration_topology %in% c("tiered", "hfc")) {
-              topo_obj <- topology_tiered(islands, tiers = tiers_count)
-              policy_obj <- policy_tiered_admission(min_fitness_threshold = policy_thresh_val)
-              txs <- resolve_migration_transactions(policy_obj, topo_obj, state)
-              migration_txs <- c(migration_txs, txs)
-              break
-            } else {
-              topo_obj <- switch(migration_topology,
-                "grid" = topology_grid(islands),
-                "torus" = topology_torus(islands),
-                "hypercube" = topology_hypercube(islands),
-                "complete" = topology_complete(islands),
-                "feature_distance" = topology_feature_distance(islands),
-                topology_ring(islands)
-              )
-              candidates <- get_neighbors(topo_obj, j)
-              if (length(candidates) == 0) candidates <- setdiff(1:islands, j)
-              dest <- if (length(candidates) == 1) candidates[1] else sample(candidates, 1)
-            }
-
-            migration_txs[[length(migration_txs) + 1]] <- list(from = j, to = dest, is_pull = FALSE)
-          }
-        }
-
-        # Process each migration transaction
-        for (tx in migration_txs) {
-          src <- tx$from
-          dest <- tx$to
-          n_injected <- 0L
-          effective_rate <- 0L
-          new_genes <- list()
-
-          payload_strategy <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
-            migration$payload
-          } else {
-            "full_individual"
-          }
-
-          # 1. Recipe-level migration (only if payload_strategy == "full_individual")
-          if (identical(payload_strategy, "full_individual")) {
-            if (length(old_pop_list[[src]]) > 0) {
-              effective_rate <- min(
-                migration_rate, length(old_pop_list[[src]]),
-                length(pop_list[[dest]]) - 1L
-              )
-            }
-            if (effective_rate > 0) {
-              worst_start <- length(pop_list[[dest]]) - effective_rate + 1
-              worst_end <- length(pop_list[[dest]])
-              migrant_inds <- old_pop_list[[src]][1:effective_rate]
-
-              data_differs <- row_split_islands || per_island_validation || evaluation_strategy == "metacv"
-              eval_differs <- island_evaluators[src] != island_evaluators[dest]
-
-              if (data_differs || eval_differs) {
-                if (data_differs) {
-                  # Data partition differs: strip both fitness and transformer states to prevent cross-split leakage
-                  migrant_inds <- lapply(migrant_inds, strip_individual_state)
-                } else {
-                  # Data partition is identical, only evaluator differs:
-                  # Feature transformations are data-dependent and model-agnostic; preserve states and only reset fitness
-                  migrant_inds <- lapply(migrant_inds, function(ind) {
-                    ind$fitness <- NA_real_
-                    ind$raw_fitness <- NA_real_
-                    ind$val_preds <- NULL
-                    ind$y_val <- NULL
-                    ind
-                  })
-                }
-                eval_migrant <- evaluate_pop(migrant_inds, data, target_col, task, cv_folds, evaluation_strategy,
-                  split_ids_val,
-                  if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[dest]] else shared_splits,
-                  island_evaluators[dest],
-                  fold_ids,
-                  if (row_split_islands) island_shared_folds[[dest]] else shared_folds,
-                  shared_full,
-                  if (row_split_islands || evaluation_strategy == "metacv") island_state_caches[[dest]] else state_cache,
-                  if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[dest]] else fitness_cache,
-                  threads, verbose, island_best_fitness[dest],
-                  metric = metric, complexity_penalty = complexity_penalty,
-                  complexity_mode = complexity_mode,
-                  complexity_floor = complexity_floor,
-                  complexity_target = complexity_target,
-                  baseline_fitness = if (!is.null(island_baseline_inds[[dest]])) island_baseline_inds[[dest]]$fitness else baseline_ind$fitness,
-                  n_samples = nrow(data), island = dest,
-                  ind_indices = worst_start:worst_end, ...
-                )
-                migrant_inds <- eval_migrant$pop
-              }
-
-              # Replace the worst individuals of the target population
-              pop_list[[dest]][worst_start:worst_end] <- migrant_inds
-
-              # Re-sort destination population immediately by fitness (highest first)
-              dest_fits <- vapply(pop_list[[dest]], function(ind) {
-                if (!is.null(ind$fitness) && !is.na(ind$fitness)) ind$fitness else -Inf
-              }, numeric(1))
-              pop_list[[dest]] <- pop_list[[dest]][order(dest_fits, decreasing = TRUE)]
-
-              # Update best tracking immediately for destination island and global best
-              new_dest_best <- pop_list[[dest]][[1]]
-              is_new_dest_best <- FALSE
-              is_new_global_best <- FALSE
-
-              if (!is.null(new_dest_best$fitness) && !is.na(new_dest_best$fitness)) {
-                if (is.na(island_best_fitness[dest]) || new_dest_best$fitness > island_best_fitness[dest]) {
-                  island_best_fitness[dest] <- new_dest_best$fitness
-                  island_best_individual[[dest]] <- new_dest_best
-                  island_gens_without_improvement[dest] <- 0L
-                  island_improved_by_migration[dest] <- TRUE
-                  is_new_dest_best <- TRUE
-                }
-                if (is.na(global_best_fitness) || new_dest_best$fitness > global_best_fitness) {
-                  global_best_fitness <- new_dest_best$fitness
-                  global_best_individual <- new_dest_best
-                  best_ind_source <- paste0("Island ", dest)
-                  is_new_global_best <- TRUE
-                }
-              }
-
-              if (verbose) {
-                msg_prefix <- if (tx$is_pull) "Pulling" else "Migrating"
-                message(sprintf(
-                  "  %s top %d recipe(s) from Island %d (%s) to Island %d (%s)",
-                  msg_prefix, effective_rate, src, island_evaluators[src], dest, island_evaluators[dest]
-                ))
-                migrant_fit <- if (length(migrant_inds) > 0 && !is.null(migrant_inds[[1]]$fitness)) migrant_inds[[1]]$fitness else NA
-                if (!is.na(migrant_fit)) {
-                  message(sprintf(
-                    "    Evaluated Migrant Fitness on Island %d: %.4f (Current Destination Best: %.4f)",
-                    dest, migrant_fit, island_best_fitness[dest]
-                  ))
-                }
-                if (is_new_global_best) {
-                  message(sprintf("    [Island %d] New Global Best Fitness: %.4f", dest, global_best_fitness))
-                } else if (is_new_dest_best) {
-                  message(sprintf("    [Island %d] New Best Fitness: %.4f", dest, island_best_fitness[dest]))
-                }
-              }
-            }
-          }
-
-          # 2. Gene-level migration
-          if (length(old_pop_list[[src]]) > 0) {
-            best_ind <- old_pop_list[[src]][[1]]
-            best_genes <- best_ind$genes
-            if (length(best_genes) > 0) {
-              existing_formulas <- vapply(migrated_genes_pool[[dest]], gene_to_formula, character(1))
-
-              # Find new genes
-              new_genes <- list()
-              for (g_mig in best_genes) {
-                formula <- gene_to_formula(g_mig)
-                if (!formula %in% existing_formulas) {
-                  new_genes <- c(new_genes, list(g_mig))
-                }
-              }
-
-              if (length(new_genes) > 0) {
-                # Sort new genes by feature importance (highest first)
-                gene_imps <- vapply(new_genes, function(g) {
-                  col <- g$output_col
-                  if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
-                    as.numeric(best_ind$importances[[col]])
-                  } else {
-                    0.0
-                  }
-                }, double(1))
-
-                new_genes <- new_genes[order(gene_imps, decreasing = TRUE)]
-
-                # Limit to top 20 most important new genes
-                if (length(new_genes) > 20) {
-                  new_genes <- new_genes[1:20]
-                }
-
-                # Strip fitted states before adding to destination pool to prevent stale/leaked states
-                for (k in seq_along(new_genes)) {
-                  new_genes[[k]]$state <- NULL
-                }
-
-                migrated_genes_pool[[dest]] <- c(migrated_genes_pool[[dest]], new_genes)
-                n_injected <- length(new_genes)
-              } else {
-                n_injected <- 0L
-              }
-
-              if (length(migrated_genes_pool[[dest]]) > 20) {
-                migrated_genes_pool[[dest]] <- tail(migrated_genes_pool[[dest]], 20)
-              }
-              if (verbose && n_injected > 0) {
-                actual_injected <- min(n_injected, 20L)
-                message(sprintf("  Injected %d gene(s) into Island %d gene pool from Island %d", actual_injected, dest, src))
-              }
-            }
-          }
-
-
-          migrated_gene_details <- list()
-          if (length(new_genes) > 0) {
-            migrated_gene_details <- lapply(new_genes, function(g_mig) {
-              col <- g_mig$output_col
-              imp_val <- if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
-                as.numeric(best_ind$importances[[col]])
-              } else {
-                0.0
-              }
-              list(
-                formula = gene_to_formula(g_mig),
-                output_col = col,
-                importance = imp_val
-              )
-            })
-          }
-
-          ind_src <- if (length(pop_list[[src]]) > 0) pop_list[[src]][[1]] else NULL
-          ind_dest <- if (length(pop_list[[dest]]) > 0) pop_list[[dest]][[1]] else NULL
-          feat_dist <- .calc_feature_distance(ind_src, ind_dest)
-
-          migration_event <- list(
-            from = src,
-            to = dest,
-            topology = migration_topology,
-            is_pull = tx$is_pull,
-            n_recipes = effective_rate,
-            n_genes = n_injected,
-            migrated_genes = migrated_gene_details,
-            feature_distance = feat_dist,
-            donor_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[src] else NULL,
-            dest_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[dest] else NULL
-          )
-
-          if (record) {
-            if (is.null(evolution_log$generations[[g]]$migrations)) {
-              evolution_log$generations[[g]]$migrations <- list()
-            }
-            evolution_log$generations[[g]]$migrations <- c(
-              evolution_log$generations[[g]]$migrations,
-              list(migration_event)
-            )
-          }
-
-          if (!is.null(viewer)) {
-            viewer$send(list(type = "migration", data = migration_event))
-          }
-        }
-
-        # Re-sort all island populations descending by fitness so migrated elites participate in survivor selection & elitism
-        for (k in 1:islands) {
-          fitness_vals <- sapply(pop_list[[k]], function(ind) ind$fitness)
-          pop_list[[k]] <- pop_list[[k]][order(fitness_vals, decreasing = TRUE)]
-          top_fit <- pop_list[[k]][[1]]$fitness
-          if (!is.na(top_fit)) {
-            if (is.na(island_best_fitness[k]) || top_fit > island_best_fitness[k]) {
-              island_best_fitness[k] <- top_fit
-              island_best_individual[[k]] <- pop_list[[k]][[1]]
-              island_gens_without_improvement[k] <- 0
-              island_improved_by_migration[k] <- TRUE
-            }
-            if (top_fit > global_best_fitness) {
-              global_best_fitness <- top_fit
-              global_best_individual <- pop_list[[k]][[1]]
-              best_ind_source <- paste0("Island ", k)
-            }
-          }
-        }
-      }
-
-      # --- BREEDING PHASE FOR NEXT GENERATION ---
-      for (j in 1:islands) {
-        pop <- pop_list[[j]]
-
-        # Selection: keep top 50% of current population
-        num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
-        survivors <- pop[1:num_survivors]
-
-        # Collect outputs from evaluated genes
-        tested_gene_outputs <- unique(unlist(lapply(pop, function(ind) {
-          if (length(ind$genes) == 0) {
-            return(character(0))
-          }
-          vapply(ind$genes, function(g) g$output_col, character(1))
-        })))
-
-        # Aggregate importances from survivors
-        global_importances <- list()
-        for (s in survivors) {
-          if (length(s$importances) > 0) {
-            for (feat in names(s$importances)) {
-              if (is.null(global_importances[[feat]])) {
-                global_importances[[feat]] <- c(s$importances[[feat]])
-              } else {
-                global_importances[[feat]] <- c(global_importances[[feat]], s$importances[[feat]])
-              }
-            }
-          }
-        }
-
-        if (length(global_importances) > 0) {
-          global_importances_vec <- sapply(global_importances, mean)
-        } else {
-          global_importances_vec <- numeric(0)
-        }
-
-        # Adaptive mutation rate and temperature: increase exploration during stagnation
-        stagnation_ratio <- if (!is.null(early_stopping_generations) && early_stopping_generations > 0) {
-          min(1, island_gens_without_improvement[j] / early_stopping_generations)
-        } else {
-          0
-        }
-        adaptive_mutation_rate <- 0.3 + 0.4 * stagnation_ratio
-        temperature <- 0.1 + 0.9 * stagnation_ratio
-
-        # Determine target population size (Stagnation Expansion / Gradual Contraction State-Machine)
-        target_pop_size <- pop_size
-        if (dynamic_population) {
-          if (island_gens_without_improvement[j] > 0) {
-            island_current_pop_size[j] <- max(island_current_pop_size[j] + 1, floor(island_current_pop_size[j] * dynamic_population_growth_rate))
-          } else {
-            island_current_pop_size[j] <- max(pop_size, floor(island_current_pop_size[j] * dynamic_population_decay_rate))
-          }
-          target_pop_size <- min(island_current_pop_size[j], pop_size * 5L)
-        }
-
-        next_gen <- list()
-        next_gen[[1]] <- survivors[[1]]
-
-        cur_island_cache <- if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache
-        cur_island_best_fit <- if (row_split_islands || evaluation_strategy == "metacv") island_best_fitness[j] else global_best_fitness
-
-        # Fill the rest
-        while (length(next_gen) < target_pop_size) {
-          idx <- length(next_gen) + 1
-          is_expansion <- idx > pop_size
-
-          if (is_expansion) {
-            p <- tournament_select(pop, k = 3)
-            child <- mutate(p,
-              verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
-              temperature = 100.0, task = task, tested_gene_outputs = tested_gene_outputs,
-              allowed_transformers = get_island_transformers(j),
-              migrated_genes = migrated_genes_pool[[j]],
-              gene_migration_prob = gene_migration_prob,
-              raw_toggle_prob = raw_toggle_prob,
-              recalculate_mask_prob = recalculate_mask_prob
-            )
-          } else if (stats::runif(1) < (1 - adaptive_mutation_rate)) {
-            p1 <- tournament_select(pop, k = 3)
-            p2 <- tournament_select(pop, k = 3)
-
-            use_union <- FALSE
-            if (crossover_type == "union") {
-              use_union <- TRUE
-            } else if (crossover_type == "both") {
-              use_union <- stats::runif(1) < 0.5
-            }
-
-            if (use_union) {
-              child <- union_crossover(p1, p2, verbose = FALSE)
-            } else {
-              child <- crossover(p1, p2, verbose = FALSE)
-            }
-
-            if (stats::runif(1) < 0.2) {
-              child <- mutate(child,
-                verbose = FALSE, importances = global_importances_vec,
-                temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
-                allowed_transformers = get_island_transformers(j),
-                migrated_genes = migrated_genes_pool[[j]],
-                gene_migration_prob = gene_migration_prob,
-                raw_toggle_prob = raw_toggle_prob,
-                recalculate_mask_prob = recalculate_mask_prob
-              )
-            }
-          } else {
-            p <- tournament_select(pop, k = 3)
-            child <- mutate(p,
-              verbose = FALSE, importances = global_importances_vec,
-              temperature = temperature, task = task, tested_gene_outputs = tested_gene_outputs,
-              allowed_transformers = get_island_transformers(j),
-              migrated_genes = migrated_genes_pool[[j]],
-              gene_migration_prob = gene_migration_prob,
-              raw_toggle_prob = raw_toggle_prob,
-              recalculate_mask_prob = recalculate_mask_prob
-            )
-          }
-
-          # Validation Check: Duplicate in next_gen OR already known to be worse than best
-          attempts <- 0
-          while (is_invalid_individual(child, next_gen, cur_island_cache, cur_island_best_fit, evaluator = island_evaluators[j]) && attempts < 15) {
-            child <- mutate(child,
-              verbose = FALSE, force_add = TRUE, importances = global_importances_vec,
-              temperature = if (is_expansion) 100.0 else temperature, task = task,
-              tested_gene_outputs = tested_gene_outputs, allowed_transformers = get_island_transformers(j),
-              migrated_genes = migrated_genes_pool[[j]],
-              gene_migration_prob = gene_migration_prob,
-              raw_toggle_prob = raw_toggle_prob,
-              recalculate_mask_prob = recalculate_mask_prob
-            )
-            attempts <- attempts + 1
-          }
-
-          next_gen <- c(next_gen, list(child))
-        }
-        pop_list[[j]] <- next_gen
-      }
-    }
-
-    # Final evaluation of individuals on all islands
-    for (j in 1:islands) {
-      eval_res <- evaluate_pop_mf(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
-        split_ids_val,
-        if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
-        island_evaluators[j],
-        fold_ids,
-        if (row_split_islands) island_shared_folds[[j]] else shared_folds,
-        shared_full,
-        if (row_split_islands || evaluation_strategy == "metacv") island_state_caches[[j]] else state_cache,
-        if (row_split_islands || evaluation_strategy == "metacv") island_fitness_caches[[j]] else fitness_cache,
-        threads, verbose, island_best_fitness[j],
-        metric = metric, complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
-        n_samples = nrow(data), island = j,
-        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
-        mf_on = multi_fidelity && g <= mf_warmup_gens,
-        lf_shared_splits = if (row_split_islands || evaluation_strategy == "metacv") mf_island_shared_splits[[j]] else mf_shared_splits,
-        lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
-        lf_shared_full = mf_shared_full, ...
-      )
-      pop_list[[j]] <- eval_res$pop
-      fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
-      pop_list[[j]] <- pop_list[[j]][order(fitness_vals, decreasing = TRUE)]
-
-      if (!is.null(pop_list[[j]][[1]]$fitness) && !is.na(pop_list[[j]][[1]]$fitness) &&
-          (is.na(island_best_fitness[j]) || pop_list[[j]][[1]]$fitness > island_best_fitness[j])) {
-        island_best_fitness[j] <- pop_list[[j]][[1]]$fitness
-        pop_list[[j]][[1]]$evaluator <- island_evaluators[j]
-        island_best_individual[[j]] <- pop_list[[j]][[1]]
-      }
-
-      if (!is.null(pop_list[[j]][[1]]$fitness) && !is.na(pop_list[[j]][[1]]$fitness) &&
-          (is.na(global_best_fitness) || pop_list[[j]][[1]]$fitness > global_best_fitness)) {
-        global_best_fitness <- pop_list[[j]][[1]]$fitness
-        global_best_individual <- pop_list[[j]][[1]]
-        best_ind_source <- paste0("Island ", j)
-      }
-    }
-
-    # Combine all island populations for final selection
-    pop <- unlist(pop_list, recursive = FALSE)
-    fitness_vals <- sapply(pop, function(ind) ind$fitness)
-    pop <- pop[order(fitness_vals, decreasing = TRUE)]
-    best_ind <- global_best_individual
-
-    # If multi-fidelity was enabled, ensure all island bests are evaluated at full fidelity
-    if (multi_fidelity) {
-      for (j in seq_len(islands)) {
-        ind_j <- island_best_individual[[j]]
-        p_j <- ind_j$val_preds
-        n_rows_j <- if (is.matrix(p_j)) nrow(p_j) else length(p_j)
-        if (evaluation_strategy != "metacv" && n_rows_j < nrow(data)) {
-          ind_j$fitness <- NA_real_
-          cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
-          ind_j <- evaluate_fitness(
-            ind_j, data, target_col,
-            task = task, cv_folds = cv_folds,
-            evaluation_strategy = evaluation_strategy,
-            split_ids = split_ids_val,
-            shared_splits = if (row_split_islands) island_shared_splits[[j]] else shared_splits,
-            evaluator = cand_eval, fold_ids = fold_ids,
-            shared_folds = if (row_split_islands) island_shared_folds[[j]] else shared_folds,
-            shared_full = shared_full, state_cache = if (row_split_islands) island_state_caches[[j]] else state_cache,
-            threads = threads, metric = metric, verbose = FALSE,
-            allow_prune = TRUE,
-            complexity_penalty = complexity_penalty,
-            complexity_mode = complexity_mode,
-            complexity_floor = complexity_floor,
-            complexity_target = complexity_target,
-            baseline_fitness = if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness,
-            running_best_fitness = global_best_fitness,
-            n_samples = nrow(data), ...
-          )
-          island_best_individual[[j]] <- ind_j
-        }
-      }
-      # Update global best if any re-evaluated island best improved
-      best_j_idx <- which.max(sapply(island_best_individual, function(ind) ind$fitness))
-      if (island_best_individual[[best_j_idx]]$fitness > best_ind$fitness) {
-        best_ind <- island_best_individual[[best_j_idx]]
-        global_best_fitness <- best_ind$fitness
-      }
+      global_best_fitness_init <- baseline_ind$fitness
+      global_best_individual_init <- baseline_ind
+      best_ind_source_init <- "Island 1"
     }
   }
 
+  # Run evolutionary search loop
+  evo_res <- run_evolution_loop(
+    islands = islands, pop_init = pop_init, pop_list_init = pop_list_init,
+    generations = generations, pop_size = pop_size, data = data,
+    target_col = target_col, task = task, cv_folds = cv_folds,
+    evaluation_strategy = evaluation_strategy, split_ids_val = split_ids_val,
+    shared_splits = shared_splits, island_shared_splits = island_shared_splits,
+    evaluator = evaluator_main, island_evaluators = island_evaluators,
+    fold_ids = fold_ids, shared_folds = shared_folds,
+    island_shared_folds = island_shared_folds, shared_full = shared_full,
+    state_cache = state_cache, island_state_caches = island_state_caches,
+    fitness_cache = fitness_cache, island_fitness_caches = island_fitness_caches,
+    threads = threads, verbose = verbose, metric = metric,
+    complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+    complexity_floor = complexity_floor, complexity_target = complexity_target,
+    island_baseline_inds = island_baseline_inds, baseline_ind = baseline_ind,
+    cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+    multi_fidelity = multi_fidelity, mf_warmup_frac = mf_warmup_frac,
+    mf_shared_splits = mf_shared_splits,
+    mf_island_shared_splits = mf_island_shared_splits,
+    mf_shared_folds = mf_shared_folds,
+    mf_island_shared_folds = mf_island_shared_folds,
+    mf_shared_full = mf_shared_full, record = record, viewer = viewer,
+    evolution_log = evolution_log,
+    early_stopping_generations = early_stopping_generations,
+    dynamic_population = dynamic_population,
+    dynamic_population_growth_rate = dynamic_population_growth_rate,
+    dynamic_population_decay_rate = dynamic_population_decay_rate,
+    crossover_type = crossover_type, allowed_transformers = allowed_transformers,
+    raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob,
+    migration = migration, migration_interval = migration_interval,
+    migration_rate = migration_rate, gene_migration_prob = gene_migration_prob, migration_topology = migration_topology,
+    migration_temperature = migration_temperature,
+    pull_stagnation_threshold = pull_stagnation_threshold,
+    row_split_islands = row_split_islands,
+    per_island_validation = per_island_validation,
+    get_island_transformers = get_island_transformers,
+    global_best_fitness_init = global_best_fitness_init,
+    global_best_individual_init = global_best_individual_init,
+    best_ind_source_init = best_ind_source_init, ...
+  )
+
+  pop <- evo_res$pop
+  pop_list <- evo_res$pop_list
+  best_ind <- evo_res$best_ind
+  global_best_fitness <- evo_res$global_best_fitness
+  fitness_history <- evo_res$fitness_history
+  island_best_fitness <- evo_res$island_best_fitness
+  island_best_individual <- evo_res$island_best_individual
+  historical_best_genes <- evo_res$historical_best_genes
+  best_ind_source <- evo_res$best_ind_source
+  evolution_log <- evo_res$evolution_log
+
+  # Row-split tournament
   if (row_split_islands) {
     if (per_island_validation) {
-      # Tournament: re-evaluate each island's best individual on the full global dataset
       if (verbose) {
         message(sprintf("\nRunning final tournament: re-evaluating best individual from each of %d islands on full training dataset...", islands))
       }
@@ -2304,7 +1014,6 @@ evolve_features <- function(data, target_col, task = "classification",
         message(sprintf("  Tournament winner: Island %d (fitness %.4f)", winner_idx, best_ind$fitness))
       }
     } else {
-      # Re-evaluate all island bests on the full training dataset
       if (verbose) {
         message("\nRe-evaluating island bests on full training dataset...")
       }
@@ -2345,137 +1054,40 @@ evolve_features <- function(data, target_col, task = "classification",
   ensemble_oof_fitness <- NULL
 
   if (evaluation_strategy == "metacv") {
-    # Stitch Out-Of-Fold predictions from each island best (heterogeneous island composite)
-    if (task == "multiclass") {
-      stitched_preds <- matrix(NA_real_, nrow = nrow(data), ncol = num_class)
-      for (j in seq_len(islands)) {
-        ind_j <- island_best_individual[[j]]
-        val_idx <- which(fold_ids == j)
-        if (!is.null(ind_j$val_preds)) {
-          vp <- ind_j$val_preds
-          if (!is.matrix(vp)) vp <- matrix(vp, ncol = num_class, byrow = FALSE)
-          stitched_preds[val_idx, ] <- vp
-        }
-      }
-    } else {
-      stitched_preds <- rep(NA_real_, nrow(data))
-      for (j in seq_len(islands)) {
-        ind_j <- island_best_individual[[j]]
-        val_idx <- which(fold_ids == j)
-        if (!is.null(ind_j$val_preds)) {
-          stitched_preds[val_idx] <- ind_j$val_preds
-        }
-      }
-    }
-    metacv_island_oof_preds <- stitched_preds
+    oof_res <- stitch_metacv_oof_predictions(
+      island_best_individual = island_best_individual,
+      fold_ids = fold_ids, data = data, target_col = target_col,
+      task = task, metric = metric, num_class = num_class, classes = classes
+    )
+    metacv_island_oof_preds <- oof_res$metacv_island_oof_preds
+    ensemble_oof_fitness <- oof_res$ensemble_oof_fitness
 
-    # Compute OOF validation fitness of the stitched island predictions
-    y_eval_oof <- if (task == "multiclass") {
-      as.integer(factor(data[[target_col]], levels = classes)) - 1
-    } else {
-      data[[target_col]]
-    }
-    ensemble_oof_fitness <- if (task == "multiclass") {
-      compute_metric(y_eval_oof, metacv_island_oof_preds, task, metric, num_class)
-    } else {
-      compute_metric(y_eval_oof, metacv_island_oof_preds, task, metric)
-    }
+    champ_res <- select_metacv_champion(
+      island_best_individual = island_best_individual,
+      metacv_selection = metacv_selection,
+      island_baseline_inds = island_baseline_inds,
+      baseline_ind = baseline_ind, data = data, target_col = target_col,
+      task = task, islands = islands, fold_ids = fold_ids,
+      island_shared_splits = island_shared_splits, shared_full = shared_full,
+      state_cache = state_cache, threads = threads, metric = metric,
+      verbose = verbose, island_evaluators = island_evaluators,
+      global_best_fitness = global_best_fitness,
+      complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      metacv_island_oof_preds = metacv_island_oof_preds,
+      ensemble_oof_fitness = ensemble_oof_fitness, ...
+    )
 
-    if (metacv_selection %in% c("fitness", "headroom")) {
-      # FAST SELECTION: Skip the K^2 CV tournament.
-      oof_preds <- metacv_island_oof_preds
-      island_best_fitness <- vapply(island_best_individual, function(ind) ind$fitness, numeric(1))
-
-      if (metacv_selection == "fitness") {
-        winner_idx <- which.max(island_best_fitness)
-        if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- 1L
-      } else {
-        ideal_metric <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
-        island_headrooms <- vapply(seq_len(islands), function(j) {
-          b_fit <- if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
-          denom <- ideal_metric - b_fit
-          if (abs(denom) < 1e-6) 0.0 else (island_best_fitness[j] - b_fit) / denom
-        }, numeric(1))
-        winner_idx <- which.max(island_headrooms)
-        if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- which.max(island_best_fitness)
-      }
-      best_ind <- island_best_individual[[winner_idx]]
-      best_ind_source <- paste0("Island ", winner_idx)
-
-      if (verbose) {
-        sel_desc <- if (metacv_selection == "fitness") "validation fitness" else "headroom closed"
-        message(sprintf("\nFinalizing MetaCV: selected champion recipe from Island %d by %s (zero CV tournament overhead)...",
-                        winner_idx, sel_desc))
-        message(sprintf("  Winning Recipe Fitness: %.4f (Baseline: %.4f | Stitched OOF Fitness: %.4f)",
-                        best_ind$fitness, baseline_ind$fitness, ensemble_oof_fitness))
-      }
-      tournament_fitness <- island_best_fitness
-      candidates <- island_best_individual
-    } else {
-      # TOURNAMENT MODE: evaluate each island's best candidate with full CV to select the global champion
-      if (verbose) {
-        message(sprintf("\nRunning MetaCV tournament: evaluating full CV fitness for best individual from each of %d islands...", islands))
-      }
-
-      # Deduplicate candidate recipes to avoid re-running identical full CV evaluations
-      cand_recipes <- vapply(island_best_individual, individual_to_recipe_string, character(1))
-      cand_evals <- vapply(seq_len(islands), function(j) {
-        ind <- island_best_individual[[j]]
-        if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
-      }, character(1))
-      cand_keys <- paste0(cand_evals, "::", cand_recipes)
-      cv_eval_cache <- list()
-      candidates <- vector("list", islands)
-
-      for (j in seq_len(islands)) {
-        cache_key <- cand_keys[j]
-        if (!is.null(cv_eval_cache[[cache_key]])) {
-          candidates[[j]] <- cv_eval_cache[[cache_key]]
-          if (verbose) {
-            message(sprintf("  [Island %d] Full CV fitness: %.4f (cached)  Recipe: %s",
-                            j, candidates[[j]]$fitness, individual_to_recipe_string(candidates[[j]])))
-          }
-        } else {
-          ind <- island_best_individual[[j]]
-          ind <- strip_individual_state(ind)
-          cand_eval <- cand_evals[j]
-          ind <- evaluate_fitness(
-            ind, data, target_col,
-            task = task, cv_folds = islands,
-            evaluation_strategy = "cv",
-            split_ids = NULL, shared_splits = NULL,
-            evaluator = cand_eval, fold_ids = fold_ids,
-            shared_folds = island_shared_splits,
-            shared_full = shared_full, state_cache = state_cache,
-            threads = threads, metric = metric, verbose = FALSE,
-            allow_prune = TRUE,
-            complexity_penalty = complexity_penalty,
-            complexity_mode = complexity_mode,
-            complexity_floor = complexity_floor,
-            complexity_target = complexity_target,
-            baseline_fitness = baseline_ind$fitness,
-            running_best_fitness = global_best_fitness,
-            n_samples = nrow(data), ...
-          )
-          cv_eval_cache[[cache_key]] <- ind
-          candidates[[j]] <- ind
-          if (verbose) {
-            message(sprintf("  [Island %d] Full CV fitness: %.4f  Recipe: %s",
-                            j, ind$fitness, individual_to_recipe_string(ind)))
-          }
-        }
-      }
-      island_best_individual <- candidates
-      island_best_fitness <- vapply(candidates, function(ind) ind$fitness, numeric(1))
-      tournament_fitness <- island_best_fitness
-      winner_idx <- which.max(tournament_fitness)
-      best_ind <- candidates[[winner_idx]]
-      best_ind_source <- paste0("Island ", winner_idx)
-      oof_preds <- best_ind$val_preds
-      if (verbose) {
-        message(sprintf("  MetaCV Tournament winner: Island %d (fitness %.4f)", winner_idx, best_ind$fitness))
-      }
-    }
+    best_ind <- champ_res$best_ind
+    winner_idx <- champ_res$winner_idx
+    best_ind_source <- champ_res$best_ind_source
+    oof_preds <- champ_res$oof_preds
+    tournament_fitness <- champ_res$tournament_fitness
+    candidates <- champ_res$candidates
+    island_best_individual <- champ_res$island_best_individual
+    island_best_fitness <- champ_res$island_best_fitness
   } else if (evaluation_strategy == "cv" && !is.null(best_ind$val_preds)) {
     oof_preds <- best_ind$val_preds
   }
@@ -2503,224 +1115,60 @@ evolve_features <- function(data, target_col, task = "classification",
     viewer$send(list(type = "tournament", data = tournament_data))
   }
 
+  # Final feature pooling
   if (model_all_final_genes) {
-    if (verbose) {
-      message("\nEvaluating pooled features (all final genes)...")
-    }
-
-    # 1. Collect all genes from all individuals in the final population
-    all_genes <- unlist(lapply(pop, function(ind) ind$genes), recursive = FALSE)
-
-    # 2. De-duplicate genes by their unique output column name
-    unique_cols <- if (length(all_genes) > 0) unique(vapply(all_genes, function(g) g$output_col, character(1))) else character(0)
-    deduped_genes <- list()
-    for (gene in all_genes) {
-      if (gene$output_col %in% unique_cols) {
-        gene$state <- NULL
-        deduped_genes[[gene$output_col]] <- gene
-        unique_cols <- setdiff(unique_cols, gene$output_col)
-      }
-    }
-    deduped_genes <- unname(deduped_genes)
-
-    super_ind <- NULL
-    adopted_pooled <- FALSE
-
-    if (length(deduped_genes) > 0) {
-      # 3. Create the super-individual
-      super_ind <- create_individual(
-        genes = deduped_genes,
-        numeric_cols = best_ind$numeric_cols,
-        categorical_cols = best_ind$categorical_cols,
-        datetime_cols = best_ind$datetime_cols,
-        all_numeric_cols = best_ind$all_numeric_cols,
-        all_categorical_cols = best_ind$all_categorical_cols,
-        all_datetime_cols = best_ind$all_datetime_cols
-      )
-
-      best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-
-      # 4. Evaluate the super-individual's fitness
-      super_ind <- evaluate_fitness(
-        super_ind, data, target_col,
-        task = task,
-        cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
-        evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
-        split_ids = split_ids_val,
-        shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
-        evaluator = best_eval_curr, fold_ids = fold_ids,
-        shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
-        shared_full = shared_full, state_cache = state_cache,
-        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
-        complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        baseline_fitness = baseline_ind$fitness,
-        running_best_fitness = best_ind$fitness,
-        n_samples = nrow(data), ...
-      )
-
-      if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
-        super_ind$best_params <- best_ind$best_params
-      }
-      if (is.null(super_ind$best_iteration) && !is.null(best_ind$best_iteration)) {
-        super_ind$best_iteration <- best_ind$best_iteration
-      }
-      if (is.null(super_ind$train_size) && !is.null(best_ind$train_size)) {
-        super_ind$train_size <- best_ind$train_size
-      }
-
-      if (!is.na(super_ind$fitness) && (is.na(best_ind$fitness) || super_ind$fitness > best_ind$fitness)) {
-        if (verbose) {
-          message(sprintf(
-            "  Pooled features improved validation fitness from %.4f to %.4f. Using pooled features.",
-            best_ind$fitness, super_ind$fitness
-          ))
-        }
-        best_ind <- super_ind
-        best_ind$evaluator <- best_eval_curr
-        best_ind_source <- "Adopted (Pooled)"
-        adopted_pooled <- TRUE
-        oof_preds <- best_ind$val_preds
-      } else {
-        if (verbose) {
-          message(sprintf(
-            "  Pooled features (fitness: %.4f) did not exceed best individual (fitness: %.4f). Using best individual.",
-            super_ind$fitness, best_ind$fitness
-          ))
-        }
-      }
-    } else {
-      if (verbose) {
-        message("  No final genes found to evaluate.")
-      }
-    }
-
-    if (record) {
-      evolution_log$pooled <- list(
-        n_genes = length(deduped_genes),
-        fitness = if (!is.null(super_ind)) super_ind$fitness else best_ind$fitness,
-        adopted = adopted_pooled
-      )
-      if (!is.null(viewer)) {
-        viewer$send(list(type = "pooled", data = evolution_log$pooled))
-      }
-    }
+    pool_res <- pool_final_genes(
+      pop = pop, best_ind = best_ind, data = data, target_col = target_col,
+      task = task, cv_folds = cv_folds,
+      evaluation_strategy = evaluation_strategy,
+      split_ids_val = split_ids_val, shared_splits = shared_splits,
+      evaluator_main = evaluator_main, fold_ids = fold_ids,
+      island_shared_splits = island_shared_splits, shared_folds = shared_folds,
+      shared_full = shared_full, state_cache = state_cache,
+      threads = threads, metric = metric, verbose = verbose,
+      complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      baseline_fitness = baseline_ind$fitness, islands = islands,
+      record = record, evolution_log = evolution_log, viewer = viewer,
+      best_ind_source = best_ind_source, oof_preds = oof_preds, ...
+    )
+    best_ind <- pool_res$best_ind
+    best_ind_source <- pool_res$best_ind_source
+    oof_preds <- pool_res$oof_preds
+    evolution_log <- pool_res$evolution_log
   }
 
+  # Historical feature pooling
   if (model_all_historical_genes) {
-    if (verbose) {
-      message("\nEvaluating historical pooled features (best genes from all generations)...")
-    }
-
-    # Append the final selected best individual's genes to historical best genes
-    if (!is.null(best_ind$genes) && length(best_ind$genes) > 0) {
-      historical_best_genes <- c(historical_best_genes, best_ind$genes)
-    }
-
-    deduped_historical_genes <- list()
-    super_ind_hist <- NULL
-    adopted_hist <- FALSE
-
-    if (length(historical_best_genes) > 0) {
-      # De-duplicate genes by their unique output column name
-      unique_cols_hist <- unique(vapply(historical_best_genes, function(g) g$output_col, character(1)))
-      for (gene in historical_best_genes) {
-        if (gene$output_col %in% unique_cols_hist) {
-          gene$state <- NULL
-          deduped_historical_genes[[gene$output_col]] <- gene
-          unique_cols_hist <- setdiff(unique_cols_hist, gene$output_col)
-        }
-      }
-      deduped_historical_genes <- unname(deduped_historical_genes)
-    }
-
-    if (length(deduped_historical_genes) > 0) {
-      # Create the historical super-individual
-      super_ind_hist <- create_individual(
-        genes = deduped_historical_genes,
-        numeric_cols = best_ind$numeric_cols,
-        categorical_cols = best_ind$categorical_cols,
-        datetime_cols = best_ind$datetime_cols,
-        all_numeric_cols = best_ind$all_numeric_cols,
-        all_categorical_cols = best_ind$all_categorical_cols,
-        all_datetime_cols = best_ind$all_datetime_cols
-      )
-
-      best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-      # Evaluate the historical super-individual's fitness
-      super_ind_hist <- evaluate_fitness(
-        super_ind_hist, data, target_col,
-        task = task,
-        cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
-        evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
-        split_ids = split_ids_val,
-        shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
-        evaluator = best_eval_curr, fold_ids = fold_ids,
-        shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
-        shared_full = shared_full, state_cache = state_cache,
-        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
-        complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        baseline_fitness = baseline_ind$fitness,
-        running_best_fitness = best_ind$fitness,
-        n_samples = nrow(data), ...
-      )
-
-      if (is.null(super_ind_hist$best_params) && !is.null(best_ind$best_params)) {
-        super_ind_hist$best_params <- best_ind$best_params
-      }
-      if (is.null(super_ind_hist$best_iteration) && !is.null(best_ind$best_iteration)) {
-        super_ind_hist$best_iteration <- best_ind$best_iteration
-      }
-      if (is.null(super_ind_hist$train_size) && !is.null(best_ind$train_size)) {
-        super_ind_hist$train_size <- best_ind$train_size
-      }
-
-      if (!is.na(super_ind_hist$fitness) && (is.na(best_ind$fitness) || super_ind_hist$fitness > best_ind$fitness)) {
-        if (verbose) {
-          message(sprintf(
-            "  Historical pooled features improved validation fitness from %.4f to %.4f. Using historical pooled features.",
-            best_ind$fitness, super_ind_hist$fitness
-          ))
-        }
-        best_ind <- super_ind_hist
-        best_ind$evaluator <- best_eval_curr
-        best_ind_source <- "Adopted (Historical)"
-        adopted_hist <- TRUE
-        oof_preds <- best_ind$val_preds
-      } else {
-        if (verbose) {
-          message(sprintf(
-            "  Historical pooled features (fitness: %.4f) did not exceed current best fitness (fitness: %.4f). Keeping current best individual.",
-            super_ind_hist$fitness, best_ind$fitness
-          ))
-        }
-      }
-    } else {
-      if (verbose) {
-        message("  No historical genes found to evaluate.")
-      }
-    }
-
-    if (record) {
-      evolution_log$historical <- list(
-        n_genes = length(deduped_historical_genes),
-        fitness = if (!is.null(super_ind_hist)) super_ind_hist$fitness else best_ind$fitness,
-        adopted = adopted_hist
-      )
-      if (!is.null(viewer)) {
-        viewer$send(list(type = "historical", data = evolution_log$historical))
-      }
-    }
+    hist_res <- pool_historical_genes(
+      historical_best_genes = historical_best_genes, best_ind = best_ind,
+      data = data, target_col = target_col, task = task, cv_folds = cv_folds,
+      evaluation_strategy = evaluation_strategy, split_ids_val = split_ids_val,
+      shared_splits = shared_splits, evaluator_main = evaluator_main,
+      fold_ids = fold_ids, island_shared_splits = island_shared_splits,
+      shared_folds = shared_folds, shared_full = shared_full,
+      state_cache = state_cache, threads = threads, metric = metric,
+      verbose = verbose, complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      baseline_fitness = baseline_ind$fitness, islands = islands,
+      record = record, evolution_log = evolution_log, viewer = viewer,
+      best_ind_source = best_ind_source, oof_preds = oof_preds, ...
+    )
+    best_ind <- hist_res$best_ind
+    best_ind_source <- hist_res$best_ind_source
+    oof_preds <- hist_res$oof_preds
+    evolution_log <- hist_res$evolution_log
   }
 
+  # Holdout evaluation for split strategy
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
     best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-    best_ind <- evaluate_holdout_fitness(best_ind, data, split_ids_val, shared_splits,
+    best_ind <- evaluate_holdout_fitness(
+      best_ind, data, split_ids_val, shared_splits,
       target_col, task, best_eval_curr, threads, state_cache,
       classes, num_class,
       metric = metric, verbose = verbose, seed = seed, ...
@@ -2895,9 +1343,9 @@ evolve_features <- function(data, target_col, task = "classification",
   if (record) {
     res_sample <- tryCatch(
       {
-        apply_individual(best_ind, head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        apply_individual(best_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = state_cache)
       },
-      error = function(e) list(train = head(shared_full, 5))
+      error = function(e) list(train = utils::head(shared_full, 5))
     )
     best_dt <- res_sample$train
     best_list <- lapply(names(best_dt), function(col) {

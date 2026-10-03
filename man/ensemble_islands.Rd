@@ -15,7 +15,7 @@ ensemble_islands(
   stack_folds = NULL,
   stack_alpha = 0.5,
   seed = NULL,
-  threads = max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE),
+  threads = NULL,
   verbose = TRUE,
   ...
 )
