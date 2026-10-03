@@ -279,6 +279,18 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         } else if (param_name == "q") {
           candidates <- setdiff(c(0.25, 0.75), old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "scale") {
+          candidates <- setdiff(c(0.1, 0.5, 1.0, 2.0, 5.0, 10.0), old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "phase") {
+          candidates <- setdiff(c(0, round(pi / 4, 4), round(pi / 2, 4), round(3 * pi / 4, 4)), old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "low_pct") {
+          candidates <- setdiff(c(0.01, 0.02, 0.05), old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "high_pct") {
+          candidates <- setdiff(c(0.95, 0.98, 0.99), old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else {
           old_val
         }

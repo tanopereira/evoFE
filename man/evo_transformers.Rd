@@ -30,12 +30,15 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{divide}}{Element-wise ratio (0 where denominator is 0).}
   \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + 1e-6)}.}
   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
+  \item{\code{fourier_basis}}{Periodic sine mapping: \code{sin(scale * x + phase)} with sampled scale and phase.}
 }
 
 \strong{Rank / distribution (numeric -> numeric, stateful)}
 \describe{
   \item{\code{rank_transform}}{ECDF-based percentile rank mapped to
     \eqn{[0, 1]}.  Fit on training data; robust to outliers.}
+  \item{\code{robust_scale}}{Robust median/IQR scaling: \code{(x - median) / IQR}. Fit on training data.}
+  \item{\code{smooth_clip}}{Smooth outlier dampening via soft hyperbolic tangent roll-off beyond percentiles. Fit on training data.}
 }
 
 \strong{Group-by aggregations (mixed cat x num -> numeric, stateful)}

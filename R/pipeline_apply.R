@@ -76,6 +76,9 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
       num_mask <- vapply(train_data, is.numeric, logical(1))
       existing_num_cols <- setdiff(names(train_data)[num_mask], c(gene$output_col, target_col))
+      if (gene$transformer_name %in% c("robust_scale", "smooth_clip")) {
+        existing_num_cols <- setdiff(existing_num_cols, gene$input_cols)
+      }
       if (length(existing_num_cols) > 0) {
         new_is_finite <- is.finite(new_col_train)
         if (sum(new_is_finite) > 2 && suppressWarnings(stats::sd(new_col_train[new_is_finite])) > 0) {

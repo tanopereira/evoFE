@@ -71,6 +71,12 @@ create_gene <- function(transformer_name, input_cols) {
     params$displacement <- round(stats::runif(1, 10, 1000), 2)
   } else if (transformer_name == "groupby_quantile") {
     params$q <- sample(c(0.25, 0.75), 1)
+  } else if (transformer_name == "fourier_basis") {
+    params$scale <- sample(c(0.1, 0.5, 1.0, 2.0, 5.0, 10.0), 1)
+    params$phase <- sample(c(0, round(pi / 4, 4), round(pi / 2, 4), round(3 * pi / 4, 4)), 1)
+  } else if (transformer_name == "smooth_clip") {
+    params$low_pct <- sample(c(0.01, 0.02, 0.05), 1)
+    params$high_pct <- sample(c(0.95, 0.98, 0.99), 1)
   }
   gene <- list(
     transformer_name = transformer_name,

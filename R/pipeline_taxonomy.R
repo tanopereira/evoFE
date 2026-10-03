@@ -12,11 +12,11 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
     } else if (at == "basic") {
       at <- intersect(all_t, c(
         "add", "subtract", "multiply", "divide",
-        "log", "sqrt", "reciprocal", "power", "displaced_log",
+        "log", "sqrt", "reciprocal", "power", "displaced_log", "fourier_basis",
         "normalized_difference", "frequency_encode",
         "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
         "feature_hash",
-        "rank_transform", "groupby_mean", "groupby_min", "groupby_max", "concat"
+        "rank_transform", "robust_scale", "smooth_clip", "groupby_mean", "groupby_min", "groupby_max", "concat"
       ))
     } else if (at == "clustering") {
       at <- intersect(all_t, c(
@@ -27,6 +27,7 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
     } else if (at == "robust") {
       at <- intersect(all_t, c(
         "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
+        "robust_scale", "smooth_clip", "fourier_basis",
         "add", "subtract", "multiply", "divide",
         "normalized_difference", "log_ratio",
         "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",

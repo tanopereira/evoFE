@@ -40,16 +40,20 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     } else {
       sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, cols_str)
     }
-  } else if (!is.null(gene$params$Q)) {
-    sprintf("%s%d(%s)", gene$transformer_name, gene$params$Q, cols_str)
-  } else if (!is.null(gene$params$base)) {
-    sprintf("%s%d(%s)", gene$transformer_name, gene$params$base, cols_str)
-  } else if (!is.null(gene$params$p)) {
-    sprintf("pow%.4g(%s)", gene$params$p, cols_str)
-  } else if (!is.null(gene$params$displacement)) {
-    sprintf("dlog%.2f(%s)", gene$params$displacement, cols_str)
-  } else if (!is.null(gene$params$q)) {
-    sprintf("%s_q%.2f(%s)", gene$transformer_name, gene$params$q, cols_str)
+  } else if (gene$transformer_name == "fourier_basis") {
+    sprintf("fourier_basis_s%.4g_p%.4g(%s)", gene$params[["scale"]], gene$params[["phase"]], cols_str)
+  } else if (gene$transformer_name == "smooth_clip") {
+    sprintf("smooth_clip_l%.2g_h%.2g(%s)", gene$params[["low_pct"]], gene$params[["high_pct"]], cols_str)
+  } else if (!is.null(gene$params[["Q"]])) {
+    sprintf("%s%d(%s)", gene$transformer_name, gene$params[["Q"]], cols_str)
+  } else if (!is.null(gene$params[["base"]])) {
+    sprintf("%s%d(%s)", gene$transformer_name, gene$params[["base"]], cols_str)
+  } else if (!is.null(gene$params[["p"]])) {
+    sprintf("pow%.4g(%s)", gene$params[["p"]], cols_str)
+  } else if (!is.null(gene$params[["displacement"]])) {
+    sprintf("dlog%.2f(%s)", gene$params[["displacement"]], cols_str)
+  } else if (!is.null(gene$params[["q"]])) {
+    sprintf("%s_q%.2f(%s)", gene$transformer_name, gene$params[["q"]], cols_str)
   } else if (gene$transformer_name == "umap_genie") {
     nn_str <- if (!is.null(gene$params$n_neighbors)) paste0("_nn", gene$params$n_neighbors) else ""
     dens_str <- if (!is.null(gene$params$dens_scale)) paste0("_d", gene$params$dens_scale) else ""
