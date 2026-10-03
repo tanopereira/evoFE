@@ -2964,6 +2964,18 @@ evolve_features <- function(data, target_col, task = "classification",
     calculate_headroom(island_best_fit, island_baselines_vec, task)
   } else NULL
 
+  island_bests_list <- if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind)
+  for (idx in seq_along(island_bests_list)) {
+    if (is.null(island_bests_list[[idx]]$extra_args)) {
+      island_bests_list[[idx]]$extra_args <- extra_args_top
+    }
+    if (is.null(island_bests_list[[idx]]$threads)) {
+      island_bests_list[[idx]]$threads <- threads
+    }
+  }
+  if (is.null(best_ind$extra_args)) best_ind$extra_args <- extra_args_top
+  if (is.null(best_ind$threads)) best_ind$threads <- threads
+
   res_obj <- list(
     best_individual = best_ind,
     history = pop,
@@ -2996,7 +3008,9 @@ evolve_features <- function(data, target_col, task = "classification",
     oof_preds = oof_preds,
     metacv_island_oof_preds = if (evaluation_strategy == "metacv") metacv_island_oof_preds else NULL,
     metacv_oof_fitness = if (evaluation_strategy == "metacv") ensemble_oof_fitness else NULL,
-    island_bests = if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind),
+    island_bests = island_bests_list,
+    threads = threads,
+    extra_args = extra_args_top,
     evolution_log = if (record) evolution_log else NULL,
     alignment_cache = new.env(hash = TRUE, parent = emptyenv())
   )

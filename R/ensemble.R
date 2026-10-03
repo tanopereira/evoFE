@@ -82,7 +82,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              stack_folds = NULL,
                              stack_alpha = 0.5,
                              seed = NULL,
-                             threads = max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE),
+                             threads = NULL,
                              verbose = TRUE, ...) {
   # Normalize recipe input: single evo_recipe or list of evo_recipe objects
   if (inherits(recipe, "evo_recipe")) {
@@ -100,6 +100,27 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   if (missing(data) || is.null(data)) {
     stop("Argument 'data' (full training dataset) is required for lazy final model fitting.")
+  }
+
+  first_recipe <- recipe_list[[1]]
+
+  # Thread resolution:
+  # 1. Thread alias passed via ... (e.g. nthreads, num_threads, threads)
+  # 2. Explicitly supplied threads argument (if not NULL)
+  # 3. Inherited threads from first_recipe$threads
+  # 4. Fallback to physical core count
+  user_args_top <- list(...)
+  resolved_user_threads <- resolve_param_aliases(user_args_top)$threads
+  if (!is.null(resolved_user_threads)) {
+    threads <- resolved_user_threads
+  } else if (is.null(threads)) {
+    if (!is.null(first_recipe$threads)) {
+      threads <- as.integer(first_recipe$threads)
+    } else {
+      threads <- max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+    }
+  } else {
+    threads <- as.integer(threads)
   }
 
   # Handle positional method passed in 3rd argument (e.g. ensemble_islands(rec, data, "equal"))
@@ -122,8 +143,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     stop("'caruana_rounds' must be a positive integer >= 1.")
   }
   caruana_rounds <- as.integer(caruana_rounds)
-
-  first_recipe <- recipe_list[[1]]
 
   # Infer target_col
   if (is.null(target_col)) {
@@ -264,15 +283,42 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
     for (nm in names(val_preds_list)) {
       ind_re <- cand_metadata[[nm]]$ind
+      rec_re <- cand_metadata[[nm]]$recipe
       ind_re$fitness <- NA_real_
       cand_eval <- cand_metadata[[nm]]$evaluator
-      ind_re <- evaluate_fitness(
-        ind_re, data = data, target_col = target_col,
-        task = task, cv_folds = common_folds,
-        evaluation_strategy = "cv", fold_ids = common_fold_ids,
-        evaluator = cand_eval, threads = threads,
-        metric = metric, verbose = FALSE, allow_prune = TRUE
-      )
+
+      cand_extra <- if (!is.null(ind_re$extra_args) && length(ind_re$extra_args) > 0) {
+        ind_re$extra_args
+      } else if (!is.null(rec_re$extra_args) && length(rec_re$extra_args) > 0) {
+        rec_re$extra_args
+      } else if (!is.null(first_recipe$extra_args) && length(first_recipe$extra_args) > 0) {
+        first_recipe$extra_args
+      } else {
+        list()
+      }
+      eval_extra <- utils::modifyList(cand_extra, list(...))
+
+      cand_threads_eval <- if (!is.null(threads)) {
+        threads
+      } else if (!is.null(ind_re$threads)) {
+        ind_re$threads
+      } else if (!is.null(rec_re$threads)) {
+        rec_re$threads
+      } else {
+        first_recipe$threads
+      }
+      if (is.null(cand_threads_eval)) cand_threads_eval <- max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+
+      ind_re <- do.call(evaluate_fitness, c(
+        list(
+          ind_re, data = data, target_col = target_col,
+          task = task, cv_folds = common_folds,
+          evaluation_strategy = "cv", fold_ids = common_fold_ids,
+          evaluator = cand_eval, threads = cand_threads_eval,
+          metric = metric, verbose = FALSE, allow_prune = TRUE
+        ),
+        eval_extra
+      ))
       val_preds_list[[nm]] <- ind_re$val_preds
       cand_metadata[[nm]]$ind <- ind_re
     }
@@ -470,8 +516,12 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
     active_evaluators[[name]] <- eval_i
 
-    # Check if this candidate matches rec_i$best_individual & rec_i$best_model is available
-    if (ind_str == best_ind_str && !is.null(rec_i$best_model)) {
+    user_args_passed <- list(...)
+    has_user_override <- length(user_args_passed) > 0 ||
+      (!is.null(threads) && !is.null(rec_i$threads) && as.integer(threads) != as.integer(rec_i$threads))
+
+    # Check if this candidate matches rec_i$best_individual & rec_i$best_model is available (and no parameter overrides requested)
+    if (!has_user_override && ind_str == best_ind_str && !is.null(rec_i$best_model)) {
       if (verbose) {
         message(sprintf("  [%s] Evaluator: %s | Weight: %5.1f%% | Reusing existing global best model (zero retraining).", name, eval_i, weights[[name]] * 100))
       }
@@ -498,7 +548,19 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
 
       # Train model using candidate's specific evaluator and best params
-      final_args_i <- list(...)
+      cand_info <- cand_metadata[[name]]
+      rec_i <- cand_info$recipe
+
+      base_extra <- if (!is.null(ind_i$extra_args) && length(ind_i$extra_args) > 0) {
+        ind_i$extra_args
+      } else if (!is.null(rec_i$extra_args) && length(rec_i$extra_args) > 0) {
+        rec_i$extra_args
+      } else if (!is.null(first_recipe$extra_args) && length(first_recipe$extra_args) > 0) {
+        first_recipe$extra_args
+      } else {
+        list()
+      }
+      final_args_i <- utils::modifyList(base_extra, list(...))
       if (!is.null(ind_i$best_iteration) && is.numeric(ind_i$best_iteration) &&
           is.finite(ind_i$best_iteration) && ind_i$best_iteration > 0) {
         total_data_size <- nrow(x_full)
@@ -536,11 +598,22 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         final_args_i <- utils::modifyList(final_args_i, as.list(ind_i$best_params))
       }
 
+      cand_threads <- if (!is.null(threads)) {
+        threads
+      } else if (!is.null(ind_i$threads)) {
+        ind_i$threads
+      } else if (!is.null(rec_i$threads)) {
+        rec_i$threads
+      } else {
+        first_recipe$threads
+      }
+      if (is.null(cand_threads)) cand_threads <- max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
+
       res_m <- do.call(train_model, c(
         list(
           x_train = x_full, y_train = y_full,
           task = task, evaluator = final_eval_i,
-          threads = threads, num_class = num_class, metric = metric,
+          threads = cand_threads, num_class = num_class, metric = metric,
           verbose = verbose, best_params = ind_i$best_params
         ),
         final_args_i
@@ -598,7 +671,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       evaluator = first_recipe$evaluator,
       target_col = target_col,
       classes = classes,
-      metric = metric
+      metric = metric,
+      threads = threads,
+      extra_args = list(...)
     ),
     class = "evo_ensemble"
   )

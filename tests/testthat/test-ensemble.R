@@ -410,4 +410,65 @@ test_that("ensemble_islands caches aligned predictions by reference in recipe$al
   expect_equal(ens2$method, "stack")
 })
 
+test_that("ensemble_islands inherits extra parameters and threads from recipe", {
+  # Mock evaluator that records arguments passed to train_func
+  recorded_args <- new.env(parent = emptyenv())
+  register_evaluator(
+    "param_tracker_eval",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+                          task = "regression", threads = 2, num_class = NULL, ...) {
+      args <- list(...)
+      recorded_args$last_threads <- threads
+      recorded_args$last_batch_size <- args$batch_size
+      recorded_args$last_custom_flag <- args$custom_flag
+      list(
+        model = list(weights = colMeans(x_train)),
+        predictions = if (!is.null(x_val)) rowMeans(x_val) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train))
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      rowMeans(x_new)
+    }
+  )
+
+  df <- data.frame(x1 = rnorm(30), x2 = rnorm(30), y = rnorm(30))
+
+  rec <- evolve_features(
+    df, "y",
+    task = "regression",
+    evaluator = "param_tracker_eval",
+    islands = 2,
+    generations = 1,
+    pop_size = 2,
+    threads = 8,
+    batch_size = 2048,
+    custom_flag = "inherited_value",
+    verbose = FALSE
+  )
+
+  expect_equal(rec$threads, 8)
+  expect_equal(rec$extra_args$batch_size, 2048)
+  expect_equal(rec$extra_args$custom_flag, "inherited_value")
+
+  # Ensemble should inherit threads = 8 and batch_size = 2048 without re-specifying
+  ens <- ensemble_islands(rec, df, method = "equal", verbose = FALSE)
+
+  expect_equal(ens$threads, 8)
+  expect_equal(recorded_args$last_threads, 8)
+  expect_equal(recorded_args$last_batch_size, 2048)
+  expect_equal(recorded_args$last_custom_flag, "inherited_value")
+
+  # Overriding in ensemble_islands should take precedence
+  ens_override <- ensemble_islands(
+    rec, df, method = "equal",
+    threads = 4, batch_size = 1024, custom_flag = "overridden",
+    verbose = FALSE
+  )
+  expect_equal(ens_override$threads, 4)
+  expect_equal(recorded_args$last_threads, 4)
+  expect_equal(recorded_args$last_batch_size, 1024)
+  expect_equal(recorded_args$last_custom_flag, "overridden")
+})
+
 
