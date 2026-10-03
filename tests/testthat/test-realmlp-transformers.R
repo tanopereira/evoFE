@@ -1,19 +1,31 @@
-test_that("fourier_basis computes periodic mapping correctly and handles params", {
+test_that("fourier_basis computes multi-component harmonic basis correctly and handles params", {
   dt_train <- data.table::data.table(x = c(0, pi / 2, pi, 3 * pi / 2, 2 * pi))
   gene <- create_gene("fourier_basis", "x")
+  expect_true(!is.null(gene$params$comp_idx))
   expect_true(!is.null(gene$params$scale))
   expect_true(!is.null(gene$params$phase))
 
-  # Test with known scale = 1, phase = 0
+  # Test comp_idx = 1 (sine 1st harmonic)
+  gene$params$comp_idx <- 1L
   gene$params$scale <- 1.0
   gene$params$phase <- 0.0
-  out <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
-  expect_equal(out, sin(dt_train$x), tolerance = 1e-6)
+  out1 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
+  expect_equal(out1, sin(dt_train$x), tolerance = 1e-6)
 
-  # Test with phase = pi/2 (converts to cosine)
-  gene$params$phase <- pi / 2
-  out_cos <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
-  expect_equal(out_cos, cos(dt_train$x), tolerance = 1e-6)
+  # Test comp_idx = 2 (cosine 1st harmonic)
+  gene$params$comp_idx <- 2L
+  out2 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
+  expect_equal(out2, cos(dt_train$x), tolerance = 1e-6)
+
+  # Test comp_idx = 3 (sine 2nd harmonic)
+  gene$params$comp_idx <- 3L
+  out3 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
+  expect_equal(out3, sin(2 * dt_train$x), tolerance = 1e-6)
+
+  # Test comp_idx = 4 (cosine 2nd harmonic)
+  gene$params$comp_idx <- 4L
+  out4 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
+  expect_equal(out4, cos(2 * dt_train$x), tolerance = 1e-6)
 
   # Test NA / Inf safety
   dt_na <- data.table::data.table(x = c(NA, Inf, -Inf, 1))
@@ -21,9 +33,9 @@ test_that("fourier_basis computes periodic mapping correctly and handles params"
   expect_equal(out_na[1:3], c(0, 0, 0))
   expect_true(is.finite(out_na[4]))
 
-  # Test formula string
+  # Test formula string with comp_idx
   formula_str <- gene_to_formula(gene)
-  expect_match(formula_str, "fourier_basis_s.*_p.*\\(x\\)")
+  expect_match(formula_str, "fourier_basis4_s.*_p.*\\(x\\)")
 })
 
 test_that("robust_scale computes median/IQR scaling on train and applies state to test", {

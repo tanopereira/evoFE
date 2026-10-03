@@ -438,11 +438,13 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         
         # If the transformer is multi-component, add all components
         new_genes_to_add <- list()
-        if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
+        if (t_name %in% c("pca", "truncated_svd", "umap", "mca", "famd", "between_group_pca", "genie_centroid_dist", "lumbermark_centroid_dist", "supervised_bgpca", "supervised_mca", "supervised_famd", "fourier_basis")) {
           C <- if (t_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
             sample(2:5, 1)
           } else if (t_name %in% c("mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
             sample(2:5, 1)
+          } else if (t_name == "fourier_basis") {
+            sample(c(4L, 6L), 1)
           } else {
             max(2L, as.integer(round(log2(length(cols)))))
           }
@@ -450,6 +452,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
           n_neighbors <- if (t_name == "umap") max(2L, stats::rpois(1, 15)) else NULL
           dens_scale <- if (t_name == "umap") round(stats::runif(1, 0, 1), 2) else NULL
+          fbr_scale <- if (t_name == "fourier_basis") sample(c(0.1, 0.5, 1.0, 2.0, 5.0, 10.0), 1) else NULL
+          fbr_phase <- if (t_name == "fourier_basis") sample(c(0, round(pi / 4, 4), round(pi / 2, 4), round(3 * pi / 4, 4)), 1) else NULL
           
           for (comp in 1:C) {
             g <- create_gene(t_name, cols)
@@ -460,6 +464,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
             } else if (t_name == "umap") {
               g$params$n_neighbors <- n_neighbors
               g$params$dens_scale <- dens_scale
+            } else if (t_name == "fourier_basis") {
+              g$params$scale <- fbr_scale
+              g$params$phase <- fbr_phase
             }
             g$output_col <- t_def$name_generator(g)
             new_genes_to_add <- c(new_genes_to_add, list(g))

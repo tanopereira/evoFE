@@ -151,16 +151,26 @@ evo_transformers$displaced_log <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "dlog")
 )
 
-# Fourier Basis (Periodic mapping with scale and phase)
+# Fourier Basis (Multi-component harmonic expansion with scale and phase)
 evo_transformers$fourier_basis <- create_transformer(
   name = "fourier_basis",
   type = "unary",
   input_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
     x <- as.numeric(data[[gene$input_cols[1]]])
-    scale <- if (!is.null(gene$params$scale)) gene$params$scale else 1.0
-    phase <- if (!is.null(gene$params$phase)) gene$params$phase else 0.0
-    res <- suppressWarnings(sin(scale * x + phase))
+    scale <- if (!is.null(gene$params[["scale"]])) gene$params[["scale"]] else 1.0
+    phase <- if (!is.null(gene$params[["phase"]])) gene$params[["phase"]] else 0.0
+    comp_idx <- if (!is.null(gene$params[["comp_idx"]])) as.integer(gene$params[["comp_idx"]]) else 1L
+
+    # Harmonic order k = 1, 2, ...
+    k <- (comp_idx + 1L) %/% 2L
+    is_cos <- (comp_idx %% 2L == 0L)
+
+    res <- if (is_cos) {
+      suppressWarnings(cos(k * scale * x + phase))
+    } else {
+      suppressWarnings(sin(k * scale * x + phase))
+    }
     res[!is.finite(res)] <- 0
     res
   },

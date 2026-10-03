@@ -65,7 +65,7 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
 #'   \item{\code{divide}}{Element-wise ratio (0 where denominator is 0).}
 #'   \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + 1e-6)}.}
 #'   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
-#'   \item{\code{fourier_basis}}{Periodic sine mapping: \code{sin(scale * x + phase)} with sampled scale and phase.}
+#'   \item{\code{fourier_basis}}{Multi-component Fourier harmonic basis: paired sine and cosine harmonics (\code{comp_idx} 1--4 or 1--6) across fundamental and multiple frequencies with sampled scale and phase.}
 #' }
 #'
 #' \strong{Rank / distribution (numeric -> numeric, stateful)}

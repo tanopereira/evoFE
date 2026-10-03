@@ -17,6 +17,11 @@ gene_to_formula <- function(gene, truncate = TRUE) {
   if (gene$transformer_name == "one_hot_encode") {
     comp_str <- if (gene$params$comp_idx == 6) "other" else as.character(gene$params$comp_idx)
     sprintf("ohe_%s(%s)", comp_str, cols_str)
+  } else if (gene$transformer_name == "fourier_basis") {
+    comp_str <- if (!is.null(gene$params[["comp_idx"]])) as.character(gene$params[["comp_idx"]]) else "1"
+    scale_val <- if (!is.null(gene$params[["scale"]])) gene$params[["scale"]] else 1.0
+    phase_val <- if (!is.null(gene$params[["phase"]])) gene$params[["phase"]] else 0.0
+    sprintf("fourier_basis%s_s%.4g_p%.4g(%s)", comp_str, scale_val, phase_val, cols_str)
   } else if (!is.null(gene$params$component)) {
     sprintf("%s_%s(%s)", gene$transformer_name, gene$params$component, cols_str)
   } else if (!is.null(gene$params$comp_idx)) {
@@ -40,8 +45,6 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     } else {
       sprintf("%s%d(%s)", gene$transformer_name, gene$params$comp_idx, cols_str)
     }
-  } else if (gene$transformer_name == "fourier_basis") {
-    sprintf("fourier_basis_s%.4g_p%.4g(%s)", gene$params[["scale"]], gene$params[["phase"]], cols_str)
   } else if (gene$transformer_name == "smooth_clip") {
     sprintf("smooth_clip_l%.2g_h%.2g(%s)", gene$params[["low_pct"]], gene$params[["high_pct"]], cols_str)
   } else if (!is.null(gene$params[["Q"]])) {
