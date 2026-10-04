@@ -27,7 +27,10 @@
 #'   assignments are available, otherwise 5). Only used when \code{method = "stack"}.
 #' @param stack_alpha Numeric in \code{[0, 1]}. Elastic-net mixing parameter of the
 #'   stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.
-#'   Only used when \code{method = "stack"}.
+#' @param rank_average Logical or NULL. If \code{TRUE}, ranks predictions to uniform
+#'   quantiles in [0, 1] before computing ensemble weights and predictions.
+#'   Recommended for ranking-based metrics like AUC. If \code{NULL} (default),
+#'   automatically defaults to \code{TRUE} when \code{metric = "auc"}.
 #' @param seed Optional integer seed for reproducible bagged sampling. Does not mutate
 #'   the user's global RNG state.
 #' @param threads Integer. Number of threads to use for model training.
@@ -43,6 +46,7 @@
 #'   \item{single_best_fitness}{Unpenalized validation fitness of the single best island model.}
 #'   \item{ensemble_val_fitness}{Validation fitness achieved by the ensemble.}
 #'   \item{method}{The ensembling method used.}
+#'   \item{rank_average}{Logical indicating whether rank averaging was used.}
 #'   \item{stack_cv_fitness}{Honest nested cross-validated fitness of the stacking procedure
 #'     (only for \code{method = "stack"}).}
 #'   \item{task}{The learning task ("classification", "regression", or "multiclass").}
@@ -81,6 +85,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              sample_ratio = 0.8,
                              stack_folds = NULL,
                              stack_alpha = 0.5,
+                             rank_average = NULL,
                              seed = NULL,
                              threads = NULL,
                              verbose = TRUE, ...) {
@@ -168,6 +173,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   metric <- first_recipe$metric
   classes <- first_recipe$classes
   num_class <- if (!is.null(classes)) length(classes) else NULL
+
+  # Determine rank_average: default to TRUE if metric is 'auc', otherwise FALSE
+  if (is.null(rank_average)) {
+    rank_average <- !is.null(metric) && is.character(metric) && tolower(metric) == "auc"
+  } else if (!is.logical(rank_average) || length(rank_average) != 1L) {
+    stop("'rank_average' must be a logical scalar (TRUE or FALSE) or NULL.")
+  }
 
   # Collect validation prediction vectors, targets, and evaluators across all recipes
   val_preds_list <- list()
@@ -403,6 +415,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       sample_ratio = sample_ratio,
       seed = seed,
       num_class = num_class,
+      rank_average = rank_average,
       verbose = verbose
     )
   } else if (method == "stack") {
@@ -436,24 +449,30 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       fold_partition = fold_partition,
       alpha = stack_alpha,
       seed = seed,
+      rank_average = rank_average,
       verbose = verbose
     )
   } else if (method == "equal") {
     weights <- rep(1 / length(val_preds_list), length(val_preds_list))
     names(weights) <- names(val_preds_list)
-    ens_preds <- if (is_metacv_equal) {
+    preds_for_blend <- if (isTRUE(rank_average)) {
+      lapply(val_preds_list, rank_transform_predictions)
+    } else {
+      val_preds_list
+    }
+    ens_preds <- if (is_metacv_equal && !isTRUE(rank_average)) {
       first_recipe$metacv_island_oof_preds
     } else {
       if (task == "multiclass") {
-        res_mat <- matrix(0, nrow = nrow(val_preds_list[[1]]), ncol = ncol(val_preds_list[[1]]))
+        res_mat <- matrix(0, nrow = nrow(preds_for_blend[[1]]), ncol = ncol(preds_for_blend[[1]]))
         for (nm in names(weights)) {
-          res_mat <- res_mat + weights[[nm]] * val_preds_list[[nm]]
+          res_mat <- res_mat + weights[[nm]] * preds_for_blend[[nm]]
         }
         res_mat
       } else {
-        res_vec <- numeric(length(val_preds_list[[1]]))
+        res_vec <- numeric(length(preds_for_blend[[1]]))
         for (nm in names(weights)) {
-          res_vec <- res_vec + weights[[nm]] * val_preds_list[[nm]]
+          res_vec <- res_vec + weights[[nm]] * preds_for_blend[[nm]]
         }
         res_vec
       }
@@ -652,6 +671,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       island_improvements = isl_improvements,
       island_headroom_closed = isl_headroom_closed,
       method = method,
+      rank_average = isTRUE(rank_average),
       stack_cv_fitness = if (!is.null(selection_res$stack_cv_fitness)) selection_res$stack_cv_fitness else NULL,
       task = task,
       evaluator = first_recipe$evaluator,

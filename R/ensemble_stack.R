@@ -9,10 +9,14 @@
 .stack_select <- function(y_true, val_preds_list, task, metric,
                           num_class = NULL, classes = NULL,
                           stack_folds = 5L, fold_partition = NULL,
-                          alpha = 0.5, seed = NULL, verbose = FALSE) {
+                          alpha = 0.5, seed = NULL, rank_average = FALSE, verbose = FALSE) {
   n_candidates <- length(val_preds_list)
   candidate_names <- names(val_preds_list)
   n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
+
+  if (isTRUE(rank_average)) {
+    val_preds_list <- lapply(val_preds_list, rank_transform_predictions)
+  }
 
   fam <- switch(task,
     regression = "gaussian",

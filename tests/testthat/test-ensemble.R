@@ -471,4 +471,44 @@ test_that("ensemble_islands inherits extra parameters and threads from recipe", 
   expect_equal(recorded_args$last_custom_flag, "overridden")
 })
 
+test_that("ensemble_islands supports rank_average parameter and defaults for auc", {
+  df <- data.frame(
+    x1 = rnorm(40),
+    x2 = rnorm(40),
+    y = rep(c(0, 1), each = 20)
+  )
+
+  rec_auc <- evolve_features(
+    df, "y",
+    task = "classification",
+    evaluator = "lightgbm",
+    metric = "auc",
+    islands = 2,
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 2,
+    verbose = FALSE
+  )
+
+  # Should default to TRUE when metric is auc
+  ens_default <- ensemble_islands(rec_auc, df, method = "equal", verbose = FALSE)
+  expect_true(ens_default$rank_average)
+
+  p_ens <- predict_model(ens_default, df)
+  expect_equal(length(p_ens), nrow(df))
+  expect_true(all(p_ens >= 0 & p_ens <= 1))
+
+  # Explicit override rank_average = FALSE
+  ens_no_rank <- ensemble_islands(rec_auc, df, method = "equal", rank_average = FALSE, verbose = FALSE)
+  expect_false(ens_no_rank$rank_average)
+
+  # caruana method with rank_average = TRUE
+  ens_caruana <- ensemble_islands(rec_auc, df, method = "caruana", rank_average = TRUE, caruana_rounds = 5, verbose = FALSE)
+  expect_true(ens_caruana$rank_average)
+
+  p_caruana <- predict_model(ens_caruana, df)
+  expect_equal(length(p_caruana), nrow(df))
+  expect_true(all(p_caruana >= 0 & p_caruana <= 1))
+})
+
 

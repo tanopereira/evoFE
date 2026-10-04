@@ -177,6 +177,10 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
 
     preds_i <- evaluator_entry$predict_func(mod_i, x_new, task = object$task)
 
+    if (isTRUE(object$rank_average)) {
+      preds_i <- rank_transform_predictions(preds_i)
+    }
+
     if (!is.null(object$classes)) {
       if (!is.matrix(preds_i)) {
         preds_i <- matrix(preds_i, ncol = length(object$classes), byrow = TRUE)

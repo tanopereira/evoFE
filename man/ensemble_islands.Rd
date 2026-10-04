@@ -14,6 +14,7 @@ ensemble_islands(
   sample_ratio = 0.8,
   stack_folds = NULL,
   stack_alpha = 0.5,
+  rank_average = NULL,
   seed = NULL,
   threads = NULL,
   verbose = TRUE,
@@ -49,8 +50,12 @@ of the stacked ensemble (default: \code{min(5, cv_folds)} in cv mode when fold
 assignments are available, otherwise 5). Only used when \code{method = "stack"}.}
 
 \item{stack_alpha}{Numeric in \code{[0, 1]}. Elastic-net mixing parameter of the
-stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.
-Only used when \code{method = "stack"}.}
+stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.}
+
+\item{rank_average}{Logical or NULL. If \code{TRUE}, ranks predictions to uniform
+quantiles in [0, 1] before computing ensemble weights and predictions.
+Recommended for ranking-based metrics like AUC. If \code{NULL} (default),
+automatically defaults to \code{TRUE} when \code{metric = "auc"}.}
 
 \item{seed}{Optional integer seed for reproducible bagged sampling. Does not mutate
 the user's global RNG state.}
@@ -71,6 +76,7 @@ An \code{evo_ensemble} object containing:
   \item{single_best_fitness}{Unpenalized validation fitness of the single best island model.}
   \item{ensemble_val_fitness}{Validation fitness achieved by the ensemble.}
   \item{method}{The ensembling method used.}
+  \item{rank_average}{Logical indicating whether rank averaging was used.}
   \item{stack_cv_fitness}{Honest nested cross-validated fitness of the stacking procedure
     (only for \code{method = "stack"}).}
   \item{task}{The learning task ("classification", "regression", or "multiclass").}

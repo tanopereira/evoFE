@@ -4,12 +4,16 @@
 caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
                            patience = 15, bag_samples = FALSE, bag_bags = 5,
                            sample_ratio = 0.8, seed = NULL,
-                           num_class = NULL, verbose = FALSE) {
+                           num_class = NULL, rank_average = FALSE, verbose = FALSE) {
 
   n_candidates <- length(val_preds_list)
   candidate_names <- names(val_preds_list)
   n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
   w_fmt <- nchar(as.character(rounds))
+
+  if (isTRUE(rank_average)) {
+    val_preds_list <- lapply(val_preds_list, rank_transform_predictions)
+  }
 
   eval_fitness <- function(y, p) {
     if (is.matrix(p)) {

@@ -344,7 +344,8 @@ print.evo_ensemble <- function(x, ...) {
   } else {
     "Caruana"
   }
-  cat(sprintf("An evoFE Island Ensemble (%s)\n", method_str))
+  rank_tag <- if (isTRUE(x$rank_average)) " (Rank Averaged)" else ""
+  cat(sprintf("An evoFE Island Ensemble (%s)%s\n", method_str, rank_tag))
   cat(sprintf("  Evaluator:            %s\n", x$evaluator))
   cat(sprintf("  Task:                 %s\n", x$task))
   if (!is.null(x$metric)) {
@@ -407,6 +408,7 @@ summary.evo_ensemble <- function(object, ...) {
     task = object$task,
     metric = object$metric,
     method = if (!is.null(object$method)) object$method else "caruana",
+    rank_average = object$rank_average,
     stack_cv_fitness = object$stack_cv_fitness,
     single_best_fitness = object$single_best_fitness,
     ensemble_val_fitness = object$ensemble_val_fitness,
@@ -445,7 +447,8 @@ print.summary_evo_ensemble <- function(x, ...) {
   } else {
     "Caruana"
   }
-  cat(sprintf("Summary of evoFE %s Ensemble\n", method_str))
+  rank_tag <- if (isTRUE(x$rank_average)) " (Rank Averaged)" else ""
+  cat(sprintf("Summary of evoFE %s Ensemble%s\n", method_str, rank_tag))
   cat(sprintf("Evaluator: %s | Task: %s | Metric: %s\n", x$evaluator, x$task, x$metric))
   cat(sprintf("Single Best Fitness: %.4f --> Ensemble Fitness: %.4f\n", x$single_best_fitness, x$ensemble_val_fitness))
   if (!is.null(x$stack_cv_fitness)) {

@@ -442,14 +442,36 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
 
 #' Check if Learner-Level Verbosity is Requested
 #'
-#' Returns TRUE if verbose argument or option `evoFE.verbose` is >= 3.
-#'
-#' @param verbose Optional numeric/logical verbose setting.
-#' @return Logical scalar.
 #' @keywords internal
 #' @noRd
 is_learner_verbose <- function(verbose = NULL) {
   opt_val <- getOption("evoFE.verbose", 0)
   (is.numeric(verbose) && verbose >= 3) ||
     (is.numeric(opt_val) && opt_val >= 3)
+}
+
+#' Rank Transform Predictions to Uniform [0, 1] Quantiles
+#'
+#' Maps predictions to [0, 1] percentile ranks. For matrices (multiclass),
+#' ranks are computed column-wise. Ties are handled by average rank.
+#'
+#' @param p Numeric vector or matrix of predictions.
+#' @return Prediction object with the same shape mapped to [0, 1] ranks.
+#' @keywords internal
+#' @noRd
+rank_transform_predictions <- function(p) {
+  if (is.null(p)) return(NULL)
+  if (is.matrix(p)) {
+    apply(p, 2, function(col) {
+      n <- length(col)
+      if (n <= 1L) return(rep(0.5, n))
+      r <- rank(col, ties.method = "average", na.last = "keep")
+      (r - 0.5) / n
+    })
+  } else {
+    n <- length(p)
+    if (n <= 1L) return(rep(0.5, n))
+    r <- rank(p, ties.method = "average", na.last = "keep")
+    (r - 0.5) / n
+  }
 }
