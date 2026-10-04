@@ -439,3 +439,17 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
   args$early_stopping_round <- 0L
   args
 }
+
+#' Check if Learner-Level Verbosity is Requested
+#'
+#' Returns TRUE if verbose argument or option `evoFE.verbose` is >= 3.
+#'
+#' @param verbose Optional numeric/logical verbose setting.
+#' @return Logical scalar.
+#' @keywords internal
+#' @noRd
+is_learner_verbose <- function(verbose = NULL) {
+  opt_val <- getOption("evoFE.verbose", 0)
+  (is.numeric(verbose) && verbose >= 3) ||
+    (is.numeric(opt_val) && opt_val >= 3)
+}

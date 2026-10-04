@@ -68,7 +68,10 @@
 #' @param threads Number of threads to use for parallel execution (default 2)
 #' @param max_clustering_size Maximum unique training rows to cluster (default
 #'   5000, 0/NULL for unlimited)
-#' @param verbose Logical. If TRUE, prints progress.
+#' @param verbose Integer or logical. If \code{0} or \code{FALSE}, runs silently.
+#'   If \code{1} or \code{TRUE}, prints generation progress.
+#'   If \code{2}, prints detailed transformer-level logging.
+#'   If \code{3}, enables live learner iteration logs for underlying models (LightGBM, XGBoost, CatBoost, RealMLP).
 #' @param metric The metric to optimize ("default", "auc", "f1", "mae", "cal_rmse", "cal_mae", or a
 #'   custom function).
 #' @param model_all_final_genes Logical. If TRUE, the final model is trained using

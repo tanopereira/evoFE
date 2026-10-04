@@ -552,7 +552,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   int stopped_epoch = n_epochs;
   int best_epoch = n_epochs;
 
-  int log_interval = (verbose >= 2) ? 32 : 64;
+  int log_interval = (verbose >= 3) ? 1 : ((verbose >= 2) ? 32 : 64);
 
   if (verbose >= 1) {
     std::string es_info = (early_stopping_rounds > 0 && has_val) ?

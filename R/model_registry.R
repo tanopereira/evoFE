@@ -303,6 +303,8 @@ register_evaluator(
     reg_obj <- if (is_mae_metric) "regression_l1" else "regression"
     reg_metric <- if (is_mae_metric) "mae" else "rmse"
 
+    learner_verbose <- is_learner_verbose(extra_params$verbose)
+
     params <- list(
       objective = switch(task,
         classification = "binary",
@@ -316,7 +318,7 @@ register_evaluator(
       ),
       num_leaves = 15,
       learning_rate = 0.1,
-      verbose = -1,
+      verbose = if (learner_verbose) 1L else -1L,
       num_threads = threads,
       seed = 42
     )
@@ -371,7 +373,7 @@ register_evaluator(
     # early_stopping_rounds requires at least one validation dataset
     esr <- if (length(valids) > 0) early_stopping_rounds else NULL
 
-    utils::capture.output({
+    if (learner_verbose) {
       model <- lightgbm::lgb.train(
         params = params,
         data = dtrain,
@@ -379,9 +381,21 @@ register_evaluator(
         valids = valids,
         eval = if (use_custom_eval) lgb_eval else NULL,
         early_stopping_rounds = esr,
-        verbose = -1
+        verbose = 1L
       )
-    })
+    } else {
+      utils::capture.output({
+        model <- lightgbm::lgb.train(
+          params = params,
+          data = dtrain,
+          nrounds = nrounds,
+          valids = valids,
+          eval = if (use_custom_eval) lgb_eval else NULL,
+          early_stopping_rounds = esr,
+          verbose = -1L
+        )
+      })
+    }
 
     best_it <- if (!is.null(model$best_iter) && model$best_iter > 0) model$best_iter else NULL
     preds <- if (!is.null(x_val)) {
@@ -471,6 +485,8 @@ register_evaluator(
     reg_obj <- if (is_mae_metric) "reg:absoluteerror" else "reg:squarederror"
     reg_eval_metric <- if (is_mae_metric) "mae" else "rmse"
 
+    learner_verbose <- is_learner_verbose(extra_params$verbose)
+
     params <- list(
       objective = switch(task,
         classification = "binary:logistic",
@@ -487,8 +503,8 @@ register_evaluator(
       eta = 0.1,
       min_child_weight = 1,
       seed = 42,
-      verbosity = 0,
-      silent = 1
+      verbosity = if (learner_verbose) 1L else 0L,
+      silent = if (learner_verbose) 0L else 1L
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -549,8 +565,8 @@ register_evaluator(
       }
     }
 
-    utils::capture.output({
-      model <- suppressWarnings(xgboost::xgb.train(
+    xgb_train_call <- function() {
+      suppressWarnings(xgboost::xgb.train(
         params = params,
         data = dtrain,
         nrounds = nrounds,
@@ -558,9 +574,18 @@ register_evaluator(
         custom_metric = if (use_custom_eval) xgb_feval else NULL,
         early_stopping_rounds = early_stopping_rounds,
         maximize = if (use_custom_eval) FALSE else NULL,
-        verbose = 0
+        verbose = if (learner_verbose) 1L else 0L
       ))
-    })
+    }
+
+    model <- if (learner_verbose) {
+      xgb_train_call()
+    } else {
+      utils::capture.output({
+        res <- xgb_train_call()
+      })
+      res
+    }
 
     best_iter <- .xgb_best_iter(model)
 
@@ -662,6 +687,10 @@ register_evaluator(
     metric_arg       <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
+    opt_verbose <- getOption("evoFE.verbose", 0)
+    verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
+    learner_verbose <- is_learner_verbose(verbose_arg)
+
     is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
     reg_loss <- if (is_mae_metric) "MAE" else "RMSE"
 
@@ -674,7 +703,7 @@ register_evaluator(
       thread_count = threads,
       iterations = nrounds,
       learning_rate = 0.1,
-      logging_level = "Silent",
+      logging_level = if (learner_verbose) "Verbose" else "Silent",
       allow_writing_files = FALSE,
       train_dir = tempdir(),
       random_seed = 42
@@ -703,7 +732,18 @@ register_evaluator(
       params$od_wait <- early_stopping_rounds
     }
 
-    model <- suppressWarnings(catboost::catboost.train(dtrain, test_pool = dval_es, params = params))
+    cb_train_call <- function() {
+      suppressWarnings(catboost::catboost.train(dtrain, test_pool = dval_es, params = params))
+    }
+
+    model <- if (learner_verbose) {
+      cb_train_call()
+    } else {
+      utils::capture.output({
+        res <- cb_train_call()
+      })
+      res
+    }
 
     preds <- NULL
     if (!is.null(x_val)) {
@@ -1117,7 +1157,8 @@ register_evaluator(
     verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
     show_log <- isTRUE(verbose_arg) || (is.numeric(verbose_arg) && verbose_arg >= 1) || isTRUE(opt_verbose) || (is.numeric(opt_verbose) && opt_verbose >= 1)
     is_detail <- isTRUE(verbose_arg >= 2) || isTRUE(opt_verbose >= 2)
-    verbose_int <- if (show_log) (if (is_detail) 2L else 1L) else 0L
+    is_super  <- is_learner_verbose(verbose_arg)
+    verbose_int <- if (show_log) (if (is_super) 3L else if (is_detail) 2L else 1L) else 0L
 
     use_es <- early_stopping_rounds > 0L && !is.null(x_val) && !is.null(y_val)
     es_rounds_to_pass <- if (use_es) early_stopping_rounds else 0L

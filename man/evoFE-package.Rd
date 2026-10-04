@@ -54,7 +54,9 @@ behaviour at runtime:
 \describe{
   \item{\code{evoFE.verbose}}{(integer/logical) Verbosity level.
     \code{0} or \code{FALSE} for silent; \code{1} or \code{TRUE} for normal;
-    \code{2} for detailed transformer-level logging.  Default \code{0}.}
+    \code{2} for detailed transformer-level logging;
+    \code{3} for learner-level training iteration logging (streaming LightGBM,
+    XGBoost, CatBoost, and RealMLP epochs). Default \code{0}.}
   \item{\code{evoFE.threads}}{(integer) Default number of threads to use for
     parallel operations inside evaluators and clustering transformers.
     Default \code{2}.}
