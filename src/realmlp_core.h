@@ -215,27 +215,49 @@ public:
   }
 
   // Forward pass through PBLD — writes into pre-allocated E, cache_Z, cache_Theta
+  // Fused single-pass SIMD vector loops: zero dgemm, zero OpenMP lock contention, zero allocations
   void forward(const Eigen::MatrixXd& x, Eigen::MatrixXd& E,
                std::vector<Eigen::MatrixXd>& cache_Z,
                std::vector<Eigen::MatrixXd>& cache_Theta,
                bool save_cache) const {
-    int B = x.rows();
+    int B = static_cast<int>(x.rows());
 
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (n_features >= 4)
 #endif
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
-      E.block(0, out_col_start, B, 1) = x.col(j);
+      const double* x_col = x.col(j).data();
+      std::memcpy(E.col(out_col_start).data(), x_col, B * sizeof(double));
 
-      // Theta = 2*pi * x_j * omega_j + b_j  (write into cache directly)
-      cache_Theta[j].topRows(B).noalias() = 2.0 * M_PI * x.col(j) * omega.val.row(j);
-      cache_Theta[j].topRows(B).rowwise() += b_phase.val.row(j);
-      cache_Z[j].topRows(B).array() = cache_Theta[j].topRows(B).array().cos();
+      // 1. Theta = 2*pi * x_j * omega_j + b_j and Z = cos(Theta) in a single fused pass
+      for (int k = 0; k < k_freq; ++k) {
+        double om = omega.val(j, k);
+        double b_ph = b_phase.val(j, k);
+        double* th_col = cache_Theta[j].col(k).data();
+        double* z_col = cache_Z[j].col(k).data();
+        for (int i = 0; i < B; ++i) {
+          double th = 2.0 * M_PI * x_col[i] * om + b_ph;
+          th_col[i] = th;
+          z_col[i] = std::cos(th);
+        }
+      }
 
-      // U = Z * W_j + beta_j
-      E.block(0, out_col_start + 1, B, d_proj).noalias() = cache_Z[j].topRows(B) * W_proj[j].val;
-      E.block(0, out_col_start + 1, B, d_proj).rowwise() += beta_proj.val.row(j);
+      // 2. Fused U = Z * W_j + beta_j (zero dgemm, zero OpenMP lock contention)
+      for (int c = 0; c < d_proj; ++c) {
+        double b_val = beta_proj.val(j, c);
+        double* out_col = E.col(out_col_start + 1 + c).data();
+        for (int i = 0; i < B; ++i) {
+          out_col[i] = b_val;
+        }
+        for (int k = 0; k < k_freq; ++k) {
+          double w_val = W_proj[j].val(k, c);
+          const double* z_col = cache_Z[j].col(k).data();
+          for (int i = 0; i < B; ++i) {
+            out_col[i] += w_val * z_col[i];
+          }
+        }
+      }
     }
   }
 
@@ -271,13 +293,34 @@ public:
       int tid = 0;
 #endif
       int out_col_start = j * (1 + d_proj);
-      E.block(0, out_col_start, B, 1) = x.col(j);
+      const double* x_col = x.col(j).data();
+      std::memcpy(E.col(out_col_start).data(), x_col, B * sizeof(double));
+
       auto& Z_buf = thread_Z_buf[tid];
-      Z_buf.topRows(B).noalias() = 2.0 * M_PI * x.col(j) * omega.val.row(j);
-      Z_buf.topRows(B).rowwise() += b_phase.val.row(j);
-      Z_buf.topRows(B).array() = Z_buf.topRows(B).array().cos();
-      E.block(0, out_col_start + 1, B, d_proj).noalias() = Z_buf.topRows(B) * W_proj[j].val;
-      E.block(0, out_col_start + 1, B, d_proj).rowwise() += beta_proj.val.row(j);
+      for (int k = 0; k < k_freq; ++k) {
+        double om = omega.val(j, k);
+        double b_ph = b_phase.val(j, k);
+        double* z_col = Z_buf.col(k).data();
+        for (int i = 0; i < B; ++i) {
+          z_col[i] = std::cos(2.0 * M_PI * x_col[i] * om + b_ph);
+        }
+      }
+
+      // Fused U = Z * W_j + beta_j (zero dgemm, zero OpenMP lock contention)
+      for (int c = 0; c < d_proj; ++c) {
+        double b_val = beta_proj.val(j, c);
+        double* out_col = E.col(out_col_start + 1 + c).data();
+        for (int i = 0; i < B; ++i) {
+          out_col[i] = b_val;
+        }
+        for (int k = 0; k < k_freq; ++k) {
+          double w_val = W_proj[j].val(k, c);
+          const double* z_col = Z_buf.col(k).data();
+          for (int i = 0; i < B; ++i) {
+            out_col[i] += w_val * z_col[i];
+          }
+        }
+      }
     }
   }
 
@@ -323,16 +366,66 @@ public:
       auto& grad_Th = grad_Th_tls[tid];
 
       int out_col_start = j * (1 + d_proj);
-      auto grad_U = grad_E.block(0, out_col_start + 1, B, d_proj);
-      grad_beta_buf.row(j) = grad_U.colwise().sum();
 
-      grad_W.noalias() = cache_Z[j].topRows(B).transpose() * grad_U;
+      // 1. grad_beta = sum(grad_U)
+      for (int c = 0; c < d_proj; ++c) {
+        const double* u_col = grad_E.col(out_col_start + 1 + c).data();
+        double sum = 0.0;
+        for (int i = 0; i < B; ++i) sum += u_col[i];
+        grad_beta_buf(j, c) = sum;
+      }
+
+      // 2. grad_W = cache_Z[j]^T * grad_U (zero dgemm, cache-contiguous dot products)
+      for (int c = 0; c < d_proj; ++c) {
+        const double* u_col = grad_E.col(out_col_start + 1 + c).data();
+        for (int k = 0; k < k_freq; ++k) {
+          const double* z_col = cache_Z[j].col(k).data();
+          double dot = 0.0;
+          for (int i = 0; i < B; ++i) {
+            dot += z_col[i] * u_col[i];
+          }
+          grad_W(k, c) = dot;
+        }
+      }
       W_proj[j].update(grad_W, lr, beta1, beta2, eps, b1_corr, b2_corr);
 
-      grad_Z.topRows(B).noalias() = grad_U * W_proj[j].val.transpose();
-      grad_Th.topRows(B).array() = -grad_Z.topRows(B).array() * cache_Theta[j].topRows(B).array().sin();
-      grad_b_buf.row(j) = grad_Th.topRows(B).colwise().sum();
-      grad_omega_buf.row(j) = 2.0 * M_PI * (x.col(j).transpose() * grad_Th.topRows(B));
+      // 3. grad_Z = grad_U * W_j^T (zero dgemm)
+      for (int k = 0; k < k_freq; ++k) {
+        double* gz_col = grad_Z.col(k).data();
+        for (int i = 0; i < B; ++i) gz_col[i] = 0.0;
+        for (int c = 0; c < d_proj; ++c) {
+          double w_val = W_proj[j].val(k, c);
+          const double* u_col = grad_E.col(out_col_start + 1 + c).data();
+          for (int i = 0; i < B; ++i) {
+            gz_col[i] += w_val * u_col[i];
+          }
+        }
+      }
+
+      // 4. grad_Th = -grad_Z * sin(cache_Theta), and accumulate grad_b
+      for (int k = 0; k < k_freq; ++k) {
+        const double* gz_col = grad_Z.col(k).data();
+        const double* th_col = cache_Theta[j].col(k).data();
+        double* gth_col = grad_Th.col(k).data();
+        double sum_b = 0.0;
+        for (int i = 0; i < B; ++i) {
+          double gth = -gz_col[i] * std::sin(th_col[i]);
+          gth_col[i] = gth;
+          sum_b += gth;
+        }
+        grad_b_buf(j, k) = sum_b;
+      }
+
+      // 5. grad_omega = 2*pi * x.col(j)^T * grad_Th
+      const double* x_col = x.col(j).data();
+      for (int k = 0; k < k_freq; ++k) {
+        const double* gth_col = grad_Th.col(k).data();
+        double dot = 0.0;
+        for (int i = 0; i < B; ++i) {
+          dot += x_col[i] * gth_col[i];
+        }
+        grad_omega_buf(j, k) = 2.0 * M_PI * dot;
+      }
     }
 
     omega.update(grad_omega_buf, lr, beta1, beta2, eps, b1_corr, b2_corr);
