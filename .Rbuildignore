@@ -17,6 +17,8 @@
 ^test_[^/]*\.R$
 ^\.Rd2pdf.*$
 ^SKILLS\.md$
+^ML_STRATEGY\.md$
+^ml_competition_strategy\.md$
 ^GATE_STATUS\.md$
 ^doc$
 ^Meta$
