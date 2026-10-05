@@ -122,11 +122,11 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
   ps <- do.call(paradox::ps, param_list)
   
   # 4. Create a dynamic training function wrapper
-  tuned_train_func <- function(x_train, y_train, x_val = NULL, y_val = NULL,
+  tuned_train_func <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NULL,
                                task = "classification", threads = 2, num_class = NULL,
                                metric = "default", mbo_iters = 5, mbo_init_design = 8,
                                mbo_folds = 3, mbo_infill_opt = "focussearch",
-                               verbose = FALSE, best_params = NULL, ...) {
+                               verbose = FALSE, best_params = NULL, fold_data = NULL, ...) {
     
     # Check for required packages
     if (!requireNamespace("mlr3mbo", quietly = TRUE) ||
@@ -135,11 +135,26 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       stop("The packages 'mlr3mbo', 'paradox', and 'bbotk' are required to use the tuned evaluator. Please install them.")
     }
 
-    use_split <- !is.null(x_val) && !is.null(y_val)
+    extra_args <- list(...)
+    if (is.null(fold_data) && !is.null(extra_args$fold_data)) {
+      fold_data <- extra_args$fold_data
+    }
+    if (!is.null(extra_args$cv_folds)) {
+      mbo_folds <- as.integer(extra_args$cv_folds)
+    }
+
+    use_fold_data <- !is.null(fold_data) && is.list(fold_data) && length(fold_data) > 0
+    if (use_fold_data) {
+      mbo_folds <- length(fold_data)
+    }
+    use_split <- !use_fold_data && !is.null(x_val) && !is.null(y_val)
     
     if (verbose) {
       metric_name <- if (is.function(metric)) "custom" else metric
-      if (use_split) {
+      if (use_fold_data) {
+        message(sprintf("\n[MBO] Starting %s Hyperparameter Tuning (Iters: %d, Strategy: global-cv-%d, Metric: %s)...", 
+                        base_model_name, mbo_iters, mbo_folds, metric_name))
+      } else if (use_split) {
         message(sprintf("\n[MBO] Starting %s Hyperparameter Tuning (Iters: %d, Strategy: split, Metric: %s)...", 
                         base_model_name, mbo_iters, metric_name))
       } else {
@@ -148,7 +163,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       }
     }
 
-    if (!use_split) {
+    if (!use_split && !use_fold_data) {
       folds <- sample(rep(1:mbo_folds, length.out = nrow(x_train)))
     }
     
@@ -157,8 +172,29 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       # Extract parameters from the MBO proposal and merge with fixed_params and extra args
       trial_params <- utils::modifyList(list(...), fixed_params)
       trial_params <- utils::modifyList(trial_params, x)
+      trial_params$fold_data <- NULL
       
-      if (use_split) {
+      if (use_fold_data) {
+        # Global cross-validation mode across pre-computed folds
+        scores <- numeric(mbo_folds)
+        for (i in seq_len(mbo_folds)) {
+          fd <- fold_data[[i]]
+          res <- do.call(base_evaluator$train_func, c(
+            list(x_train = fd$x_train, y_train = fd$y_train,
+                 x_val = fd$x_val, y_val = fd$y_val,
+                 task = task, threads = threads, num_class = num_class,
+                 metric = metric, verbose = FALSE),
+            trial_params
+          ))
+          scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class)
+        }
+        mean_score <- mean(scores)
+        if (verbose) {
+          param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
+          message(sprintf("  [MBO Eval] %s -> Global CV Fitness: %.4f", param_str, mean_score))
+        }
+        return(mean_score)
+      } else if (use_split) {
         # Train on split and compute target validation metric
         res <- do.call(base_evaluator$train_func, c(
           list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task, 
@@ -288,9 +324,32 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                       base_model_name, paste0(names(best_hyperparams), "=", unlist(best_hyperparams), collapse = ", ")))
     }
     
-    # 5. Train final model with the optimal parameters on the full dataset
+    # 5. Train final model with the optimal parameters
+    if (use_fold_data) {
+      final_params <- utils::modifyList(list(...), fixed_params)
+      final_params <- utils::modifyList(final_params, best_hyperparams)
+      final_params$fold_data <- NULL
+
+      fold_res <- vector("list", mbo_folds)
+      for (i in seq_len(mbo_folds)) {
+        fd <- fold_data[[i]]
+        fold_res[[i]] <- do.call(base_evaluator$train_func, c(
+          list(x_train = fd$x_train, y_train = fd$y_train,
+               x_val = fd$x_val, y_val = fd$y_val,
+               task = task, threads = threads, num_class = num_class,
+               metric = metric, verbose = FALSE),
+          final_params
+        ))
+      }
+      return(list(
+        best_params = best_hyperparams,
+        fold_res = fold_res
+      ))
+    }
+
     final_params <- utils::modifyList(list(...), fixed_params)
     final_params <- utils::modifyList(final_params, best_hyperparams)
+    final_params$fold_data <- NULL
     final_res <- do.call(base_evaluator$train_func, c(
       list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task, 
            threads = threads, num_class = num_class, metric = metric, verbose = verbose),

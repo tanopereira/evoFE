@@ -28,7 +28,7 @@
 #'   \code{predictions} (NULL when \code{x_val} is NULL),
 #'   and \code{importances} (named numeric vector or NULL).
 #' @keywords internal
-train_model <- function(x_train, y_train, x_val = NULL, y_val = NULL,
+train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NULL,
                         task = "classification", evaluator = "lightgbm",
                         threads = 2, num_class = NULL, nrounds = 50, ...) {
 

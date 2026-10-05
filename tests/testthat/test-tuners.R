@@ -118,5 +118,70 @@ test_that("lightgbm_mbo end-to-end runs on dummy data", {
   if (!is.null(res)) {
     expect_s3_class(res, "evo_recipe")
     expect_type(res$best_individual, "list")
+    expect_true(!is.null(res$best_individual$best_params))
   }
+})
+
+test_that("is_tuned_evaluator() correctly detects tuned vs base evaluators", {
+  expect_false(is_tuned_evaluator("lightgbm"))
+  expect_false(is_tuned_evaluator("xgboost"))
+  expect_true(is_tuned_evaluator("lightgbm_mbo"))
+  expect_false(is_tuned_evaluator("non_existent_evaluator"))
+})
+
+test_that("global CV optimization sets one winning best_params across folds", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  set.seed(42)
+  n <- 40
+  dummy_data <- data.frame(
+    x1 = stats::rnorm(n),
+    x2 = stats::rnorm(n),
+    target = stats::rnorm(n)
+  )
+
+  if (!exists("mock_tuned_test", envir = evo_evaluators)) {
+    register_evaluator(
+      "mock_base_test",
+      train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+                            task = "regression", ...) {
+        args <- list(...)
+        param_val <- if (!is.null(args$param_a)) args$param_a else 4.0
+        val_score <- 100 - abs(param_val - 4.5)
+        list(
+          model = list(args = args, val_score = val_score),
+          predictions = if (!is.null(x_val)) rep(val_score, nrow(x_val)) else NULL
+        )
+      },
+      predict_func = function(model, x_new, task, ...) {
+        rep(model$val_score, nrow(x_new))
+      }
+    )
+    param_ranges <- list(
+      param_a = list(type = "numeric", lower = 1.0, upper = 8.0)
+    )
+    make_tunable("mock_base_test", param_ranges, tuner_name = "mock_tuned_test")
+  }
+
+  res <- evolve_features(
+    data = dummy_data,
+    target_col = "target",
+    task = "regression",
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 3,
+    early_stopping_generations = 1,
+    evaluator = "mock_tuned_test",
+    mbo_iters = 2,
+    mbo_init_design = 3,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_recipe")
+  expect_true(!is.null(res$best_individual$best_params))
+  expect_true("param_a" %in% names(res$best_individual$best_params))
+  expect_true(is.numeric(res$best_individual$fitness))
+  expect_true(length(res$best_individual$val_preds) == n)
 })

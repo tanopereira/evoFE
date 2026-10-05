@@ -179,6 +179,22 @@ unwrap_evaluator <- function(evaluator) {
   curr
 }
 
+#' Check if an Evaluator is Tuned / Wrapped
+#'
+#' @param evaluator Character name or evaluator list object.
+#' @return Logical scalar TRUE if evaluator wraps a base evaluator via tuning.
+#' @export
+is_tuned_evaluator <- function(evaluator) {
+  if (is.list(evaluator) && !is.null(evaluator$base_evaluator)) {
+    return(TRUE)
+  }
+  if (is.character(evaluator) && length(evaluator) == 1 && !is.na(evaluator) && has_evaluator(evaluator)) {
+    ev <- get_evaluator(evaluator)
+    return(!is.null(ev$base_evaluator) && ev$base_evaluator != evaluator)
+  }
+  FALSE
+}
+
 #' Check if an Evaluator is Tree-Based
 #'
 #' Inspects the traits of the evaluator (or its unwrapped base evaluator) to determine
@@ -344,7 +360,7 @@ register_evaluator(
       params$metric <- "None"
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -528,7 +544,7 @@ register_evaluator(
       params$eval_metric <- NULL
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
+    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -710,7 +726,7 @@ register_evaluator(
     )
 
     control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
-                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds",
+                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data",
                         "device", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads",
                         "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
