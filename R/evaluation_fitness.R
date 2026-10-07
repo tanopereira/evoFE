@@ -69,8 +69,12 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       train_fold <- shared_splits$train
       val_fold <- shared_splits$val
     } else {
-      train_fold <- data.table::as.data.table(data[split_ids == "train", ])
-      val_fold <- data.table::as.data.table(data[split_ids == "val", ])
+      tr_idx <- which(split_ids == "train")
+      va_idx <- which(split_ids == "val")
+      train_fold <- data.table::as.data.table(data[tr_idx, ])
+      val_fold <- data.table::as.data.table(data[va_idx, ])
+      data.table::setattr(train_fold, ".row_id", tr_idx)
+      data.table::setattr(val_fold, ".row_id", va_idx)
     }
 
     # Copy train/val folds so we can modify them when applying recipe
@@ -274,6 +278,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         val_idx <- which(folds == f)
         train_fold <- dt[train_idx, ]
         val_fold <- dt[val_idx, ]
+        data.table::setattr(train_fold, ".row_id", train_idx)
+        data.table::setattr(val_fold, ".row_id", val_idx)
       }
       fold_train_sizes <- c(fold_train_sizes, nrow(train_fold))
 

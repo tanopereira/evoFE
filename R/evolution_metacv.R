@@ -83,10 +83,13 @@ build_metacv_partitions <- function(data, islands, cv_strategy = "random", time_
                                     group_col = NULL, verbose = FALSE) {
   fold_ids <- .build_cv_folds(data, islands, cv_strategy, time_col, group_col)
   island_shared_splits <- lapply(seq_len(islands), function(j) {
-    list(
-      train = data.table::as.data.table(data[fold_ids != j, ]),
-      val   = data.table::as.data.table(data[fold_ids == j, ])
-    )
+    tr_idx <- which(fold_ids != j)
+    va_idx <- which(fold_ids == j)
+    tr_dt <- data.table::as.data.table(data[tr_idx, ])
+    va_dt <- data.table::as.data.table(data[va_idx, ])
+    data.table::setattr(tr_dt, ".row_id", tr_idx)
+    data.table::setattr(va_dt, ".row_id", va_idx)
+    list(train = tr_dt, val = va_dt)
   })
   if (verbose) {
     message(sprintf("  MetaCV partitions -> %d folds mapped across %d islands", islands, islands))

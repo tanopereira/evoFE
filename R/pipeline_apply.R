@@ -23,7 +23,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   col_exists_val <- if (!is.null(val_data)) gene$output_col %in% names(val_data) else TRUE
   col_exists_full <- if (!is.null(full_data)) gene$output_col %in% names(full_data) else TRUE
 
-  if (col_exists_train && col_exists_val && col_exists_full && !is.null(gene$state)) {
+  if (col_exists_train && col_exists_val && col_exists_full && (!is.null(gene$state) || is.null(t_def$fit_func))) {
     return(list(train = train_data, val = val_data, full = full_data, gene = gene))
   }
 
@@ -80,10 +80,32 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   }
 
   out_type <- if (!is.null(t_def$output_type)) t_def$output_type else "numeric"
+  can_use_global <- use_global_fit && all(gene$input_cols %in% names(full_data))
+  new_col_full <- NULL
 
   # Apply to train
   if (!col_exists_train) {
-    new_col_train <- t_def$apply_func(train_data, gene, state)
+    if (can_use_global) {
+      if (col_exists_full) {
+        new_col_full <- full_data[[gene$output_col]]
+      } else {
+        new_col_full <- t_def$apply_func(full_data, gene, state)
+        if (out_type == "categorical") {
+          new_col_full <- as.factor(new_col_full)
+        } else if (is.double(new_col_full)) {
+          new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+        }
+      }
+      tr_idx <- attr(train_data, ".row_id")
+      if (!is.null(tr_idx) && length(new_col_full) >= max(tr_idx)) {
+        new_col_train <- new_col_full[tr_idx]
+      } else {
+        new_col_train <- t_def$apply_func(train_data, gene, state)
+      }
+    } else {
+      new_col_train <- t_def$apply_func(train_data, gene, state)
+    }
+
     if (is.double(new_col_train)) {
       new_col_train[!is.finite(new_col_train) | abs(new_col_train) > 3.402823e38] <- NA_real_
     }
@@ -136,11 +158,39 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     } else {
       train_data[[gene$output_col]] <- new_col_train
     }
+
+    # Commit globally computed column to full_data after train passes validation
+    if (can_use_global && !col_exists_full && !is.null(new_col_full)) {
+      if (data.table::is.data.table(full_data)) {
+        full_data[, (gene$output_col) := new_col_full]
+      } else {
+        full_data[[gene$output_col]] <- new_col_full
+      }
+      col_exists_full <- TRUE
+    }
   }
 
   # Apply to val
   if (!is.null(val_data) && !col_exists_val) {
-    new_col_val <- t_def$apply_func(val_data, gene, state)
+    if (can_use_global) {
+      if (is.null(new_col_full)) {
+        new_col_full <- if (col_exists_full) full_data[[gene$output_col]] else t_def$apply_func(full_data, gene, state)
+        if (out_type == "categorical") {
+          new_col_full <- as.factor(new_col_full)
+        } else if (is.double(new_col_full)) {
+          new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+        }
+      }
+      va_idx <- attr(val_data, ".row_id")
+      if (!is.null(va_idx) && length(new_col_full) >= max(va_idx)) {
+        new_col_val <- new_col_full[va_idx]
+      } else {
+        new_col_val <- t_def$apply_func(val_data, gene, state)
+      }
+    } else {
+      new_col_val <- t_def$apply_func(val_data, gene, state)
+    }
+
     if (out_type == "categorical") {
       # Fallback level alignment in case train_data has already been converted to factor
       train_factor <- train_data[[gene$output_col]]
@@ -156,15 +206,17 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     }
   }
 
-  # Apply to full_data (if provided and column doesn't already exist)
+  # Apply to full_data (if provided and column doesn't already exist, e.g. for supervised transformers)
   if (!is.null(full_data) && !col_exists_full) {
-    new_col_full <- t_def$apply_func(full_data, gene, state)
-    if (out_type == "categorical") {
-      train_factor <- train_data[[gene$output_col]]
-      train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
-      new_col_full <- factor(new_col_full, levels = train_levels)
-    } else if (is.double(new_col_full)) {
-      new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+    if (is.null(new_col_full)) {
+      new_col_full <- t_def$apply_func(full_data, gene, state)
+      if (out_type == "categorical") {
+        train_factor <- train_data[[gene$output_col]]
+        train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
+        new_col_full <- factor(new_col_full, levels = train_levels)
+      } else if (is.double(new_col_full)) {
+        new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+      }
     }
     if (data.table::is.data.table(full_data)) {
       full_data[, (gene$output_col) := new_col_full]
@@ -201,7 +253,7 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
     NULL
   }
   dt_full <- if (!is.null(full_data) && isTRUE(global_unsupervised)) {
-    if (data.table::is.data.table(full_data)) data.table::copy(full_data) else data.table::as.data.table(full_data)
+    if (data.table::is.data.table(full_data)) full_data else data.table::as.data.table(full_data)
   } else {
     NULL
   }

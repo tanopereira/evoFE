@@ -196,3 +196,94 @@ test_that("multi-fidelity screening fits unsupervised transformers on full datas
   expect_equal(unname(cached_state$model$scale), unname(full_pca$scale), tolerance = 1e-6)
 })
 
+test_that("global_unsupervised slices subsets by .row_id and persists in full_data", {
+  set.seed(42)
+  n <- 50
+  dt <- data.table::data.table(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    target = rnorm(n)
+  )
+
+  tr_idx <- 1:35
+  va_idx <- 36:50
+  train_dt <- data.table::copy(dt[tr_idx, ])
+  val_dt <- data.table::copy(dt[va_idx, ])
+  data.table::setattr(train_dt, ".row_id", tr_idx)
+  data.table::setattr(val_dt, ".row_id", va_idx)
+
+  g_pca <- create_gene("pca", c("x1", "x2"))
+  g_pca$params$comp_idx <- 1L
+  ind <- create_individual(
+    genes = list(g_pca),
+    numeric_cols = c("x1", "x2"),
+    all_numeric_cols = c("x1", "x2")
+  )
+
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  res <- apply_individual(
+    ind, train_dt, val_dt,
+    target_col = "target", state_cache = state_cache,
+    full_data = dt, global_unsupervised = TRUE
+  )
+
+  out_col <- g_pca$output_col
+  expect_true(out_col %in% names(dt))
+  expect_true(out_col %in% names(res$train))
+  expect_true(out_col %in% names(res$val))
+
+  # Train and val columns must be exact slices of the global column
+  expect_equal(res$train[[out_col]], dt[[out_col]][tr_idx])
+  expect_equal(res$val[[out_col]], dt[[out_col]][va_idx])
+
+  # A second evaluation with the same gene reuses dt[[out_col]] directly
+  train_dt2 <- data.table::copy(dt[tr_idx, ])
+  val_dt2 <- data.table::copy(dt[va_idx, ])
+  data.table::setattr(train_dt2, ".row_id", tr_idx)
+  data.table::setattr(val_dt2, ".row_id", va_idx)
+
+  res2 <- apply_individual(
+    ind, train_dt2, val_dt2,
+    target_col = "target", state_cache = state_cache,
+    full_data = dt, global_unsupervised = TRUE
+  )
+  expect_equal(res2$train[[out_col]], dt[[out_col]][tr_idx])
+  expect_equal(res2$val[[out_col]], dt[[out_col]][va_idx])
+})
+
+test_that("rejected constant column does not pollute full_data", {
+  n <- 30
+  dt <- data.table::data.table(
+    x1 = rep(5.0, n),
+    x2 = rnorm(n),
+    target = rnorm(n)
+  )
+
+  tr_idx <- 1:20
+  va_idx <- 21:30
+  train_dt <- data.table::copy(dt[tr_idx, ])
+  val_dt <- data.table::copy(dt[va_idx, ])
+  data.table::setattr(train_dt, ".row_id", tr_idx)
+  data.table::setattr(val_dt, ".row_id", va_idx)
+
+  # Scale on constant column produces NaN / constant which gets rejected
+  g_scale <- create_gene("robust_scale", "x1")
+  ind <- create_individual(
+    genes = list(g_scale),
+    numeric_cols = c("x1", "x2"),
+    all_numeric_cols = c("x1", "x2")
+  )
+
+  out_col <- g_scale$output_col
+  res <- apply_individual(
+    ind, train_dt, val_dt,
+    target_col = "target", allow_prune = TRUE,
+    full_data = dt, global_unsupervised = TRUE
+  )
+
+  # Gene should be pruned and output_col must NOT exist in dt
+  expect_false(out_col %in% names(dt))
+  expect_false(out_col %in% names(res$train))
+})
+
+

@@ -536,19 +536,21 @@ evolve_features <- function(data, target_col, task = "classification",
         train_indices <- sample(train_indices)
         split_indices <- split(train_indices, cut(seq_along(train_indices), islands, labels = FALSE))
         for (j in seq_len(islands)) {
-          island_shared_folds[[j]][[f]] <- list(
-            train = data.table::as.data.table(data[split_indices[[j]], ]),
-            val = data.table::as.data.table(data[fold_ids == f, ])
-          )
+          tr_dt <- data.table::as.data.table(data[split_indices[[j]], ])
+          va_dt <- data.table::as.data.table(data[fold_ids == f, ])
+          data.table::setattr(tr_dt, ".row_id", split_indices[[j]])
+          data.table::setattr(va_dt, ".row_id", which(fold_ids == f))
+          island_shared_folds[[j]][[f]] <- list(train = tr_dt, val = va_dt)
         }
       }
     } else {
       shared_folds <- list()
       for (f in seq_len(cv_folds)) {
-        shared_folds[[f]] <- list(
-          train = data.table::as.data.table(data[fold_ids != f, ]),
-          val = data.table::as.data.table(data[fold_ids == f, ])
-        )
+        tr_dt <- data.table::as.data.table(data[fold_ids != f, ])
+        va_dt <- data.table::as.data.table(data[fold_ids == f, ])
+        data.table::setattr(tr_dt, ".row_id", which(fold_ids != f))
+        data.table::setattr(va_dt, ".row_id", which(fold_ids == f))
+        shared_folds[[f]] <- list(train = tr_dt, val = va_dt)
       }
     }
   } else if (evaluation_strategy == "metacv") {
@@ -563,11 +565,17 @@ evolve_features <- function(data, target_col, task = "classification",
       split_ids_val <- split_ids
     }
 
-    global_train_dt <- data.table::as.data.table(data[split_ids_val == "train", ])
-    global_val_dt <- data.table::as.data.table(data[split_ids_val == "val", ])
+    tr_idx <- which(split_ids_val == "train")
+    va_idx <- which(split_ids_val == "val")
+    global_train_dt <- data.table::as.data.table(data[tr_idx, ])
+    global_val_dt   <- data.table::as.data.table(data[va_idx, ])
+    data.table::setattr(global_train_dt, ".row_id", tr_idx)
+    data.table::setattr(global_val_dt, ".row_id", va_idx)
     global_holdout_dt <- NULL
     if ("holdout" %in% split_ids_val) {
-      global_holdout_dt <- data.table::as.data.table(data[split_ids_val == "holdout", ])
+      ho_idx <- which(split_ids_val == "holdout")
+      global_holdout_dt <- data.table::as.data.table(data[ho_idx, ])
+      data.table::setattr(global_holdout_dt, ".row_id", ho_idx)
     }
 
     if (row_split_islands) {
@@ -582,15 +590,15 @@ evolve_features <- function(data, target_col, task = "classification",
           n_local_train <- max(1L, floor(local_split_frac * n_j))
           local_train_idx <- split_indices[[j]][seq_len(n_local_train)]
           local_val_idx <- split_indices[[j]][seq(n_local_train + 1L, n_j)]
-          island_shared_splits[[j]] <- list(
-            train = data.table::as.data.table(data[local_train_idx, ]),
-            val   = data.table::as.data.table(data[local_val_idx, ])
-          )
+          tr_dt <- data.table::as.data.table(data[local_train_idx, ])
+          va_dt <- data.table::as.data.table(data[local_val_idx, ])
+          data.table::setattr(tr_dt, ".row_id", local_train_idx)
+          data.table::setattr(va_dt, ".row_id", local_val_idx)
+          island_shared_splits[[j]] <- list(train = tr_dt, val = va_dt)
         } else {
-          island_shared_splits[[j]] <- list(
-            train = data.table::as.data.table(data[split_indices[[j]], ]),
-            val   = global_val_dt
-          )
+          tr_dt <- data.table::as.data.table(data[split_indices[[j]], ])
+          data.table::setattr(tr_dt, ".row_id", split_indices[[j]])
+          island_shared_splits[[j]] <- list(train = tr_dt, val = global_val_dt)
         }
         if (!is.null(global_holdout_dt)) {
           island_shared_splits[[j]]$holdout <- global_holdout_dt
@@ -632,7 +640,12 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(part) || nrow(part) == 0L) return(part)
       n_take <- max(30L, ceiling(nrow(part) * mf_sample_frac))
       n_take <- min(n_take, nrow(part))
-      part[seq_len(n_take), ]
+      res <- part[seq_len(n_take), ]
+      row_id <- attr(part, ".row_id")
+      if (!is.null(row_id)) {
+        data.table::setattr(res, ".row_id", row_id[seq_len(n_take)])
+      }
+      res
     }
     .mf_subsample_fold <- function(fl) {
       if (is.null(fl)) return(fl)
