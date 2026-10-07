@@ -125,11 +125,14 @@ evo_transformers$feature_hash <- create_transformer(
     
     non_na_mask <- !is.na(x)
     if (any(non_na_mask)) {
+      valid_x <- x[non_na_mask]
+      u_x <- unique(valid_x)
       v_hash <- digest::getVDigest(algo = "xxhash32")
-      hex_vals <- v_hash(x[non_na_mask])
+      hex_vals <- v_hash(u_x)
       int_vals <- strtoi(substr(hex_vals, 1, 7), 16L)
       bin_indices <- (int_vals %% num_bins) + 1
-      res[non_na_mask] <- as.numeric(bin_indices == comp_idx)
+      u_res <- as.numeric(bin_indices == comp_idx)
+      res[non_na_mask] <- u_res[match(valid_x, u_x)]
     }
     
     res
@@ -186,7 +189,7 @@ evo_transformers$similarity_encode <- create_transformer(
         if (n < 3) return(s_clean)
         substring(s_clean, 1:(n - 2), 3:n)
       }
-      sapply(str_vec, function(s) {
+      compute_single <- function(s) {
         if (is.na(s) || nchar(s) == 0) return(0)
         g <- get_3grams(s)
         if (length(g) == 0 && proto_len == 0) return(1)
@@ -194,7 +197,10 @@ evo_transformers$similarity_encode <- create_transformer(
         intersection <- length(intersect(g, proto_grams))
         union_len <- length(union(g, proto_grams))
         if (union_len == 0) 0 else intersection / union_len
-      }, USE.NAMES = FALSE)
+      }
+      u_s <- unique(str_vec)
+      u_res <- vapply(u_s, compute_single, numeric(1), USE.NAMES = FALSE)
+      u_res[match(str_vec, u_s)]
     }
 
     if (is.null(state$preds_cache)) {
@@ -234,17 +240,20 @@ evo_transformers$minhash_encode <- create_transformer(
     x <- as.character(data[[input_cols[1]]])
 
     compute_minhash <- function(str_vec) {
-      sapply(str_vec, function(s) {
+      compute_single <- function(s) {
         if (is.na(s) || nchar(s) == 0) return(0)
         s_clean <- paste0("^", tolower(s), "$")
         n <- nchar(s_clean)
         grams <- if (n < 3) s_clean else substring(s_clean, 1:(n - 2), 3:n)
-        hashes <- sapply(grams, function(g) {
+        hashes <- vapply(grams, function(g) {
           h_hex <- digest::digest(paste0(g, "_", seed), algo = "xxhash32")
           strtoi(substr(h_hex, 1, 7), base = 16L)
-        }, USE.NAMES = FALSE)
+        }, integer(1), USE.NAMES = FALSE)
         min(hashes) / 268435455
-      }, USE.NAMES = FALSE)
+      }
+      u_s <- unique(str_vec)
+      u_res <- vapply(u_s, compute_single, numeric(1), USE.NAMES = FALSE)
+      u_res[match(str_vec, u_s)]
     }
 
     if (is.null(state$preds_cache)) {
@@ -283,36 +292,58 @@ evo_transformers$gap_encode <- create_transformer(
       substring(s_clean, 1:(n - 2), 3:n)
     }
 
-    all_grams <- unlist(lapply(valid_x, get_3grams))
+    # Deduplicate unique categories to extract grams and count frequencies
+    u_valid_x <- unique(valid_x)
+    cat_counts <- table(valid_x)
+    u_counts <- as.numeric(cat_counts[u_valid_x])
+    u_grams <- lapply(u_valid_x, get_3grams)
+
+    gram_counts_map <- new.env(hash = TRUE, parent = emptyenv())
+    for (i in seq_along(u_valid_x)) {
+      g <- u_grams[[i]]
+      if (length(g) > 0) {
+        tab <- table(g)
+        cnt <- u_counts[i]
+        for (gn in names(tab)) {
+          prev <- if (exists(gn, envir = gram_counts_map, inherits = FALSE)) get(gn, envir = gram_counts_map) else 0
+          assign(gn, prev + as.numeric(tab[[gn]]) * cnt, envir = gram_counts_map)
+        }
+      }
+    }
+    all_grams <- ls(gram_counts_map)
     if (length(all_grams) == 0) return(list(valid = FALSE))
+    gram_freqs <- vapply(all_grams, function(gn) get(gn, envir = gram_counts_map), numeric(1))
+    top_grams <- names(sort(gram_freqs, decreasing = TRUE))[1:min(30L, length(all_grams))]
 
-    gram_counts <- sort(table(all_grams), decreasing = TRUE)
-    top_grams <- names(gram_counts)[1:min(30L, length(gram_counts))]
-
-    mat <- matrix(0, nrow = length(x), ncol = length(top_grams))
-    colnames(mat) <- top_grams
-    for (i in seq_along(x)) {
-      g <- get_3grams(x[i])
+    # Build unique n-gram counts matrix
+    mat_u <- matrix(0, nrow = length(u_valid_x), ncol = length(top_grams))
+    colnames(mat_u) <- top_grams
+    for (i in seq_along(u_valid_x)) {
+      g <- u_grams[[i]]
       if (length(g) > 0) {
         tab <- table(g)
         match_idx <- match(names(tab), top_grams)
         valid_m <- !is.na(match_idx)
         if (any(valid_m)) {
-          mat[i, match_idx[valid_m]] <- as.numeric(tab[valid_m])
+          mat_u[i, match_idx[valid_m]] <- as.numeric(tab[valid_m])
         }
       }
     }
 
-    col_means <- colMeans(mat)
-    mat_centered <- sweep(mat, 2, col_means, "-")
+    total_n <- length(x)
+    col_means <- colSums(mat_u * u_counts) / max(1, total_n)
+    mat_c_u <- sweep(mat_u, 2, col_means, "-")
+    n_zero <- total_n - sum(u_counts)
+    cov_mat <- crossprod(mat_c_u * sqrt(u_counts)) + n_zero * tcrossprod(col_means)
 
     tryCatch({
-      nv <- min(4L, ncol(mat))
-      res <- svd(mat_centered, nu = 0, nv = nv)
+      nv <- min(4L, ncol(cov_mat))
+      eig <- eigen(cov_mat, symmetric = TRUE)
+      v <- eig$vectors[, seq_len(nv), drop = FALSE]
       list(
         top_grams = top_grams,
         col_means = col_means,
-        v = res$v,
+        v = v,
         valid = TRUE,
         preds_cache = new.env(hash = TRUE, parent = emptyenv())
       )
@@ -333,20 +364,25 @@ evo_transformers$gap_encode <- create_transformer(
         if (n < 3) return(s_clean)
         substring(s_clean, 1:(n - 2), 3:n)
       }
-      mat <- matrix(0, nrow = length(x), ncol = length(top_grams))
-      for (i in seq_along(x)) {
-        g <- get_3grams(x[i])
-        if (length(g) > 0) {
-          tab <- table(g)
-          match_idx <- match(names(tab), top_grams)
-          valid_m <- !is.na(match_idx)
-          if (any(valid_m)) {
-            mat[i, match_idx[valid_m]] <- as.numeric(tab[valid_m])
+      u_x <- unique(x)
+      mat_u <- matrix(0, nrow = length(u_x), ncol = length(top_grams))
+      for (i in seq_along(u_x)) {
+        s <- u_x[i]
+        if (!is.na(s) && nchar(s) > 0) {
+          g <- get_3grams(s)
+          if (length(g) > 0) {
+            tab <- table(g)
+            match_idx <- match(names(tab), top_grams)
+            valid_m <- !is.na(match_idx)
+            if (any(valid_m)) {
+              mat_u[i, match_idx[valid_m]] <- as.numeric(tab[valid_m])
+            }
           }
         }
       }
-      mat_centered <- sweep(mat, 2, state$col_means, "-")
-      mat_centered %*% state$v
+      mat_centered_u <- sweep(mat_u, 2, state$col_means, "-")
+      proj_u <- mat_centered_u %*% state$v
+      proj_u[match(x, u_x), , drop = FALSE]
     }
 
     preds <- if (is.null(state$preds_cache)) {
