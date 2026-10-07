@@ -132,3 +132,67 @@ test_that("global_unsupervised = FALSE falls back to fold-local unsupervised fit
   # Because they were fit locally on different folds without global data, the rotation states differ
   expect_false(identical(res_local_1$ind$genes[[1]]$state$model$rotation, res_local_2$ind$genes[[1]]$state$model$rotation))
 })
+
+test_that("multi-fidelity screening fits unsupervised transformers on full dataset", {
+  set.seed(42)
+  n <- 100
+  dt <- data.table::data.table(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    y = rnorm(n)
+  )
+
+  g_pca <- create_gene("pca", c("x1", "x2"))
+  g_pca$params$comp_idx <- 1L
+  ind <- create_individual(
+    genes = list(g_pca),
+    numeric_cols = c("x1", "x2"),
+    all_numeric_cols = c("x1", "x2")
+  )
+
+  state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
+
+  # 50 rows train, 50 rows val
+  sh_splits <- list(
+    train = dt[1:50, ],
+    val = dt[51:100, ]
+  )
+  # Low-fidelity train has only 20 rows
+  lf_splits <- list(
+    train = dt[1:20, ],
+    val = dt[51:100, ]
+  )
+
+  res_mf <- evaluate_pop_mf(
+    pop = list(ind),
+    data = dt,
+    target_col = "y",
+    task = "regression",
+    cv_folds = 2,
+    evaluation_strategy = "split",
+    split_ids = NULL,
+    shared_splits = sh_splits,
+    evaluator = "lightgbm",
+    fold_ids = NULL,
+    shared_folds = NULL,
+    shared_full = dt,
+    state_cache = state_cache,
+    fitness_cache = fitness_cache,
+    threads = 1,
+    verbose = FALSE,
+    running_best_fitness = -Inf,
+    mf_on = TRUE,
+    lf_shared_splits = lf_splits
+  )
+
+  # Check that state was fit globally on dt (100 rows, not 20 rows)
+  full_pca <- stats::prcomp(as.matrix(dt[, .(x1, x2)]), center = TRUE, scale. = TRUE)
+  cached_key <- digest::digest(paste0(gene_to_state_formula(g_pca), "_global"), algo = "md5", serialize = FALSE)
+  expect_true(cached_key %in% ls(state_cache))
+  cached_state <- get(cached_key, envir = state_cache)
+  # Global state center and scale match the full 100-row dataset
+  expect_equal(unname(cached_state$model$center), unname(full_pca$center), tolerance = 1e-6)
+  expect_equal(unname(cached_state$model$scale), unname(full_pca$scale), tolerance = 1e-6)
+})
+

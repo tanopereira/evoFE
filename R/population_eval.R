@@ -163,7 +163,7 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
     )
   }
 
-  if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_full) && is.null(lf_shared_splits))) {
+  if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_splits))) {
     return(.do_eval(pop, shared_splits, shared_folds, shared_full, "", verbose, running_best_fitness, indices = seq_along(pop)))
   }
 
@@ -171,7 +171,8 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
 
   lf_splits_eff <- if (!is.null(lf_shared_splits)) lf_shared_splits else shared_splits
   lf_folds_eff <- if (!is.null(lf_shared_folds)) lf_shared_folds else shared_folds
-  lf_full_eff <- if (!is.null(lf_shared_full)) lf_shared_full else shared_full
+  # Full dataset is never downsampled: global unsupervised representations and fold allocations remain global
+  lf_full_eff <- shared_full
 
   # Track which individuals were already evaluated with full-fidelity fitness
   already_evaluated <- !vapply(pop, function(x) is.null(x$fitness) || is.na(x$fitness), logical(1))

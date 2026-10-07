@@ -655,7 +655,9 @@ evolve_features <- function(data, target_col, task = "classification",
     if (!is.null(island_shared_folds)) {
       mf_island_shared_folds <- lapply(island_shared_folds, function(isl) lapply(isl, .mf_subsample_fold))
     }
-    mf_shared_full <- if (!is.null(shared_full) && nrow(shared_full) > 30L) .mf_subsample(shared_full) else NULL
+    # Multi-fidelity downsamples evaluator training folds only; shared_full remains intact
+    # so global unsupervised transformers learn and cache the full data manifold.
+    mf_shared_full <- shared_full
     if (verbose) {
       message(sprintf(
         "  Multi-fidelity: screening on %.0f%% of training rows (min 30 rows floor) for the first %d generation(s), then full-fidelity promotion.",
