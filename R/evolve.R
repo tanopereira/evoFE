@@ -682,6 +682,7 @@ evolve_features <- function(data, target_col, task = "classification",
   # Fitness and state caches
   fitness_cache <- new.env(hash = TRUE, parent = emptyenv())
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  data.table::setattr(shared_full, ".global_state_cache", state_cache)
 
   viewer <- NULL
   evolution_log <- NULL
@@ -816,7 +817,7 @@ evolve_features <- function(data, target_col, task = "classification",
 
   if (islands > 1) {
     island_fitness_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = emptyenv()))
-    island_state_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = emptyenv()))
+    island_state_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = state_cache))
     for (j in seq_len(islands)) {
       local_baseline <- create_individual(
         genes = list(),

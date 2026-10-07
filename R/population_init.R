@@ -144,13 +144,19 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
 #' Strip fitted transformer state and fitness from an individual
 #'
 #' Resets fitness, raw_fitness, predictions, and clears fitted states
-#' from all genes so that the individual can be evaluated cleanly on a
-#' new data split or fold without data leakage.
+#' from supervised genes (or all genes if keep_unsupervised is FALSE)
+#' so that the individual can be evaluated cleanly on a new data split
+#' or fold without data leakage. Unsupervised transformer states (e.g. PCA,
+#' UMAP, clustering) carry no target leakage and are preserved when
+#' keep_unsupervised = TRUE.
 #'
 #' @param ind An \code{evo_individual} object.
+#' @param keep_unsupervised Logical. If TRUE (default), fitted states of
+#'   unsupervised transformers are preserved since they contain no target
+#'   information and do not cause data leakage across splits.
 #' @return The modified \code{evo_individual}.
 #' @export
-strip_individual_state <- function(ind) {
+strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.global_unsupervised", TRUE)) {
   ind$fitness <- NA_real_
   ind$raw_fitness <- NA_real_
   ind$penalty <- 0.0
@@ -158,7 +164,9 @@ strip_individual_state <- function(ind) {
   ind$y_val <- NULL
   if (length(ind$genes) > 0) {
     for (i in seq_along(ind$genes)) {
-      ind$genes[[i]]$state <- NULL
+      if (!isTRUE(keep_unsupervised) || is_supervised_transformer(ind$genes[[i]])) {
+        ind$genes[[i]]$state <- NULL
+      }
     }
   }
   ind

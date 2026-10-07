@@ -286,4 +286,102 @@ test_that("rejected constant column does not pollute full_data", {
   expect_false(out_col %in% names(res$train))
 })
 
+test_that("strip_individual_state preserves unsupervised states and strips supervised states", {
+  g_pca <- create_gene("pca", c("x1", "x2"))
+  g_pca$state <- list(model = "mock_pca_state")
+
+  g_te <- create_gene("target_encode", "cat")
+  g_te$state <- list(encoding_map = c(A = 0.5, B = 0.2))
+
+  ind <- create_individual(
+    genes = list(g_pca, g_te),
+    numeric_cols = c("x1", "x2"),
+    categorical_cols = "cat"
+  )
+  ind$fitness <- 0.95
+  ind$val_preds <- c(1, 0, 1)
+
+  stripped <- strip_individual_state(ind, keep_unsupervised = TRUE)
+
+  # Fitness and predictions must be reset
+  expect_true(is.na(stripped$fitness))
+  expect_null(stripped$val_preds)
+
+  # Unsupervised PCA state is preserved
+  expect_equal(stripped$genes[[1]]$state$model, "mock_pca_state")
+
+  # Supervised target encode state is stripped
+  expect_null(stripped$genes[[2]]$state)
+})
+
+test_that("cross-island evaluation reuses global state cache and avoids redundant fitting", {
+  set.seed(123)
+  n <- 60
+  dt <- data.table::data.table(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    target = rnorm(n)
+  )
+
+  global_cache <- new.env(hash = TRUE, parent = emptyenv())
+  data.table::setattr(dt, ".global_state_cache", global_cache)
+
+  island1_cache <- new.env(hash = TRUE, parent = global_cache)
+  island2_cache <- new.env(hash = TRUE, parent = global_cache)
+
+  # Island 1 partitions (rows 1:40 train, 41:60 val)
+  tr1_idx <- 1:40
+  va1_idx <- 41:60
+  tr1 <- data.table::copy(dt[tr1_idx, ])
+  va1 <- data.table::copy(dt[va1_idx, ])
+  data.table::setattr(tr1, ".row_id", tr1_idx)
+  data.table::setattr(va1, ".row_id", va1_idx)
+
+  # Custom transformer with call counter to prove fit_func is only called once
+  fit_counter <- 0L
+  t_custom <- create_transformer(
+    name = "test_counted_trans",
+    type = "multivariate",
+    fit_func = function(data, gene, target_col = NULL) {
+      fit_counter <<- fit_counter + 1L
+      list(offset = 42.0)
+    },
+    apply_func = function(data, gene, state = NULL) {
+      sin(data[[gene$input_cols[1]]]) * cos(data[[gene$input_cols[2]]]) + state$offset
+    },
+    name_generator = function(gene) "test_counted_col"
+  )
+  evo_transformers$test_counted_trans <- t_custom
+  on.exit(rm("test_counted_trans", envir = evo_transformers), add = TRUE)
+
+  g_counted <- create_gene("test_counted_trans", c("x1", "x2"))
+  ind1 <- create_individual(genes = list(g_counted), numeric_cols = c("x1", "x2"))
+
+  # Island 1 applies individual
+  res1 <- apply_individual(ind1, tr1, va1, target_col = "target",
+                           state_cache = island1_cache, full_data = dt, global_unsupervised = TRUE)
+
+  expect_equal(fit_counter, 1L)
+  expect_true("test_counted_col" %in% names(dt))
+  expect_equal(res1$train[["test_counted_col"]], dt[["test_counted_col"]][tr1_idx])
+
+  # Island 2 receives migrated individual or evaluates new individual with same gene
+  tr2_idx <- 21:60
+  va2_idx <- 1:20
+  tr2 <- data.table::copy(dt[tr2_idx, ])
+  va2 <- data.table::copy(dt[va2_idx, ])
+  data.table::setattr(tr2, ".row_id", tr2_idx)
+  data.table::setattr(va2, ".row_id", va2_idx)
+
+  ind2 <- create_individual(genes = list(g_counted), numeric_cols = c("x1", "x2"))
+  res2 <- apply_individual(ind2, tr2, va2, target_col = "target",
+                           state_cache = island2_cache, full_data = dt, global_unsupervised = TRUE)
+
+  # fit_counter must STILL be 1 (fit_func was NOT called again!)
+  expect_equal(fit_counter, 1L)
+  expect_equal(res2$train[["test_counted_col"]], dt[["test_counted_col"]][tr2_idx])
+  expect_equal(res2$val[["test_counted_col"]], dt[["test_counted_col"]][va2_idx])
+})
+
+
 

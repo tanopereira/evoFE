@@ -30,20 +30,39 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   is_supervised <- is_supervised_transformer(gene, t_def)
   use_global_fit <- !is_supervised && !is.null(full_data) && isTRUE(global_unsupervised)
 
+  eff_global_cache <- if (!is.null(full_data)) attr(full_data, ".global_state_cache") else NULL
+  if (is.null(eff_global_cache)) eff_global_cache <- state_cache
+
   state <- NULL
   has_cached_state <- FALSE
   cache_key <- NULL
-  if (!is.null(state_cache)) {
-    if (use_global_fit) {
+
+  if (use_global_fit) {
+    if (!is.null(gene$state)) {
+      state <- gene$state
+      has_cached_state <- TRUE
+    } else {
       cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_global"), algo = "md5", serialize = FALSE)
-    } else if (!is.null(target_col)) {
-      if (is.null(data_hash)) {
-        data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+      target_cache <- if (!is.null(eff_global_cache)) eff_global_cache else state_cache
+      if (!is.null(target_cache) && exists(cache_key, envir = target_cache, inherits = TRUE)) {
+        state <- get(cache_key, envir = target_cache, inherits = TRUE)
+        gene$state <- state
+        has_cached_state <- TRUE
       }
-      cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
     }
-    if (!is.null(cache_key) && exists(cache_key, envir = state_cache, inherits = FALSE)) {
-      state <- get(cache_key, envir = state_cache)
+  } else if (is.null(target_col)) {
+    # Predicting without target_col: reuse fitted state from training time
+    if (!is.null(gene$state)) {
+      state <- gene$state
+      has_cached_state <- TRUE
+    }
+  } else if (!is.null(state_cache)) {
+    if (is.null(data_hash)) {
+      data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+    }
+    cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
+    if (exists(cache_key, envir = state_cache, inherits = TRUE)) {
+      state <- get(cache_key, envir = state_cache, inherits = TRUE)
       gene$state <- state
       has_cached_state <- TRUE
     }
@@ -52,11 +71,12 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   # If we are fitting and it's stateful
   if (!has_cached_state && !is.null(t_def$fit_func)) {
     if (use_global_fit) {
-      if (all(gene$input_cols %in% names(full_data))) {
+      if (!col_exists_full && all(gene$input_cols %in% names(full_data))) {
         state <- t_def$fit_func(full_data, gene, target_col = NULL)
         gene$state <- state
-        if (!is.null(cache_key)) {
-          assign(cache_key, state, envir = state_cache)
+        target_cache <- if (!is.null(eff_global_cache)) eff_global_cache else state_cache
+        if (!is.null(cache_key) && !is.null(target_cache)) {
+          assign(cache_key, state, envir = target_cache)
         }
       } else if (!is.null(target_col)) {
         state <- t_def$fit_func(train_data, gene, target_col)
@@ -69,14 +89,11 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       } else {
         state <- t_def$fit_func(train_data, gene, target_col)
         gene$state <- state
-        if (!is.null(cache_key)) {
+        if (!is.null(cache_key) && !is.null(state_cache)) {
           assign(cache_key, state, envir = state_cache)
         }
       }
     }
-  } else if (!is.null(gene$state)) {
-    # If we are predicting
-    state <- gene$state
   }
 
   out_type <- if (!is.null(t_def$output_type)) t_def$output_type else "numeric"
