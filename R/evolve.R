@@ -126,6 +126,7 @@
 #' @param metacv_mode Deprecated alias for \code{metacv_selection}.
 #' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
 #' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
+#' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @importFrom utils tail head
@@ -195,10 +196,17 @@ evolve_features <- function(data, target_col, task = "classification",
                             metacv_selection = c("fitness", "tournament", "headroom"),
                             metacv_mode = NULL,
                             record = FALSE,
-                            port = NULL, ...) {
+                            port = NULL,
+                            global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
   threads <- resolve_thread_count(threads, extra_args_top)
+
+  old_glob_unsup <- getOption("evoFE.global_unsupervised", NULL)
+  options(evoFE.global_unsupervised = isTRUE(global_unsupervised))
+  on.exit({
+    options(evoFE.global_unsupervised = old_glob_unsup)
+  }, add = TRUE)
 
   # Validate complexity arguments
   if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1 || complexity_penalty < 0) {

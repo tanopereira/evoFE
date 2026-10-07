@@ -5,8 +5,8 @@
 \title{Train a boosted tree model}
 \usage{
 train_model(
-  x_train,
-  y_train,
+  x_train = NULL,
+  y_train = NULL,
   x_val = NULL,
   y_val = NULL,
   task = "classification",

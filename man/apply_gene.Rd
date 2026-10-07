@@ -10,7 +10,9 @@ apply_gene(
   val_data = NULL,
   target_col = NULL,
   state_cache = NULL,
-  data_hash = NULL
+  data_hash = NULL,
+  full_data = NULL,
+  global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)
 )
 }
 \arguments{
@@ -25,11 +27,16 @@ apply_gene(
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 
 \item{data_hash}{Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.}
+
+\item{full_data}{Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.}
+
+\item{global_unsupervised}{Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).}
 }
 \value{
 A list with three elements: \code{train} (the modified training
   \code{data.table} with the new gene column appended), \code{val} (the
-  modified validation \code{data.table} or \code{NULL}), and \code{gene}
+  modified validation \code{data.table} or \code{NULL}), \code{full} (the
+  modified full \code{data.table} or \code{NULL}), and \code{gene}
   (the gene list, with its \code{state} element populated if the transformer
   is stateful).
 }

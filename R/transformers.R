@@ -44,6 +44,36 @@ create_transformer <- function(name, type, input_type = "numeric", output_type =
     class = "evo_transformer"
   )
 }
+
+#' Check whether a transformer is supervised
+#'
+#' @param gene A gene list, transformer name character string, or \code{evo_transformer}.
+#' @param t_def Optional \code{evo_transformer} definition.
+#' @return Logical indicating whether the transformer requires supervision (uses target).
+#' @export
+is_supervised_transformer <- function(gene, t_def = NULL) {
+  if (is.null(t_def)) {
+    t_name <- if (inherits(gene, "evo_transformer")) {
+      gene$name
+    } else if (is.character(gene)) {
+      gene
+    } else if (is.list(gene) && !is.null(gene$transformer_name)) {
+      gene$transformer_name
+    } else {
+      NULL
+    }
+    if (is.null(t_name)) return(FALSE)
+    t_def <- evo_transformers[[t_name]]
+  }
+  if (is.null(t_def)) return(FALSE)
+  if (!is.null(t_def$type) && grepl("^supervised", t_def$type)) return(TRUE)
+  t_name <- if (is.character(gene)) gene else if (is.list(gene) && !is.null(gene$transformer_name)) gene$transformer_name else t_def$name
+  t_name %in% c(
+    "target_encode", "pooled_target_encode", "target_encode_multiclass",
+    "woe_encode", "target_quantile_encode", "cat_interaction_target_encode",
+    "supervised_bgpca", "supervised_mca", "supervised_famd"
+  )
+}
 #' Built-in feature transformers
 #'
 #' An environment containing all built-in transformer definitions available

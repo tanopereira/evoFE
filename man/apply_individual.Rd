@@ -10,7 +10,9 @@ apply_individual(
   val_data = NULL,
   target_col = NULL,
   state_cache = NULL,
-  allow_prune = TRUE
+  allow_prune = TRUE,
+  full_data = NULL,
+  global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)
 )
 }
 \arguments{
@@ -25,11 +27,16 @@ apply_individual(
 \item{state_cache}{Optional environment to cache full-dataset fitted states of stateful transformers.}
 
 \item{allow_prune}{Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.}
+
+\item{full_data}{Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.}
+
+\item{global_unsupervised}{Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).}
 }
 \value{
-A list with three elements: \code{train} (the transformed training
+A list with elements: \code{train} (the transformed training
   \code{data.table} with all gene columns applied), \code{val} (the
-  transformed validation \code{data.table} or \code{NULL}), and \code{ind}
+  transformed validation \code{data.table} or \code{NULL}), \code{full} (the
+  transformed full \code{data.table} or \code{NULL}), and \code{ind}
   (the updated \code{evo_individual} whose genes now carry fitted states).
 }
 \description{

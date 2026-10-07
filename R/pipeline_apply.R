@@ -6,47 +6,72 @@
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
 #' @param data_hash Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.
+#' @param full_data Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.
+#' @param global_unsupervised Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).
 #' @return A list with three elements: \code{train} (the modified training
 #'   \code{data.table} with the new gene column appended), \code{val} (the
-#'   modified validation \code{data.table} or \code{NULL}), and \code{gene}
+#'   modified validation \code{data.table} or \code{NULL}), \code{full} (the
+#'   modified full \code{data.table} or \code{NULL}), and \code{gene}
 #'   (the gene list, with its \code{state} element populated if the transformer
 #'   is stateful).
 #' @export
-apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, data_hash = NULL) {
+apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, data_hash = NULL,
+                       full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)) {
   t_def <- evo_transformers[[gene$transformer_name]]
 
   col_exists_train <- gene$output_col %in% names(train_data)
   col_exists_val <- if (!is.null(val_data)) gene$output_col %in% names(val_data) else TRUE
+  col_exists_full <- if (!is.null(full_data)) gene$output_col %in% names(full_data) else TRUE
 
-  if (col_exists_train && col_exists_val && !is.null(gene$state)) {
-    return(list(train = train_data, val = val_data, gene = gene))
+  if (col_exists_train && col_exists_val && col_exists_full && !is.null(gene$state)) {
+    return(list(train = train_data, val = val_data, full = full_data, gene = gene))
   }
+
+  is_supervised <- is_supervised_transformer(gene, t_def)
+  use_global_fit <- !is_supervised && !is.null(full_data) && isTRUE(global_unsupervised)
 
   state <- NULL
   has_cached_state <- FALSE
   cache_key <- NULL
-  if (!is.null(state_cache) && !is.null(target_col)) {
-    if (is.null(data_hash)) {
-      data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+  if (!is.null(state_cache)) {
+    if (use_global_fit) {
+      cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_global"), algo = "md5", serialize = FALSE)
+    } else if (!is.null(target_col)) {
+      if (is.null(data_hash)) {
+        data_hash <- digest::digest(train_data[[target_col]], algo = "xxhash64")
+      }
+      cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
     }
-    cache_key <- digest::digest(paste0(gene_to_state_formula(gene), "_", data_hash), algo = "md5", serialize = FALSE)
-    if (exists(cache_key, envir = state_cache, inherits = FALSE)) {
+    if (!is.null(cache_key) && exists(cache_key, envir = state_cache, inherits = FALSE)) {
       state <- get(cache_key, envir = state_cache)
       gene$state <- state
       has_cached_state <- TRUE
     }
   }
 
-  # If we are fitting (target_col provided) and it's stateful
-  if (!has_cached_state && !is.null(t_def$fit_func) && !is.null(target_col)) {
-    # Skip fitting in CV folds if columns already exist
-    if (is.null(state_cache) && col_exists_train && col_exists_val) {
-      # Skip fitting, state remains NULL
-    } else {
-      state <- t_def$fit_func(train_data, gene, target_col)
-      gene$state <- state
-      if (!is.null(cache_key)) {
-        assign(cache_key, state, envir = state_cache)
+  # If we are fitting and it's stateful
+  if (!has_cached_state && !is.null(t_def$fit_func)) {
+    if (use_global_fit) {
+      if (all(gene$input_cols %in% names(full_data))) {
+        state <- t_def$fit_func(full_data, gene, target_col = NULL)
+        gene$state <- state
+        if (!is.null(cache_key)) {
+          assign(cache_key, state, envir = state_cache)
+        }
+      } else if (!is.null(target_col)) {
+        state <- t_def$fit_func(train_data, gene, target_col)
+        gene$state <- state
+      }
+    } else if (!is.null(target_col)) {
+      # Skip fitting in CV folds if columns already exist
+      if (is.null(state_cache) && col_exists_train && col_exists_val) {
+        # Skip fitting, state remains NULL
+      } else {
+        state <- t_def$fit_func(train_data, gene, target_col)
+        gene$state <- state
+        if (!is.null(cache_key)) {
+          assign(cache_key, state, envir = state_cache)
+        }
       }
     }
   } else if (!is.null(gene$state)) {
@@ -70,7 +95,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 
     # Reject columns that are near-perfect duplicates of existing features.
     # Guard with !is.null(target_col): during inference (holdout/predict) we
-    # must apply every gene that was accepted at training time <U+2014> correlation on
+    # must apply every gene that was accepted at training time — correlation on
     # a different data split must never prune a gene the model depends on.
     cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.95)
     if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
@@ -131,7 +156,24 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     }
   }
 
-  list(train = train_data, val = val_data, gene = gene)
+  # Apply to full_data (if provided and column doesn't already exist)
+  if (!is.null(full_data) && !col_exists_full) {
+    new_col_full <- t_def$apply_func(full_data, gene, state)
+    if (out_type == "categorical") {
+      train_factor <- train_data[[gene$output_col]]
+      train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
+      new_col_full <- factor(new_col_full, levels = train_levels)
+    } else if (is.double(new_col_full)) {
+      new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+    }
+    if (data.table::is.data.table(full_data)) {
+      full_data[, (gene$output_col) := new_col_full]
+    } else {
+      full_data[[gene$output_col]] <- new_col_full
+    }
+  }
+
+  list(train = train_data, val = val_data, full = full_data, gene = gene)
 }
 
 #' Apply an entire individual's recipe to data
@@ -142,15 +184,24 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #' @param target_col Name of the target column.
 #' @param state_cache Optional environment to cache full-dataset fitted states of stateful transformers.
 #' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
-#' @return A list with three elements: \code{train} (the transformed training
+#' @param full_data Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.
+#' @param global_unsupervised Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).
+#' @return A list with elements: \code{train} (the transformed training
 #'   \code{data.table} with all gene columns applied), \code{val} (the
-#'   transformed validation \code{data.table} or \code{NULL}), and \code{ind}
+#'   transformed validation \code{data.table} or \code{NULL}), \code{full} (the
+#'   transformed full \code{data.table} or \code{NULL}), and \code{ind}
 #'   (the updated \code{evo_individual} whose genes now carry fitted states).
 #' @export
-apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = TRUE) {
+apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = TRUE,
+                             full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)) {
   dt_train <- if (data.table::is.data.table(train_data)) train_data else data.table::as.data.table(train_data)
   dt_val <- if (!is.null(val_data)) {
     if (data.table::is.data.table(val_data)) val_data else data.table::as.data.table(val_data)
+  } else {
+    NULL
+  }
+  dt_full <- if (!is.null(full_data) && isTRUE(global_unsupervised)) {
+    if (data.table::is.data.table(full_data)) data.table::copy(full_data) else data.table::as.data.table(full_data)
   } else {
     NULL
   }
@@ -169,7 +220,8 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
         if (!all(gene$input_cols %in% names(dt_train))) {
           stop("Input column missing")
         }
-        apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash)
+        apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash,
+                   full_data = dt_full, global_unsupervised = global_unsupervised)
       },
       error = function(e) {
         NULL
@@ -186,6 +238,7 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
 
     dt_train <- res$train
     dt_val <- res$val
+    if (!is.null(res$full)) dt_full <- res$full
     new_genes[[length(new_genes) + 1L]] <- res$gene
   }
 
@@ -218,5 +271,5 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
     }
   }
 
-  list(train = dt_train, val = dt_val, ind = ind)
+  list(train = dt_train, val = dt_val, full = dt_full, ind = ind)
 }

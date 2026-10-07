@@ -31,6 +31,7 @@
 #' @param cv_strategy Fold construction strategy for CV: \code{"random"} (default), \code{"time"}, or \code{"group"}.
 #' @param time_col Column name used when \code{cv_strategy = "time"}.
 #' @param group_col Column name used when \code{cv_strategy = "group"}.
+#' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
 #'   the computed score (higher is better), \code{importances} set to a named
@@ -48,7 +49,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              complexity_floor = 0.20, complexity_target = "all_features",
                              running_best_fitness = NULL, baseline_fitness = NULL,
                              n_samples = NULL, cv_strategy = "random",
-                             time_col = NULL, group_col = NULL, ...) {
+                             time_col = NULL, group_col = NULL,
+                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
   }
@@ -74,11 +76,14 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Copy train/val folds so we can modify them when applying recipe
     train_fold <- data.table::copy(train_fold)
     val_fold <- data.table::copy(val_fold)
+    full_split_data <- if (!is.null(shared_full)) shared_full else data
 
     # Apply genes
     res <- tryCatch(
       {
-        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
+        apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache,
+                         allow_prune = allow_prune, full_data = full_split_data,
+                         global_unsupervised = global_unsupervised)
       },
       error = function(e) {
         NULL
@@ -274,7 +279,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
       res <- tryCatch(
         {
-          apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache, allow_prune = allow_prune)
+          apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache,
+                           allow_prune = allow_prune, full_data = dt,
+                           global_unsupervised = global_unsupervised)
         },
         error = function(e) {
           NULL

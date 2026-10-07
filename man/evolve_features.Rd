@@ -56,6 +56,7 @@ evolve_features(
   metacv_mode = NULL,
   record = FALSE,
   port = NULL,
+  global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )
 }
@@ -236,6 +237,8 @@ the highest normalized headroom closed).}
 \item{record}{Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).}
 
 \item{port}{Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').}
+
+\item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training
 functions.}

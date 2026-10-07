@@ -32,6 +32,7 @@ evaluate_fitness(
   cv_strategy = "random",
   time_col = NULL,
   group_col = NULL,
+  global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )
 }
@@ -90,6 +91,8 @@ evaluate_fitness(
 \item{time_col}{Column name used when \code{cv_strategy = "time"}.}
 
 \item{group_col}{Column name used when \code{cv_strategy = "group"}.}
+
+\item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
