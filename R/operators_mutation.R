@@ -280,10 +280,10 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           candidates <- setdiff(c(0.25, 0.75), old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else if (param_name == "scale") {
-          candidates <- setdiff(c(0.1, 0.5, 1.0, 2.0, 5.0, 10.0), old_val)
+          candidates <- setdiff(c(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0), old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else if (param_name == "phase") {
-          candidates <- setdiff(c(0, round(pi / 4, 4), round(pi / 2, 4), round(3 * pi / 4, 4)), old_val)
+          candidates <- setdiff(c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)), old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else if (param_name == "low_pct") {
           candidates <- setdiff(c(0.01, 0.02, 0.05), old_val)
@@ -444,7 +444,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           } else if (t_name %in% c("mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
             sample(2:5, 1)
           } else if (t_name == "fourier_basis") {
-            sample(c(4L, 6L), 1)
+            sample(c(4L, 6L, 8L), 1)
           } else {
             max(2L, as.integer(round(log2(length(cols)))))
           }
@@ -452,8 +452,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           gini_threshold <- if (t_name == "genie_centroid_dist") round(stats::runif(1, 0.1, 0.9), 2) else NULL
           n_neighbors <- if (t_name == "umap") max(2L, stats::rpois(1, 15)) else NULL
           dens_scale <- if (t_name == "umap") round(stats::runif(1, 0, 1), 2) else NULL
-          fbr_scale <- if (t_name == "fourier_basis") sample(c(0.1, 0.5, 1.0, 2.0, 5.0, 10.0), 1) else NULL
-          fbr_phase <- if (t_name == "fourier_basis") sample(c(0, round(pi / 4, 4), round(pi / 2, 4), round(3 * pi / 4, 4)), 1) else NULL
+          fbr_scale <- if (t_name == "fourier_basis") sample(c(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0), 1) else NULL
+          fbr_phase <- if (t_name == "fourier_basis") sample(c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)), 1) else NULL
           
           for (comp in 1:C) {
             g <- create_gene(t_name, cols)

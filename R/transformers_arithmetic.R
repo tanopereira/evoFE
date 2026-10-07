@@ -151,25 +151,48 @@ evo_transformers$displaced_log <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "dlog")
 )
 
-# Fourier Basis (Multi-component harmonic expansion with scale and phase)
+# Fourier Basis (Multi-component harmonic expansion with data-adaptive scale and phase)
 evo_transformers$fourier_basis <- create_transformer(
   name = "fourier_basis",
   type = "unary",
   input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    x <- as.numeric(data[[gene$input_cols[1]]])
+    x_clean <- x[!is.na(x) & is.finite(x)]
+    if (length(x_clean) == 0) return(list(center = 0.0, scale = 1.0))
+    med <- stats::median(x_clean)
+    qs <- stats::quantile(x_clean, probs = c(0.25, 0.75), names = FALSE, na.rm = TRUE)
+    iqr_val <- qs[2] - qs[1]
+    scale_val <- if (is.finite(iqr_val) && iqr_val > 1e-8) {
+      iqr_val
+    } else {
+      sd_val <- stats::sd(x_clean)
+      if (is.finite(sd_val) && sd_val > 1e-8) sd_val else 1.0
+    }
+    list(center = med, scale = scale_val)
+  },
   apply_func = function(data, gene, state = NULL) {
     x <- as.numeric(data[[gene$input_cols[1]]])
     scale <- if (!is.null(gene$params[["scale"]])) gene$params[["scale"]] else 1.0
     phase <- if (!is.null(gene$params[["phase"]])) gene$params[["phase"]] else 0.0
     comp_idx <- if (!is.null(gene$params[["comp_idx"]])) as.integer(gene$params[["comp_idx"]]) else 1L
 
-    # Harmonic order k = 1, 2, ...
-    k <- (comp_idx + 1L) %/% 2L
+    # Dyadic harmonic order k = 2^(h - 1) where h = 1, 2, ... (1, 2, 4, 8, ...)
+    h <- (comp_idx + 1L) %/% 2L
+    k <- as.numeric(2L^(h - 1L))
     is_cos <- (comp_idx %% 2L == 0L)
 
-    res <- if (is_cos) {
-      suppressWarnings(cos(k * scale * x + phase))
+    # Normalize x using state if fitted (data-adaptive); otherwise use raw x
+    arg <- if (!is.null(state) && !is.null(state$scale) && is.finite(state$scale) && state$scale > 1e-8) {
+      center <- if (!is.null(state$center) && is.finite(state$center)) state$center else 0.0
+      2 * pi * k * scale * ((x - center) / state$scale) + phase
     } else {
-      suppressWarnings(sin(k * scale * x + phase))
+      k * scale * x + phase
+    }
+    res <- if (is_cos) {
+      suppressWarnings(cos(arg))
+    } else {
+      suppressWarnings(sin(arg))
     }
     res[!is.finite(res)] <- 0
     res

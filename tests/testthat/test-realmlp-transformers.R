@@ -27,6 +27,34 @@ test_that("fourier_basis computes multi-component harmonic basis correctly and h
   out4 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
   expect_equal(out4, cos(2 * dt_train$x), tolerance = 1e-6)
 
+  # Test comp_idx = 5 & 6 (dyadic harmonic order k = 4)
+  gene$params$comp_idx <- 5L
+  out5 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
+  expect_equal(out5, sin(4 * dt_train$x), tolerance = 1e-6)
+  gene$params$comp_idx <- 6L
+  out6 <- evo_transformers$fourier_basis$apply_func(dt_train, gene)
+  expect_equal(out6, cos(4 * dt_train$x), tolerance = 1e-6)
+
+  # Test data-adaptive fit_func and stateful apply
+  x_vals <- c(10, 20, 30, 40, 50, 60, 70, 80, 90)
+  dt_adaptive <- data.table::data.table(x = x_vals, target = rnorm(length(x_vals)))
+  state_adaptive <- evo_transformers$fourier_basis$fit_func(dt_adaptive, gene, target_col = "target")
+  expect_equal(state_adaptive$center, 50)
+  expect_equal(state_adaptive$scale, 40) # IQR = 70 - 30 = 40
+
+  gene$params$comp_idx <- 1L
+  gene$params$scale <- 1.0
+  gene$params$phase <- 0.0
+  out_state <- evo_transformers$fourier_basis$apply_func(dt_adaptive, gene, state = state_adaptive)
+  expect_equal(out_state, sin(2 * pi * (x_vals - 50) / 40), tolerance = 1e-6)
+
+  # Test state formula caching sharing across components
+  g_c1 <- create_gene("fourier_basis", "x")
+  g_c1$params$comp_idx <- 1L
+  g_c2 <- create_gene("fourier_basis", "x")
+  g_c2$params$comp_idx <- 2L
+  expect_equal(gene_to_state_formula(g_c1), gene_to_state_formula(g_c2))
+
   # Test NA / Inf safety
   dt_na <- data.table::data.table(x = c(NA, Inf, -Inf, 1))
   out_na <- evo_transformers$fourier_basis$apply_func(dt_na, gene)
@@ -35,7 +63,7 @@ test_that("fourier_basis computes multi-component harmonic basis correctly and h
 
   # Test formula string with comp_idx
   formula_str <- gene_to_formula(gene)
-  expect_match(formula_str, "fourier_basis4_s.*_p.*\\(x\\)")
+  expect_match(formula_str, "fourier_basis1_s.*_p.*\\(x\\)")
 })
 
 test_that("robust_scale computes median/IQR scaling on train and applies state to test", {

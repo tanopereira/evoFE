@@ -84,7 +84,7 @@ gene_to_formula <- function(gene, truncate = TRUE) {
 #'   component index is omitted so that all components share one cache key.
 #' @export
 gene_to_state_formula <- function(gene) {
-  if (gene$transformer_name %in% c("pca", "truncated_svd", "mca", "famd", "between_group_pca")) {
+  if (gene$transformer_name %in% c("pca", "truncated_svd", "mca", "famd", "between_group_pca", "fourier_basis")) {
     sprintf("%s(%s)", gene$transformer_name, paste(gene$input_cols, collapse = ", "))
   } else if (gene$transformer_name == "umap") {
     nn <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
