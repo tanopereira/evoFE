@@ -7,6 +7,7 @@
 #include "realmlp_fused.h"
 #include "realmlp_workspace.h"
 #include "realmlp_core.h"
+#include "metrics_calibration.h"
 
 // [[Rcpp::depends(RcppEigen)]]
 
@@ -302,6 +303,10 @@ inline MetricResult compute_val_metric(
       }
       return { static_cast<double>(errors) / N_val, "Val error", false };
     }
+    if (m == "ts_refinement" || m == "eval-ts-refinement" || m == "ts-refinement" || m == "eval_ts_refinement") {
+      double score = evofe::compute_ts_refinement_binary_impl(y_v_ptr, val_preds.data(), N_val, 1.0, false, 1);
+      return { score, "Val TS-Refinement", false };
+    }
     // Default for binary classification: logloss
     double ll_sum = 0.0;
     for (int i = 0; i < N_val; ++i) {
@@ -342,6 +347,10 @@ inline MetricResult compute_val_metric(
       if (best_c != static_cast<int>(y_v_ptr[i])) errors++;
     }
     return { static_cast<double>(errors) / N_val, "Val error", false };
+  }
+  if (m == "ts_refinement" || m == "eval-ts-refinement" || m == "ts-refinement" || m == "eval_ts_refinement") {
+    double score = evofe::compute_ts_refinement_multiclass_impl(y_v_ptr, val_preds.data(), N_val, out_dim, 1.0, false, 1);
+    return { score, "Val TS-Refinement", false };
   }
   // Default for multiclass: multi-logloss
   double ll_sum = 0.0;

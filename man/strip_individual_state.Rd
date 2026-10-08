@@ -4,16 +4,26 @@
 \alias{strip_individual_state}
 \title{Strip fitted transformer state and fitness from an individual}
 \usage{
-strip_individual_state(ind)
+strip_individual_state(
+  ind,
+  keep_unsupervised = getOption("evoFE.global_unsupervised", TRUE)
+)
 }
 \arguments{
 \item{ind}{An \code{evo_individual} object.}
+
+\item{keep_unsupervised}{Logical. If TRUE (default), fitted states of
+unsupervised transformers are preserved since they contain no target
+information and do not cause data leakage across splits.}
 }
 \value{
 The modified \code{evo_individual}.
 }
 \description{
 Resets fitness, raw_fitness, predictions, and clears fitted states
-from all genes so that the individual can be evaluated cleanly on a
-new data split or fold without data leakage.
+from supervised genes (or all genes if keep_unsupervised is FALSE)
+so that the individual can be evaluated cleanly on a new data split
+or fold without data leakage. Unsupervised transformer states (e.g. PCA,
+UMAP, clustering) carry no target leakage and are preserved when
+keep_unsupervised = TRUE.
 }

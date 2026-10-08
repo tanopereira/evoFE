@@ -375,7 +375,7 @@ register_evaluator(
     lgb_eval <- function(preds, dtrain) {
       labels <- lightgbm::get_field(dtrain, "label")
       if (custom_eval_type == "ts_refinement") {
-        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE)
+        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
         list(name = "ts_refinement", value = score, higher_better = FALSE)
       } else if (custom_eval_type == "cal_rmse") {
         score <- compute_calibrated_rmse(labels, preds)
@@ -570,7 +570,7 @@ register_evaluator(
     xgb_feval <- function(preds, dtrain) {
       labels <- xgboost::getinfo(dtrain, "label")
       if (custom_eval_type == "ts_refinement") {
-        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE)
+        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE, threads = threads)
         list(metric = "ts_refinement", value = score)
       } else if (custom_eval_type == "cal_rmse") {
         score <- compute_calibrated_rmse(labels, preds)

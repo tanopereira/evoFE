@@ -10,7 +10,8 @@ compute_ts_refinement(
   task = "classification",
   num_class = NULL,
   alpha = 1,
-  is_logits = FALSE
+  is_logits = FALSE,
+  threads = NULL
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ compute_ts_refinement(
 \item{alpha}{Numeric. Laplace smoothing parameter (default is 1).}
 
 \item{is_logits}{Logical. If \code{TRUE}, the input predictions \code{y_pred} are treated directly as prediction margins (logits). If \code{FALSE}, they are treated as probabilities and converted to logits.}
+
+\item{threads}{Integer. Number of threads to use for parallel computation (defaults to option \code{"evoFE.threads"} or 1).}
 }
 \value{
 Numeric. The minimized smoothed log-loss.

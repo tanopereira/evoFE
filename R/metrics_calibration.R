@@ -9,12 +9,16 @@
 #' @param num_class Integer. Number of classes (required for multiclass).
 #' @param alpha Numeric. Laplace smoothing parameter (default is 1).
 #' @param is_logits Logical. If \code{TRUE}, the input predictions \code{y_pred} are treated directly as prediction margins (logits). If \code{FALSE}, they are treated as probabilities and converted to logits.
+#' @param threads Integer. Number of threads to use for parallel computation (defaults to option \code{"evoFE.threads"} or 1).
 #' @return Numeric. The minimized smoothed log-loss.
 #' @export
-compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_class = NULL, alpha = 1, is_logits = FALSE) {
+compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_class = NULL, alpha = 1, is_logits = FALSE, threads = NULL) {
   if (!task %in% c("classification", "multiclass")) {
     stop("TS-Refinement metric is only supported for 'classification' and 'multiclass' tasks.")
   }
+
+  th <- if (!is.null(threads)) as.integer(threads) else as.integer(getOption("evoFE.threads", 1L))
+  if (is.na(th) || th < 1L) th <- 1L
 
   if (task == "classification") {
     if (is.factor(y_true)) {
@@ -26,43 +30,16 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
       y_true <- as.integer(as.factor(y_true)) - 1L
     }
+    y_true <- as.numeric(y_true)
     y_pred <- as.numeric(y_pred)
-    if (is_logits) {
-      z <- y_pred
-    } else {
-      # Reconstruct logits (margins) from probabilities
-      p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
-      z <- log(p / (1 - p))
-    }
-    # Clamp infinite values and impute NA/NaN
-    z[is.na(z) | is.nan(z)] <- 0
-    z <- pmax(pmin(z, 35), -35)
 
-    # Laplace smooth the labels based on true class count
-    N1 <- sum(y_true == 1, na.rm = TRUE)
-    N0 <- sum(y_true == 0, na.rm = TRUE)
-    N_true <- ifelse(y_true == 1, N1, N0)
-
-    y_smooth <- ifelse(y_true == 1,
-      (N_true + alpha) / (N_true + 2 * alpha),
-      alpha / (N_true + 2 * alpha)
+    rcpp_compute_ts_refinement_binary(
+      y_true = y_true,
+      y_pred = y_pred,
+      alpha = as.numeric(alpha),
+      is_logits = isTRUE(is_logits),
+      threads = th
     )
-
-    obj_fn <- function(temp) {
-      probs_T <- 1 / (1 + exp(-z / temp))
-      probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-      ll <- -mean(y_smooth * log(probs_T) + (1 - y_smooth) * log(1 - probs_T), na.rm = TRUE)
-      ll
-    }
-
-    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
-    best_temp <- opt$minimum
-
-    # Return the un-smoothed log-loss (Option B) at the optimal temperature
-    probs_T <- 1 / (1 + exp(-z / best_temp))
-    probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-    ll_unsmoothed <- -mean(y_true * log(probs_T) + (1 - y_true) * log(1 - probs_T), na.rm = TRUE)
-    return(ll_unsmoothed)
   } else if (task == "multiclass") {
     if (is.null(num_class)) {
       stop("num_class must be specified for multiclass TS-Refinement.")
@@ -80,60 +57,14 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
     }
     y_true_0 <- pmax(0L, pmin(as.integer(y_true_0), as.integer(num_class - 1L)))
 
-    if (is_logits) {
-      z <- y_pred
-    } else {
-      p <- pmax(pmin(y_pred, 1 - 1e-15), 1e-15)
-      z <- log(p)
-    }
-    # Clamp infinite values and impute NA/NaN
-    z[is.na(z) | is.nan(z)] <- 0
-    z <- pmax(pmin(z, 35), -35)
-
-    # Laplace smooth labels based on class-count sweep formulation
-    n <- length(y_true_0)
-    N_vec <- tabulate(y_true_0 + 1, nbins = num_class)
-    N_k_row <- N_vec[y_true_0 + 1]
-
-    true_target <- (N_k_row + alpha) / (N_k_row + 2 * alpha)
-    leftover_mass <- alpha / (N_k_row + 2 * alpha)
-
-    denom <- n - N_k_row
-    mass_per_item <- ifelse(denom == 0, 0, leftover_mass / pmax(1, denom))
-
-    N_mat <- matrix(N_vec, nrow = n, ncol = num_class, byrow = TRUE)
-    y_smooth <- sweep(N_mat, 1, mass_per_item, "*")
-    y_smooth[cbind(seq_len(n), y_true_0 + 1)] <- true_target
-
-    obj_fn <- function(temp) {
-      z_scaled <- z / temp
-      z_max <- apply(z_scaled, 1, max)
-      z_stable <- z_scaled - z_max
-      exp_z <- exp(z_stable)
-      sum_exp_z <- rowSums(exp_z)
-      probs_T <- exp_z / sum_exp_z
-      probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-
-      ll <- -mean(rowSums(y_smooth * log(probs_T)), na.rm = TRUE)
-      ll
-    }
-
-    opt <- stats::optimize(f = obj_fn, interval = c(0.001, 10))
-    best_temp <- opt$minimum
-
-    # Return the un-smoothed log-loss (Option B) at the optimal temperature
-    z_scaled <- z / best_temp
-    z_max <- apply(z_scaled, 1, max)
-    z_stable <- z_scaled - z_max
-    exp_z <- exp(z_stable)
-    sum_exp_z <- rowSums(exp_z)
-    probs_T <- exp_z / sum_exp_z
-    probs_T <- pmax(pmin(probs_T, 1 - 1e-15), 1e-15)
-
-    y_hard <- matrix(0, nrow = n, ncol = num_class)
-    y_hard[cbind(seq_len(n), y_true_0 + 1)] <- 1
-    ll_unsmoothed <- -mean(rowSums(y_hard * log(probs_T)), na.rm = TRUE)
-    return(ll_unsmoothed)
+    rcpp_compute_ts_refinement_multiclass(
+      y_true = y_true_0,
+      y_pred = y_pred,
+      num_class = as.integer(num_class),
+      alpha = as.numeric(alpha),
+      is_logits = isTRUE(is_logits),
+      threads = th
+    )
   }
 }
 
