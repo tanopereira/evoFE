@@ -31,6 +31,12 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{normalized_difference}}{\code{(a - b) / (|a| + |b| + 1e-6)}.}
   \item{\code{log_ratio}}{\code{log1p(|a|) - log1p(|b|)}.}
   \item{\code{fourier_basis}}{Multi-component Fourier harmonic basis with data-adaptive robust normalization: paired sine and cosine dyadic harmonics (\code{comp_idx} 1--4, 1--6, or 1--8; orders 1, 2, 4, 8) across octave frequency scales and non-redundant phases.}
+  \item{\code{row_min}}{Row-wise minimum across 2+ numeric columns (dealbreaker metric).}
+  \item{\code{row_max}}{Row-wise maximum across 2+ numeric columns.}
+  \item{\code{relative_rating}}{Difference between primary numeric column and mean of other columns (rater debiasing).}
+  \item{\code{geometric_mean}}{Geometric mean across 2+ numeric columns with positive clamping.}
+  \item{\code{harmonic_mean}}{Harmonic mean across 2+ numeric columns with positive clamping (soft bottleneck / rate mean).}
+  \item{\code{pythagorean_imbalance}}{Difference between arithmetic mean and harmonic mean (\code{AM - HM}) measuring rating imbalance.}
 }
 
 \strong{Rank / distribution (numeric -> numeric, stateful)}
@@ -76,6 +82,7 @@ for the evolutionary feature-engineering search.  Every entry is an
 \describe{
   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
   \item{\code{frequency_encode}}{Count of each category level in training data.}
+  \item{\code{numeric_freq}}{Count of each unique numerical value in training data (frequency proxy for spiky/clustered numerics).}
   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
     an "other" bucket (\code{comp_idx} 1-6).}
   \item{\code{similarity_encode}}{Character 3-gram Jaccard similarity between string

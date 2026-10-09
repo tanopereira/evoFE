@@ -1,36 +1,55 @@
 # Unsupervised categorical encoders: frequency, one-hot, hashing, n-gram & similarity encodings.
 # Split out of transformers.R; loaded after it (alphabetical file order).
 
+.fit_frequency_mapping <- function(x) {
+  dt <- data.table::data.table(x = x)
+  mapping <- dt[, .N, by = x]
+  data.table::setkey(mapping, x)
+  def_val <- if (nrow(mapping) > 0) stats::median(mapping$N) else 0
+  list(mapping = mapping, default_val = def_val)
+}
+
+.apply_frequency_mapping <- function(x, state) {
+  if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
+    def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
+    return(rep(as.numeric(def_val), if (!is.null(x)) length(x) else 0L))
+  }
+  dt <- data.table::data.table(x = x)
+  res <- state$mapping[dt, on = "x"]$N
+  if (is.null(res)) {
+    def_val <- if (!is.null(state$default_val)) state$default_val else 0
+    return(rep(as.numeric(def_val), length(x)))
+  }
+  res[is.na(res)] <- state$default_val
+  as.numeric(res)
+}
+
 evo_transformers$frequency_encode <- create_transformer(
   name = "frequency_encode",
   type = "unary",
   input_type = "categorical",
   fit_func = function(data, gene, target_col = NULL) {
-    input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
-    dt <- data.table::data.table(x = x)
-    mapping <- dt[, .N, by = x]
-    data.table::setkey(mapping, x)
-    list(mapping = mapping, default_val = median(mapping$N))
+    .fit_frequency_mapping(data[[gene$input_cols[1]]])
   },
   apply_func = function(data, gene, state) {
-    input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
-    if (is.null(x) || length(x) == 0 || is.null(state) || is.null(state$mapping)) {
-      def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
-      return(rep(def_val, nrow(data)))
-    }
-    dt <- data.table::data.table(x = x)
-    res <- state$mapping[dt, on = "x"]$N
-    if (is.null(res)) {
-      def_val <- if (!is.null(state$default_val)) state$default_val else 0
-      return(rep(def_val, nrow(data)))
-    }
-    res[is.na(res)] <- state$default_val
-    res
+    .apply_frequency_mapping(data[[gene$input_cols[1]]], state)
   },
   name_generator = function(gene) .gene_col_name(gene, "freq")
 )
+
+evo_transformers$numeric_freq <- create_transformer(
+  name = "numeric_freq",
+  type = "unary",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    .fit_frequency_mapping(data[[gene$input_cols[1]]])
+  },
+  apply_func = function(data, gene, state) {
+    .apply_frequency_mapping(data[[gene$input_cols[1]]], state)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "nfreq")
+)
+
 
 # --- STATEFUL MIXED TRANSFORMERS ---
 

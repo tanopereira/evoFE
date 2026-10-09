@@ -414,7 +414,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           cols <- weighted_sample(available_cols, 2, replace = allow_rep)
         } else if (t_def$type == "multivariate") {
           if (length(available_cols) < 2) next
-          max_cols <- if (t_name %in% c("add", "multiply")) {
+          max_cols <- if (t_name %in% c("add", "multiply", "row_min", "row_max", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
             min(5, length(available_cols))
           } else if (t_name == "concat") {
             min(3, length(available_cols))

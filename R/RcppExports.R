@@ -46,3 +46,39 @@ rcpp_realmlp_predict <- function(model_state, x_new) {
     .Call(`_evoFE_rcpp_realmlp_predict`, model_state, x_new)
 }
 
+#' Fast C++ Row-wise Minimum
+#' @keywords internal
+rcpp_fused_row_min <- function(cols, threads = 1L) {
+    .Call(`_evoFE_rcpp_fused_row_min`, cols, threads)
+}
+
+#' Fast C++ Row-wise Maximum
+#' @keywords internal
+rcpp_fused_row_max <- function(cols, threads = 1L) {
+    .Call(`_evoFE_rcpp_fused_row_max`, cols, threads)
+}
+
+#' Fast C++ Geometric Mean
+#' @keywords internal
+rcpp_fused_geometric_mean <- function(cols, eps = 1e-6, threads = 1L) {
+    .Call(`_evoFE_rcpp_fused_geometric_mean`, cols, eps, threads)
+}
+
+#' Fast C++ Harmonic Mean
+#' @keywords internal
+rcpp_fused_harmonic_mean <- function(cols, eps = 1e-6, threads = 1L) {
+    .Call(`_evoFE_rcpp_fused_harmonic_mean`, cols, eps, threads)
+}
+
+#' Fast C++ Pythagorean Imbalance (AM - HM)
+#' @keywords internal
+rcpp_fused_pythagorean_imbalance <- function(cols, eps = 1e-6, threads = 1L) {
+    .Call(`_evoFE_rcpp_fused_pythagorean_imbalance`, cols, eps, threads)
+}
+
+#' Fast C++ Relative Rating (Primary vs Mean of Others)
+#' @keywords internal
+rcpp_fused_relative_rating <- function(cols, threads = 1L) {
+    .Call(`_evoFE_rcpp_fused_relative_rating`, cols, threads)
+}
+

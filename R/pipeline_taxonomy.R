@@ -13,7 +13,8 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
       at <- intersect(all_t, c(
         "add", "subtract", "multiply", "divide",
         "log", "sqrt", "reciprocal", "power", "displaced_log", "fourier_basis",
-        "normalized_difference", "frequency_encode",
+        "normalized_difference", "frequency_encode", "numeric_freq",
+        "row_min", "row_max", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance",
         "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
         "feature_hash",
         "rank_transform", "robust_scale", "smooth_clip", "groupby_mean", "groupby_min", "groupby_max", "concat"
@@ -30,7 +31,8 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
         "robust_scale", "smooth_clip", "fourier_basis",
         "add", "subtract", "multiply", "divide",
         "normalized_difference", "log_ratio",
-        "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode",
+        "row_min", "row_max", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance",
+        "target_encode", "pooled_target_encode", "woe_encode", "frequency_encode", "numeric_freq",
         "feature_hash",
         "groupby_mean", "groupby_median", "groupby_sd",
         "groupby_zscore", "groupby_ratio", "groupby_quantile",

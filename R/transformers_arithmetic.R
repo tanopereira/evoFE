@@ -295,3 +295,84 @@ evo_transformers$smooth_clip <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "scl")
 )
+
+# --- FUSED MULTIVARIATE PYTHAGOREAN & ROW-WISE TRANSFORMERS ---
+
+evo_transformers$row_min <- create_transformer(
+  name = "row_min",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    cols_list <- lapply(gene$input_cols, function(c) as.numeric(data[[c]]))
+    threads <- default_threads()
+    rcpp_fused_row_min(cols_list, threads = threads)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rmin"),
+  allow_replace = FALSE
+)
+
+evo_transformers$row_max <- create_transformer(
+  name = "row_max",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    cols_list <- lapply(gene$input_cols, function(c) as.numeric(data[[c]]))
+    threads <- default_threads()
+    rcpp_fused_row_max(cols_list, threads = threads)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rmax"),
+  allow_replace = FALSE
+)
+
+evo_transformers$relative_rating <- create_transformer(
+  name = "relative_rating",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    cols_list <- lapply(gene$input_cols, function(c) as.numeric(data[[c]]))
+    threads <- default_threads()
+    rcpp_fused_relative_rating(cols_list, threads = threads)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rel"),
+  allow_replace = FALSE
+)
+
+evo_transformers$geometric_mean <- create_transformer(
+  name = "geometric_mean",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    cols_list <- lapply(gene$input_cols, function(c) as.numeric(data[[c]]))
+    threads <- default_threads()
+    rcpp_fused_geometric_mean(cols_list, eps = 1e-6, threads = threads)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "gmean"),
+  allow_replace = FALSE
+)
+
+evo_transformers$harmonic_mean <- create_transformer(
+  name = "harmonic_mean",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    cols_list <- lapply(gene$input_cols, function(c) as.numeric(data[[c]]))
+    threads <- default_threads()
+    rcpp_fused_harmonic_mean(cols_list, eps = 1e-6, threads = threads)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "hmean"),
+  allow_replace = FALSE
+)
+
+evo_transformers$pythagorean_imbalance <- create_transformer(
+  name = "pythagorean_imbalance",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    cols_list <- lapply(gene$input_cols, function(c) as.numeric(data[[c]]))
+    threads <- default_threads()
+    rcpp_fused_pythagorean_imbalance(cols_list, eps = 1e-6, threads = threads)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "pimb"),
+  allow_replace = FALSE
+)
+

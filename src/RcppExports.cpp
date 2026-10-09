@@ -79,12 +79,93 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rcpp_fused_row_min
+NumericVector rcpp_fused_row_min(List cols, int threads);
+RcppExport SEXP _evoFE_rcpp_fused_row_min(SEXP colsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type cols(colsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fused_row_min(cols, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_fused_row_max
+NumericVector rcpp_fused_row_max(List cols, int threads);
+RcppExport SEXP _evoFE_rcpp_fused_row_max(SEXP colsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type cols(colsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fused_row_max(cols, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_fused_geometric_mean
+NumericVector rcpp_fused_geometric_mean(List cols, double eps, int threads);
+RcppExport SEXP _evoFE_rcpp_fused_geometric_mean(SEXP colsSEXP, SEXP epsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type cols(colsSEXP);
+    Rcpp::traits::input_parameter< double >::type eps(epsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fused_geometric_mean(cols, eps, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_fused_harmonic_mean
+NumericVector rcpp_fused_harmonic_mean(List cols, double eps, int threads);
+RcppExport SEXP _evoFE_rcpp_fused_harmonic_mean(SEXP colsSEXP, SEXP epsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type cols(colsSEXP);
+    Rcpp::traits::input_parameter< double >::type eps(epsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fused_harmonic_mean(cols, eps, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_fused_pythagorean_imbalance
+NumericVector rcpp_fused_pythagorean_imbalance(List cols, double eps, int threads);
+RcppExport SEXP _evoFE_rcpp_fused_pythagorean_imbalance(SEXP colsSEXP, SEXP epsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type cols(colsSEXP);
+    Rcpp::traits::input_parameter< double >::type eps(epsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fused_pythagorean_imbalance(cols, eps, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_fused_relative_rating
+NumericVector rcpp_fused_relative_rating(List cols, int threads);
+RcppExport SEXP _evoFE_rcpp_fused_relative_rating(SEXP colsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type cols(colsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fused_relative_rating(cols, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_compute_ts_refinement_binary", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_binary, 5},
     {"_evoFE_rcpp_compute_ts_refinement_multiclass", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_multiclass, 6},
     {"_evoFE_rcpp_realmlp_train", (DL_FUNC) &_evoFE_rcpp_realmlp_train, 15},
     {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 2},
+    {"_evoFE_rcpp_fused_row_min", (DL_FUNC) &_evoFE_rcpp_fused_row_min, 2},
+    {"_evoFE_rcpp_fused_row_max", (DL_FUNC) &_evoFE_rcpp_fused_row_max, 2},
+    {"_evoFE_rcpp_fused_geometric_mean", (DL_FUNC) &_evoFE_rcpp_fused_geometric_mean, 3},
+    {"_evoFE_rcpp_fused_harmonic_mean", (DL_FUNC) &_evoFE_rcpp_fused_harmonic_mean, 3},
+    {"_evoFE_rcpp_fused_pythagorean_imbalance", (DL_FUNC) &_evoFE_rcpp_fused_pythagorean_imbalance, 3},
+    {"_evoFE_rcpp_fused_relative_rating", (DL_FUNC) &_evoFE_rcpp_fused_relative_rating, 2},
     {NULL, NULL, 0}
 };
 
