@@ -5,9 +5,10 @@
 #' @param task Task type ("classification", "multiclass", "regression")
 #' @param metric Metric name or function
 #' @param num_class Number of classes for multiclass
+#' @param threads Number of threads for parallel metric computation
 #' @return Numeric metric score (higher is better)
 #' @noRd
-compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
+compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL, threads = NULL) {
   if (is.function(metric)) {
     return(metric(y_true, y_pred))
   }
@@ -16,7 +17,7 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
 
   if (task == "classification") {
     if (metric %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
-      min_loss <- compute_ts_refinement(y_true, y_pred, task = task, is_logits = FALSE)
+      min_loss <- compute_ts_refinement(y_true, y_pred, task = task, is_logits = FALSE, threads = threads)
       return(exp(-min_loss))
     }
     switch(metric,
@@ -26,7 +27,7 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL) {
     )
   } else if (task == "multiclass") {
     if (metric %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
-      min_loss <- compute_ts_refinement(y_true, y_pred, task = task, num_class = num_class, is_logits = FALSE)
+      min_loss <- compute_ts_refinement(y_true, y_pred, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
       return(exp(-min_loss))
     }
     switch(metric,

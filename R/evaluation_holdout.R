@@ -125,9 +125,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
       if (!is.matrix(preds_holdout)) {
         preds_holdout <- matrix(preds_holdout, ncol = num_class, byrow = TRUE)
       }
-      ind$holdout_fitness <- compute_metric(y_holdout_encoded, preds_holdout, task, metric, num_class)
+      ind$holdout_fitness <- compute_metric(y_holdout_encoded, preds_holdout, task, metric, num_class, threads = threads)
     } else {
-      ind$holdout_fitness <- compute_metric(holdout_fold[[target_col]], preds_holdout, task, metric)
+      ind$holdout_fitness <- compute_metric(holdout_fold[[target_col]], preds_holdout, task, metric, threads = threads)
     }
   } else {
     ind$holdout_fitness <- -Inf

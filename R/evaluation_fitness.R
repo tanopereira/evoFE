@@ -181,16 +181,16 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Validation score -> raw_fitness
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-      raw_score <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+      raw_score <- compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
       ind$val_preds <- preds
       ind$y_val <- y_val_encoded
     } else if (task == "classification") {
       y_val_encoded <- y_val
-      raw_score <- compute_metric(y_val_encoded, preds, task, metric)
+      raw_score <- compute_metric(y_val_encoded, preds, task, metric, threads = threads)
       ind$val_preds <- preds
       ind$y_val <- y_val_encoded
     } else {
-      raw_score <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
+      raw_score <- compute_metric(val_fold_feat[[target_col]], preds, task, metric, threads = threads)
       ind$val_preds <- preds
       ind$y_val <- val_fold_feat[[target_col]]
     }
@@ -376,7 +376,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
         if (task == "multiclass") {
           y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-          metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+          metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
           if (length(val_idx) == length(y_val_encoded)) {
             if (is.matrix(preds)) {
               oof_preds[val_idx, ] <- preds
@@ -387,13 +387,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           }
         } else if (task == "classification") {
           y_val_encoded <- y_val
-          metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric)
+          metrics[fi] <- compute_metric(y_val_encoded, preds, task, metric, threads = threads)
           if (length(val_idx) == length(preds)) {
             oof_preds[val_idx] <- preds
             oof_y[val_idx] <- y_val_encoded
           }
         } else {
-          metrics[fi] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric)
+          metrics[fi] <- compute_metric(val_fold_feat[[target_col]], preds, task, metric, threads = threads)
           if (length(val_idx) == length(preds)) {
             oof_preds[val_idx] <- preds
             oof_y[val_idx] <- val_fold_feat[[target_col]]
@@ -453,7 +453,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
           if (task == "multiclass") {
             y_val_encoded <- as.integer(factor(fd$val_fold_feat[[target_col]], levels = classes)) - 1
-            metrics[orig_fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class)
+            metrics[orig_fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
             if (length(val_idx) == length(y_val_encoded)) {
               if (is.matrix(preds)) {
                 oof_preds[val_idx, ] <- preds
@@ -464,13 +464,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
             }
           } else if (task == "classification") {
             y_val_encoded <- fd$y_val
-            metrics[orig_fi] <- compute_metric(y_val_encoded, preds, task, metric)
+            metrics[orig_fi] <- compute_metric(y_val_encoded, preds, task, metric, threads = threads)
             if (length(val_idx) == length(preds)) {
               oof_preds[val_idx] <- preds
               oof_y[val_idx] <- y_val_encoded
             }
           } else {
-            metrics[orig_fi] <- compute_metric(fd$val_fold_feat[[target_col]], preds, task, metric)
+            metrics[orig_fi] <- compute_metric(fd$val_fold_feat[[target_col]], preds, task, metric, threads = threads)
             if (length(val_idx) == length(preds)) {
               oof_preds[val_idx] <- preds
               oof_y[val_idx] <- fd$val_fold_feat[[target_col]]

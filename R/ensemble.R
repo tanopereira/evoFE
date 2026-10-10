@@ -478,9 +478,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
     }
     final_fitness <- if (task == "multiclass") {
-      compute_metric(y_val, ens_preds, task, metric, num_class)
+      compute_metric(y_val, ens_preds, task, metric, num_class, threads = threads)
     } else {
-      compute_metric(y_val, ens_preds, task, metric)
+      compute_metric(y_val, ens_preds, task, metric, threads = threads)
     }
     selection_res <- list(
       weights = weights,

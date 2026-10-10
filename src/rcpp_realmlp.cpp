@@ -234,7 +234,8 @@ inline MetricResult compute_val_metric(
     const std::string& task,
     const std::string& metric_req,
     int out_dim,
-    std::vector<std::pair<double, int>>* auc_pairs_buf = nullptr) {
+    std::vector<std::pair<double, int>>* auc_pairs_buf = nullptr,
+    int threads = 1) {
 
   int N_val = static_cast<int>(val_preds.rows());
   std::string m = metric_req;
@@ -304,7 +305,7 @@ inline MetricResult compute_val_metric(
       return { static_cast<double>(errors) / N_val, "Val error", false };
     }
     if (m == "ts_refinement" || m == "eval-ts-refinement" || m == "ts-refinement" || m == "eval_ts_refinement") {
-      double score = evofe::compute_ts_refinement_binary_impl(y_v_ptr, val_preds.data(), N_val, 1.0, false, 1);
+      double score = evofe::compute_ts_refinement_binary_impl(y_v_ptr, val_preds.data(), N_val, 1.0, false, threads);
       return { score, "Val TS-Refinement", false };
     }
     // Default for binary classification: logloss
@@ -349,7 +350,7 @@ inline MetricResult compute_val_metric(
     return { static_cast<double>(errors) / N_val, "Val error", false };
   }
   if (m == "ts_refinement" || m == "eval-ts-refinement" || m == "ts-refinement" || m == "eval_ts_refinement") {
-    double score = evofe::compute_ts_refinement_multiclass_impl(y_v_ptr, val_preds.data(), N_val, out_dim, 1.0, false, 1);
+    double score = evofe::compute_ts_refinement_multiclass_impl(y_v_ptr, val_preds.data(), N_val, out_dim, 1.0, false, threads);
     return { score, "Val TS-Refinement", false };
   }
   // Default for multiclass: multi-logloss
@@ -372,8 +373,9 @@ inline MetricResult compute_val_metric(
     const std::string& task,
     const std::string& metric_req,
     int out_dim,
-    std::vector<std::pair<double, int>>* auc_pairs_buf = nullptr) {
-  return compute_val_metric(val_preds, y_v_vec.begin(), task, metric_req, out_dim, auc_pairs_buf);
+    std::vector<std::pair<double, int>>* auc_pairs_buf = nullptr,
+    int threads = 1) {
+  return compute_val_metric(val_preds, y_v_vec.begin(), task, metric_req, out_dim, auc_pairs_buf, threads);
 }
 
 //' Train RealMLP Model in C++
@@ -742,7 +744,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     if (has_val && N_val > 0) {
       model.embedder.forward_nocache(X_v, val_ws.E, val_ws.thread_Z_buf);
       model.forward_predict_inplace(val_ws.E, N_val, val_ws, val_ws.preds);
-      MetricResult m_res = compute_val_metric(val_ws.preds, y_v_ptr, task, metric, out_dim, &val_ws.auc_pairs);
+      MetricResult m_res = compute_val_metric(val_ws.preds, y_v_ptr, task, metric, out_dim, &val_ws.auc_pairs, threads);
       val_score = m_res.score;
       val_metric_nm = m_res.name;
 

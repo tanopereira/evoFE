@@ -1084,7 +1084,8 @@ evolve_features <- function(data, target_col, task = "classification",
     oof_res <- stitch_metacv_oof_predictions(
       island_best_individual = island_best_individual,
       fold_ids = fold_ids, data = data, target_col = target_col,
-      task = task, metric = metric, num_class = num_class, classes = classes
+      task = task, metric = metric, num_class = num_class, classes = classes,
+      threads = threads
     )
     metacv_island_oof_preds <- oof_res$metacv_island_oof_preds
     ensemble_oof_fitness <- oof_res$ensemble_oof_fitness
@@ -1323,9 +1324,9 @@ evolve_features <- function(data, target_col, task = "classification",
           if (!is.matrix(preds_conf)) {
             preds_conf <- matrix(preds_conf, ncol = num_class, byrow = TRUE)
           }
-          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class)
+          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
         } else {
-          conf_fitness <- compute_metric(y_conf, preds_conf, task, metric)
+          conf_fitness <- compute_metric(y_conf, preds_conf, task, metric, threads = threads)
         }
         best_ind$holdout_fitness <- conf_fitness
       }

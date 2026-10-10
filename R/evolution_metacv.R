@@ -171,7 +171,8 @@ stitch_metacv_baseline_oof <- function(island_baseline_inds, fold_ids, data, tas
 #' @return List with metacv_island_oof_preds and ensemble_oof_fitness
 #' @noRd
 stitch_metacv_oof_predictions <- function(island_best_individual, fold_ids, data, target_col,
-                                          task, metric, num_class = NULL, classes = NULL) {
+                                          task, metric, num_class = NULL, classes = NULL,
+                                          threads = NULL) {
   islands <- length(island_best_individual)
   if (task == "multiclass") {
     stitched_preds <- matrix(NA_real_, nrow = nrow(data), ncol = num_class)
@@ -201,9 +202,9 @@ stitch_metacv_oof_predictions <- function(island_best_individual, fold_ids, data
     data[[target_col]]
   }
   ensemble_oof_fitness <- if (task == "multiclass") {
-    compute_metric(y_eval_oof, stitched_preds, task, metric, num_class)
+    compute_metric(y_eval_oof, stitched_preds, task, metric, num_class, threads = threads)
   } else {
-    compute_metric(y_eval_oof, stitched_preds, task, metric)
+    compute_metric(y_eval_oof, stitched_preds, task, metric, threads = threads)
   }
 
   list(
