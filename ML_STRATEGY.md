@@ -14,12 +14,12 @@ In competitive tabular machine learning (Kaggle, DrivenData, Numerai), top leade
 ### The Compute Bottleneck
 If you attempt to run $\eta = 0.005$ with $10,000$ trees or $300$ epochs of RealMLP **inside** an evolutionary loop across 15 generations, 10 population, and 4 islands:
 $$\text{Evaluations} \approx 15 \times 10 \times 4 = 600 \text{ models}$$
-At 10 minutes per model on 1M+ rows, evolution would take **100 hours**! Furthermore, RealMLP expands each continuous feature into 33 dimensions ($16$ periodic frequencies $\times 2$ sinusoids $+ 1$ raw); feeding 200 raw features yields $6,600$ dense dimensions with DenseNet skips, choking CPU caches if evaluated hundreds of times.
+At 10 minutes per model on 1M+ rows, evolution would take **100 hours**! Furthermore, RealMLP's PBLD embedder computes $16$ periodic cosine features per input column and projects them to $4$ channels plus the raw value ($5$ output channels per feature, but $16$ cosines computed per feature per row); feeding 200 raw features means $3,200$ cosine evaluations per row per forward pass, which dominates runtime if evaluated hundreds of times.
 
 ### The Solution: The Two-Phase Decoupled Architecture
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ PHASE 1: TRI-EVALUATOR MetaCV DISCOVERY (allowed_transformers = "all")      │
+│ PHASE 1: TRI-EVALUATOR MetaCV DISCOVERY (allowed_transformers = unsup_t)    │
 │ - Objective: Discover complementary features across differing inductive     │
 │   biases before high-capacity training.                                     │
 │ - Pass 1 (LightGBM): MetaCV fast exploration (leaf-wise greediness, groupbys)│
@@ -88,7 +88,7 @@ While LightGBM is blazingly fast, **models find and thrive on fundamentally diff
 - **Blind Spots**: Extreme, unregularized target encodings or noisy categorical counts that cause spikes in $g_i / h_i$ ratios. LightGBM might exploit them in a single deep leaf, but XGBoost's Hessian penalization will discard them.
 
 #### 3. RealMLP: Continuous Periodic Fourier Manifolds (PBLD)
-- **Split Mechanics**: No trees, no axis-aligned hyperplanes. RealMLP expands continuous coordinates into $k=16$ periodic frequencies ($\sin(2\pi f_i x + \phi_i)$ and $\cos(2\pi f_i x + \phi_i)$) concatenated with raw input ($33$ channels per continuous feature) feeding into DenseNet residual skips trained with Adam and cosine annealing.
+- **Split Mechanics**: No trees, no axis-aligned hyperplanes. RealMLP expands each continuous coordinate into $k=16$ learnable periodic features $\cos(2\pi \omega_{jk} x_j + b_{jk})$, linearly projects them to $4$ channels and concatenates the raw input ($5$ channels per feature, see `PBLDEmbedder` in `src/realmlp_core.h`), feeding into DenseNet residual skips trained with Adam and cosine annealing.
 - **What it Discovers**:
   - **Topological Manifolds (`umap`, `pca`)**: RealMLP projects and interpolates smoothly across continuous curved coordinates. Where trees need 50 stair-step splits to approximate a spiral manifold, RealMLP fits it with a single hidden layer.
   - **Rank Uniforms (`rank_transform`)**: While trees are completely indifferent to rank transforms, neural nets are transformed by them. Mapping fat-tailed distributions to uniform $[0, 1]$ prevents gradient explosion, bounds activation variance, and unlocks dense representation learning.
@@ -108,6 +108,17 @@ While LightGBM is blazingly fast, **models find and thrive on fundamentally diff
 | **`mst_score` & `deadwood`** | ⭐⭐⭐ Good | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | Continuous Euclidean density metric directly utilized by neural coordinate layers |
 | **`groupby_mean` (high card)** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Moderate | ⭐⭐ Low / Risky | Leaf-wise trees greedily isolate small pockets; NNs risk overfitting unnormalized shifts |
 | **`woe_encode`** | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Good | Linear in log-odds; matches XGBoost's Taylor expansion perfectly |
+| **`harmonic_mean` / `row_min`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | Packs a multi-column "weakest link" interaction into one column that a single split can use |
+| **`numeric_freq`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐ Good | Turns repeated values (routes, price points) into a density signal without destroying numeric order |
+
+### Ordinal, Likert & "Spiky" Numerics
+Converting Likert scales or repeated-value numerics (flight distances, price points) to categoricals rarely helps: it destroys order, adds subset-split noise in trees, and is ~collinear with the raw column. Keep them numeric and let evolution combine them with the row-wise transformers:
+- `row_min` / `row_max` — dealbreaker / best-aspect across a rating battery.
+- `harmonic_mean` (smooth bottleneck), `geometric_mean` (multiplicative utility), `pythagorean_imbalance` ($\text{AM} - \text{HM}$, rating polarization).
+- `relative_rating` — one item minus the mean of the others (rater-bias removal).
+- `numeric_freq` — count of each exact value (traffic/popularity proxy for spiky numerics).
+
+All of these are included in the `"basic"` and `"robust"` presets and run as fused OpenMP C++ kernels.
 
 > [!CAUTION]
 > **The Consequence of Mono-Evaluator Exploration**:
@@ -128,10 +139,9 @@ if (i == 1) {
 }
 ```
 Mutations are only applied to $i > 1$. Therefore, setting `pop_size = 1` produces a population containing **only Individual 1** (zero mutations, all input features active):
-1. **Generation 0**: Trains the evaluator across all 5 CV folds with competition-grade parameters (`learning_rate = 0.005`, `nrounds = 15000`, `early_stopping_rounds = 150`). It records early stopping iterations and generates honest Out-Of-Fold (OOF) predictions (`oof_preds`).
-2. **Generation 1**: Individual 1 matches the Generation 0 formula key in `fitness_cache`, requiring zero re-computation.
-3. **Automatic Scaling & Final Fit**: Because `g == generations` (1), evolution concludes. evoFE's built-in `scale_factor = total_data_size / training_size` automatically scales `best_iteration` to the full dataset size and fits the final production model.
-4. **Stacked Ensembling**: Passing the resulting recipes into `ensemble_islands(list(lgb, xgb, mlp), method = "stack", stack_folds = 5)` extracts the OOF predictions, optimizes non-negative meta-weights, and produces a single unified `evo_ensemble` object.
+1. **Single Generation**: Individual 1 is trained across all CV folds with competition-grade parameters (`learning_rate = 0.005`, `nrounds = 15000`, `early_stopping_rounds = 150`). It records early-stopping iterations and honest Out-Of-Fold predictions (`oof_preds`). Because `g == generations`, the loop exits immediately with no mutation or selection.
+2. **Automatic Scaling & Final Fit**: For tree evaluators, `best_iteration` is scaled by `total_rows / training_rows` (e.g. $1.25\times$ for 5-fold CV) and the final production model is fit on all rows (`recipe$best_model`).
+3. **Stacked Ensembling**: Passing the resulting recipes into `ensemble_islands(list(lgb, xgb, mlp), method = "stack", stack_folds = 5)` extracts the OOF predictions, optimizes non-negative meta-weights, and produces a single unified `evo_ensemble` object.
 
 ---
 
@@ -191,7 +201,7 @@ evoFE provides a dedicated suite of **manifold and graph learning transformers**
 
 ### How evoFE Scales UMAP to Huge Datasets (Zero $O(N^2)$ Bottleneck)
 Fitting raw UMAP or hierarchical clustering directly on 1M+ rows would freeze a workstation. evoFE avoids this with a 3-part acceleration architecture:
-1. **High-Throughput Landmark Subsampling (`.cluster_prep_x`)**: evoFE caps the fitting rows to `getOption("evoFE.max_clustering_size", 25000)`. Because `uwot` uses C++ multi-threaded approximate nearest neighbors (`RcppAnnoy`) and multi-threaded SGD, and `quitefastmst` uses fast binary heaps, fitting on **25,000–50,000 landmark rows** executes in just a few seconds on modern multicore CPUs without sacrificing topological detail.
+1. **High-Throughput Landmark Subsampling (`.cluster_prep_x`)**: evoFE caps the fitting rows to the `max_clustering_size` argument of `evolve_features()` (default `5000`). Note that `evolve_features()` writes this argument into `options(evoFE.max_clustering_size)` for the duration of the run, so **setting the option globally has no effect — pass the argument**. Because `uwot` uses multi-threaded approximate nearest neighbors and SGD, and `quitefastmst` uses fast binary heaps, raising it to **25,000–50,000 landmark rows** remains fast on modern multicore CPUs.
 2. **Fast Out-of-Sample Projection (`uwot::umap_transform`)**: The remaining millions of rows (and all test set rows) are projected into the manifold space using `uwot`'s C++ multi-threaded approximate nearest-neighbor engine (`n_sgd_threads = "auto"`).
 3. **State & Matrix Caching (`state_cache` & `preds_cache`)**: Once a UMAP embedding or cluster assignment is computed for a set of columns, its projection model is cached across generations and folds, eliminating redundant fits.
 
@@ -206,7 +216,7 @@ Can we use XGBoost with evoFE? **Yes, absolutely — and it should be a cornerst
 |:---|:---|:---|:---|:---|
 | **LightGBM** | Leaf-wise (best-first) | Fast Histogram (`lgb.Dataset`) | Monotonic raw bins | High-speed anchor, deep asymmetric trees |
 | **XGBoost** | Depth-wise (level-wise) | Exact / Approx / Fast Hist (`tree_method = "hist"`) | 2nd-order Taylor gradients + L2 Hessian regularization | Conservative symmetric trees, robust against outliers |
-| **RealMLP** | Continuous PBLD DenseNet | C++ Adam with log-cosine annealing | 33-dim periodic Fourier embeddings | Non-axis-aligned smooth surfaces, manifold learning |
+| **RealMLP** | Continuous PBLD DenseNet | C++ Adam with cosine annealing | 16 learnable periodic features projected to 5 channels per input | Non-axis-aligned smooth surfaces, manifold learning |
 
 Because their internal loss approximations and split geometries differ, their error residuals are fundamentally uncorrelated. Blending all three on an evoFE-engineered feature set routinely beats any single tuned model by $0.005 - 0.015$ in metric score.
 
@@ -242,13 +252,13 @@ recipe_xgb <- evolve_features(
 evoFE's native C++ RealMLP (`src/realmlp_core.h`, `src/rcpp_realmlp.cpp`) provides a state-of-the-art neural alternative to gradient boosting, but large tabular datasets require specific optimizations:
 
 ### Why RealMLP Can Be Slow on Large Datasets
-1. **PBLD Expansion**: Continuous features undergo Periodic Bias Linear DenseNet embeddings ($k=16$ periodic frequencies, phase shifts, and raw feature concatenation). Every input feature becomes **33 input channels**.
-   - $50 \text{ features} \rightarrow 1,650 \text{ dense embedding columns}$.
-   - $200 \text{ features} \rightarrow 6,600 \text{ dense embedding columns}$.
-2. **Mini-Batch Loop Overhead**: By default, RealMLP auto-batch sizing caps at $1,024$. On a 2M-row dataset, each epoch requires $\approx 2,000$ mini-batches. With OpenMP thread dispatch on CPU, 2,000 tiny mini-batches stall on thread scheduling and memory bandwidth.
+1. **PBLD Expansion**: Each input feature computes $k=16$ learnable cosines per row, which are projected to 4 channels and concatenated with the raw value — **5 embedding channels per feature**, but the 16 cosine evaluations (forward and backward) dominate cost.
+   - $50 \text{ features} \rightarrow 250 \text{ embedding columns}, 800 \text{ cosines/row}$.
+   - $200 \text{ features} \rightarrow 1,000 \text{ embedding columns}, 3,200 \text{ cosines/row}$.
+2. **Mini-Batch Loop Overhead**: By default (`batch_size` unset), RealMLP auto-sizes batches to $1,024$ for $N \ge 32,000$ ($512$ for $N \ge 8,000$). On a 2M-row dataset, each epoch requires $\approx 2,000$ mini-batches, and per-batch OpenMP dispatch overhead becomes significant.
 
 ### How to Make RealMLP Fly
-* **Scale the Batch Size**: Pass `batch_size = 2048` or `batch_size = 4096`. Larger batch sizes turn memory-bandwidth-bound matrix-vector operations into compute-bound OpenMP GEMM (General Matrix Multiply) operations, giving a **$3\times$ to $6\times$ speedup** on modern multicore CPUs.
+* **Scale the Batch Size**: Pass `batch_size = 2048` or `batch_size = 4096`. Fewer, larger batches amortize per-batch OpenMP dispatch and improve cache reuse in the dense layers. Benchmark on your data — larger batches may also need a higher `lr`.
 * **Enforce evoFE Parsimony Pruning**: Never feed unpruned raw features into RealMLP. Set `complexity_penalty = 0.25 - 0.35` with `complexity_target = "all_features"`. This forces evolution to retain only the top 25–45 most predictive features, keeping the PBLD embedding layer lean.
 * **Decoupled Deployment**: Do not use RealMLP as the primary evaluator during early generations. Let fast LightGBM/XGBoost islands discover the feature transformations, then train RealMLP on the frozen feature matrix for full convergence ($200 - 300$ epochs with cosine annealing).
 * **Synergy with UMAP**: RealMLP excels at processing continuous manifold coordinates (`umap_1`, `umap_2`, `mst_score`). While trees use them for rapid partitioning, RealMLP's periodic layers interpolate smoothly across these topological surfaces.
@@ -261,7 +271,7 @@ evoFE's native C++ RealMLP (`src/realmlp_core.h`, `src/rcpp_realmlp.cpp`) provid
 flowchart TD
     S0["Stage 0: Recon & Validation Anchor\n(Leakage-safe splits, untouched holdout, data.table)"]
     S1["Stage 1: Cheap Proxy Scouting\n(Subsampled rows, LightGBM η=0.1, basic transformers)"]
-    S2["Stage 2: Tri-Evaluator MetaCV Exploration (allowed_transformers='all')\n(3 fast MetaCV passes: LGBM + XGB + RealMLP)"]
+    S2["Stage 2: Tri-Evaluator MetaCV Exploration (allowed_transformers=unsup_t)\n(3 fast MetaCV passes: LGBM + XGB + RealMLP)"]
     S3["Stage 3: Mega Matrix Synthesis\n(ensemble_islands(method='equal') -> predict(ens, data))"]
     S4["Stage 4: 1-Gen Triad Retraining on Mega Matrix (generations=1, pop_size=1)\n(rec_final_lgb + rec_final_xgb + rec_final_mlp with low eta, deep schedules)"]
     S5["Stage 5: Stacked Ensembling & Final Submission\n(ensemble_islands(method='stack') -> predict_model())"]
@@ -277,12 +287,16 @@ flowchart TD
 library(evoFE)
 library(data.table)
 
-# 1. Global Performance Options (Complying with AGENTS.md)
-options(evoFE.threads = max(1L, parallel::detectCores() - 1L))
+# 1. Global options that evoFE actually reads
 options(evoFE.verbose = 1)
-options(evoFE.max_clustering_size = 25000)     # C++ uwot & quitefastmst scale to 25k-50k rows in seconds
-options(evoFE.redundancy_cor_threshold = 0.92) # Auto-prune duplicate features
+options(evoFE.redundancy_cor_threshold = 0.92) # Auto-prune near-duplicate features
 options(evoFE.importance_threshold = 0.002)
+
+# NOTE: threads and the clustering landmark cap are *arguments* of evolve_features();
+# they overwrite options(evoFE.threads / evoFE.max_clustering_size) during each run.
+# Pass them explicitly in every call below:
+n_threads <- max(1L, parallel::detectCores(logical = FALSE))
+clust_cap <- 25000L   # uwot & quitefastmst handle 25k-50k landmark rows quickly
 
 # 2. Fast I/O via data.table
 train <- fread("train.csv")
@@ -292,6 +306,16 @@ test  <- fread("test.csv")
 # - Time series / temporal: cv_strategy = "time", time_col = "timestamp"
 # - Grouped (users/stores/patients): cv_strategy = "group", group_col = "user_id"
 # - Standard i.i.d.: cv_strategy = "random", cv_folds = 5
+
+# 4. Choose the search metric
+# - Leaderboard metric AUC: search and ensemble on metric = "ts_refinement"
+#   (temperature-scaled log-loss = pure refinement; smooth, margin-sensitive, and
+#   usually yields higher test AUC than optimizing AUC directly).
+search_metric <- "ts_refinement"
+
+# 5. Choose the parsimony mode
+# - N > ~25k or feeding a stacker: complexity_mode = "bic_dynamic" (permissive)
+# - N < ~10k or very noisy target: complexity_mode = "pac_bayes_dynamic" (strict)
 ```
 
 ---
@@ -331,7 +355,7 @@ plot(scout_recipe, type = "importance")
 
 ---
 
-### Stage 2: Tri-Evaluator MetaCV Exploration Engine (`allowed_transformers = "all"`) (Hours 4–12)
+### Stage 2: Tri-Evaluator MetaCV Exploration Engine (`allowed_transformers = unsup_t`) (Hours 4–12)
 
 Why evaluate every model on restricted palettes or force all evaluators into a single island loop?
 As demonstrated in Section 2, **each model family operates in a fundamentally different mathematical space**:
@@ -339,10 +363,10 @@ As demonstrated in Section 2, **each model family operates in a fundamentally di
 * **XGBoost**: Depth-wise symmetric splits with 2nd-order Hessian regularization.
 * **RealMLP**: Continuous periodic Fourier PBLD embeddings optimizing smooth topological representations.
 
-Instead of manually guessing which transformers to assign to each model, we run **one MetaCV exploration pass per evaluator with ALL transformers allowed** (`allowed_transformers = "all"`). Each evaluator naturally picks its own optimal transformations from the full universe of features!
+Instead of manually guessing which transformers to assign to each model, we run **one MetaCV exploration pass per evaluator with ALL unsupervised transformers allowed** (`allowed_transformers = unsup_t`). Each evaluator naturally picks its own optimal transformations from the full universe of leak-free features!
 
-#### The 5 Pillars of This Architecture:
-1. **Unconstrained Feature Selection**: Passing `allowed_transformers = "all"` allows each evaluator to surprise you. LightGBM might find a rare UMAP boundary split; RealMLP might discover a continuous transformation of a group aggregation; XGBoost will select ratio features that stabilize its 2nd-order gradients.
+#### The 6 Pillars of This Architecture:
+1. **Unconstrained Feature Selection**: Passing `allowed_transformers = unsup_t` allows each evaluator to surprise you. LightGBM might find a rare UMAP boundary split; RealMLP might discover a continuous transformation of a group aggregation; XGBoost will select ratio features that stabilize its 2nd-order gradients.
 2. **MetaCV $K\times$ Speedup**: Each of the 3 passes runs with `evaluation_strategy = "metacv"` across 4 islands. Each island evaluates candidate genes on only **1 fold**, slashing exploration runtime by $4\times$.
 3. **Tournament Selection for Honest OOFs**: Setting `metacv_selection = "tournament"` runs a quick $K$-fold CV tournament on the island champions at the end of evolution, returning full-dataset out-of-fold predictions ready for ensembling without partition mismatch.
 4. **Demand-Driven Island Migration on Complete Mesh (`dual_gibbs_pull` + `migration_interval = 1`)**:
@@ -354,16 +378,23 @@ Instead of manually guessing which transformers to assign to each model, we run 
      - But evoFE's **`dual_gibbs_pull`** fundamentally solves this: it operates on a **complete mesh** with **demand-driven pull gating**:
        $$p_{\text{pull}} = \frac{1}{1 + \exp\left(-\frac{s_j - \text{pull\_stagnation\_threshold}}{\tau}\right)}$$
        where $s_j$ is the number of generations island $j$ has spent without improvement.
-     - When an island stagnates, its candidate donor pool evaluates the **entire complete fleet** (`candidates = setdiff(1:islands, j)`), sampling donors via softmax on their headroom closed.
+     - When an island stagnates, its candidate donor pool evaluates the **entire complete fleet** (`candidates = setdiff(1:islands, j)`), sampling donors via a softmax over their best fitness (`weight_by = "fitness"`, the default).
    - **Why `migration_interval = 1` + `pull_stagnation_threshold = 2` on Complete Mesh is Optimal**:
      - **Thriving islands ($s_j = 0$)**: $p_{\text{pull}} \approx 11.9\%$ ($4.7\%$ with threshold 3), so they remain in near-total isolation to climb their unique evolutionary paths unhindered.
-     - **Stagnant islands ($s_j \ge 2$)**: $p_{\text{pull}} \ge 50\% - 73\%$, triggering an **immediate zero-latency rescue** from the highest-headroom donor island anywhere in the fleet ($D = 1$).
+     - **Stagnant islands ($s_j \ge 2$)**: $p_{\text{pull}} = 50\%$ at $s_j = 2$ and $73\%$ at $s_j = 3$, triggering a rescue from a high-fitness donor anywhere in the fleet ($D = 1$). (These numbers assume `temperature = 1.0`; the policy default `0.5` makes the gate sharper.)
      - **Assimilation Reset**: The instant an immigrant recipe or top-20 gene improves local fitness, $s_j$ resets to 0, instantly closing the pull gate.
    - *(Note: You can also specify this explicitly using the modular config container: `migration = migration_config(topology = topology_complete(islands = 4), policy = policy_gibbs_pull(stagnation_threshold = 2))`)*.
-5. **High-Throughput Manifold & Anomaly Learning**: `uwot` and `quitefastmst` run in C++ with multi-threading and easily process **20,000–50,000 rows in seconds**. We leave `options(evoFE.max_clustering_size = 25000)` active.
-6. **Parsimony Guardrails**: We set `complexity_penalty = 0.25 - 0.30` with `complexity_target = "all_features"`. This forces each evaluator to keep only its **top 10–20 most impactful features**, preventing feature explosion when combining them.
+5. **High-Throughput Manifold & Anomaly Learning**: `uwot` and `quitefastmst` handle **20,000–50,000 landmark rows** quickly. Pass `max_clustering_size = clust_cap` to every call (the default is 5,000).
+6. **Parsimony Guardrails**: We set `complexity_penalty = 0.25 - 0.30` with `complexity_target = "all_features"`. This pushes each evaluator toward a compact feature set, preventing feature explosion when combining them.
+
+> [!CAUTION]
+> **Supervised genes leak into Stage 4.** Stage 3 materializes the discovered features on the *full* training set (`predict(ens_scouts, train)`), so any supervised transformer (`target_encode`, `pooled_target_encode`, `woe_encode`, `target_quantile_encode`, `cat_interaction_target_encode`, `supervised_*`) is fit on every row's target. Stage 4's cross-validation on `train_mega` then sees encodings that already memorized the validation targets — inflated OOF scores, wrong early stopping, and a miscalibrated stacker. This is the Pattern C trap from Section 4.
+> **Fix used below**: restrict the exploration passes to unsupervised transformers (`unsup_t`). If target encodings matter, give Stage 4 a short search (e.g. `generations = 3, pop_size = 6`) with `allowed_transformers` limited to the supervised encoders — evoFE fits those per fold — or skip the mega-matrix and ensemble the Stage 2 recipes directly.
 
 ```r
+# Unsupervised vocabulary: everything except target-aware encoders (leak-free mega matrix)
+unsup_t <- Filter(Negate(is_supervised_transformer), names(evo_transformers))
+
 # High-performance migration container: Complete all-to-all mesh (D=1) + demand-driven Gibbs pull
 mig_cfg <- migration_config(
   topology = topology_complete(islands = 4),           # Complete clique: any island directly queries all others
@@ -372,20 +403,21 @@ mig_cfg <- migration_config(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Pass 1: LightGBM Exploration (MetaCV, all transformers)
+# Pass 1: LightGBM Exploration (MetaCV, unsupervised transformers)
 # ─────────────────────────────────────────────────────────────
 rec_lgb_search <- evolve_features(
   data                  = train,
   target_col            = "target",
   task                  = "classification",
   evaluator             = "lightgbm",
-  allowed_transformers  = "all",             # Full vocabulary unconstrained
+  metric                = search_metric,
+  allowed_transformers  = unsup_t,            # Leak-free unsupervised vocabulary
   evaluation_strategy   = "metacv",
-  metacv_selection      = "tournament",      # K-fold tournament for honest full OOFs
-  migration             = mig_cfg,           # Complete topology (D=1) + demand-driven Gibbs pull
-  migration_interval    = 1,                 # Evaluate pull condition every generation
+  metacv_selection      = "tournament",       # K-fold tournament for honest full OOFs
+  migration             = mig_cfg,            # Complete topology (D=1) + demand-driven Gibbs pull
+  migration_interval    = 1,                  # Evaluate pull condition every generation
   migration_rate        = 1,
-  gene_migration_prob   = 0.25,              # Inject top donor features into mutation pool
+  gene_migration_prob   = 0.25,               # Inject top donor features into mutation pool
   generations           = 10,
   pop_size              = 8,
   learning_rate         = 0.08,
@@ -397,20 +429,23 @@ rec_lgb_search <- evolve_features(
   mf_warmup_frac        = 0.4,
   complexity_penalty    = 0.25,
   complexity_mode       = "bic_dynamic",
-  complexity_target     = "all_features",     # Parsimonious feature selection
+  complexity_target     = "all_features",      # Parsimonious feature selection
+  threads               = n_threads,
+  max_clustering_size   = clust_cap,
   seed                  = 101
 )
 
 # ─────────────────────────────────────────────────────────────
-# Pass 2: XGBoost Exploration (MetaCV, all transformers)
+# Pass 2: XGBoost Exploration (MetaCV, unsupervised transformers)
 # ─────────────────────────────────────────────────────────────
 rec_xgb_search <- evolve_features(
   data                  = train,
   target_col            = "target",
   task                  = "classification",
   evaluator             = "xgboost",
-  tree_method           = "hist",            # Fast histogram binning
-  allowed_transformers  = "all",
+  metric                = search_metric,
+  tree_method           = "hist",             # Fast histogram binning
+  allowed_transformers  = unsup_t,
   evaluation_strategy   = "metacv",
   metacv_selection      = "tournament",
   migration             = mig_cfg,
@@ -429,18 +464,21 @@ rec_xgb_search <- evolve_features(
   complexity_penalty    = 0.25,
   complexity_mode       = "bic_dynamic",
   complexity_target     = "all_features",
+  threads               = n_threads,
+  max_clustering_size   = clust_cap,
   seed                  = 202
 )
 
 # ─────────────────────────────────────────────────────────────
-# Pass 3: RealMLP Exploration (MetaCV, all transformers)
+# Pass 3: RealMLP Exploration (MetaCV, unsupervised transformers)
 # ─────────────────────────────────────────────────────────────
 rec_mlp_search <- evolve_features(
   data                  = train,
   target_col            = "target",
   task                  = "classification",
   evaluator             = "realmlp",
-  allowed_transformers  = "all",
+  metric                = search_metric,
+  allowed_transformers  = unsup_t,
   evaluation_strategy   = "metacv",
   metacv_selection      = "tournament",
   migration             = mig_cfg,
@@ -449,13 +487,15 @@ rec_mlp_search <- evolve_features(
   gene_migration_prob   = 0.25,
   generations           = 8,
   pop_size              = 6,
-  batch_size            = 2048,              # High OpenMP GEMM BLAS throughput
-  realmlp_epochs        = 30,                # Fast surrogate epochs during evolution
+  batch_size            = 2048,               # High OpenMP GEMM BLAS throughput
+  realmlp_epochs        = 30,                 # Fast surrogate epochs during evolution
   realmlp_lr            = 0.01,
   early_stopping_rounds = 10,
-  complexity_penalty    = 0.30,              # Aggressive parsimony keeps PBLD layer lean
+  complexity_penalty    = 0.30,               # Aggressive parsimony keeps PBLD layer lean
   complexity_mode       = "bic_dynamic",
   complexity_target     = "all_features",
+  threads               = n_threads,
+  max_clustering_size   = clust_cap,
   seed                  = 303
 )
 ```
@@ -578,9 +618,9 @@ rec_final_mlp <- evolve_features(
 )
 
 cat("Individual OOF Fitness Scores:\n")
-cat(sprintf("  LightGBM OOF: %.5f\n", rec_final_lgb$best_fitness))
-cat(sprintf("  XGBoost OOF:  %.5f\n", rec_final_xgb$best_fitness))
-cat(sprintf("  RealMLP OOF:  %.5f\n", rec_final_mlp$best_fitness))
+cat(sprintf("  LightGBM OOF: %.5f\n", rec_final_lgb$best_individual$fitness))
+cat(sprintf("  XGBoost OOF:  %.5f\n", rec_final_xgb$best_individual$fitness))
+cat(sprintf("  RealMLP OOF:  %.5f\n", rec_final_mlp$best_individual$fitness))
 ```
 
 ---
@@ -627,11 +667,11 @@ cat("Competition submission file generated successfully!\n")
 
 | Bottleneck | Problem Scenario | evoFE Solution | Key Setting |
 |:---|:---|:---|:---|
-| **Model Diversity** | Single evaluator misses neural/scale features | Tri-Evaluator MetaCV Exploration | 3 fast MetaCV passes with `allowed_transformers = "all"` |
+| **Model Diversity** | Single evaluator misses neural/scale features | Tri-Evaluator MetaCV Exploration | 3 fast MetaCV passes with `allowed_transformers = unsup_t` |
 | **CV Runtime** | 1M+ rows, 5-fold CV takes hours | Switch to MetaCV (1 fold per island) | `evaluation_strategy = "metacv"` |
 | **Row Count** | 5M+ rows, RAM or CPU exhaustion | Split rows across islands | `row_split_islands = TRUE, islands = 6` |
 | **Early Generations**| Bad recipes waste full CV time | Subsample rows during warmup | `multi_fidelity = TRUE, mf_sample_frac = 0.3` |
-| **Manifold / UMAP** | UMAP & MST take $O(N^2)$ time | C++ multi-threaded landmark cap | `options(evoFE.max_clustering_size = 25000)` |
+| **Manifold / UMAP** | UMAP & MST take $O(N^2)$ time | C++ multi-threaded landmark cap | `max_clustering_size = 25000` (or `50000`) |
 | **RealMLP Speed** | Small batch size stalls OpenMP threads | Scale mini-batch size | `batch_size = 2048` or `4096` |
 | **RealMLP Memory**| 150+ features blow up PBLD embeddings | Aggressive feature parsimony | `complexity_penalty = 0.3, complexity_target = "all_features"` |
 | **XGBoost Speed** | Exact tree search is slow | Use fast histogram method | `tree_method = "hist"` |
@@ -814,11 +854,12 @@ If you have a strict compute budget and want to avoid running 5-fold evaluation 
 
 ```r
 # 1. Quick split on Mega Matrix for fast tuning
-val_idx <- sample.int(nrow(train_mega), size = floor(0.20 * nrow(train_mega)))
-x_tr    <- as.matrix(train_mega[-val_idx, !target_name, with = FALSE])
-y_tr    <- train_mega[-val_idx][[target_name]]
-x_va    <- as.matrix(train_mega[val_idx, !target_name, with = FALSE])
-y_va    <- train_mega[val_idx][[target_name]]
+val_idx   <- sample.int(nrow(train_mega), size = floor(0.20 * nrow(train_mega)))
+feat_cols <- setdiff(names(train_mega), target_name)
+x_tr      <- as.matrix(train_mega[-val_idx, feat_cols, with = FALSE])
+y_tr      <- train_mega[-val_idx][[target_name]]
+x_va      <- as.matrix(train_mega[val_idx, feat_cols, with = FALSE])
+y_va      <- train_mega[val_idx][[target_name]]
 
 # 2. Fast single-split tuning via train_model()
 fit_lgb_tune <- train_model(
@@ -979,14 +1020,18 @@ seeds_lgb <- c(101, 102, 103)
 seeds_xgb <- c(201, 202, 203)
 seeds_mlp <- c(301, 302, 303)
 
+# Unsupervised vocabulary prevents target-encoding leakage into Step B.5 10-fold CV
+unsup_t <- Filter(Negate(is_supervised_transformer), names(evo_transformers))
+
 # ─── Swarm 1: LightGBM Exploration (3 Seeds) ───
 rec_lgb_list <- lapply(seeds_lgb, function(s) {
   evolve_features(
     data                  = train,
     target_col            = "target",
     task                  = "classification",
+    metric                = "ts_refinement",  # Temperature-scaled probability refinement
     evaluator             = "lightgbm_micro", # In-loop hyperparameter adaptation
-    allowed_transformers  = "all",
+    allowed_transformers  = unsup_t,          # Leak-free unsupervised vocabulary
     evaluation_strategy   = "cv",             # Honest full 5-fold CV on every generation
     cv_folds              = 5,
     migration             = mig_swarm,
@@ -1001,6 +1046,7 @@ rec_lgb_list <- lapply(seeds_lgb, function(s) {
     mbo_init_design       = 4,
     complexity_penalty    = 0.25,
     complexity_target     = "all_features",
+    max_clustering_size   = 50000,
     seed                  = s
   )
 })
@@ -1011,9 +1057,10 @@ rec_xgb_list <- lapply(seeds_xgb, function(s) {
     data                  = train,
     target_col            = "target",
     task                  = "classification",
+    metric                = "ts_refinement",
     evaluator             = "xgboost_micro",
     tree_method           = "hist",
-    allowed_transformers  = "all",
+    allowed_transformers  = unsup_t,
     evaluation_strategy   = "cv",
     cv_folds              = 5,
     migration             = mig_swarm,
@@ -1028,6 +1075,7 @@ rec_xgb_list <- lapply(seeds_xgb, function(s) {
     mbo_init_design       = 4,
     complexity_penalty    = 0.25,
     complexity_target     = "all_features",
+    max_clustering_size   = 50000,
     seed                  = s
   )
 })
@@ -1038,8 +1086,9 @@ rec_mlp_list <- lapply(seeds_mlp, function(s) {
     data                  = train,
     target_col            = "target",
     task                  = "classification",
+    metric                = "ts_refinement",
     evaluator             = "realmlp_micro",
-    allowed_transformers  = "all",
+    allowed_transformers  = unsup_t,
     evaluation_strategy   = "cv",
     cv_folds              = 5,
     migration             = mig_swarm,
@@ -1054,6 +1103,7 @@ rec_mlp_list <- lapply(seeds_mlp, function(s) {
     mbo_init_design       = 3,
     complexity_penalty    = 0.30,
     complexity_target     = "all_features",
+    max_clustering_size   = 50000,
     seed                  = s
   )
 })
@@ -1136,9 +1186,10 @@ make_tunable(
 
 # 2. Run Deep MBO on Holdout Split
 val_split <- sample.int(nrow(train_mega), size = floor(0.20 * nrow(train_mega)))
-x_tr <- as.matrix(train_mega[-val_split, !"target", with = FALSE])
+feat_cols <- setdiff(names(train_mega), "target")
+x_tr <- as.matrix(train_mega[-val_split, feat_cols, with = FALSE])
 y_tr <- train_mega[-val_split][["target"]]
-x_va <- as.matrix(train_mega[val_split, !"target", with = FALSE])
+x_va <- as.matrix(train_mega[val_split, feat_cols, with = FALSE])
 y_va <- train_mega[val_split][["target"]]
 
 # Tune LightGBM (35 MBO Iterations)
@@ -1223,11 +1274,11 @@ oof_matrix <- cbind(
 )
 colnames(oof_matrix) <- c(paste0("lgb_", 1:5), paste0("xgb_", 1:5), paste0("mlp_", 1:5))
 
-# Collect Test predictions
+# Collect Test predictions (predict_model handles full recipe transformations & model inference)
 test_matrix <- cbind(
-  do.call(cbind, lapply(lgb_models, function(m) predict(m$final_model, as.matrix(test_mega)))),
-  do.call(cbind, lapply(xgb_models, function(m) predict(m$final_model, as.matrix(test_mega)))),
-  do.call(cbind, lapply(mlp_models, function(m) predict(m$final_model, as.matrix(test_mega))))
+  do.call(cbind, lapply(lgb_models, function(m) predict_model(m, test_mega))),
+  do.call(cbind, lapply(xgb_models, function(m) predict_model(m, test_mega))),
+  do.call(cbind, lapply(mlp_models, function(m) predict_model(m, test_mega)))
 )
 colnames(test_matrix) <- colnames(oof_matrix)
 
