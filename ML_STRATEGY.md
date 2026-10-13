@@ -550,11 +550,14 @@ By setting `generations = 1, pop_size = 1`, evoFE acts as an automated 5-fold CV
 - Scales `best_iteration` from early stopping to full dataset size.
 - Prepares full S3 `evo_recipe` objects ready for `ensemble_islands()`.
 
+> [!TIP]
+> **Why `nrounds = 50,000` is the right ceiling with low $\eta$**: `nrounds` is purely a safety ceiling, not a fixed compute requirement. At $\eta \le 0.005$ on wide feature matrices with column subsampling (`feature_fraction = 0.70 - 0.75`), gradient boosting takes very small, regularized steps per split. 15,000 trees are often not enough — the validation loss is frequently still climbing/dropping when 15,000 is hit, cutting training short and underfitting the final scaled model. Setting `nrounds = 50000` with `early_stopping_rounds = 200 - 300` guarantees you never truncate training prematurely, while early stopping safely halts when the true validation minimum is reached.
+
 ```r
 cv_seed <- 123
 
 # ─────────────────────────────────────────────────────────────
-# Model 1: Low-eta LightGBM (15,000 trees, eta=0.005, leaf-wise)
+# Model 1: Low-eta LightGBM (50,000 ceiling, eta=0.005, leaf-wise)
 # ─────────────────────────────────────────────────────────────
 rec_final_lgb <- evolve_features(
   data                  = train_mega,
@@ -571,13 +574,13 @@ rec_final_lgb <- evolve_features(
   bagging_freq          = 1,
   lambda_l1             = 0.5,
   lambda_l2             = 2.0,
-  nrounds               = 15000,
-  early_stopping_rounds = 150,
+  nrounds               = 50000,             # High ceiling ensures no premature truncation
+  early_stopping_rounds = 250,
   seed                  = cv_seed
 )
 
 # ─────────────────────────────────────────────────────────────
-# Model 2: Low-eta XGBoost (10,000 trees, eta=0.008, depth-wise hist)
+# Model 2: Low-eta XGBoost (35,000 ceiling, eta=0.008, depth-wise hist)
 # ─────────────────────────────────────────────────────────────
 rec_final_xgb <- evolve_features(
   data                  = train_mega,
@@ -587,14 +590,14 @@ rec_final_xgb <- evolve_features(
   generations           = 1,
   pop_size              = 1,
   cv_folds              = 5,
-  tree_method           = "hist",        # Fast histogram binning
+  tree_method           = "hist",            # Fast histogram binning
   learning_rate         = 0.008,
   max_depth             = 6,
   subsample             = 0.80,
   colsample_bytree      = 0.75,
   lambda                = 2.0,
-  nrounds               = 10000,
-  early_stopping_rounds = 120,
+  nrounds               = 35000,
+  early_stopping_rounds = 200,
   seed                  = cv_seed
 )
 
@@ -807,8 +810,8 @@ rec_final_lgb <- evolve_features(
   pop_size              = 1,
   cv_folds              = 5,                   # MBO automatically tunes across all 5 folds
   learning_rate         = 0.008,               # Fixed low eta
-  nrounds               = 15000,
-  early_stopping_rounds = 150,
+  nrounds               = 50000,               # High ceiling ensures convergence
+  early_stopping_rounds = 250,
   mbo_iters             = 12,                  # 12 Bayesian optimization trials
   mbo_init_design       = 8,                   # 8 Latin Hypercube initial points
   seed                  = cv_seed
@@ -825,8 +828,8 @@ rec_final_xgb <- evolve_features(
   pop_size              = 1,
   cv_folds              = 5,
   learning_rate         = 0.008,
-  nrounds               = 10000,
-  early_stopping_rounds = 120,
+  nrounds               = 35000,
+  early_stopping_rounds = 200,
   mbo_iters             = 12,
   mbo_init_design       = 8,
   seed                  = cv_seed
@@ -865,7 +868,7 @@ y_va      <- train_mega[val_idx][[target_name]]
 fit_lgb_tune <- train_model(
   x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va,
   task = "classification", evaluator = "lightgbm_tabarena",
-  learning_rate = 0.01, nrounds = 3000, early_stopping_rounds = 50,
+  learning_rate = 0.01, nrounds = 5000, early_stopping_rounds = 80,
   mbo_iters = 15, mbo_init_design = 8
 )
 lgb_best_params <- fit_lgb_tune$best_params
@@ -881,8 +884,8 @@ rec_final_lgb <- do.call(evolve_features, c(
     pop_size              = 1,
     cv_folds              = 5,
     learning_rate         = 0.005,
-    nrounds               = 15000,
-    early_stopping_rounds = 150,
+    nrounds               = 50000,
+    early_stopping_rounds = 250,
     seed                  = cv_seed
   ),
   lgb_best_params
