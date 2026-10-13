@@ -457,9 +457,16 @@ register_evaluator(
     }
     x_new <- .sanitize_feature_matrix(x_new)
     extra_args <- list(...)
-    th <- if (!is.null(extra_args$threads)) extra_args$threads else 2
-    if (!is.null(model$best_iter) && model$best_iter > 0) {
-      stats::predict(model, x_new, num_iteration = model$best_iter, params = list(num_threads = th))
+    th <- if (!is.null(extra_args$threads)) as.integer(extra_args$threads) else default_threads()
+    num_iter <- if (!is.null(extra_args$num_iteration)) {
+      as.integer(extra_args$num_iteration)
+    } else if (!is.null(model$best_iter) && model$best_iter > 0) {
+      model$best_iter
+    } else {
+      NULL
+    }
+    if (!is.null(num_iter) && num_iter > 0) {
+      stats::predict(model, x_new, num_iteration = num_iter, params = list(num_threads = th))
     } else {
       stats::predict(model, x_new, params = list(num_threads = th))
     }
@@ -654,11 +661,18 @@ register_evaluator(
     }
     x_new <- .sanitize_feature_matrix(x_new)
     extra_args <- list(...)
-    th <- if (!is.null(extra_args$threads)) extra_args$threads else 2
+    th <- if (!is.null(extra_args$threads)) as.integer(extra_args$threads) else default_threads()
     best_iter <- .xgb_best_iter(model)
+    iter_range <- if (!is.null(extra_args$iterationrange)) {
+      extra_args$iterationrange
+    } else if (!is.null(best_iter) && best_iter >= 1) {
+      c(1, best_iter + 1)
+    } else {
+      NULL
+    }
     dmatrix <- xgboost::xgb.DMatrix(data = x_new, missing = NA, nthread = th)
-    preds <- if (!is.null(best_iter) && best_iter >= 1) {
-      stats::predict(model, dmatrix, iterationrange = c(1, best_iter + 1))
+    preds <- if (!is.null(iter_range)) {
+      stats::predict(model, dmatrix, iterationrange = iter_range)
     } else {
       stats::predict(model, dmatrix)
     }

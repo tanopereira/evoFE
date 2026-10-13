@@ -117,6 +117,15 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
     stop("No model was trained or saved during evolution.")
   }
   
+  user_args <- list(...)
+  th <- if (!is.null(user_args$threads)) {
+    as.integer(user_args$threads)
+  } else if (!is.null(object$threads)) {
+    as.integer(object$threads)
+  } else {
+    default_threads()
+  }
+
   # Step 1: Evolve features for newdata
   features_dt <- stats::predict(object, newdata)
   
@@ -125,7 +134,10 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   
   # Step 3: Run prediction
   evaluator_entry <- get_evaluator(object$evaluator)
-  preds <- evaluator_entry$predict_func(object$best_model, x_new, task = object$task)
+  preds <- do.call(evaluator_entry$predict_func, c(
+    list(model = object$best_model, x_new = x_new, task = object$task, threads = th),
+    user_args
+  ))
   
   if (!is.null(object$classes)) {
     if (!is.matrix(preds)) {
@@ -148,6 +160,15 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
   active_names <- names(weights[weights > 0])
   if (length(active_names) == 0) {
     stop("No active island models with positive weights found in evo_ensemble.")
+  }
+
+  user_args <- list(...)
+  th <- if (!is.null(user_args$threads)) {
+    as.integer(user_args$threads)
+  } else if (!is.null(object$threads)) {
+    as.integer(object$threads)
+  } else {
+    default_threads()
   }
 
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
@@ -175,7 +196,10 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     feat_dt <- res_i$train[, features, with = FALSE]
     x_new <- .sanitize_feature_matrix(feat_dt)
 
-    preds_i <- evaluator_entry$predict_func(mod_i, x_new, task = object$task)
+    preds_i <- do.call(evaluator_entry$predict_func, c(
+      list(model = mod_i, x_new = x_new, task = object$task, threads = th),
+      user_args
+    ))
 
     if (isTRUE(object$rank_average)) {
       preds_i <- rank_transform_predictions(preds_i)

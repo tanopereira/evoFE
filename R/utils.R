@@ -401,6 +401,10 @@ canonical_metric_name <- function(metric) {
 #' @keywords internal
 #' @noRd
 default_threads <- function() {
+  opt <- getOption("evoFE.threads", NULL)
+  if (!is.null(opt) && is.numeric(opt) && opt >= 1) {
+    return(as.integer(opt))
+  }
   max(1L, parallel::detectCores(logical = FALSE), na.rm = TRUE)
 }
 
