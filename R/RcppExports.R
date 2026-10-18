@@ -31,7 +31,7 @@ rcpp_compute_ts_refinement_multiclass <- function(y_true, y_pred, num_class, alp
 #' @param metric String: validation metric to optimize and report.
 #' @param hidden_dim Integer: hidden layer dimension (default 256).
 #' @return A List containing model weights, training statistics, and feature importances.
-rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = 256L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", hidden_dim = 256L) {
+rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = -1L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", hidden_dim = 256L) {
     .Call(`_evoFE_rcpp_realmlp_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric, hidden_dim)
 }
 

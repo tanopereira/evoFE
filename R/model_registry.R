@@ -289,7 +289,7 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
 register_evaluator(
   "lightgbm",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
     if (!requireNamespace("lightgbm", quietly = TRUE)) {
       stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
     }
@@ -481,7 +481,7 @@ register_evaluator(
 register_evaluator(
   "xgboost",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
     if (!requireNamespace("xgboost", quietly = TRUE)) {
       stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
     }
@@ -699,7 +699,7 @@ register_evaluator(
 register_evaluator(
   "catboost",
   train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
     if (system.file(package = "catboost") == "") {
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
@@ -843,7 +843,7 @@ register_evaluator(
 register_evaluator(
   "lm",
   train_func = function(x_train, y_train, x_val = NULL, task = "regression",
-                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
     if (!requireNamespace("glmnet", quietly = TRUE)) {
       stop("The 'glmnet' package is required for the penalized lm evaluator.")
     }
@@ -998,7 +998,7 @@ register_evaluator(
 register_evaluator(
   "keras3",
   train_func = function(x_train, y_train, x_val = NULL, task = "regression",
-                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
     if (!requireNamespace("keras3", quietly = TRUE)) {
       stop("The 'keras3' package is required for the keras3 evaluator.")
     }
@@ -1206,7 +1206,7 @@ register_evaluator(
 register_evaluator(
   "realmlp",
   train_func = function(x_train, y_train, x_val = NULL, task = "regression",
-                        threads = 2, num_class = NULL, nrounds = 50, ...) {
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
     extra_params <- list(...)
     if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
     if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
@@ -1354,7 +1354,7 @@ register_evaluator(
     } else if (!is.null(model$threads)) {
       as.integer(model$threads)
     } else {
-      as.integer(getOption("evoFE.threads", 0L))
+      default_threads()
     }
     raw_preds <- rcpp_realmlp_predict(model$model_state, x_new, threads = n_threads)
 

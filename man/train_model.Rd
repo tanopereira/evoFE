@@ -11,7 +11,7 @@ train_model(
   y_val = NULL,
   task = "classification",
   evaluator = "lightgbm",
-  threads = 2,
+  threads = default_threads(),
   num_class = NULL,
   nrounds = 50,
   ...

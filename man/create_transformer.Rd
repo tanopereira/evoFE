@@ -24,11 +24,11 @@ create_transformer(
 
 \item{output_type}{Type of output: "numeric" or "categorical"}
 
-\item{fit_func}{function(data, input_cols, target_col = NULL) returning state}
+\item{fit_func}{function(data, gene, target_col = NULL) returning state}
 
-\item{apply_func}{function(data, input_cols, state = NULL) returning new column vector}
+\item{apply_func}{function(data, gene, state = NULL) returning new column vector}
 
-\item{name_generator}{function(input_cols) returning output column name}
+\item{name_generator}{function(gene) returning output column name}
 
 \item{allow_replace}{Logical. Whether column sampling allows replacement.}
 }

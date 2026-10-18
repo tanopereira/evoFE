@@ -119,6 +119,127 @@ inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXd
   }
 }
 
+// Fused activation with bias addition: computes out = act(in + bias) in a single cache-contiguous pass
+inline void apply_activation_with_bias(const Eigen::Ref<const Eigen::MatrixXd>& in,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& bias,
+                                      Eigen::Ref<Eigen::MatrixXd> out, bool is_cls) {
+  int R = static_cast<int>(in.rows());
+  int C = static_cast<int>(in.cols());
+  int in_stride = static_cast<int>(in.outerStride());
+  int out_stride = static_cast<int>(out.outerStride());
+  const double* in_data = in.data();
+  double* out_data = out.data();
+  const double* b_data = bias.data();
+
+  if (is_cls) {
+    constexpr double LAMBDA = 1.0507009873554804934193349852946;
+    constexpr double ALPHA  = 1.6732632423543772848170429916717;
+    constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (C >= 4)
+#endif
+    for (int c = 0; c < C; ++c) {
+      double b = b_data[c];
+      const double* in_col = in_data + c * in_stride;
+      double* out_col = out_data + c * out_stride;
+      for (int r = 0; r < R; ++r) {
+        double z = in_col[r] + b;
+        out_col[r] = (z > 0.0) ? (LAMBDA * z) : (LAMBDA_ALPHA * std::expm1(z));
+      }
+    }
+  } else {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (C >= 2)
+#endif
+    for (int c = 0; c < C; ++c) {
+      double b = b_data[c];
+      const double* in_col = in_data + c * in_stride;
+      double* out_col = out_data + c * out_stride;
+      for (int r = 0; r < R; ++r) {
+        double z = in_col[r] + b;
+        if (z > 20.0) {
+          out_col[r] = z;
+        } else if (z < -20.0) {
+          out_col[r] = z * std::exp(z);
+        } else {
+          double ez = std::exp(z);
+          double w = 1.0 + ez;
+          double tsp = 1.0 - 2.0 / (w * w + 1.0);
+          out_col[r] = z * tsp;
+        }
+      }
+    }
+  }
+}
+
+// Fused activation gradient and bias accumulation: computes delta = delta * act'(act_in + bias) and grad_b = sum(delta)
+inline void apply_activation_grad_and_accum_bias(const Eigen::Ref<const Eigen::MatrixXd>& act_in,
+                                                 const Eigen::Ref<const Eigen::MatrixXd>& bias,
+                                                 Eigen::Ref<Eigen::MatrixXd> delta,
+                                                 Eigen::MatrixXd& grad_b,
+                                                 bool is_cls) {
+  int R = static_cast<int>(delta.rows());
+  int C = static_cast<int>(delta.cols());
+  int a_stride = static_cast<int>(act_in.outerStride());
+  int d_stride = static_cast<int>(delta.outerStride());
+  const double* a_data = act_in.data();
+  double* d_data = delta.data();
+  const double* b_data = bias.data();
+  double* gb_data = grad_b.data();
+
+  if (is_cls) {
+    constexpr double LAMBDA = 1.0507009873554804934193349852946;
+    constexpr double ALPHA  = 1.6732632423543772848170429916717;
+    constexpr double LAMBDA_ALPHA = LAMBDA * ALPHA;
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (C >= 2)
+#endif
+    for (int c = 0; c < C; ++c) {
+      double b = b_data[c];
+      const double* a_col = a_data + c * a_stride;
+      double* d_col = d_data + c * d_stride;
+      double sum = 0.0;
+      for (int r = 0; r < R; ++r) {
+        double a = a_col[r] + b;
+        double d = d_col[r] * ((a > 0.0) ? LAMBDA : (LAMBDA_ALPHA * std::exp(a)));
+        d_col[r] = d;
+        sum += d;
+      }
+      gb_data[c] = sum;
+    }
+  } else {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (C >= 2)
+#endif
+    for (int c = 0; c < C; ++c) {
+      double b = b_data[c];
+      const double* a_col = a_data + c * a_stride;
+      double* d_col = d_data + c * d_stride;
+      double sum = 0.0;
+      for (int r = 0; r < R; ++r) {
+        double a = a_col[r] + b;
+        double factor;
+        if (a > 20.0) {
+          factor = 1.0;
+        } else if (a < -20.0) {
+          double ea = std::exp(a);
+          factor = ea * (1.0 + a);
+        } else {
+          double ea = std::exp(a);
+          double w = 1.0 + ea;
+          double tsp = 1.0 - 2.0 / (w * w + 1.0);
+          double sig = ea / w;
+          factor = (tsp + a * sig * (1.0 - tsp * tsp));
+        }
+        double d = d_col[r] * factor;
+        d_col[r] = d;
+        sum += d;
+      }
+      gb_data[c] = sum;
+    }
+  }
+}
+
 // Coslog4 learning rate schedule: smoothly anneals from 1.0 at t=0 to 0.0 at t=1
 inline double coslog4_schedule(double t) {
   t = std::clamp(t, 0.0, 1.0);
@@ -151,6 +272,26 @@ struct AdamParam {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (sz >= 1024)
 #endif
+    for (int i = 0; i < sz; ++i) {
+      double g = g_ptr[i];
+      double m_val = beta1 * m_ptr[i] + (1.0 - beta1) * g;
+      double v_val = beta2 * v_ptr[i] + (1.0 - beta2) * g * g;
+      m_ptr[i] = m_val;
+      v_ptr[i] = v_val;
+      val_ptr[i] -= alpha * m_val / (std::sqrt(std::max(0.0, v_val)) + eps_scaled);
+    }
+  }
+
+  void update_serial(const Eigen::MatrixXd& grad, double lr, double beta1, double beta2, double eps,
+                     double b1_corr, double b2_corr) {
+    double alpha = lr * std::sqrt(b2_corr) / b1_corr;
+    double eps_scaled = eps * std::sqrt(b2_corr);
+    int sz = static_cast<int>(val.size());
+    double* val_ptr = val.data();
+    double* m_ptr = m.data();
+    double* v_ptr = v.data();
+    const double* g_ptr = grad.data();
+
     for (int i = 0; i < sz; ++i) {
       double g = g_ptr[i];
       double m_val = beta1 * m_ptr[i] + (1.0 - beta1) * g;
@@ -263,7 +404,7 @@ public:
     int B = static_cast<int>(x.rows());
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (n_features >= 4)
+#pragma omp parallel for schedule(static) if (n_features >= 2)
 #endif
     for (int j = 0; j < n_features; ++j) {
       int out_col_start = j * (1 + d_proj);
@@ -324,7 +465,7 @@ public:
     }
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (n_features >= 4)
+#pragma omp parallel for schedule(static) if (n_features >= 2)
 #endif
     for (int j = 0; j < n_features; ++j) {
 #if defined(_OPENMP)
@@ -392,8 +533,11 @@ public:
     grad_b_buf.setZero();
     grad_beta_buf.setZero();
 
+    double alpha = lr * std::sqrt(b2_corr) / b1_corr;
+    double eps_scaled = eps * std::sqrt(b2_corr);
+
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (n_features >= 4)
+#pragma omp parallel for schedule(static) if (n_features >= 2)
 #endif
     for (int j = 0; j < n_features; ++j) {
 #if defined(_OPENMP)
@@ -407,12 +551,17 @@ public:
 
       int out_col_start = j * (1 + d_proj);
 
-      // 1. grad_beta = sum(grad_U)
+      // 1. grad_beta = sum(grad_U) and update beta_proj in parallel
       for (int c = 0; c < d_proj; ++c) {
         const double* u_col = grad_E.col(out_col_start + 1 + c).data();
         double sum = 0.0;
         for (int i = 0; i < B; ++i) sum += u_col[i];
         grad_beta_buf(j, c) = sum;
+        double m_val = beta1 * beta_proj.m(j, c) + (1.0 - beta1) * sum;
+        double v_val = beta2 * beta_proj.v(j, c) + (1.0 - beta2) * sum * sum;
+        beta_proj.m(j, c) = m_val;
+        beta_proj.v(j, c) = v_val;
+        beta_proj.val(j, c) -= alpha * m_val / (std::sqrt(std::max(0.0, v_val)) + eps_scaled);
       }
 
       // 2. grad_W = cache_Z[j]^T * grad_U (zero dgemm, cache-contiguous dot products)
@@ -427,7 +576,7 @@ public:
           grad_W(k, c) = dot;
         }
       }
-      W_proj[j].update(grad_W, lr, beta1, beta2, eps, b1_corr, b2_corr);
+      W_proj[j].update_serial(grad_W, lr, beta1, beta2, eps, b1_corr, b2_corr);
 
       // 3. grad_Z = grad_U * W_j^T (zero dgemm)
       for (int k = 0; k < k_freq; ++k) {
@@ -442,7 +591,7 @@ public:
         }
       }
 
-      // 4. grad_Th = -grad_Z * sin(cache_Theta), and accumulate grad_b
+      // 4. grad_Th = -grad_Z * sin(cache_Theta), and accumulate/update grad_b
       for (int k = 0; k < k_freq; ++k) {
         const double* gz_col = grad_Z.col(k).data();
         const double* th_col = cache_Theta[j].col(k).data();
@@ -454,9 +603,14 @@ public:
           sum_b += gth;
         }
         grad_b_buf(j, k) = sum_b;
+        double m_val = beta1 * b_phase.m(j, k) + (1.0 - beta1) * sum_b;
+        double v_val = beta2 * b_phase.v(j, k) + (1.0 - beta2) * sum_b * sum_b;
+        b_phase.m(j, k) = m_val;
+        b_phase.v(j, k) = v_val;
+        b_phase.val(j, k) -= alpha * m_val / (std::sqrt(std::max(0.0, v_val)) + eps_scaled);
       }
 
-      // 5. grad_omega = 2*pi * x.col(j)^T * grad_Th
+      // 5. grad_omega = 2*pi * x.col(j)^T * grad_Th and in-parallel update
       const double* x_col = x.col(j).data();
       for (int k = 0; k < k_freq; ++k) {
         const double* gth_col = grad_Th.col(k).data();
@@ -464,13 +618,15 @@ public:
         for (int i = 0; i < B; ++i) {
           dot += x_col[i] * gth_col[i];
         }
-        grad_omega_buf(j, k) = 2.0 * M_PI * dot;
+        double g_om = 2.0 * M_PI * dot;
+        grad_omega_buf(j, k) = g_om;
+        double m_val = beta1 * omega.m(j, k) + (1.0 - beta1) * g_om;
+        double v_val = beta2 * omega.v(j, k) + (1.0 - beta2) * g_om * g_om;
+        omega.m(j, k) = m_val;
+        omega.v(j, k) = v_val;
+        omega.val(j, k) -= alpha * m_val / (std::sqrt(std::max(0.0, v_val)) + eps_scaled);
       }
     }
-
-    omega.update(grad_omega_buf, lr, beta1, beta2, eps, b1_corr, b2_corr);
-    b_phase.update(grad_b_buf, lr, beta1, beta2, eps, b1_corr, b2_corr);
-    beta_proj.update(grad_beta_buf, lr, beta1, beta2, eps, b1_corr, b2_corr);
   }
 };
 
@@ -671,20 +827,27 @@ public:
                    Eigen::MatrixXd& A2, Eigen::MatrixXd& H2,
                    Eigen::MatrixXd& A3, Eigen::MatrixXd& H3,
                    Eigen::MatrixXd& Out) const {
-    auto E_block = E.topRows(cur_B);
-    H0.topRows(cur_B).noalias() = (E_block.array().rowwise() * front_scale.val.row(0).array()).matrix();
+    int embed_d = static_cast<int>(E.cols());
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (embed_d >= 4)
+#endif
+    for (int c = 0; c < embed_d; ++c) {
+      double sc = front_scale.val(0, c);
+      const double* e_col = E.col(c).data();
+      double* h0_col = H0.col(c).data();
+      for (int r = 0; r < cur_B; ++r) {
+        h0_col[r] = e_col[r] * sc;
+      }
+    }
 
     A1.topRows(cur_B).noalias() = H0.topRows(cur_B) * W1.val;
-    A1.topRows(cur_B).rowwise() += b1.val.row(0);
-    apply_activation(A1.topRows(cur_B), H1.topRows(cur_B), is_classification);
+    apply_activation_with_bias(A1.topRows(cur_B), b1.val, H1.topRows(cur_B), is_classification);
 
     A2.topRows(cur_B).noalias() = H1.topRows(cur_B) * W2.val;
-    A2.topRows(cur_B).rowwise() += b2.val.row(0);
-    apply_activation(A2.topRows(cur_B), H2.topRows(cur_B), is_classification);
+    apply_activation_with_bias(A2.topRows(cur_B), b2.val, H2.topRows(cur_B), is_classification);
 
     A3.topRows(cur_B).noalias() = H2.topRows(cur_B) * W3.val;
-    A3.topRows(cur_B).rowwise() += b3.val.row(0);
-    apply_activation(A3.topRows(cur_B), H3.topRows(cur_B), is_classification);
+    apply_activation_with_bias(A3.topRows(cur_B), b3.val, H3.topRows(cur_B), is_classification);
 
     Out.topRows(cur_B).noalias() = H3.topRows(cur_B) * W4.val;
     Out.topRows(cur_B).rowwise() += b4.val.row(0);

@@ -58,6 +58,7 @@ Suggests:
     ranger,
     DiceKriging,
     rgenoud,
-    mlr3learners
+    mlr3learners,
+    withr
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.1.0

@@ -18,7 +18,7 @@ evaluate_fitness(
   shared_folds = NULL,
   shared_full = NULL,
   state_cache = NULL,
-  threads = 2,
+  threads = default_threads(),
   metric = "default",
   verbose = FALSE,
   allow_prune = TRUE,

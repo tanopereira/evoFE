@@ -30,7 +30,7 @@ supports_color <- function() {
 #' @param extra_args List of extra arguments
 #' @return Normalized thread count
 #' @noRd
-resolve_thread_count <- function(threads = 2L, extra_args = list()) {
+resolve_thread_count <- function(threads = default_threads(), extra_args = list()) {
   resolve_param_aliases(extra_args, defaults = list(threads = threads))$threads
 }
 
@@ -41,7 +41,7 @@ resolve_thread_count <- function(threads = 2L, extra_args = list()) {
 #' @param seed Optional random seed
 #' @return Environment state list used by restore_core_env
 #' @noRd
-setup_core_env <- function(threads = 2L, max_clustering_size = 5000L, seed = NULL) {
+setup_core_env <- function(threads = default_threads(), max_clustering_size = 5000L, seed = NULL) {
   # Temporarily configure max clustering size and threads options
   old_max_size <- getOption("evoFE.max_clustering_size")
   old_threads <- getOption("evoFE.threads")

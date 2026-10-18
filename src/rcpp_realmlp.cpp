@@ -1,6 +1,7 @@
 #include <Rcpp.h>
 #include <RcppEigen.h>
 #include <cstring>
+#include <chrono>
 #if !defined(_WIN32)
 #include <dlfcn.h>
 #endif
@@ -410,7 +411,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
                         Nullable<NumericVector> y_val = R_NilValue,
                         std::string task = "regression",
                         int n_epochs = 256,
-                        int batch_size = 256,
+                        int batch_size = -1,
                         double lr = -1.0,
                         int early_stopping_rounds = 0,
                         int seed = 42,
@@ -603,8 +604,11 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   }
 
   int step = 0;
+  double t_shuf_s = 0.0, t_emb_fwd_s = 0.0, t_mlp_fwd_s = 0.0, t_loss_s = 0.0;
+  double t_mlp_bwd_s = 0.0, t_emb_bwd_s = 0.0, t_adam_mlp_s = 0.0, t_imp_s = 0.0;
 
   for (int epoch = 0; epoch < n_epochs; ++epoch) {
+    auto t_sh0 = std::chrono::high_resolution_clock::now();
     // Shuffle dataset once per epoch: column-contiguous for hardware prefetching
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
 #if defined(_OPENMP)
@@ -620,6 +624,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
         ws.Y_shuf(i, c) = Y_tr(perm[i], c);
       }
     }
+    auto t_sh1 = std::chrono::high_resolution_clock::now();
+    if (verbose >= 2) t_shuf_s += std::chrono::duration<double>(t_sh1 - t_sh0).count();
 
     double epoch_loss_sum = 0.0;
 
@@ -640,16 +646,23 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       double b2_corr = 1.0 - std::pow(beta2, step);
 
       // 1. Forward PBLD — writes into ws.E, ws.cache_Z, ws.cache_Theta (zero realloc)
+      auto t_ef0 = std::chrono::high_resolution_clock::now();
       model.embedder.forward(X_batch, ws.E, ws.cache_Z, ws.cache_Theta, true);
+      auto t_ef1 = std::chrono::high_resolution_clock::now();
+      if (verbose >= 2) t_emb_fwd_s += std::chrono::duration<double>(t_ef1 - t_ef0).count();
 
       // 2. Forward MLP — writes into ws.H0..H3, ws.Out
+      auto t_mf0 = std::chrono::high_resolution_clock::now();
       model.forward_mlp(ws.E, cur_B, ws.H0, ws.A1, ws.H1, ws.A2, ws.H2, ws.A3, ws.H3, ws.Out);
+      auto t_mf1 = std::chrono::high_resolution_clock::now();
+      if (verbose >= 2) t_mlp_fwd_s += std::chrono::duration<double>(t_mf1 - t_mf0).count();
 
       // Views for current batch size
       auto Out_b = ws.Out.topRows(cur_B);
       auto grad_out_b = ws.grad_out.topRows(cur_B);
 
       // 3. Loss & output gradient
+      auto t_ls0 = std::chrono::high_resolution_clock::now();
       double batch_loss = 0.0;
 
       if (task == "regression") {
@@ -708,60 +721,112 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       }
 
       epoch_loss_sum += batch_loss;
+      auto t_ls1 = std::chrono::high_resolution_clock::now();
+      if (verbose >= 2) t_loss_s += std::chrono::duration<double>(t_ls1 - t_ls0).count();
 
       // 4. Backprop MLP — use pre-allocated workspace
+      auto t_mb0 = std::chrono::high_resolution_clock::now();
       auto H3_b = ws.H3.topRows(cur_B);
       auto H2_b = ws.H2.topRows(cur_B);
       auto H1_b = ws.H1.topRows(cur_B);
       auto H0_b = ws.H0.topRows(cur_B);
       auto E_b = ws.E.topRows(cur_B);
 
-      ws.grad_W4.noalias() = H3_b.transpose() * grad_out_b;
-      ws.grad_b4 = grad_out_b.colwise().sum();
       ws.delta3.topRows(cur_B).noalias() = grad_out_b * model.W4.val.transpose();
       auto A3_b = ws.A3.topRows(cur_B);
       auto delta3_b = ws.delta3.topRows(cur_B);
-      apply_activation_grad_inplace(A3_b, delta3_b, model.is_classification);
+      apply_activation_grad_and_accum_bias(A3_b, model.b3.val, delta3_b, ws.grad_b3, model.is_classification);
 
-      ws.grad_W3.noalias() = H2_b.transpose() * delta3_b;
-      ws.grad_b3 = delta3_b.colwise().sum();
       ws.delta2.topRows(cur_B).noalias() = delta3_b * model.W3.val.transpose();
       auto A2_b = ws.A2.topRows(cur_B);
       auto delta2_b = ws.delta2.topRows(cur_B);
-      apply_activation_grad_inplace(A2_b, delta2_b, model.is_classification);
+      apply_activation_grad_and_accum_bias(A2_b, model.b2.val, delta2_b, ws.grad_b2, model.is_classification);
 
-      ws.grad_W2.noalias() = H1_b.transpose() * delta2_b;
-      ws.grad_b2 = delta2_b.colwise().sum();
       ws.delta1.topRows(cur_B).noalias() = delta2_b * model.W2.val.transpose();
       auto A1_b = ws.A1.topRows(cur_B);
       auto delta1_b = ws.delta1.topRows(cur_B);
-      apply_activation_grad_inplace(A1_b, delta1_b, model.is_classification);
+      apply_activation_grad_and_accum_bias(A1_b, model.b1.val, delta1_b, ws.grad_b1, model.is_classification);
 
-      ws.grad_W1.noalias() = H0_b.transpose() * delta1_b;
-      ws.grad_b1 = delta1_b.colwise().sum();
       ws.delta0.topRows(cur_B).noalias() = delta1_b * model.W1.val.transpose();
       auto delta0_b = ws.delta0.topRows(cur_B);
 
-      ws.grad_scale = (E_b.cwiseProduct(delta0_b)).colwise().sum();
-      ws.delta_E.topRows(cur_B).noalias() = (delta0_b.array().rowwise() * model.front_scale.val.row(0).array()).matrix();
+      // Fused parallel column-wise pass for grad_scale and delta_E
+      int embed_d = static_cast<int>(E_b.cols());
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (embed_d >= 4)
+#endif
+      for (int c = 0; c < embed_d; ++c) {
+        double sc = model.front_scale.val(0, c);
+        const double* d0_col = delta0_b.col(c).data();
+        const double* e_col = E_b.col(c).data();
+        double* de_col = ws.delta_E.col(c).data();
+        double sum_scale = 0.0;
+        for (int r = 0; r < cur_B; ++r) {
+          sum_scale += e_col[r] * d0_col[r];
+          de_col[r] = d0_col[r] * sc;
+        }
+        ws.grad_scale(0, c) = sum_scale;
+      }
+
+      // Computation of layer weight gradients W1, W2, W3, W4 (OpenBLAS GEMM - executed sequentially to avoid OpenMP deadlock)
+      ws.grad_W1.noalias() = H0_b.transpose() * delta1_b;
+      ws.grad_W2.noalias() = H1_b.transpose() * delta2_b;
+      ws.grad_W3.noalias() = H2_b.transpose() * delta3_b;
+      ws.grad_W4.noalias() = H3_b.transpose() * grad_out_b;
+      ws.grad_b4 = grad_out_b.colwise().sum();
+      auto t_mb1 = std::chrono::high_resolution_clock::now();
+      if (verbose >= 2) t_mlp_bwd_s += std::chrono::duration<double>(t_mb1 - t_mb0).count();
 
       // 5. Backprop PBLD Embeddings and Adam update (zero inner-loop heap allocations)
+      auto t_eb0 = std::chrono::high_resolution_clock::now();
       model.embedder.backward_and_update(X_batch, ws.delta_E.topRows(cur_B),
                                          ws.cache_Z, ws.cache_Theta,
                                          ws.grad_omega, ws.grad_b, ws.grad_beta,
                                          ws.grad_W_tls, ws.grad_Z_tls, ws.grad_Th_tls,
                                          cur_lr, beta1, beta2, eps, b1_corr, b2_corr);
+      auto t_eb1 = std::chrono::high_resolution_clock::now();
+      if (verbose >= 2) t_emb_bwd_s += std::chrono::duration<double>(t_eb1 - t_eb0).count();
 
-      // 6. Adam update MLP
-      model.front_scale.update(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W1.update(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b1.update(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W2.update(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b2.update(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W3.update(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b3.update(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W4.update(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.b4.update(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      // 6. Parallel layer-wise Adam update across threads
+      auto t_ad0 = std::chrono::high_resolution_clock::now();
+#if defined(_OPENMP)
+#pragma omp parallel sections if (max_threads >= 2)
+      {
+#pragma omp section
+        {
+          model.front_scale.update_serial(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W1.update_serial(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.b1.update_serial(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+        }
+#pragma omp section
+        {
+          model.W2.update_serial(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.b2.update_serial(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+        }
+#pragma omp section
+        {
+          model.W3.update_serial(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.b3.update_serial(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+        }
+#pragma omp section
+        {
+          model.W4.update_serial(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.b4.update_serial(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+        }
+      }
+#else
+      model.front_scale.update_serial(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W1.update_serial(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b1.update_serial(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W2.update_serial(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b2.update_serial(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W3.update_serial(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b3.update_serial(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W4.update_serial(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.b4.update_serial(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
+#endif
+      auto t_ad1 = std::chrono::high_resolution_clock::now();
+      if (verbose >= 2) t_adam_mlp_s += std::chrono::duration<double>(t_ad1 - t_ad0).count();
     }
 
     double avg_train_loss = epoch_loss_sum / n_batches;
@@ -859,9 +924,18 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     std::memcpy(y_eval.data(), y_train.begin(), N_eval * sizeof(double));
   }
 
+  auto t_imp0 = std::chrono::high_resolution_clock::now();
   FeatureImportanceWorkspace fi_ws;
   fi_ws.allocate(N_eval, D, out_dim, hidden_dim, embed_dim, model.embedder.d_proj, model.embedder.k_freq, max_threads);
   std::vector<double> importances = model.compute_importances(X_eval, y_eval, fi_ws);
+  auto t_imp1 = std::chrono::high_resolution_clock::now();
+  if (verbose >= 2) t_imp_s += std::chrono::duration<double>(t_imp1 - t_imp0).count();
+
+  if (verbose >= 2) {
+    double total_sec = t_shuf_s + t_emb_fwd_s + t_mlp_fwd_s + t_loss_s + t_mlp_bwd_s + t_emb_bwd_s + t_adam_mlp_s + t_imp_s;
+    Rprintf("    [RealMLP Profile (threads=%d)] Total: %.3fs | Shuf: %.3fs | EmbFwd: %.3fs | MLPFwd: %.3fs | Loss: %.3fs | MLPBwd: %.3fs | EmbBwd: %.3fs | AdamMLP: %.3fs | Imp: %.3fs\n",
+            threads, total_sec, t_shuf_s, t_emb_fwd_s, t_mlp_fwd_s, t_loss_s, t_mlp_bwd_s, t_emb_bwd_s, t_adam_mlp_s, t_imp_s);
+  }
 
 
   List res = List::create(

@@ -123,7 +123,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
   
   # 4. Create a dynamic training function wrapper
   tuned_train_func <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NULL,
-                               task = "classification", threads = 2, num_class = NULL,
+                               task = "classification", threads = default_threads(), num_class = NULL,
                                metric = "default", mbo_iters = 5, mbo_init_design = 8,
                                mbo_folds = 3, mbo_infill_opt = "focussearch",
                                verbose = FALSE, best_params = NULL, fold_data = NULL, ...) {

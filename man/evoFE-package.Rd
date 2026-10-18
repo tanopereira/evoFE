@@ -69,7 +69,7 @@ behaviour at runtime:
     correlation threshold above which a newly generated feature column is
     considered a near-duplicate of an existing column and rejected.  Lower
     values impose stricter redundancy pruning.  Set to \code{1.0} to
-    disable.  Default \code{0.95}.}
+    disable.  Default \code{0.99}.}
   \item{\code{evoFE.importance_threshold}}{(numeric >= 0) Normalised feature
     importance threshold below which a feature's weight is zeroed out before
     importance-guided mutation.  Default \code{0.001}.}
