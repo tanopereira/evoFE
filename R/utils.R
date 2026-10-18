@@ -258,10 +258,21 @@ apply_complexity_penalty <- function(raw_score,
                                      metric = "default",
                                      data = NULL,
                                      shared_full = NULL) {
+  if (is.numeric(ind)) {
+    pen <- ind
+    t_mode <- if (is.character(n_samples)) n_samples else task
+    if (identical(t_mode, "regression")) {
+      return(if (raw_score <= 0) raw_score * (1 + pen) else raw_score * (1 - pen))
+    } else {
+      error_gap <- max(0, min(1.0, 1.0 - raw_score))
+      return(raw_score - error_gap * pen)
+    }
+  }
+
   ind$raw_fitness <- raw_score
   ind$penalty <- 0.0
 
-  if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
+  if (is.numeric(complexity_penalty) && complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
     n_samp <- if (!is.null(n_samples)) {
       n_samples
     } else if (!is.null(data)) {

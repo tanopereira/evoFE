@@ -195,37 +195,26 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$y_val <- val_fold_feat[[target_col]]
     }
 
-    ind$raw_fitness <- raw_score
-    ind$penalty <- 0.0
+    # Propagate the updated genes (with state) before complexity penalty so pruned genes are not penalized
+    ind$genes <- res$ind$genes
 
-    # Complexity penalty: discourage long recipes (parsimony pressure)
-    if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
-      n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
-      n_active_raw <- length(res$ind$numeric_cols) + length(res$ind$categorical_cols) + length(res$ind$datetime_cols)
-      n_genes <- length(res$ind$genes)
-      pen <- compute_complexity_penalty(
-        n_genes = n_genes,
-        n_samples = n_samp,
-        running_best_fitness = running_best_fitness,
-        baseline_fitness = baseline_fitness,
-        metric = metric,
-        task = task,
-        complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        n_features = n_active_raw + n_genes
-      )
-      ind$penalty <- pen
-      ind$fitness <- apply_complexity_penalty(raw_score, pen, task)
-    } else {
-      ind$fitness <- raw_score
-    }
+    ind <- apply_complexity_penalty(
+      raw_score = raw_score,
+      ind = ind,
+      n_samples = n_samples,
+      task = task,
+      complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      running_best_fitness = running_best_fitness,
+      baseline_fitness = baseline_fitness,
+      metric = metric,
+      data = data,
+      shared_full = shared_full
+    )
 
     ind$holdout_fitness <- NULL
-
-    # Propagate the updated genes (with state)
-    ind$genes <- res$ind$genes
   } else {
     # --- Existing CV strategy ---
     use_shared <- !is.null(shared_folds) && !is.null(shared_full)
@@ -498,29 +487,21 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # so pruned genes are not penalized in CV mode
     if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
 
-    # Complexity penalty: discourage long recipes (parsimony pressure)
-    if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
-      n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
-      n_active_raw <- length(ind$numeric_cols) + length(ind$categorical_cols) + length(ind$datetime_cols)
-      n_genes <- length(ind$genes)
-      pen <- compute_complexity_penalty(
-        n_genes = n_genes,
-        n_samples = n_samp,
-        running_best_fitness = running_best_fitness,
-        baseline_fitness = baseline_fitness,
-        metric = metric,
-        task = task,
-        complexity_penalty = complexity_penalty,
-        complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        n_features = n_active_raw + n_genes
-      )
-      ind$penalty <- pen
-      ind$fitness <- apply_complexity_penalty(raw_score, pen, task)
-    } else {
-      ind$fitness <- raw_score
-    }
+    ind <- apply_complexity_penalty(
+      raw_score = raw_score,
+      ind = ind,
+      n_samples = n_samples,
+      task = task,
+      complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      running_best_fitness = running_best_fitness,
+      baseline_fitness = baseline_fitness,
+      metric = metric,
+      data = data,
+      shared_full = shared_full
+    )
 
     # Aggregate importances across folds
     all_feats <- unique(unlist(lapply(fold_importances, names)))
