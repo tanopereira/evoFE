@@ -306,6 +306,8 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
                                   pull_stagnation_threshold, row_split_islands,
                                   per_island_validation, tiers_count = NULL,
                                   policy_thresh_val = NULL, get_island_transformers, ...) {
+  prev_global_best_fitness <- global_best_fitness
+
   if (verbose) {
     if (global_best_fitness > -Inf) {
       message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
@@ -390,6 +392,12 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
       global_best_individual <- pop_list[[j]][[1]]
       best_ind_source <- paste0("Island ", j)
     }
+  }
+
+  if (g == 1 || (!is.na(global_best_fitness) && (is.na(prev_global_best_fitness) || global_best_fitness > prev_global_best_fitness))) {
+    generations_without_improvement <- 0
+  } else {
+    generations_without_improvement <- generations_without_improvement + 1
   }
 
   if (record) {
@@ -486,6 +494,11 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
         ))
         stop_early <- TRUE
       }
+    } else if (generations_without_improvement >= early_stopping_generations) {
+      if (verbose) {
+        message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
+      }
+      stop_early <- TRUE
     }
   }
 
@@ -573,6 +586,9 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
     global_best_individual <- mig_res$global_best_individual
     best_ind_source <- mig_res$best_ind_source
     evolution_log <- mig_res$evolution_log
+    if (!is.na(global_best_fitness) && (is.na(prev_global_best_fitness) || global_best_fitness > prev_global_best_fitness)) {
+      generations_without_improvement <- 0
+    }
   }
 
   # --- BREEDING PHASE ---
@@ -906,23 +922,11 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
       global_best_fitness <- step_res$global_best_fitness
       global_best_individual <- step_res$global_best_individual
       best_ind_source <- step_res$best_ind_source
+      generations_without_improvement <- step_res$generations_without_improvement
       historical_best_genes <- step_res$historical_best_genes
       evolution_log <- step_res$evolution_log
 
       fitness_history[g] <- global_best_fitness
-      if (g == 1 || (global_best_fitness > fitness_history[max(1, g - 1)])) {
-        generations_without_improvement <- 0
-      } else {
-        generations_without_improvement <- generations_without_improvement + 1
-      }
-
-      if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
-        if (verbose) {
-          message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
-        }
-        fitness_history <- fitness_history[1:g]
-        break
-      }
 
       if (step_res$stop_early) {
         fitness_history <- fitness_history[1:g]
