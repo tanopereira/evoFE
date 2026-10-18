@@ -109,6 +109,8 @@ is_supervised_transformer <- function(gene, t_def = NULL) {
 #'     \eqn{[0, 1]}.  Fit on training data; robust to outliers.}
 #'   \item{\code{robust_scale}}{Robust median/IQR scaling: \code{(x - median) / IQR}. Fit on training data.}
 #'   \item{\code{smooth_clip}}{Smooth outlier dampening via soft hyperbolic tangent roll-off beyond percentiles. Fit on training data.}
+#'   \item{\code{yeo_johnson}}{Yeo-Johnson power transformation (\eqn{\lambda \in [-2, 2]} fit via maximum likelihood on training data) with zero-mean unit-variance standardization; supports positive, zero, and negative inputs.}
+#'   \item{\code{box_cox}}{Shifted Box-Cox power transformation (\eqn{\lambda \in [-2, 2]} and positivity shift fit via maximum likelihood on training data) with zero-mean unit-variance standardization.}
 #' }
 #'
 #' \strong{Group-by aggregations (mixed cat x num -> numeric, stateful)}

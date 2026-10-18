@@ -97,3 +97,53 @@ NumericVector rcpp_fused_relative_rating(List cols, int threads = 1) {
   evofe::fused_relative_rating_impl(ptrs, k, n, out.begin(), threads);
   return out;
 }
+
+//' Fast C++ Yeo-Johnson Power Transformation Fit
+//' @keywords internal
+// [[Rcpp::export]]
+List rcpp_fit_yeo_johnson(NumericVector x) {
+  double lambda = 1.0, mean = 0.0, sd = 1.0;
+  evofe::fit_yeo_johnson_impl(x.begin(), x.size(), lambda, mean, sd);
+  return List::create(
+    Named("lambda") = lambda,
+    Named("mean") = mean,
+    Named("sd") = sd
+  );
+}
+
+//' Fast C++ Yeo-Johnson Power Transformation Apply
+//' @keywords internal
+// [[Rcpp::export]]
+NumericVector rcpp_apply_yeo_johnson(NumericVector x, double lambda, double mean, double sd, int threads = 1) {
+  int n = x.size();
+  if (n == 0) return NumericVector(0);
+  NumericVector out(n);
+  evofe::apply_yeo_johnson_impl(x.begin(), n, lambda, mean, sd, out.begin(), threads);
+  return out;
+}
+
+//' Fast C++ Shifted Box-Cox Power Transformation Fit
+//' @keywords internal
+// [[Rcpp::export]]
+List rcpp_fit_box_cox(NumericVector x) {
+  double lambda = 1.0, shift = 0.0, mean = 0.0, sd = 1.0;
+  evofe::fit_box_cox_impl(x.begin(), x.size(), lambda, shift, mean, sd);
+  return List::create(
+    Named("lambda") = lambda,
+    Named("shift") = shift,
+    Named("mean") = mean,
+    Named("sd") = sd
+  );
+}
+
+//' Fast C++ Shifted Box-Cox Power Transformation Apply
+//' @keywords internal
+// [[Rcpp::export]]
+NumericVector rcpp_apply_box_cox(NumericVector x, double lambda, double shift, double mean, double sd, int threads = 1) {
+  int n = x.size();
+  if (n == 0) return NumericVector(0);
+  NumericVector out(n);
+  evofe::apply_box_cox_impl(x.begin(), n, lambda, shift, mean, sd, out.begin(), threads);
+  return out;
+}
+

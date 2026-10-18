@@ -294,6 +294,44 @@ evo_transformers$smooth_clip <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "scl")
 )
 
+# Yeo-Johnson Power Transformation (C++ Brent MLE fit + standardized single-pass apply)
+evo_transformers$yeo_johnson <- create_transformer(
+  name = "yeo_johnson",
+  type = "unary",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    x <- as.numeric(data[[gene$input_cols[1]]])
+    rcpp_fit_yeo_johnson(x)
+  },
+  apply_func = function(data, gene, state = NULL) {
+    x <- as.numeric(data[[gene$input_cols[1]]])
+    if (is.null(state) || is.null(state$lambda)) {
+      state <- rcpp_fit_yeo_johnson(x)
+    }
+    rcpp_apply_yeo_johnson(x, state$lambda, state$mean, state$sd, threads = default_threads())
+  },
+  name_generator = function(gene) .gene_col_name(gene, "yj")
+)
+
+# Shifted Box-Cox Power Transformation (C++ Brent MLE fit + standardized single-pass apply)
+evo_transformers$box_cox <- create_transformer(
+  name = "box_cox",
+  type = "unary",
+  input_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    x <- as.numeric(data[[gene$input_cols[1]]])
+    rcpp_fit_box_cox(x)
+  },
+  apply_func = function(data, gene, state = NULL) {
+    x <- as.numeric(data[[gene$input_cols[1]]])
+    if (is.null(state) || is.null(state$lambda)) {
+      state <- rcpp_fit_box_cox(x)
+    }
+    rcpp_apply_box_cox(x, state$lambda, state$shift, state$mean, state$sd, threads = default_threads())
+  },
+  name_generator = function(gene) .gene_col_name(gene, "bc")
+)
+
 # --- FUSED MULTIVARIATE PYTHAGOREAN & ROW-WISE TRANSFORMERS ---
 
 evo_transformers$row_min <- create_transformer(

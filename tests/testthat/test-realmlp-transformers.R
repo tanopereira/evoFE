@@ -179,3 +179,103 @@ test_that("mutate can tweak fourier_basis and smooth_clip parameters", {
   }
   expect_true(mutated_params)
 })
+
+test_that("yeo_johnson fits MLE lambda and standardizes positive/negative skewed distributions", {
+  set.seed(101)
+  z <- rnorm(500)
+  # Right-skewed distribution spanning negative and positive values
+  x_train <- exp(z) - 1.5
+  dt_train <- data.table::data.table(x = x_train, y = z)
+  gene <- create_gene("yeo_johnson", "x")
+
+  state <- evo_transformers$yeo_johnson$fit_func(dt_train, gene, target_col = "y")
+  expect_true(is.numeric(state$lambda) && is.finite(state$lambda))
+  expect_true(state$lambda < 0.6) # Should compress right tail (lambda < 1)
+  expect_true(state$sd > 0)
+
+  out_train <- evo_transformers$yeo_johnson$apply_func(dt_train, gene, state)
+  expect_equal(mean(out_train), 0.0, tolerance = 1e-6)
+  expect_equal(stats::sd(out_train), 1.0, tolerance = 1e-6)
+
+  # Strictly monotonic with input x
+  ord <- order(x_train)
+  expect_true(all(diff(out_train[ord]) >= -1e-12))
+
+  # Test stateful application on test data + non-finite handling
+  dt_test <- data.table::data.table(x = c(-1.0, 0.0, 2.0, NA_real_, Inf))
+  out_test <- evo_transformers$yeo_johnson$apply_func(dt_test, gene, state)
+  expect_true(out_test[1] < out_test[2] && out_test[2] < out_test[3])
+  expect_equal(out_test[4:5], c(0.0, 0.0))
+
+  # Constant column fallback
+  dt_const <- data.table::data.table(x = rep(3.0, 20))
+  st_const <- evo_transformers$yeo_johnson$fit_func(dt_const, gene)
+  expect_equal(st_const$sd, 1.0)
+  expect_equal(evo_transformers$yeo_johnson$apply_func(dt_const, gene, st_const), rep(0.0, 20))
+  expect_equal(gene_to_formula(gene), "yeo_johnson(x)")
+})
+
+test_that("box_cox fits MLE lambda on positive and shifted negative data", {
+  set.seed(202)
+  z <- rnorm(600, mean = 0, sd = 0.8)
+  # Pure log-normal data -> theoretical Box-Cox lambda = 0, shift = 0
+  x_pos <- exp(z)
+  dt_pos <- data.table::data.table(x = x_pos, y = z)
+  gene <- create_gene("box_cox", "x")
+
+  state_pos <- evo_transformers$box_cox$fit_func(dt_pos, gene, target_col = "y")
+  expect_equal(state_pos$shift, 0.0)
+  expect_equal(state_pos$lambda, 0.0, tolerance = 0.15)
+
+  out_pos <- evo_transformers$box_cox$apply_func(dt_pos, gene, state_pos)
+  expect_equal(mean(out_pos), 0.0, tolerance = 1e-6)
+  expect_equal(stats::sd(out_pos), 1.0, tolerance = 1e-6)
+
+  # Shifted data containing negative and zero values
+  x_neg <- x_pos - 5.0
+  dt_neg <- data.table::data.table(x = x_neg, y = z)
+  state_neg <- evo_transformers$box_cox$fit_func(dt_neg, gene, target_col = "y")
+  expect_true(state_neg$shift > -min(x_neg))
+
+  out_neg <- evo_transformers$box_cox$apply_func(dt_neg, gene, state_neg)
+  expect_equal(mean(out_neg), 0.0, tolerance = 1e-6)
+  expect_equal(stats::sd(out_neg), 1.0, tolerance = 1e-6)
+  ord <- order(x_neg)
+  expect_true(all(diff(out_neg[ord]) >= -1e-12))
+
+  # Test unseen extreme negative value & NA safety on test split
+  dt_test <- data.table::data.table(x = c(-1000.0, NA_real_, Inf))
+  out_test <- evo_transformers$box_cox$apply_func(dt_test, gene, state_neg)
+  expect_true(all(is.finite(out_test)))
+  expect_equal(out_test[2:3], c(0.0, 0.0))
+  expect_equal(gene_to_formula(gene), "box_cox(x)")
+})
+
+test_that("yeo_johnson and box_cox survive parent correlation check and default threshold is 0.99", {
+  set.seed(303)
+  old_opt <- getOption("evoFE.redundancy_cor_threshold")
+  on.exit(options(evoFE.redundancy_cor_threshold = old_opt), add = TRUE)
+  options(evoFE.redundancy_cor_threshold = NULL) # Exercise 0.99 default
+
+  # Nearly Gaussian positive data where Box-Cox and Yeo-Johnson have |r(T(x), x)| > 0.99 against raw x
+  dt <- data.table::data.table(
+    a = rnorm(200, mean = 50, sd = 2),
+    b = exp(rnorm(200, mean = 0, sd = 0.5)),
+    target = rnorm(200)
+  )
+
+  g_yj <- create_gene("yeo_johnson", "a")
+  g_bc <- create_gene("box_cox", "b")
+  g_rk <- create_gene("rank_transform", "a")
+
+  ind <- create_individual(
+    genes = list(g_yj, g_bc, g_rk),
+    numeric_cols = c("a", "b"),
+    all_numeric_cols = c("a", "b")
+  )
+
+  res <- apply_individual(ind, data.table::copy(dt), target_col = "target", allow_prune = TRUE)
+  expect_equal(length(res$ind$genes), 3)
+  expect_true(all(c(g_yj$output_col, g_bc$output_col, g_rk$output_col) %in% names(res$train)))
+})
+

@@ -155,6 +155,59 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rcpp_fit_yeo_johnson
+List rcpp_fit_yeo_johnson(NumericVector x);
+RcppExport SEXP _evoFE_rcpp_fit_yeo_johnson(SEXP xSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type x(xSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fit_yeo_johnson(x));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_apply_yeo_johnson
+NumericVector rcpp_apply_yeo_johnson(NumericVector x, double lambda, double mean, double sd, int threads);
+RcppExport SEXP _evoFE_rcpp_apply_yeo_johnson(SEXP xSEXP, SEXP lambdaSEXP, SEXP meanSEXP, SEXP sdSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type x(xSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type mean(meanSEXP);
+    Rcpp::traits::input_parameter< double >::type sd(sdSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_apply_yeo_johnson(x, lambda, mean, sd, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_fit_box_cox
+List rcpp_fit_box_cox(NumericVector x);
+RcppExport SEXP _evoFE_rcpp_fit_box_cox(SEXP xSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type x(xSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fit_box_cox(x));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_apply_box_cox
+NumericVector rcpp_apply_box_cox(NumericVector x, double lambda, double shift, double mean, double sd, int threads);
+RcppExport SEXP _evoFE_rcpp_apply_box_cox(SEXP xSEXP, SEXP lambdaSEXP, SEXP shiftSEXP, SEXP meanSEXP, SEXP sdSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type x(xSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type shift(shiftSEXP);
+    Rcpp::traits::input_parameter< double >::type mean(meanSEXP);
+    Rcpp::traits::input_parameter< double >::type sd(sdSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_apply_box_cox(x, lambda, shift, mean, sd, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_compute_ts_refinement_binary", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_binary, 5},
@@ -167,6 +220,10 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_fused_harmonic_mean", (DL_FUNC) &_evoFE_rcpp_fused_harmonic_mean, 3},
     {"_evoFE_rcpp_fused_pythagorean_imbalance", (DL_FUNC) &_evoFE_rcpp_fused_pythagorean_imbalance, 3},
     {"_evoFE_rcpp_fused_relative_rating", (DL_FUNC) &_evoFE_rcpp_fused_relative_rating, 2},
+    {"_evoFE_rcpp_fit_yeo_johnson", (DL_FUNC) &_evoFE_rcpp_fit_yeo_johnson, 1},
+    {"_evoFE_rcpp_apply_yeo_johnson", (DL_FUNC) &_evoFE_rcpp_apply_yeo_johnson, 5},
+    {"_evoFE_rcpp_fit_box_cox", (DL_FUNC) &_evoFE_rcpp_fit_box_cox, 1},
+    {"_evoFE_rcpp_apply_box_cox", (DL_FUNC) &_evoFE_rcpp_apply_box_cox, 6},
     {NULL, NULL, 0}
 };
 

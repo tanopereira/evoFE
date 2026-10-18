@@ -17,7 +17,8 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
         "row_min", "row_max", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance",
         "one_hot_encode", "target_encode", "pooled_target_encode", "target_encode_multiclass",
         "feature_hash",
-        "rank_transform", "robust_scale", "smooth_clip", "groupby_mean", "groupby_min", "groupby_max", "concat"
+        "rank_transform", "robust_scale", "smooth_clip", "yeo_johnson", "box_cox",
+        "groupby_mean", "groupby_min", "groupby_max", "concat"
       ))
     } else if (at == "clustering") {
       at <- intersect(all_t, c(
@@ -28,7 +29,7 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
     } else if (at == "robust") {
       at <- intersect(all_t, c(
         "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
-        "robust_scale", "smooth_clip", "fourier_basis",
+        "robust_scale", "smooth_clip", "yeo_johnson", "box_cox", "fourier_basis",
         "add", "subtract", "multiply", "divide",
         "normalized_difference", "log_ratio",
         "row_min", "row_max", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance",

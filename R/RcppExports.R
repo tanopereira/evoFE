@@ -39,7 +39,7 @@ rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, tas
 #'
 #' @param model_state List returned by `rcpp_realmlp_train`.
 #' @param x_new Numeric matrix of new input features.
-#' @param threads Integer: number of threads for parallel prediction (default 1).
+#' @param threads Integer: number of threads for parallel prediction (default 0 = unchanged).
 #' @return A NumericMatrix of predictions.
 rcpp_realmlp_predict <- function(model_state, x_new, threads = 0L) {
     .Call(`_evoFE_rcpp_realmlp_predict`, model_state, x_new, threads)
@@ -79,5 +79,29 @@ rcpp_fused_pythagorean_imbalance <- function(cols, eps = 1e-6, threads = 1L) {
 #' @keywords internal
 rcpp_fused_relative_rating <- function(cols, threads = 1L) {
     .Call(`_evoFE_rcpp_fused_relative_rating`, cols, threads)
+}
+
+#' Fast C++ Yeo-Johnson Power Transformation Fit
+#' @keywords internal
+rcpp_fit_yeo_johnson <- function(x) {
+    .Call(`_evoFE_rcpp_fit_yeo_johnson`, x)
+}
+
+#' Fast C++ Yeo-Johnson Power Transformation Apply
+#' @keywords internal
+rcpp_apply_yeo_johnson <- function(x, lambda, mean, sd, threads = 1L) {
+    .Call(`_evoFE_rcpp_apply_yeo_johnson`, x, lambda, mean, sd, threads)
+}
+
+#' Fast C++ Shifted Box-Cox Power Transformation Fit
+#' @keywords internal
+rcpp_fit_box_cox <- function(x) {
+    .Call(`_evoFE_rcpp_fit_box_cox`, x)
+}
+
+#' Fast C++ Shifted Box-Cox Power Transformation Apply
+#' @keywords internal
+rcpp_apply_box_cox <- function(x, lambda, shift, mean, sd, threads = 1L) {
+    .Call(`_evoFE_rcpp_apply_box_cox`, x, lambda, shift, mean, sd, threads)
 }
 

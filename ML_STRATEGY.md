@@ -92,10 +92,11 @@ While LightGBM is blazingly fast, **models find and thrive on fundamentally diff
 - **Split Mechanics**: No trees, no axis-aligned hyperplanes. RealMLP expands each continuous coordinate into $k=16$ learnable periodic features $\cos(2\pi \omega_{jk} x_j + b_{jk})$, linearly projects them to $4$ channels and concatenates the raw input ($5$ channels per feature, see `PBLDEmbedder` in `src/realmlp_core.h`), feeding into DenseNet residual skips trained with Adam and cosine annealing.
 - **What it Discovers**:
   - **Topological Manifolds (`umap`, `pca`)**: RealMLP projects and interpolates smoothly across continuous curved coordinates. Where trees need 50 stair-step splits to approximate a spiral manifold, RealMLP fits it with a single hidden layer.
-  - **Rank Uniforms & Neural Preconditioners (`rank_transform`, `robust_scale`, `smooth_clip`, `fourier_basis`)**: While trees are completely indifferent to monotonic rescaling, neural nets are transformed by it:
+  - **Rank Uniforms, Power Transforms & Neural Preconditioners (`rank_transform`, `robust_scale`, `smooth_clip`, `yeo_johnson`, `box_cox`, `fourier_basis`)**: While trees are completely indifferent to monotonic rescaling, neural nets are transformed by it:
     - `rank_transform(x)` maps fat-tailed distributions to uniform $[0, 1]$.
     - `robust_scale(x)` centers by the training median and scales by the interquartile range ($(x - \text{med})/\text{IQR}$), preventing extreme outliers from skewing `x_mean` / `x_std` standardization.
     - `smooth_clip(x)` leaves the bulk $[q_{\text{low}}, q_{\text{high}}]$ distribution untouched while smoothly compressing extreme tails via $\tanh$, avoiding hard-clipping zero gradients.
+    - `yeo_johnson(x)` and `box_cox(x)` fit parametric maximum-likelihood power transformations ($\lambda \in [-2, 2]$ via C++ Brent optimization) with zero-mean unit-variance standardization, Gaussianizing skewed features while preserving relative tail spacing.
     - `fourier_basis(x)` computes data-adaptive dyadic harmonic $\sin/\cos$ components normalized by median/IQR, giving both neural layers and trees explicit periodic signals.
   - **Graph Density Distances (`mst_score`, `genie_centroid_dist`)**: Continuous Euclidean metrics from Minimum Spanning Trees and hierarchical cluster centroids give RealMLP direct geometric density signals.
 - **Blind Spots**: Discontinuous step functions (e.g. `quantile_binning`) and unnormalized high-cardinality integers. RealMLP's gradient updates oscillate wildly if fed unscaled raw counters that trees navigate effortlessly.
@@ -106,7 +107,7 @@ While LightGBM is blazingly fast, **models find and thrive on fundamentally diff
 
 | Feature Transformation | LightGBM Valuation | XGBoost Valuation | RealMLP Valuation | Why the Disconnect Exists |
 |:---|:---:|:---:|:---:|:---|
-| **`rank_transform` / `robust_scale` / `smooth_clip`** | ❌ Zero Gain | ❌ Zero Gain | ⭐⭐⭐⭐⭐ Critical | Trees are split-invariant to monotonic transforms; NNs avoid outlier distortion and saturation |
+| **`rank_transform` / `robust_scale` / `smooth_clip` / `yeo_johnson` / `box_cox`** | ❌ Zero Gain | ❌ Zero Gain | ⭐⭐⭐⭐⭐ Critical | Trees are split-invariant to monotonic transforms; NNs avoid outlier distortion and saturation |
 | **`fourier_basis`** | ⭐⭐⭐ Good | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | Injects explicit multi-scale dyadic harmonics ($\sin/\cos$) normalized by median/IQR |
 | **`umap_1`, `umap_2`** | ⭐⭐ Moderate | ⭐⭐ Moderate | ⭐⭐⭐⭐⭐ Highest | Trees cut coarse boxes; RealMLP interpolates continuous curved topology |
 | **`normalized_difference`** | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐ Strong | Stabilizes XGBoost's 2nd-order Hessian; keeps NN inputs bounded in $[-1, 1]$ |
@@ -128,7 +129,7 @@ All of these are included in the `"basic"` and `"robust"` presets and run as fus
 
 > [!CAUTION]
 > **The Consequence of Mono-Evaluator Exploration**:
-> If you evaluate candidate features *only* with LightGBM, genes like `rank_transform`, `robust_scale`, `smooth_clip`, `umap`, `pca`, and `mst_score` receive negligible fitness improvements and get eliminated by the parsimony filter (`complexity_penalty`).
+> If you evaluate candidate features *only* with LightGBM, genes like `rank_transform`, `robust_scale`, `smooth_clip`, `yeo_johnson`, `box_cox`, `umap`, `pca`, and `mst_score` receive negligible fitness improvements and get eliminated by the parsimony filter (`complexity_penalty`).
 > When you later retrain RealMLP in Phase 2 on the "champion" features, RealMLP is forced to learn on features optimized solely for tree partitioning, crippling its stacking diversity!
 
 ---
@@ -295,7 +296,7 @@ library(data.table)
 
 # 1. Global options that evoFE actually reads
 options(evoFE.verbose = 1)
-options(evoFE.redundancy_cor_threshold = 0.92) # Auto-prune near-duplicate features
+options(evoFE.redundancy_cor_threshold = 0.99) # Auto-prune near-exact linear duplicates while preserving mild curvature
 options(evoFE.importance_threshold = 0.002)
 
 # NOTE: threads and the clustering landmark cap are *arguments* of evolve_features();
@@ -698,7 +699,7 @@ cat("Competition submission file generated successfully!\n")
 | **RealMLP Speed** | Small batch size stalls OpenMP threads | Scale mini-batch size | `batch_size = 2048` or `4096` |
 | **RealMLP Memory**| 150+ features blow up PBLD embeddings | Aggressive feature parsimony | `complexity_penalty = 0.3, complexity_target = "all_features"` |
 | **XGBoost Speed** | Exact tree search is slow | Use fast histogram method | `tree_method = "hist"` |
-| **Redundant Genes**| Collinear transformations bloat trees | Correlation pruning filter | `options(evoFE.redundancy_cor_threshold = 0.90)` |
+| **Redundant Genes**| Collinear transformations bloat trees | Correlation pruning filter | `options(evoFE.redundancy_cor_threshold = 0.99)` |
 | **Search Overfitting**| Evolution chases CV noise | Confirmation holdout + parsimony | `holdout_frac = 0.08, complexity_mode = "bic_dynamic"` |
 | **Island Diversity** | Ring topology bottlenecks diffusion (D=K-1); push swamps islands | Complete topology + demand-driven Gibbs pull evaluated every gen | `migration = migration_config(topology = topology_complete(4), policy = policy_gibbs_pull(2)), migration_interval = 1` |
 | **MetaCV Stacking** | Single-fold island evaluations lack full OOFs | End-of-search K-fold tournament | `metacv_selection = "tournament"` |

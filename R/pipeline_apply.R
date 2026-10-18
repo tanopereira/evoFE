@@ -136,11 +136,11 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     # Guard with !is.null(target_col): during inference (holdout/predict) we
     # must apply every gene that was accepted at training time — correlation on
     # a different data split must never prune a gene the model depends on.
-    cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.95)
+    cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.99)
     if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
       num_mask <- vapply(train_data, is.numeric, logical(1))
       existing_num_cols <- setdiff(names(train_data)[num_mask], c(gene$output_col, target_col))
-      if (gene$transformer_name %in% c("robust_scale", "smooth_clip")) {
+      if (gene$transformer_name %in% c("robust_scale", "smooth_clip", "box_cox", "yeo_johnson", "rank_transform")) {
         existing_num_cols <- setdiff(existing_num_cols, gene$input_cols)
       }
       if (length(existing_num_cols) > 0) {
