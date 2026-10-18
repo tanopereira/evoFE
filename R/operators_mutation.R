@@ -270,7 +270,12 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           # as components are managed together during Add mutation
           old_val # no-op
         } else if (param_name == "component") {
-          components <- c("year", "month", "day", "hour", "day_of_week", "weekend")
+          op_name <- if (!is.null(gene_to_mod$transformer_name)) gene_to_mod$transformer_name else gene_to_mod$op
+          if (!is.null(op_name) && op_name == "datetime_cyclic") {
+            components <- c("month_sin", "month_cos", "day_sin", "day_cos", "hour_sin", "hour_cos", "wday_sin", "wday_cos", "yday_sin", "yday_cos")
+          } else {
+            components <- c("year", "month", "day", "hour", "wday", "yday", "is_weekend")
+          }
           candidates <- setdiff(components, old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else if (param_name == "p") {
@@ -297,6 +302,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         
         if (!identical(new_val, old_val)) {
           gene_to_mod$params[[param_name]] <- new_val
+          if (param_name == "k" && !is.null(gene_to_mod$params$comp_idx) && gene_to_mod$params$comp_idx > gene_to_mod$params$k) {
+            gene_to_mod$params$comp_idx <- gene_to_mod$params$k
+          }
           gene_to_mod$state <- NULL
           gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
           mod_success <- TRUE

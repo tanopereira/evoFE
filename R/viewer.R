@@ -180,7 +180,8 @@ view.evo_recipe <- function(recipe, ...) {
 
   html <- paste(readLines(html_path, warn = FALSE), collapse = "\n")
   # Inject the logged JSON data into the template placeholder
-  html <- sub("__EVOLUTION_DATA__", json_data, html, fixed = TRUE)
+  parts <- strsplit(html, "__EVOLUTION_DATA__", fixed = TRUE)[[1]]
+  html <- paste0(parts[1], json_data, if (length(parts) > 1) parts[2] else "")
 
   out_path <- tempfile(fileext = ".html")
   writeLines(html, out_path)

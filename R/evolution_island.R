@@ -51,13 +51,10 @@ initialize_island_populations <- function(islands, pop_size, numeric_cols, categ
 #' @noRd
 compute_effective_island_fitness <- function(island_best_fitness, island_baseline_inds, task, use_rel_fits = FALSE) {
   if (use_rel_fits) {
-    ideal_mig <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
     island_baselines <- vapply(island_baseline_inds, function(x) {
       if (!is.null(x$fitness) && is.finite(x$fitness)) x$fitness else 0
     }, numeric(1))
-    headroom <- ideal_mig - island_baselines
-    headroom[abs(headroom) < 1e-6] <- 1e-6
-    (island_best_fitness - island_baselines) / headroom
+    calculate_headroom(island_best_fitness, island_baselines, task = task)$headroom_closed
   } else {
     island_best_fitness
   }
@@ -227,7 +224,8 @@ execute_island_migration <- function(migration_txs, pop_list, old_pop_list,
                                      island_gens_without_improvement,
                                      island_improved_by_migration,
                                      migrated_genes_pool, migration = NULL,
-                                     migration_rate = 1, migration_topology = "ring",
+                                     migration_rate = 1, gene_migration_prob = 0.5,
+                                     migration_topology = "ring",
                                      island_evaluators = NULL,
                                      row_split_islands = FALSE,
                                      per_island_validation = FALSE,

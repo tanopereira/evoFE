@@ -119,9 +119,7 @@ evo_transformers$pooled_target_encode <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "pte")
 )
 
-# --- STATEFUL MULTIVARIATE TRANSFORMERS ---
-
-# PCA
+# Multiclass Target Encoding
 evo_transformers$target_encode_multiclass <- create_transformer(
   name = "target_encode_multiclass",
   type = "supervised_unary",
@@ -174,7 +172,7 @@ evo_transformers$target_encode_multiclass <- create_transformer(
 )
 
 
-# Genie Centroid Distance
+# Weight of Evidence Encoding (binary classification only)
 evo_transformers$woe_encode <- create_transformer(
   name = "woe_encode",
   type = "supervised_unary",
@@ -228,7 +226,7 @@ evo_transformers$woe_encode <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "woe")
 )
 
-# Group-by Median
+# Helper: normalize target y into a mathematically valid numeric vector for single-column target encoding
 .normalize_target_for_encoding <- function(y) {
   if (is.null(y)) return(NULL)
   if (is.numeric(y)) return(y)
@@ -261,7 +259,7 @@ evo_transformers$woe_encode <- create_transformer(
   }
 }
 
-# Supervised Between-Group PCA (groups by target, not a feature column)
+# Target Quantile Encoding
 evo_transformers$target_quantile_encode <- create_transformer(
   name = "target_quantile_encode",
   type = "supervised_unary",

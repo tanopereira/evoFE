@@ -1,9 +1,11 @@
 # R specific ignore files
+.DS_Store
 .Rhistory
 .RData
 .Ruserdata
 *.Rproj
 .Rproj.user/
+/test_*.R
 
 # Package build and check files
 /*.tar.gz

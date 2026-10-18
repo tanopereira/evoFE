@@ -1006,7 +1006,7 @@ evolve_features <- function(data, target_col, task = "classification",
         message(sprintf("\nRunning final tournament: re-evaluating best individual from each of %d islands on full training dataset...", islands))
       }
       candidates <- lapply(seq_len(islands), function(j) {
-        ind <- island_best_individual[[j]]
+        ind <- strip_individual_state(island_best_individual[[j]])
         ind$fitness <- NA_real_
         cand_eval <- if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
         ind <- evaluate_fitness(
@@ -1032,7 +1032,7 @@ evolve_features <- function(data, target_col, task = "classification",
         }
         ind
       })
-      tournament_fitness <- sapply(candidates, function(ind) ind$fitness)
+      tournament_fitness <- vapply(candidates, function(ind) ind$fitness, numeric(1))
       winner_idx <- which.max(tournament_fitness)
       best_ind <- candidates[[winner_idx]]
       island_best_individual <- candidates
@@ -1045,7 +1045,7 @@ evolve_features <- function(data, target_col, task = "classification",
         message("\nRe-evaluating island bests on full training dataset...")
       }
       island_best_individual <- lapply(seq_len(islands), function(j) {
-        ind_j <- island_best_individual[[j]]
+        ind_j <- strip_individual_state(island_best_individual[[j]])
         ind_j$fitness <- NA_real_
         cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
         evaluate_fitness(
@@ -1232,7 +1232,12 @@ evolve_features <- function(data, target_col, task = "classification",
   best_params <- best_ind$best_params
   best_iteration <- best_ind$best_iteration
   train_size <- best_ind$train_size
-  res_full <- apply_individual(best_ind, data.table::copy(shared_full), NULL, target_col, state_cache = state_cache)
+  train_full_dt <- if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
+    data.table::as.data.table(data[split_ids_val != "holdout", ])
+  } else {
+    data.table::copy(shared_full)
+  }
+  res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col, state_cache = state_cache)
   best_ind <- res_full$ind
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration
@@ -1241,13 +1246,14 @@ evolve_features <- function(data, target_col, task = "classification",
     best_ind$train_size <- train_size
   }
 
-  gene_cols <- if (length(best_ind$genes) > 0) vapply(best_ind$genes, function(g) g$output_col, character(1)) else character(0)
-  features <- c(best_ind$numeric_cols, best_ind$categorical_cols, best_ind$datetime_cols, gene_cols)
+  features <- extract_individual_features(best_ind, target_col = target_col)
 
   x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
   y_full <- res_full$train[[target_col]]
   if (task == "multiclass") {
-    y_full <- as.integer(factor(y_full, levels = classes)) - 1
+    y_full <- encode_multiclass_target(y_full, classes)
+  } else if (task == "classification") {
+    y_full <- encode_binary_target(y_full)
   }
 
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
@@ -1308,23 +1314,21 @@ evolve_features <- function(data, target_col, task = "classification",
       error = function(e) NULL
     )
     if (!is.null(res_conf)) {
-      conf_features <- c(res_conf$ind$numeric_cols, res_conf$ind$categorical_cols,
-        res_conf$ind$datetime_cols,
-        if (length(res_conf$ind$genes) > 0) vapply(res_conf$ind$genes, function(g) g$output_col, character(1)) else character(0)
-      )
+      conf_features <- extract_individual_features(res_conf$ind, target_col = target_col)
       x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
       preds_conf <- tryCatch(
-        get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task),
+        get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
         error = function(e) NULL
       )
       if (!is.null(preds_conf)) {
         y_conf <- confirmation_dt[[target_col]]
         if (task == "multiclass") {
-          y_conf_enc <- as.integer(factor(y_conf, levels = classes)) - 1
-          if (!is.matrix(preds_conf)) {
-            preds_conf <- matrix(preds_conf, ncol = num_class, byrow = TRUE)
-          }
+          y_conf_enc <- encode_multiclass_target(y_conf, classes)
+          preds_conf <- format_multiclass_predictions(preds_conf, nrow(x_conf), num_class, classes)
           conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
+        } else if (task == "classification") {
+          y_conf_enc <- encode_binary_target(y_conf)
+          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, threads = threads)
         } else {
           conf_fitness <- compute_metric(y_conf, preds_conf, task, metric, threads = threads)
         }

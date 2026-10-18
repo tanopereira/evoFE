@@ -4,9 +4,9 @@
 #' @param type Type: "unary", "binary", "supervised_unary"
 #' @param input_type Type of input: "numeric" or "categorical"
 #' @param output_type Type of output: "numeric" or "categorical"
-#' @param fit_func function(data, input_cols, target_col = NULL) returning state
-#' @param apply_func function(data, input_cols, state = NULL) returning new column vector
-#' @param name_generator function(input_cols) returning output column name
+#' @param fit_func function(data, gene, target_col = NULL) returning state
+#' @param apply_func function(data, gene, state = NULL) returning new column vector
+#' @param name_generator function(gene) returning output column name
 #' @param allow_replace Logical. Whether column sampling allows replacement.
 #' @return An \code{evo_transformer} S3 object:
 #'   a list with elements
@@ -14,8 +14,6 @@
 #'   \code{fit_func}, \code{apply_func}, \code{name_generator}, and
 #'   \code{allow_replace}.
 #' @import data.table
-#' @importFrom uwot umap
-#' @importFrom genieclust genie
 #' @examples
 #' # Define a transformer that adds a constant value of 10 to a variable
 #' add_ten_trans <- create_transformer(
@@ -281,7 +279,7 @@ is_verbose <- function() {
     vals <- as.character(x)
     vals <- vals[!is.na(vals) & vals != ""]
     if (length(vals) == 0) return(FALSE)
-    sample_vals <- if (length(vals) > 100) sample(vals, 100) else vals
+    sample_vals <- if (length(vals) > 100) with_seed(42L, sample(vals, 100)) else vals
     parsed <- tryCatch({
       as.POSIXct(sample_vals, tryFormats = c("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M", "%m/%d/%Y", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"))
     }, error = function(e) NULL)
@@ -389,6 +387,3 @@ is_verbose <- function() {
   assign(key, preds, envir = state$preds_cache)
   preds
 }
-
-# --- STATELESS UNARY TRANSFORMERS ---
-

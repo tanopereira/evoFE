@@ -259,12 +259,10 @@ select_metacv_champion <- function(island_best_individual, metacv_selection,
       winner_idx <- which.max(island_best_fitness)
       if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- 1L
     } else {
-      ideal_metric <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
-      island_headrooms <- vapply(seq_len(islands), function(j) {
-        b_fit <- if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
-        denom <- ideal_metric - b_fit
-        if (abs(denom) < 1e-6) 0.0 else (island_best_fitness[j] - b_fit) / denom
+      b_fits <- vapply(seq_len(islands), function(j) {
+        if (!is.null(island_baseline_inds[[j]])) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
       }, numeric(1))
+      island_headrooms <- calculate_headroom(island_best_fitness, b_fits, task = task)$headroom_closed
       winner_idx <- which.max(island_headrooms)
       if (length(winner_idx) == 0 || is.na(winner_idx)) winner_idx <- which.max(island_best_fitness)
     }

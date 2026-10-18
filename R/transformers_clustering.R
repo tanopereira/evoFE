@@ -8,7 +8,7 @@ evo_transformers$mst_score <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(x_train = NULL, scores = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     verbose <- is_verbose()
     tryCatch({
       if (!requireNamespace("quitefastmst", quietly = TRUE)) stop("quitefastmst package is not available")
@@ -28,7 +28,7 @@ evo_transformers$mst_score <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     .cluster_knn_apply(x_test, state, function(idx, s) s$scores[idx],
                        verbose = is_verbose(), tag = "MST Apply")
   },
@@ -44,7 +44,7 @@ evo_transformers$genie <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
     verbose <- is_verbose()
@@ -62,7 +62,7 @@ evo_transformers$genie <- create_transformer(
   apply_func = function(data, gene, state = NULL) {
     if (is.null(state) || !isTRUE(state$valid)) return(rep(1L, nrow(data)))
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     .cluster_knn_apply(x_test, state, function(idx, s) s$labels[idx],
                        verbose = is_verbose(), tag = "Genie Apply")
   },
@@ -78,7 +78,7 @@ evo_transformers$umap_genie <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
@@ -137,7 +137,7 @@ evo_transformers$umap_genie <- create_transformer(
     
     input_cols <- gene$input_cols
     x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     
     verbose <- is_verbose()
     
@@ -200,7 +200,7 @@ evo_transformers$umap_lumbermark <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     n_neighbors <- if (!is.null(gene$params$n_neighbors)) gene$params$n_neighbors else 15
@@ -258,7 +258,7 @@ evo_transformers$umap_lumbermark <- create_transformer(
     
     input_cols <- gene$input_cols
     x_test <- as.matrix(data[, input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     
     verbose <- is_verbose()
     
@@ -312,7 +312,7 @@ evo_transformers$umap_lumbermark <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "ulm")
 )
 
-# Group-by Ratio
+# Lumbermark Clustering
 evo_transformers$lumbermark <- create_transformer(
   name = "lumbermark",
   type = "multivariate",
@@ -321,7 +321,7 @@ evo_transformers$lumbermark <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     verbose <- is_verbose()
     tryCatch({
@@ -338,7 +338,7 @@ evo_transformers$lumbermark <- create_transformer(
   apply_func = function(data, gene, state = NULL) {
     if (is.null(state) || !isTRUE(state$valid)) return(rep(1L, nrow(data)))
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     .cluster_knn_apply(x_test, state, function(idx, s) s$labels[idx],
                        verbose = is_verbose(), tag = "Lumbermark Apply")
   },
@@ -354,7 +354,7 @@ evo_transformers$deadwood <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(x_train = NULL, labels = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     verbose <- is_verbose()
     tryCatch({
       if (!requireNamespace("deadwood", quietly = TRUE)) stop("deadwood package is not available")
@@ -369,14 +369,14 @@ evo_transformers$deadwood <- create_transformer(
   },
   apply_func = function(data, gene, state = NULL) {
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     .cluster_knn_apply(x_test, state, function(idx, s) s$labels[idx],
                        verbose = is_verbose(), tag = "Deadwood Apply")
   },
   name_generator = function(gene) .gene_col_name(gene, "dwd")
 )
 
-# One-Hot Encoding
+# Genie Centroid Distance
 evo_transformers$genie_centroid_dist <- create_transformer(
   name = "genie_centroid_dist",
   type = "multivariate",
@@ -384,7 +384,7 @@ evo_transformers$genie_centroid_dist <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(centroids = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     gini_threshold <- if (!is.null(gene$params$gini_threshold)) gene$params$gini_threshold else 0.3
     verbose <- is_verbose()
@@ -408,7 +408,7 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     verbose <- is_verbose()
     
     compute_dists <- function() {
@@ -438,14 +438,14 @@ evo_transformers$genie_centroid_dist <- create_transformer(
 )
 
 # Lumbermark Centroid Distance
- evo_transformers$lumbermark_centroid_dist <- create_transformer(
+evo_transformers$lumbermark_centroid_dist <- create_transformer(
   name = "lumbermark_centroid_dist",
   type = "multivariate",
   input_type = "numeric",
   fit_func = function(data, gene, target_col = NULL) {
     if (length(gene$input_cols) < 2) return(list(centroids = NULL, valid = FALSE))
     x <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x[is.na(x)] <- 0; storage.mode(x) <- "double"
+    x[!is.finite(x)] <- 0; storage.mode(x) <- "double"
     k <- if (!is.null(gene$params$k)) gene$params$k else 2
     verbose <- is_verbose()
     tryCatch({
@@ -468,7 +468,7 @@ evo_transformers$genie_centroid_dist <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (comp_idx > length(state$centroids)) comp_idx <- length(state$centroids)
     x_test <- as.matrix(data[, gene$input_cols, with = FALSE])
-    x_test[is.na(x_test)] <- 0; storage.mode(x_test) <- "double"
+    x_test[!is.finite(x_test)] <- 0; storage.mode(x_test) <- "double"
     verbose <- is_verbose()
     
     compute_dists <- function() {
@@ -496,7 +496,3 @@ evo_transformers$genie_centroid_dist <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "lmcd")
 )
-
-# --- NEW TRANSFORMERS ---
-
-# Power Transform

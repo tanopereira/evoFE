@@ -486,11 +486,6 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
         ))
         stop_early <- TRUE
       }
-    } else {
-      if (generations_without_improvement >= early_stopping_generations) {
-        message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
-        stop_early <- TRUE
-      }
     }
   }
 
@@ -746,7 +741,8 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
                                pull_stagnation_threshold, row_split_islands,
                                per_island_validation, get_island_transformers,
                                global_best_fitness_init, global_best_individual_init,
-                               best_ind_source_init, ...) {
+                               best_ind_source_init, tiers_count = NULL,
+                               policy_thresh_val = NULL, ...) {
   fitness_history <- numeric(generations)
   historical_best_genes <- list()
   mf_warmup_gens <- ceiling(generations * mf_warmup_frac)
@@ -889,11 +885,14 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         raw_toggle_prob = raw_toggle_prob, recalculate_mask_prob = recalculate_mask_prob,
         historical_best_genes = historical_best_genes, migration = migration,
         migration_interval = migration_interval, migration_rate = migration_rate,
+        gene_migration_prob = gene_migration_prob,
         migration_topology = migration_topology,
         migration_temperature = migration_temperature,
         pull_stagnation_threshold = pull_stagnation_threshold,
         row_split_islands = row_split_islands,
         per_island_validation = per_island_validation,
+        tiers_count = tiers_count,
+        policy_thresh_val = policy_thresh_val,
         get_island_transformers = get_island_transformers, ...
       )
 
@@ -915,6 +914,14 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         generations_without_improvement <- 0
       } else {
         generations_without_improvement <- generations_without_improvement + 1
+      }
+
+      if (!is.null(early_stopping_generations) && generations_without_improvement >= early_stopping_generations) {
+        if (verbose) {
+          message(sprintf("  Early stopping triggered after %d generations without global improvement.", early_stopping_generations))
+        }
+        fitness_history <- fitness_history[1:g]
+        break
       }
 
       if (step_res$stop_early) {

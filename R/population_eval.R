@@ -26,12 +26,32 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
 
     ind_idx <- if (!is.null(ind_indices) && length(ind_indices) >= i) ind_indices[i] else i
 
-    recipe_str <- individual_to_recipe_string(pop[[i]])
-    cache_key <- digest::digest(paste0(evaluator, "::", recipe_str, fidelity_tag), algo = "md5", serialize = FALSE)
+    rec_key <- individual_to_cache_key(pop[[i]])
+    cache_key <- digest::digest(paste0(evaluator, "::", rec_key, fidelity_tag), algo = "md5", serialize = FALSE)
     cached <- exists(cache_key, envir = fitness_cache, inherits = FALSE)
 
     if (cached) {
-      pop[[i]] <- get(cache_key, envir = fitness_cache)
+      cached_ind <- get(cache_key, envir = fitness_cache)
+      pop[[i]] <- cached_ind
+      pop[[i]]$raw_fitness <- cached_ind$raw_fitness
+      pop[[i]]$train_size <- cached_ind$train_size
+      is_dynamic <- (complexity_penalty %in% c("bic_dynamic", "pac_bayes_dynamic")) ||
+                    (complexity_mode %in% c("bic_dynamic", "pac_bayes_dynamic"))
+      if (is_dynamic && !is.null(cached_ind$raw_fitness) && is.finite(cached_ind$raw_fitness)) {
+        pop[[i]] <- apply_complexity_penalty(
+          raw_score = cached_ind$raw_fitness,
+          ind = pop[[i]],
+          n_samples = if (!is.null(cached_ind$train_size)) cached_ind$train_size else 100L,
+          task = task,
+          complexity_penalty = if (is.numeric(complexity_penalty)) complexity_penalty else 1.0,
+          complexity_mode = if (is.character(complexity_penalty) && complexity_penalty %in% c("bic_dynamic", "pac_bayes_dynamic")) complexity_penalty else complexity_mode,
+          complexity_floor = complexity_floor,
+          complexity_target = complexity_target,
+          running_best_fitness = running_best_fitness,
+          baseline_fitness = baseline_fitness,
+          metric = metric
+        )
+      }
     } else {
       pop[[i]] <- evaluate_fitness(pop[[i]], data, target_col,
         task = task, cv_folds = cv_folds,
@@ -51,6 +71,7 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         cv_strategy = cv_strategy, time_col = time_col, group_col = group_col, ...
       )
       assign(cache_key, pop[[i]], envir = fitness_cache)
+      fitness_cache[[rec_key]] <- pop[[i]]
     }
 
     if (verbose) {
@@ -92,23 +113,35 @@ is_invalid_individual <- function(c_ind, pop_list, cache, best_fit, evaluator = 
     if (length(ind$genes) == 0) {
       return(character(0))
     }
-    sort(vapply(ind$genes, function(g) g$output_col, character(1)))
+    sort(vapply(ind$genes, gene_to_formula, character(1), truncate = FALSE))
+  }
+  get_raw <- function(ind) {
+    sort(c(ind$numeric_cols, ind$categorical_cols, ind$datetime_cols))
   }
   c_out <- get_out(c_ind)
+  c_raw <- get_raw(c_ind)
   for (existing in pop_list) {
     e_out <- get_out(existing)
-    if (length(c_out) == length(e_out) && all(c_out == e_out)) {
+    e_raw <- get_raw(existing)
+    if (length(c_out) == length(e_out) && all(c_out == e_out) &&
+        length(c_raw) == length(e_raw) && all(c_raw == e_raw)) {
       return(TRUE)
     }
   }
 
-  # Check 2: Taboo search <U+2014> reject recipes that are clearly inferior to the best.
+  # Check 2: Taboo search — reject recipes that are clearly inferior to the best.
   # Use a meaningful epsilon so borderline recipes aren't permanently banned.
-  recipe_str <- individual_to_recipe_string(c_ind)
+  rec_key <- individual_to_cache_key(c_ind)
   cand_eval <- if (!is.null(evaluator)) evaluator else if (!is.null(c_ind$evaluator)) c_ind$evaluator else ""
-  cache_key <- digest::digest(paste0(cand_eval, "::", recipe_str), algo = "md5", serialize = FALSE)
-  if (exists(cache_key, envir = cache, inherits = FALSE)) {
-    cached_ind <- get(cache_key, envir = cache)
+  cache_key <- digest::digest(paste0(cand_eval, "::", rec_key), algo = "md5", serialize = FALSE)
+  cached_ind <- if (exists(cache_key, envir = cache, inherits = FALSE)) {
+    get(cache_key, envir = cache)
+  } else if (exists(rec_key, envir = cache, inherits = FALSE)) {
+    get(rec_key, envir = cache)
+  } else {
+    NULL
+  }
+  if (!is.null(cached_ind)) {
     known_fit <- cached_ind$fitness
     if (abs(best_fit) <= 1) {
       taboo_threshold <- max(0.00002, 0.1 * (1 - abs(best_fit)))
@@ -204,6 +237,13 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
 
   pop_out <- pop_lf
   pop_out[promo_idx] <- res_ff$pop
+
+  unpromo_idx <- setdiff(seq_along(pop_out), promo_idx)
+  for (idx in unpromo_idx) {
+    pop_out[[idx]]$lf_fitness <- pop_out[[idx]]$fitness
+    pop_out[[idx]]$fitness <- -Inf
+    pop_out[[idx]]$raw_fitness <- NA_real_
+  }
 
   fin_fits <- vapply(pop_out, function(x) {
     if (is.null(x$fitness) || is.na(x$fitness)) -Inf else x$fitness

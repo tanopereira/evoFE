@@ -37,7 +37,7 @@ predict.evo_recipe <- function(object, newdata, ...) {
   applied_ind <- res$ind
   
   gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
-  features <- unique(c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols))
+  features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
   
   res$train[, features, with = FALSE]
 }
@@ -58,6 +58,7 @@ predict.evo_ensemble <- function(object, newdata, ...) {
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   dt_input <- data.table::as.data.table(newdata)
   out_dt <- data.table::copy(dt_input)
+  all_features <- character(0)
 
   for (name in names(object$active_recipes)) {
     ind_i <- object$active_recipes[[name]]
@@ -70,9 +71,11 @@ predict.evo_ensemble <- function(object, newdata, ...) {
         out_dt[[col]] <- sub_dt[[col]]
       }
     }
+    feats_i <- extract_individual_features(res_i$ind, target_col = object$target_col, unique = TRUE)
+    all_features <- union(all_features, feats_i)
   }
 
-  out_dt
+  out_dt[, intersect(all_features, names(out_dt)), with = FALSE]
 }
 
 #' Predict target values using the fully evolved model or ensemble
@@ -118,13 +121,15 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   }
   
   user_args <- list(...)
-  th <- if (!is.null(user_args$threads)) {
-    as.integer(user_args$threads)
+  resolved_th <- resolve_param_aliases(user_args)$threads
+  th <- if (!is.null(resolved_th)) {
+    as.integer(resolved_th)
   } else if (!is.null(object$threads)) {
     as.integer(object$threads)
   } else {
     default_threads()
   }
+  user_args[c("threads", "nthreads", "nthread", "num_threads", "n_jobs")] <- NULL
 
   # Step 1: Evolve features for newdata
   features_dt <- stats::predict(object, newdata)
@@ -140,10 +145,7 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   ))
   
   if (!is.null(object$classes)) {
-    if (!is.matrix(preds)) {
-      preds <- matrix(preds, ncol = length(object$classes), byrow = TRUE)
-    }
-    colnames(preds) <- object$classes
+    preds <- format_multiclass_predictions(preds, object$classes)
   }
   
   preds
@@ -163,13 +165,15 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
   }
 
   user_args <- list(...)
-  th <- if (!is.null(user_args$threads)) {
-    as.integer(user_args$threads)
+  resolved_th <- resolve_param_aliases(user_args)$threads
+  th <- if (!is.null(resolved_th)) {
+    as.integer(resolved_th)
   } else if (!is.null(object$threads)) {
     as.integer(object$threads)
   } else {
     default_threads()
   }
+  user_args[c("threads", "nthreads", "nthread", "num_threads", "n_jobs")] <- NULL
 
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   dt_input <- data.table::as.data.table(newdata)
@@ -187,11 +191,7 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
     applied_ind <- res_i$ind
 
-    gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
-    features <- unique(c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols))
-    if (!is.null(object$target_col)) {
-      features <- setdiff(features, object$target_col)
-    }
+    features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
 
     feat_dt <- res_i$train[, features, with = FALSE]
     x_new <- .sanitize_feature_matrix(feat_dt)
@@ -202,14 +202,30 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     ))
 
     if (isTRUE(object$rank_average)) {
-      preds_i <- rank_transform_predictions(preds_i)
+      ecdf_entry <- if (!is.null(object$rank_ecdfs)) {
+        if (!is.null(object$rank_ecdfs[[as.character(name)]])) {
+          object$rank_ecdfs[[as.character(name)]]
+        } else {
+          object$rank_ecdfs[[as.character(which(active_names == name))]]
+        }
+      } else {
+        NULL
+      }
+      if (!is.null(ecdf_entry) && (NROW(preds_i) == 1L || is.null(nrow(preds_i)))) {
+        if (is.matrix(preds_i) && is.list(ecdf_entry)) {
+          for (k in seq_len(ncol(preds_i))) {
+            preds_i[, k] <- ecdf_entry[[k]](preds_i[, k])
+          }
+        } else if (is.function(ecdf_entry)) {
+          preds_i <- as.numeric(ecdf_entry(preds_i))
+        }
+      } else {
+        preds_i <- rank_transform_predictions(preds_i)
+      }
     }
 
     if (!is.null(object$classes)) {
-      if (!is.matrix(preds_i)) {
-        preds_i <- matrix(preds_i, ncol = length(object$classes), byrow = TRUE)
-      }
-      colnames(preds_i) <- object$classes
+      preds_i <- format_multiclass_predictions(preds_i, object$classes)
     }
 
     if (is.null(weighted_preds)) {

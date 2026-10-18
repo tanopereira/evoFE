@@ -1,3 +1,13 @@
+.format_metric_label <- function(m) {
+  if (is.null(m)) {
+    "default"
+  } else if (is.function(m)) {
+    "<custom function>"
+  } else {
+    as.character(m)
+  }
+}
+
 #' Print an evo_recipe object
 #'
 #' Prints a human-readable summary of the evolutionary feature engineering recipe.
@@ -12,7 +22,7 @@ print.evo_recipe <- function(x, ...) {
   cat(sprintf("  Evaluator:    %s\n", x$evaluator))
   cat(sprintf("  Task:         %s\n", x$task))
   if (!is.null(x$metric)) {
-    cat(sprintf("  Metric:       %s\n", x$metric))
+    cat(sprintf("  Metric:       %s\n", .format_metric_label(x$metric)))
   }
   raw_fit <- x$best_individual$raw_fitness
   pen_val <- x$best_individual$penalty
@@ -44,7 +54,7 @@ print.evo_recipe <- function(x, ...) {
   cat(sprintf("  Evolved Features: %d\n", gene_count))
   if (gene_count > 0) {
     cat("  Winning Recipe:\n")
-    formulas <- sapply(x$best_individual$genes, gene_to_formula)
+    formulas <- vapply(x$best_individual$genes, gene_to_formula, character(1))
     for (i in seq_along(formulas)) {
       cat(sprintf("    [%d] %s -> %s\n", i, formulas[i], x$best_individual$genes[[i]]$output_col))
     }
@@ -115,9 +125,9 @@ summary.evo_recipe <- function(object, ...) {
   
   if (length(object$best_individual$genes) > 0) {
     res$genes_summary <- data.frame(
-      Transformer = sapply(object$best_individual$genes, function(g) g$transformer_name),
-      Inputs = sapply(object$best_individual$genes, function(g) paste(g$input_cols, collapse = ", ")),
-      Output = sapply(object$best_individual$genes, function(g) g$output_col),
+      Transformer = vapply(object$best_individual$genes, function(g) g$transformer_name, character(1)),
+      Inputs = vapply(object$best_individual$genes, function(g) paste(g$input_cols, collapse = ", "), character(1)),
+      Output = vapply(object$best_individual$genes, function(g) g$output_col, character(1)),
       stringsAsFactors = FALSE
     )
   }
@@ -139,7 +149,7 @@ print.summary_evo_recipe <- function(x, ...) {
   cat(sprintf("ML Evaluator:             %s\n", x$evaluator))
   cat(sprintf("Task type:                %s\n", x$task))
   if (!is.null(x$metric)) {
-    cat(sprintf("Optimization Metric:      %s\n", x$metric))
+    cat(sprintf("Optimization Metric:      %s\n", .format_metric_label(x$metric)))
   }
   if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
     cat(sprintf("Baseline Metric Score:    %.6f\n", x$baseline_fitness))
@@ -349,7 +359,7 @@ print.evo_ensemble <- function(x, ...) {
   cat(sprintf("  Evaluator:            %s\n", x$evaluator))
   cat(sprintf("  Task:                 %s\n", x$task))
   if (!is.null(x$metric)) {
-    cat(sprintf("  Metric:               %s\n", x$metric))
+    cat(sprintf("  Metric:               %s\n", .format_metric_label(x$metric)))
   }
   cat(sprintf("  Single Best Fitness:  %.4f\n", x$single_best_fitness))
   cat(sprintf("  Ensemble Fitness:     %.4f\n", x$ensemble_val_fitness))
@@ -449,7 +459,7 @@ print.summary_evo_ensemble <- function(x, ...) {
   }
   rank_tag <- if (isTRUE(x$rank_average)) " (Rank Averaged)" else ""
   cat(sprintf("Summary of evoFE %s Ensemble%s\n", method_str, rank_tag))
-  cat(sprintf("Evaluator: %s | Task: %s | Metric: %s\n", x$evaluator, x$task, x$metric))
+  cat(sprintf("Evaluator: %s | Task: %s | Metric: %s\n", x$evaluator, x$task, .format_metric_label(x$metric)))
   cat(sprintf("Single Best Fitness: %.4f --> Ensemble Fitness: %.4f\n", x$single_best_fitness, x$ensemble_val_fitness))
   if (!is.null(x$stack_cv_fitness)) {
     cat(sprintf("Honest Nested CV Fitness: %.4f\n", x$stack_cv_fitness))

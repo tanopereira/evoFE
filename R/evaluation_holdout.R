@@ -54,16 +54,24 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   train_fold_feat <- res$train
   val_fold_feat <- res$val
 
-  gene_cols <- if (length(res$ind$genes) > 0) vapply(res$ind$genes, function(g) g$output_col, character(1)) else character(0)
-  features <- c(res$ind$numeric_cols, res$ind$categorical_cols, res$ind$datetime_cols, gene_cols)
+  features <- extract_individual_features(res$ind, target_col = target_col)
 
   x_train <- .sanitize_feature_matrix(train_fold_feat[, features, with = FALSE])
   x_val   <- .sanitize_feature_matrix(val_fold_feat[, features, with = FALSE])
   y_train <- train_fold_feat[[target_col]]
   y_val <- val_fold_feat[[target_col]]
   if (task == "multiclass") {
-    y_train <- as.integer(factor(y_train, levels = classes)) - 1
-    y_val <- as.integer(factor(y_val, levels = classes)) - 1
+    y_train <- encode_multiclass_target(y_train, classes)
+    y_val <- encode_multiclass_target(y_val, classes)
+  } else if (task == "classification") {
+    if (is.character(y_train) || (is.numeric(y_train) && !all(stats::na.omit(y_train) %in% c(0, 1)))) {
+      y_fac <- as.factor(y_train)
+      y_train <- as.integer(y_fac) - 1L
+      y_val <- as.integer(factor(y_val, levels = levels(y_fac))) - 1L
+    } else {
+      y_train <- encode_binary_target(y_train)
+      y_val <- encode_binary_target(y_val)
+    }
   }
 
   # Crucial distinction: The holdout fold is strictly for testing generalization performance on unseen
@@ -118,14 +126,15 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     x_holdout <- .sanitize_feature_matrix(res_holdout$train[, features, with = FALSE])
 
     evaluator_entry <- get_evaluator(evaluator)
-    preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task)
+    preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task, threads = threads)
 
     if (task == "multiclass") {
-      y_holdout_encoded <- as.integer(factor(holdout_fold[[target_col]], levels = classes)) - 1
-      if (!is.matrix(preds_holdout)) {
-        preds_holdout <- matrix(preds_holdout, ncol = num_class, byrow = TRUE)
-      }
+      y_holdout_encoded <- encode_multiclass_target(holdout_fold[[target_col]], classes)
+      preds_holdout <- format_multiclass_predictions(preds_holdout, nrow(x_holdout), num_class, classes)
       ind$holdout_fitness <- compute_metric(y_holdout_encoded, preds_holdout, task, metric, num_class, threads = threads)
+    } else if (task == "classification") {
+      y_holdout_encoded <- encode_binary_target(holdout_fold[[target_col]])
+      ind$holdout_fitness <- compute_metric(y_holdout_encoded, preds_holdout, task, metric, threads = threads)
     } else {
       ind$holdout_fitness <- compute_metric(holdout_fold[[target_col]], preds_holdout, task, metric, threads = threads)
     }

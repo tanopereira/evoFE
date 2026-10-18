@@ -259,15 +259,14 @@ evo_transformers$minhash_encode <- create_transformer(
     x <- as.character(data[[input_cols[1]]])
 
     compute_minhash <- function(str_vec) {
+      v_hash <- digest::getVDigest(algo = "xxhash32")
       compute_single <- function(s) {
         if (is.na(s) || nchar(s) == 0) return(0)
         s_clean <- paste0("^", tolower(s), "$")
         n <- nchar(s_clean)
         grams <- if (n < 3) s_clean else substring(s_clean, 1:(n - 2), 3:n)
-        hashes <- vapply(grams, function(g) {
-          h_hex <- digest::digest(paste0(g, "_", seed), algo = "xxhash32")
-          strtoi(substr(h_hex, 1, 7), base = 16L)
-        }, integer(1), USE.NAMES = FALSE)
+        h_hex <- v_hash(paste0(grams, "_", seed), serialize = FALSE)
+        hashes <- strtoi(substr(h_hex, 1, 7), base = 16L)
         min(hashes) / 268435455
       }
       u_s <- unique(str_vec)

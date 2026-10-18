@@ -162,6 +162,46 @@ struct AdamParam {
   }
 };
 
+// ScalingLayer abstraction (stride-aware for row-sliced Eigen::Block batch views)
+struct ScalingLayer {
+  Eigen::VectorXd scale;
+
+  void forward(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& X,
+               Eigen::Ref<Eigen::MatrixXd> out) const {
+    out.noalias() = (X.array().rowwise() * scale.transpose().array()).matrix();
+  }
+
+  void backward(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& X,
+                const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& dY,
+                Eigen::Ref<Eigen::MatrixXd> dX,
+                Eigen::Ref<Eigen::VectorXd> dscale) const {
+    dscale.noalias() = (X.cwiseProduct(dY)).colwise().sum();
+    dX.noalias() = (dY.array().rowwise() * scale.transpose().array()).matrix();
+  }
+};
+
+// NTPLinear abstraction (stride-aware for row-sliced Eigen::Block batch views)
+struct NTPLinear {
+  Eigen::MatrixXd W;
+  Eigen::VectorXd b;
+
+  void forward(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& X,
+               Eigen::Ref<Eigen::MatrixXd> out) const {
+    out.noalias() = X * W;
+    out.rowwise() += b.transpose();
+  }
+
+  void backward(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& X,
+                const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& dY,
+                Eigen::Ref<Eigen::MatrixXd> dX,
+                Eigen::Ref<Eigen::MatrixXd> dW,
+                Eigen::Ref<Eigen::VectorXd> db) const {
+    dW.noalias() = X.transpose() * dY;
+    db.noalias() = dY.colwise().sum();
+    dX.noalias() = dY * W.transpose();
+  }
+};
+
 // PBLD (Periodic Bias Linear DenseNet) feature embedder
 class PBLDEmbedder {
 public:
@@ -216,7 +256,7 @@ public:
 
   // Forward pass through PBLD — writes into pre-allocated E, cache_Z, cache_Theta
   // Fused single-pass SIMD vector loops: zero dgemm, zero OpenMP lock contention, zero allocations
-  void forward(const Eigen::MatrixXd& x, Eigen::MatrixXd& E,
+  void forward(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& x, Eigen::MatrixXd& E,
                std::vector<Eigen::MatrixXd>& cache_Z,
                std::vector<Eigen::MatrixXd>& cache_Theta,
                bool save_cache) const {
@@ -262,7 +302,7 @@ public:
   }
 
   // Forward pass without caching (writing into pre-allocated E and thread_Z_buf)
-  void forward_nocache(const Eigen::Ref<const Eigen::MatrixXd>& x,
+  void forward_nocache(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& x,
                        Eigen::MatrixXd& E,
                        std::vector<Eigen::MatrixXd>& thread_Z_buf) const {
     int B = static_cast<int>(x.rows());
@@ -325,7 +365,7 @@ public:
   }
 
   // Forward pass without caching (allocates temporary buffer when workspace not provided)
-  Eigen::MatrixXd forward_nocache(const Eigen::Ref<const Eigen::MatrixXd>& x) const {
+  Eigen::MatrixXd forward_nocache(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& x) const {
     int B = static_cast<int>(x.rows());
     int out_dim = total_out_dim();
     Eigen::MatrixXd E(B, out_dim);
@@ -335,8 +375,8 @@ public:
   }
 
   // Backward pass through PBLD and Adam parameter update (zero inner-loop heap allocations)
-  void backward_and_update(const Eigen::MatrixXd& x,
-                           const Eigen::MatrixXd& grad_E,
+  void backward_and_update(const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& x,
+                           const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& grad_E,
                            const std::vector<Eigen::MatrixXd>& cache_Z,
                            const std::vector<Eigen::MatrixXd>& cache_Theta,
                            Eigen::MatrixXd& grad_omega_buf,
@@ -524,6 +564,40 @@ struct TrainWorkspace {
   }
 };
 
+// Fused standardize matrix helper accepting Eigen::Ref with zero dynamic reallocations
+inline Eigen::MatrixXd fuse_standardize_matrix(
+    const Eigen::Ref<const Eigen::MatrixXd>& X,
+    const Eigen::VectorXd& x_mean,
+    const Eigen::VectorXd& x_std) {
+  int B = static_cast<int>(X.rows());
+  int D = static_cast<int>(X.cols());
+  Eigen::MatrixXd X_norm(B, D);
+  Eigen::VectorXd x_inv_std(D);
+  for (int j = 0; j < D; ++j) {
+    double s = x_std(j);
+    if (s < 1e-5 || !std::isfinite(s)) {
+      x_inv_std(j) = 1.0;
+    } else {
+      x_inv_std(j) = 1.0 / s;
+    }
+  }
+  if (X.innerStride() == 1 && X.outerStride() == B) {
+    fuse_standardize_matrix(X.data(), X_norm.data(), B, D, x_mean.data(), x_inv_std.data());
+  } else {
+    for (int j = 0; j < D; ++j) {
+      double m = x_mean(j);
+      double inv_s = x_inv_std(j);
+      for (int i = 0; i < B; ++i) {
+        double v = X(i, j);
+        double clean_v = std::isfinite(v) ? v : 0.0;
+        double z = (clean_v - m) * inv_s;
+        X_norm(i, j) = std::clamp(z, -30.0, 30.0);
+      }
+    }
+  }
+  return X_norm;
+}
+
 // Complete RealMLP Model
 class RealMLPModel {
 public:
@@ -710,12 +784,21 @@ public:
       for (int i = 0; i < B; ++i) {
         double max_val = Out(i, 0);
         for (int c = 1; c < output_dim; ++c) if (Out(i, c) > max_val) max_val = Out(i, c);
-        Eigen::RowVectorXd exp_row = (Out.row(i).array() - max_val).exp();
-        double sum_exp = exp_row.sum();
+        double sum_exp = 0.0;
+        for (int c = 0; c < output_dim; ++c) {
+          double ep = std::exp(Out(i, c) - max_val);
+          probs(i, c) = ep;
+          sum_exp += ep;
+        }
         if (sum_exp > 0.0) {
-          probs.row(i) = exp_row / sum_exp;
+          double inv_sum = 1.0 / sum_exp;
+          for (int c = 0; c < output_dim; ++c) {
+            probs(i, c) *= inv_sum;
+          }
         } else {
-          probs.row(i).setZero();
+          for (int c = 0; c < output_dim; ++c) {
+            probs(i, c) = 0.0;
+          }
         }
       }
       return probs;
@@ -723,45 +806,24 @@ public:
   }
 
   // Full prediction on test data (zero-copy when already standardized)
-  Eigen::MatrixXd predict(const Eigen::Ref<const Eigen::MatrixXd>& X, bool normalize_input = true) const {
-    int B = static_cast<int>(X.rows());
-    int D = static_cast<int>(X.cols());
+  Eigen::MatrixXd predict(const Eigen::Ref<const Eigen::MatrixXd>& X_raw, bool normalize_input = true) const {
+    if (n_features > 0 && X_raw.cols() != n_features) {
+      Rcpp::stop("Input matrix column count does not match model n_features.");
+    }
+    int D = static_cast<int>(X_raw.cols());
 
     if (normalize_input && x_mean.size() == D && x_std.size() == D) {
-      Eigen::MatrixXd X_norm(B, D);
-      Eigen::VectorXd x_inv_std(D);
-      for (int j = 0; j < D; ++j) {
-        double s = x_std(j);
-        if (s < 1e-5 || !std::isfinite(s)) {
-          x_inv_std(j) = 1.0;
-        } else {
-          x_inv_std(j) = 1.0 / s;
-        }
-      }
-      if (X.innerStride() == 1 && X.outerStride() == B) {
-        fuse_standardize_matrix(X.data(), X_norm.data(), B, D, x_mean.data(), x_inv_std.data());
-      } else {
-        for (int j = 0; j < D; ++j) {
-          double m = x_mean(j);
-          double inv_s = x_inv_std(j);
-          for (int i = 0; i < B; ++i) {
-            double v = X(i, j);
-            double clean_v = std::isfinite(v) ? v : 0.0;
-            double z = (clean_v - m) * inv_s;
-            X_norm(i, j) = std::clamp(z, -30.0, 30.0);
-          }
-        }
-      }
+      Eigen::MatrixXd X_norm = fuse_standardize_matrix(X_raw, x_mean, x_std);
       return predict_standardized(X_norm);
     } else {
       // Direct zero-copy pass of X!
-      return predict_standardized(X);
+      return predict_standardized(X_raw);
     }
   }
 
   // Compute feature importances via Mean Occlusion in PBLD Embedding Space using pre-allocated workspace
   std::vector<double> compute_importances(
-      const Eigen::Ref<const Eigen::MatrixXd>& X_eval,
+      const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& X_eval,
       const std::vector<double>& y_eval,
       FeatureImportanceWorkspace& ws) const {
 
@@ -860,7 +922,7 @@ public:
   }
 
   std::vector<double> compute_importances(
-      const Eigen::Ref<const Eigen::MatrixXd>& X_eval,
+      const Eigen::Ref<const Eigen::MatrixXd, 0, Eigen::OuterStride<>>& X_eval,
       const std::vector<double>& y_eval) const {
     FeatureImportanceWorkspace ws;
     return compute_importances(X_eval, y_eval, ws);
@@ -872,33 +934,80 @@ public:
   }
 
   struct StateSnapshot {
-    PBLDEmbedder embedder;
-    AdamParam front_scale, W1, b1, W2, b2, W3, b3, W4, b4;
-    Eigen::VectorXd x_mean, x_std;
+    Eigen::VectorXd scale;
+    Eigen::MatrixXd W1;
+    Eigen::VectorXd b1;
+    Eigen::VectorXd act1_param;
+    Eigen::MatrixXd W2;
+    Eigen::VectorXd b2;
+    Eigen::VectorXd act2_param;
+    Eigen::MatrixXd W3;
+    Eigen::VectorXd b3;
+    Eigen::VectorXd act3_param;
+    Eigen::MatrixXd W4;
+    Eigen::VectorXd b4;
+    // Embedder weights and normalization parameters
+    Eigen::MatrixXd embedder_omega;
+    Eigen::MatrixXd embedder_b_phase;
+    std::vector<Eigen::MatrixXd> embedder_W_proj;
+    Eigen::MatrixXd embedder_beta_proj;
+    Eigen::MatrixXd front_scale;
+    Eigen::VectorXd x_mean;
+    Eigen::VectorXd x_std;
+
+    void capture_from(const RealMLPModel& m) {
+      embedder_omega = m.embedder.omega.val;
+      embedder_b_phase = m.embedder.b_phase.val;
+      embedder_W_proj.resize(m.embedder.W_proj.size());
+      for (size_t i = 0; i < m.embedder.W_proj.size(); ++i) {
+        embedder_W_proj[i] = m.embedder.W_proj[i].val;
+      }
+      embedder_beta_proj = m.embedder.beta_proj.val;
+      front_scale = m.front_scale.val;
+      if (m.front_scale.val.rows() > 0) {
+        scale = m.front_scale.val.row(0);
+      }
+      W1 = m.W1.val;
+      if (m.b1.val.rows() > 0) b1 = m.b1.val.row(0);
+      W2 = m.W2.val;
+      if (m.b2.val.rows() > 0) b2 = m.b2.val.row(0);
+      W3 = m.W3.val;
+      if (m.b3.val.rows() > 0) b3 = m.b3.val.row(0);
+      W4 = m.W4.val;
+      if (m.b4.val.rows() > 0) b4 = m.b4.val.row(0);
+      x_mean = m.x_mean;
+      x_std = m.x_std;
+    }
+
+    void restore_to(RealMLPModel& m) const {
+      m.embedder.omega.val = embedder_omega;
+      m.embedder.b_phase.val = embedder_b_phase;
+      for (size_t i = 0; i < embedder_W_proj.size(); ++i) {
+        m.embedder.W_proj[i].val = embedder_W_proj[i];
+      }
+      m.embedder.beta_proj.val = embedder_beta_proj;
+      m.front_scale.val = front_scale;
+      m.W1.val = W1;
+      if (b1.size() > 0) m.b1.val.row(0) = b1;
+      m.W2.val = W2;
+      if (b2.size() > 0) m.b2.val.row(0) = b2;
+      m.W3.val = W3;
+      if (b3.size() > 0) m.b3.val.row(0) = b3;
+      m.W4.val = W4;
+      if (b4.size() > 0) m.b4.val.row(0) = b4;
+      m.x_mean = x_mean;
+      m.x_std = x_std;
+    }
   };
 
   StateSnapshot get_snapshot() const {
     StateSnapshot s;
-    s.embedder = embedder;
-    s.front_scale = front_scale;
-    s.W1 = W1; s.b1 = b1;
-    s.W2 = W2; s.b2 = b2;
-    s.W3 = W3; s.b3 = b3;
-    s.W4 = W4; s.b4 = b4;
-    s.x_mean = x_mean;
-    s.x_std = x_std;
+    s.capture_from(*this);
     return s;
   }
 
   void restore_snapshot(const StateSnapshot& s) {
-    embedder = s.embedder;
-    front_scale = s.front_scale;
-    W1 = s.W1; b1 = s.b1;
-    W2 = s.W2; b2 = s.b2;
-    W3 = s.W3; b3 = s.b3;
-    W4 = s.W4; b4 = s.b4;
-    x_mean = s.x_mean;
-    x_std = s.x_std;
+    s.restore_to(*this);
   }
 };
 

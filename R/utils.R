@@ -73,6 +73,29 @@ sanitize_feature_matrix <- function(x) {
 #' @noRd
 .sanitize_feature_matrix <- sanitize_feature_matrix
 
+#' Encode Binary Target Vector to 0L/1L Integers
+#'
+#' Maps factor, character, logical, or non-0/1 numeric binary targets to 0L/1L.
+#'
+#' @param y Target vector (factor, character, logical, integer, or numeric).
+#' @return An integer or numeric vector encoded as 0 and 1, preserving NAs.
+#' @keywords internal
+#' @noRd
+encode_binary_target <- function(y) {
+  if (is.null(y)) return(NULL)
+  if (is.factor(y)) {
+    as.integer(y) - 1L
+  } else if (is.character(y)) {
+    as.integer(as.factor(y)) - 1L
+  } else if (is.logical(y)) {
+    as.integer(y)
+  } else if (is.numeric(y) && !all(stats::na.omit(y) %in% c(0, 1))) {
+    as.integer(as.factor(y)) - 1L
+  } else {
+    y
+  }
+}
+
 #' Encode Multiclass Target Vector to Zero-Based Integers
 #'
 #' Encodes a multiclass target vector into a zero-based integer index vector
@@ -375,11 +398,14 @@ matrix_impute_and_scale <- function(X, stats = NULL) {
 #' @return Canonical metric name string, or the original metric function if a function was provided.
 #' @keywords internal
 #' @noRd
-canonical_metric_name <- function(metric) {
+canonical_metric_name <- function(metric, task = NULL) {
   if (is.null(metric) || is.function(metric)) {
     return(metric)
   }
   m <- tolower(trimws(as.character(metric)))
+  if (m %in% c("default", "") && !is.null(task)) {
+    return(if (identical(task, "regression")) "rmse" else "logloss")
+  }
   if (m %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
     return("ts_refinement")
   }

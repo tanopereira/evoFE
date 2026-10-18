@@ -1,13 +1,3 @@
-#' Internal helper to convert input features into a clean numeric matrix
-#' safe for C++ ML backends (e.g. XGBoost, LightGBM, CatBoost).
-#' Handles data.frames, factors/characters, non-finites (Inf, -Inf, NaN),
-#' and numbers exceeding 32-bit single-precision float range (~3.402823e38),
-#' converting all out-of-bounds or non-finite values to NA_real_.
-#' @noRd
-.sanitize_feature_matrix <- function(x) {
-  sanitize_feature_matrix(x)
-}
-
 #' Train a boosted tree model
 #'
 #' Internal helper that encapsulates LightGBM / XGBoost parameter construction

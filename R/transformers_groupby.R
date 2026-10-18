@@ -140,7 +140,7 @@ evo_transformers$groupby_min <- create_transformer(
 
 # --- STATEFUL MULTIVARIATE TRANSFORMERS (ADDITIONAL) ---
 
-# UMAP Dimension Reduction
+# Group-by Ratio
 evo_transformers$groupby_ratio <- create_transformer(
   name = "groupby_ratio",
   type = "mixed_binary",
@@ -155,6 +155,7 @@ evo_transformers$groupby_ratio <- create_transformer(
     list(mapping = mapping, default_val = mean(dt$n, na.rm = TRUE))
   },
   apply_func = function(data, gene, state) {
+    if (is.null(state) || is.null(state$mapping)) return(rep(0, nrow(data)))
     input_cols <- gene$input_cols
     x_cat <- data[[input_cols[1]]]
     x_num <- .to_numeric(data[[input_cols[2]]])
@@ -186,6 +187,7 @@ evo_transformers$groupby_zscore <- create_transformer(
     list(mapping = mapping, default_mean = global_mean, default_sd = global_sd)
   },
   apply_func = function(data, gene, state) {
+    if (is.null(state) || is.null(state$mapping)) return(rep(0, nrow(data)))
     input_cols <- gene$input_cols
     x_cat <- data[[input_cols[1]]]
     x_num <- .to_numeric(data[[input_cols[2]]])

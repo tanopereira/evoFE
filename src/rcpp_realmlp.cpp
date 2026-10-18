@@ -41,19 +41,16 @@ struct ThreadGuard {
   int old_openblas = -1;
 
   ThreadGuard(int threads) {
+    if (threads <= 0) return;
 #ifdef _OPENMP
     old_omp = omp_get_max_threads();
-    if (threads > 0) {
-      omp_set_num_threads(threads);
-    }
+    omp_set_num_threads(threads);
 #endif
     old_eigen = Eigen::nbThreads();
-    Eigen::setNbThreads(threads > 0 ? threads : 1);
+    Eigen::setNbThreads(threads);
 
     old_openblas = get_openblas_threads();
-    if (threads > 0) {
-      set_openblas_threads(threads);
-    }
+    set_openblas_threads(threads);
   }
 
   ~ThreadGuard() {
@@ -278,20 +275,30 @@ inline MetricResult compute_val_metric(
       for (int i = 0; i < N_val; ++i) {
         int y = (y_v_ptr[i] > 0.0) ? 1 : 0;
         if (y == 1) n_pos++;
-        pairs[i] = { val_preds(i, 0), y };
+        double p = std::isfinite(val_preds(i, 0)) ? val_preds(i, 0) : -1e300;
+        pairs[i] = { p, y };
       }
       int n_neg = N_val - n_pos;
       if (n_pos == 0 || n_neg == 0) return { 0.5, "Val AUC", true };
       std::sort(pairs.begin(), pairs.begin() + N_val, [](const auto& a, const auto& b) {
         return a.first < b.first;
       });
-      double rank_sum_pos = 0.0;
-      for (int i = 0; i < N_val; ++i) {
-        if (pairs[i].second == 1) {
-          rank_sum_pos += (i + 1);
+      double pos_rank_sum = 0.0;
+      size_t i = 0;
+      while (i < static_cast<size_t>(N_val)) {
+        size_t j = i + 1;
+        while (j < static_cast<size_t>(N_val) && std::abs(pairs[j].first - pairs[i].first) <= 1e-12) {
+          j++;
         }
+        double avg_rank = 0.5 * ((i + 1) + j);
+        int pos_in_group = 0;
+        for (size_t k = i; k < j; ++k) {
+          if (pairs[k].second == 1) pos_in_group++;
+        }
+        pos_rank_sum += avg_rank * pos_in_group;
+        i = j;
       }
-      double u = rank_sum_pos - (static_cast<double>(n_pos) * (n_pos + 1)) / 2.0;
+      double u = pos_rank_sum - (static_cast<double>(n_pos) * (n_pos + 1)) / 2.0;
       double auc = u / (static_cast<double>(n_pos) * n_neg);
       return { auc, "Val AUC", true };
     }
@@ -396,7 +403,6 @@ inline MetricResult compute_val_metric(
 //' @param metric String: validation metric to optimize and report.
 //' @param hidden_dim Integer: hidden layer dimension (default 256).
 //' @return A List containing model weights, training statistics, and feature importances.
-//' @export
 // [[Rcpp::export]]
 List rcpp_realmlp_train(NumericMatrix x_train,
                         NumericVector y_train,
@@ -417,9 +423,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   int N = x_train.nrow();
   int D = x_train.ncol();
 
-  if (N <= 0 || D <= 0) {
-    stop("Training data must be non-empty.");
-  }
+  if (N <= 0 || D <= 0) Rcpp::stop("x_train must have positive dimensions.");
+  if (y_train.size() != N) Rcpp::stop("y_train length must match nrow(x_train).");
 
   bool is_cls = (task == "classification");
   bool is_multi = (task == "multiclass");
@@ -468,7 +473,10 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
   if (task == "regression") {
     double sum = 0.0;
-    for (int i = 0; i < N; ++i) sum += y_train[i];
+    for (int i = 0; i < N; ++i) {
+      if (!std::isfinite(y_train[i])) Rcpp::stop("y_train contains non-finite values.");
+      sum += y_train[i];
+    }
     y_mean_val = sum / N;
 
     double sum_sq = 0.0;
@@ -500,17 +508,22 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   }
 
   // Validation data
-  bool has_val = (x_val.isNotNull() && y_val.isNotNull());
+  bool has_x_val = x_val.isNotNull();
+  bool has_val = (has_x_val && y_val.isNotNull());
   Eigen::MatrixXd X_v;
   NumericVector y_v_vec;
   const double* y_v_ptr = nullptr;
   int N_val = 0;
 
-  if (has_val) {
+  if (has_x_val) {
     NumericMatrix xv(x_val);
-    y_v_vec = NumericVector(y_val);
-    y_v_ptr = y_v_vec.begin();
+    if (xv.ncol() != D) Rcpp::stop("x_val ncol must match x_train ncol.");
     N_val = xv.nrow();
+    if (has_val) {
+      y_v_vec = NumericVector(y_val);
+      if (y_v_vec.size() != N_val) Rcpp::stop("y_val length must match nrow(x_val).");
+      y_v_ptr = y_v_vec.begin();
+    }
     X_v.resize(N_val, D);
     fuse_standardize_matrix(xv.begin(), X_v.data(), N_val, D, x_mean.data(), x_inv_std.data());
   }
@@ -585,7 +598,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
               D, model.embedder.k_freq, model.embedder.d_proj, N, max_threads);
 
   ValidationWorkspace val_ws;
-  if (has_val && N_val > 0) {
+  if (has_x_val && N_val > 0) {
     val_ws.allocate(N_val, D, out_dim, hidden_dim, embed_dim, model.embedder.k_freq, max_threads);
   }
 
@@ -661,13 +674,26 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       } else {
         auto P_b = ws.P.topRows(cur_B);
         for (int i = 0; i < cur_B; ++i) {
-          double max_val = Out_b.row(i).maxCoeff();
-          Eigen::RowVectorXd exp_row = (Out_b.row(i).array() - max_val).exp();
-          double sum_exp = exp_row.sum();
+          double max_val = Out_b(i, 0);
+          for (int c = 1; c < out_dim; ++c) {
+            if (Out_b(i, c) > max_val) max_val = Out_b(i, c);
+          }
+          double sum_exp = 0.0;
+          for (int c = 0; c < out_dim; ++c) {
+            double ep = std::exp(Out_b(i, c) - max_val);
+            P_b(i, c) = ep;
+            sum_exp += ep;
+          }
           if (sum_exp > 0.0) {
-            P_b.row(i) = exp_row / sum_exp;
+            double inv_sum = 1.0 / sum_exp;
+            for (int c = 0; c < out_dim; ++c) {
+              P_b(i, c) *= inv_sum;
+            }
           } else {
-            P_b.row(i).fill(1.0 / out_dim);
+            double inv_dim = 1.0 / out_dim;
+            for (int c = 0; c < out_dim; ++c) {
+              P_b(i, c) = inv_dim;
+            }
           }
           for (int c = 0; c < out_dim; ++c) {
             batch_loss -= Y_batch(i, c) * std::log(std::max(1e-15, P_b(i, c)));
@@ -758,9 +784,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
       if (is_better) {
         best_val_score = val_score;
-        best_snapshot = model.get_snapshot();
-        has_best_snapshot = true;
         if (early_stopping_rounds > 0) {
+          best_snapshot.capture_from(model);
+          has_best_snapshot = true;
           best_epoch = epoch + 1;
         }
         no_improve_epochs = 0;
@@ -806,18 +832,28 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   }
 
   if (has_val && has_best_snapshot && early_stopping_rounds > 0) {
-    model.restore_snapshot(best_snapshot);
+    best_snapshot.restore_to(model);
+  }
+
+  Rcpp::RObject val_preds_sexp = R_NilValue;
+  if (has_x_val && N_val > 0) {
+    model.embedder.forward_nocache(X_v, val_ws.E, val_ws.thread_Z_buf);
+    model.forward_predict_inplace(val_ws.E, N_val, val_ws, val_ws.preds);
+    NumericMatrix vp(N_val, out_dim);
+    std::memcpy(vp.begin(), val_ws.preds.data(), static_cast<size_t>(N_val) * out_dim * sizeof(double));
+    val_preds_sexp = vp;
   }
 
   // Compute feature importances via Mean Occlusion Ablation in C++
-  // Use validation set if provided, else training set (capped at 1,000 rows for lightning speed)
-  const Eigen::MatrixXd& X_imp_source = (has_val && N_val > 0) ? X_v : X_tr;
+  // Use validation set if provided with labels, else training set (capped at 1,000 rows for lightning speed)
+  bool use_val_for_imp = (has_val && N_val > 0 && y_v_ptr != nullptr);
+  const Eigen::MatrixXd& X_imp_source = use_val_for_imp ? X_v : X_tr;
   int N_avail = static_cast<int>(X_imp_source.rows());
   int N_eval = std::min(N_avail, 1000);
 
   auto X_eval = X_imp_source.topRows(N_eval);
   std::vector<double> y_eval(N_eval);
-  if (has_val && N_val > 0) {
+  if (use_val_for_imp) {
     std::memcpy(y_eval.data(), y_v_ptr, N_eval * sizeof(double));
   } else {
     std::memcpy(y_eval.data(), y_train.begin(), N_eval * sizeof(double));
@@ -830,6 +866,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
   List res = List::create(
     Named("model_state") = model_to_list(model),
+    Named("val_preds") = val_preds_sexp,
     Named("importances") = wrap(importances),
     Named("stopped_early") = stopped_early,
     Named("stopped_epoch") = stopped_epoch,
@@ -845,10 +882,11 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 //'
 //' @param model_state List returned by `rcpp_realmlp_train`.
 //' @param x_new Numeric matrix of new input features.
+//' @param threads Integer: number of threads for parallel prediction (default 0 = unchanged).
 //' @return A NumericMatrix of predictions.
-//' @export
 // [[Rcpp::export]]
-NumericMatrix rcpp_realmlp_predict(List model_state, NumericMatrix x_new) {
+NumericMatrix rcpp_realmlp_predict(List model_state, NumericMatrix x_new, int threads = 0) {
+  ThreadGuard guard(threads);
   RealMLPModel model = list_to_model(model_state);
   Eigen::Map<const Eigen::MatrixXd> X_map(x_new.begin(), x_new.nrow(), x_new.ncol());
   Eigen::MatrixXd preds = model.predict(X_map);

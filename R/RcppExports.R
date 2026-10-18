@@ -31,7 +31,6 @@ rcpp_compute_ts_refinement_multiclass <- function(y_true, y_pred, num_class, alp
 #' @param metric String: validation metric to optimize and report.
 #' @param hidden_dim Integer: hidden layer dimension (default 256).
 #' @return A List containing model weights, training statistics, and feature importances.
-#' @export
 rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = 256L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", hidden_dim = 256L) {
     .Call(`_evoFE_rcpp_realmlp_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric, hidden_dim)
 }
@@ -40,10 +39,10 @@ rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, tas
 #'
 #' @param model_state List returned by `rcpp_realmlp_train`.
 #' @param x_new Numeric matrix of new input features.
+#' @param threads Integer: number of threads for parallel prediction (default 1).
 #' @return A NumericMatrix of predictions.
-#' @export
-rcpp_realmlp_predict <- function(model_state, x_new) {
-    .Call(`_evoFE_rcpp_realmlp_predict`, model_state, x_new)
+rcpp_realmlp_predict <- function(model_state, x_new, threads = 0L) {
+    .Call(`_evoFE_rcpp_realmlp_predict`, model_state, x_new, threads)
 }
 
 #' Fast C++ Row-wise Minimum

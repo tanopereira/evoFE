@@ -37,7 +37,26 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
   }
 
   run_greedy_trajectory <- function(y_eval, preds_eval, max_rounds, early_patience, is_verbose = FALSE) {
-    init_scores <- vapply(candidate_names, function(nm) eval_fitness(y_eval, preds_eval[[nm]]), double(1))
+    first_p <- preds_eval[[1]]
+    valid_mask <- if (is.matrix(first_p)) !is.na(first_p[, 1]) else !is.na(first_p)
+    if (!is.null(y_eval)) {
+      valid_mask <- valid_mask & !is.na(y_eval)
+    }
+    if (!any(valid_mask)) {
+      return(list(weights = stats::setNames(rep(1 / n_candidates, n_candidates), candidate_names), best_score = -Inf, best_step = 1L, history = NULL))
+    }
+    if (!all(valid_mask)) {
+      y_eval <- if (is.matrix(y_eval)) y_eval[valid_mask, , drop = FALSE] else y_eval[valid_mask]
+      preds_eval <- lapply(preds_eval, function(p) {
+        if (is.matrix(p)) p[valid_mask, , drop = FALSE] else p[valid_mask]
+      })
+    }
+
+    eval_fn <- function(y, p) {
+      compute_metric(y, p, task = task, metric = metric, num_class = num_class)
+    }
+
+    init_scores <- vapply(candidate_names, function(nm) eval_fn(y_eval, preds_eval[[nm]]), double(1))
     best_init_idx <- which.max(init_scores)
     if (length(best_init_idx) == 0 || is.na(best_init_idx)) best_init_idx <- 1L
     best_init_name <- candidate_names[best_init_idx]
@@ -74,7 +93,7 @@ caruana_select <- function(y_true, val_preds_list, task, metric, rounds = 50,
         for (nm in candidate_names) {
           cand_p <- preds_eval[[nm]]
           cand_blend <- blend_preds(current_blend, cand_p, r - 1)
-          score <- eval_fitness(y_eval, cand_blend)
+          score <- eval_fn(y_eval, cand_blend)
           if (score > best_cand_score) {
             best_cand_score <- score
             best_cand <- nm

@@ -428,7 +428,7 @@ register_evaluator(
       {
         n_tr <- nrow(x_train)
         if (n_tr > 2000L) {
-          sub_idx <- sample.int(n_tr, 2000L)
+          sub_idx <- with_seed(if (!is.null(extra_params$seed)) extra_params$seed else 42L, sample.int(n_tr, 2000L))
           x_sub <- as.matrix(x_train[sub_idx, , drop = FALSE])
           sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
         } else {
@@ -457,7 +457,10 @@ register_evaluator(
     }
     x_new <- .sanitize_feature_matrix(x_new)
     extra_args <- list(...)
-    th <- if (!is.null(extra_args$threads)) as.integer(extra_args$threads) else default_threads()
+    th <- resolve_param_aliases(extra_args)$threads
+    if (is.null(th)) {
+      th <- if (!is.null(model$params$num_threads)) as.integer(model$params$num_threads) else default_threads()
+    }
     num_iter <- if (!is.null(extra_args$num_iteration)) {
       as.integer(extra_args$num_iteration)
     } else if (!is.null(model$best_iter) && model$best_iter > 0) {
@@ -558,7 +561,7 @@ register_evaluator(
     }
 
     if (identical(params$booster, "gblinear")) {
-      params$nthread <- 1
+      params$nthread <- 1L
     }
 
     dval_metric <- NULL
@@ -610,16 +613,17 @@ register_evaluator(
       res
     }
 
+    attr(model, "evoFE_threads") <- as.integer(params$nthread)
     best_iter <- .xgb_best_iter(model)
 
     preds <- if (!is.null(x_val)) {
-      dval <- xgboost::xgb.DMatrix(data = x_val, missing = NA, nthread = threads)
+      dval <- if (!is.null(dval_metric)) dval_metric else xgboost::xgb.DMatrix(data = x_val, missing = NA, nthread = threads)
       p <- if (!is.null(best_iter) && best_iter >= 1) {
         stats::predict(model, dval, iterationrange = c(1, best_iter + 1))
       } else {
         stats::predict(model, dval)
       }
-      rm(dval)
+      if (is.null(dval_metric)) rm(dval)
       p
     } else {
       NULL
@@ -630,7 +634,7 @@ register_evaluator(
         best_it_range <- if (!is.null(best_iter) && best_iter >= 1) c(1, best_iter + 1) else NULL
         n_tr <- nrow(x_train)
         if (n_tr > 2000L) {
-          sub_idx <- sample.int(n_tr, 2000L)
+          sub_idx <- with_seed(if (!is.null(extra_params$seed)) extra_params$seed else 42L, sample.int(n_tr, 2000L))
           dsub <- xgboost::xgb.DMatrix(data = x_train[sub_idx, , drop = FALSE], missing = NA, nthread = threads)
           sh <- stats::predict(model, dsub, predcontrib = TRUE, iterationrange = best_it_range)
           rm(dsub)
@@ -661,7 +665,16 @@ register_evaluator(
     }
     x_new <- .sanitize_feature_matrix(x_new)
     extra_args <- list(...)
-    th <- if (!is.null(extra_args$threads)) as.integer(extra_args$threads) else default_threads()
+    th <- resolve_param_aliases(extra_args)$threads
+    model_th <- attr(model, "evoFE_threads", exact = TRUE)
+    if (is.null(th)) {
+      th <- if (!is.null(model_th)) as.integer(model_th) else default_threads()
+    }
+    if (!identical(model_th, th)) {
+      tryCatch({
+        xgboost::xgb.model.parameters(model) <- list(nthread = th)
+      }, error = function(e) NULL)
+    }
     best_iter <- .xgb_best_iter(model)
     iter_range <- if (!is.null(extra_args$iterationrange)) {
       extra_args$iterationrange
@@ -694,9 +707,7 @@ register_evaluator(
     x_train <- .sanitize_feature_matrix(x_train)
     x_val   <- .sanitize_feature_matrix(x_val)
 
-    df_train <- as.data.frame(x_train)
-    df_train[] <- lapply(df_train, as.numeric)
-    dtrain <- catboost::catboost.load_pool(data = df_train, label = y_train)
+    dtrain <- catboost::catboost.load_pool(data = x_train, label = y_train)
 
     extra_params <- list(...)
     if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
@@ -755,9 +766,7 @@ register_evaluator(
     # Build validation pool for early stopping when possible
     dval_es <- NULL
     if (!is.null(x_val) && !is.null(y_val) && !is.null(early_stopping_rounds) && early_stopping_rounds > 0) {
-      df_val_es <- as.data.frame(x_val)
-      df_val_es[] <- lapply(df_val_es, as.numeric)
-      dval_es <- catboost::catboost.load_pool(data = df_val_es, label = y_val)
+      dval_es <- catboost::catboost.load_pool(data = x_val, label = y_val)
       params$od_type <- "Iter"
       params$od_wait <- early_stopping_rounds
     }
@@ -777,9 +786,7 @@ register_evaluator(
 
     preds <- NULL
     if (!is.null(x_val)) {
-      df_val <- as.data.frame(x_val)
-      df_val[] <- lapply(df_val, as.numeric)
-      dval <- catboost::catboost.load_pool(data = df_val)
+      dval <- if (!is.null(dval_es)) dval_es else catboost::catboost.load_pool(data = x_val)
       pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
       preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
 
@@ -794,10 +801,10 @@ register_evaluator(
     # Fetch feature importance and map column names
     importances <- tryCatch(
       {
-        n_tr <- nrow(df_train)
+        n_tr <- nrow(x_train)
         pool_imp <- if (n_tr > 2000L) {
-          sub_idx <- sample.int(n_tr, 2000L)
-          catboost::catboost.load_pool(data = df_train[sub_idx, , drop = FALSE], label = y_train[sub_idx])
+          sub_idx <- with_seed(if (!is.null(extra_params$seed)) extra_params$seed else 42L, sample.int(n_tr, 2000L))
+          catboost::catboost.load_pool(data = x_train[sub_idx, , drop = FALSE], label = y_train[sub_idx])
         } else {
           dtrain
         }
@@ -818,9 +825,7 @@ register_evaluator(
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
     x_new <- .sanitize_feature_matrix(x_new)
-    df_new <- as.data.frame(x_new)
-    df_new[] <- lapply(df_new, as.numeric)
-    dval <- catboost::catboost.load_pool(data = df_new)
+    dval <- catboost::catboost.load_pool(data = x_new)
     pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
     preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
 
@@ -857,8 +862,14 @@ register_evaluator(
       if (is.null(x_data)) return(NULL)
       xm <- as.matrix(x_data)
       for (j in seq_len(ncol(xm))) {
-        col_name <- colnames(xm)[j]
-        c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) col_means[[col_name]] else 0
+        col_name <- if (!is.null(colnames(xm))) colnames(xm)[j] else NULL
+        c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) {
+          col_means[[col_name]]
+        } else if (j <= length(col_means)) {
+          col_means[j]
+        } else {
+          0
+        }
         na_idx <- is.na(xm[, j]) | !is.finite(xm[, j])
         if (any(na_idx)) {
           xm[na_idx, j] <- c_mean
@@ -874,55 +885,76 @@ register_evaluator(
     sd_x <- apply(x_mat, 2, stats::sd, na.rm = TRUE)
     sd_x[is.na(sd_x) | sd_x == 0] <- 1
     
+    is_single_col <- (ncol(x_mat) == 1L)
+    fit_mat <- if (is_single_col) cbind(x_mat, .__dummy__ = 0.0) else x_mat
+
     if (task == "regression") {
-      model <- glmnet::cv.glmnet(x_mat, y_train, family = "gaussian", alpha = 0.5, nfolds = nfolds)
+      model <- glmnet::cv.glmnet(fit_mat, y_train, family = "gaussian", alpha = 0.5, nfolds = nfolds)
       
       preds <- NULL
       if (!is.null(x_val)) {
-        preds <- as.numeric(stats::predict(model, newx = impute_mat(x_val), s = "lambda.min"))
+        val_mat <- impute_mat(x_val)
+        if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
+        preds <- as.numeric(stats::predict(model, newx = val_mat, s = "lambda.min"))
       }
       
       coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-      importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
-      importances <- importances * sd_x[names(importances)]
+      imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+      if (is_single_col) {
+        imp <- imp[seq_len(ncol(x_train))]
+      }
+      importances <- imp * sd_x[seq_along(imp)]
+      if (!is.null(all_feats)) names(importances) <- all_feats
       
     } else if (task == "classification") {
-      model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "binomial", alpha = 0.5, nfolds = nfolds)
+      model <- glmnet::cv.glmnet(fit_mat, as.factor(y_train), family = "binomial", alpha = 0.5, nfolds = nfolds)
       
       preds <- NULL
       if (!is.null(x_val)) {
-        preds <- as.numeric(stats::predict(model, newx = impute_mat(x_val), s = "lambda.min", type = "response"))
+        val_mat <- impute_mat(x_val)
+        if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
+        preds <- as.numeric(stats::predict(model, newx = val_mat, s = "lambda.min", type = "response"))
       }
       
       coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-      importances <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
-      importances <- importances * sd_x[names(importances)]
+      imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+      if (is_single_col) {
+        imp <- imp[seq_len(ncol(x_train))]
+      }
+      importances <- imp * sd_x[seq_along(imp)]
+      if (!is.null(all_feats)) names(importances) <- all_feats
       
     } else if (task == "multiclass") {
-      model <- glmnet::cv.glmnet(x_mat, as.factor(y_train), family = "multinomial", alpha = 0.5, nfolds = nfolds)
+      model <- glmnet::cv.glmnet(fit_mat, as.factor(y_train), family = "multinomial", alpha = 0.5, nfolds = nfolds)
       
       preds <- NULL
       if (!is.null(x_val)) {
-        p_array <- stats::predict(model, newx = impute_mat(x_val), s = "lambda.min", type = "response")
+        val_mat <- impute_mat(x_val)
+        if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
+        p_array <- stats::predict(model, newx = val_mat, s = "lambda.min", type = "response")
         preds <- p_array[, , 1]
       }
       
       coefs_list <- stats::coef(model, s = "lambda.min")
-      imp_matrix <- sapply(coefs_list, function(c_mat) {
-        c_mat <- as.matrix(c_mat)
-        abs(c_mat[rownames(c_mat) != "(Intercept)", , drop = FALSE])
-      })
-      importances <- rowMeans(imp_matrix)
-      importances <- stats::setNames(importances, rownames(imp_matrix))
-      importances <- importances * sd_x[names(importances)]
+      imp_matrix <- do.call(cbind, lapply(coefs_list, function(c_mat) abs(as.numeric(c_mat)[-1])))
+      imp <- rowMeans(imp_matrix)
+      feat_names <- rownames(coefs_list[[1]])[-1]
+      names(imp) <- feat_names
+      if (is_single_col) {
+        imp <- imp[seq_len(ncol(x_train))]
+      }
+      importances <- imp * sd_x[seq_along(imp)]
+      if (!is.null(all_feats)) names(importances) <- all_feats
     }
     
     # Ensure missing names map to 0
-    missing <- setdiff(all_feats, names(importances))
-    if (length(missing) > 0) {
-      importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
+    if (!is.null(all_feats)) {
+      missing <- setdiff(all_feats, names(importances))
+      if (length(missing) > 0) {
+        importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
+      }
     }
     
     # Attach training-time imputation means to the model so predict-time
@@ -936,19 +968,26 @@ register_evaluator(
     col_means <- if (!is.null(model$col_means)) model$col_means else colMeans(x_mat, na.rm = TRUE)
     col_means[is.na(col_means) | !is.finite(col_means)] <- 0
     for (j in seq_len(ncol(x_mat))) {
-      col_name <- colnames(x_mat)[j]
-      c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) col_means[[col_name]] else 0
+      col_name <- if (!is.null(colnames(x_mat))) colnames(x_mat)[j] else NULL
+      c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) {
+        col_means[[col_name]]
+      } else if (j <= length(col_means)) {
+        col_means[j]
+      } else {
+        0
+      }
       na_idx <- is.na(x_mat[, j]) | !is.finite(x_mat[, j])
       if (any(na_idx)) {
         x_mat[na_idx, j] <- c_mean
       }
     }
+    pred_mat <- if (ncol(x_mat) == 1L) cbind(x_mat, .__dummy__ = 0.0) else x_mat
     if (task == "regression") {
-      as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min"))
+      as.numeric(stats::predict(model, newx = pred_mat, s = "lambda.min"))
     } else if (task == "classification") {
-      as.numeric(stats::predict(model, newx = x_mat, s = "lambda.min", type = "response"))
+      as.numeric(stats::predict(model, newx = pred_mat, s = "lambda.min", type = "response"))
     } else if (task == "multiclass") {
-      p_array <- stats::predict(model, newx = x_mat, s = "lambda.min", type = "response")
+      p_array <- stats::predict(model, newx = pred_mat, s = "lambda.min", type = "response")
       p_array[, , 1]
     }
   },
@@ -1097,23 +1136,21 @@ register_evaluator(
 #' @param col_meds Precomputed column medians (computed from training set).
 #' @return A list with `mat` (imputed matrix) and `col_meds`.
 #' @keywords internal
+#' @noRd
 .realmlp_impute_matrix <- function(mat, col_meds = NULL) {
-  if (is.null(mat)) return(list(mat = NULL, col_meds = col_meds))
-  has_na <- anyNA(mat)
+  if (is.null(mat) || !anyNA(mat)) return(list(mat = mat, col_meds = col_meds))
   if (is.null(col_meds)) {
-    if (!has_na) {
-      col_meds <- rep(0.0, ncol(mat))
-    } else {
-      col_meds <- apply(mat, 2, function(col) {
-        m <- stats::median(col[!is.na(col) & is.finite(col)])
-        if (is.na(m) || !is.finite(m)) 0 else m
-      })
-    }
+    col_meds <- vapply(seq_len(ncol(mat)), function(j) {
+      col <- mat[, j]
+      if (!anyNA(col)) return(stats::median(col))
+      fin <- col[!is.na(col)]
+      if (length(fin) == 0L) 0.0 else stats::median(fin)
+    }, numeric(1))
   }
-  if (has_na) {
-    for (j in seq_len(ncol(mat))) {
-      na_mask <- is.na(mat[, j]) | !is.finite(mat[, j])
-      if (any(na_mask)) mat[na_mask, j] <- col_meds[j]
+  for (j in seq_len(ncol(mat))) {
+    col <- mat[, j]
+    if (anyNA(col)) {
+      mat[is.na(col), j] <- if (j <= length(col_meds)) col_meds[j] else 0.0
     }
   }
   list(mat = mat, col_meds = col_meds)
@@ -1123,30 +1160,41 @@ register_evaluator(
 #' @param y Target vector (factor, numeric, or character).
 #' @param task One of "regression", "classification", "multiclass".
 #' @param num_class Optional integer number of classes.
+#' @param levels_target Optional vector of target class levels.
 #' @return A list with `y_num`, `levels_target`, and `num_classes_int`.
 #' @keywords internal
-.realmlp_prepare_target <- function(y, task, num_class = NULL) {
-  levels_target <- NULL
+#' @noRd
+.realmlp_prepare_target <- function(y, task, num_class = NULL, levels_target = NULL) {
   num_classes_int <- 0L
   if (task == "regression") {
     y_num <- as.numeric(y)
   } else if (task == "classification") {
-    if (is.factor(y)) {
-      levels_target <- levels(y)
-      y_num <- as.numeric(y) - 1.0
-    } else {
-      levels_target <- c("0", "1")
-      y_num <- ifelse(y > 0, 1.0, 0.0)
-    }
+    y_bin <- encode_binary_target(y)
+    levels_target <- if (!is.null(levels_target)) levels_target else c("0", "1")
+    y_num <- as.numeric(y_bin)
   } else if (task == "multiclass") {
-    levels_target <- if (!is.null(num_class)) {
-      seq(0, num_class - 1)
+    if (!is.null(levels_target)) {
+      # Use provided levels_target
     } else if (is.factor(y)) {
-      levels(y)
+      levels_target <- levels(y)
+    } else if (is.character(y)) {
+      levels_target <- sort(unique(stats::na.omit(y)))
+    } else if (is.numeric(y)) {
+      u_vals <- sort(unique(stats::na.omit(y)))
+      if (!is.null(num_class) && all(u_vals %in% seq(0, num_class - 1))) {
+        levels_target <- seq(0, num_class - 1)
+      } else if (!is.null(num_class) && all(u_vals %in% seq(1, num_class))) {
+        levels_target <- seq(1, num_class)
+      } else {
+        levels_target <- if (!is.null(num_class)) seq(0, num_class - 1) else u_vals
+      }
     } else {
-      sort(unique(y))
+      levels_target <- if (!is.null(num_class)) seq(0, num_class - 1) else sort(unique(y))
     }
     num_classes_int <- as.integer(length(levels_target))
+    if (!is.null(num_class) && num_classes_int < as.integer(num_class)) {
+      num_classes_int <- as.integer(num_class)
+    }
     y_num <- as.numeric(factor(y, levels = levels_target)) - 1.0
   } else {
     stop(sprintf("Unsupported task '%s' for RealMLP evaluator.", task))
@@ -1206,14 +1254,14 @@ register_evaluator(
     target <- .realmlp_prepare_target(y_train, task, num_class)
     y_train_num   <- target$y_num
     levels_target <- target$levels_target
-    y_val_num <- if (!is.null(y_val)) .realmlp_prepare_target(y_val, task, num_class)$y_num else NULL
+    y_val_num <- if (!is.null(y_val)) .realmlp_prepare_target(y_val, task, num_class, levels_target = target$levels_target)$y_num else NULL
 
     metric_arg <- if (!is.null(extra_params$metric)) as.character(extra_params$metric) else "default"
     hidden_dim_val <- if (!is.null(extra_params$hidden_dim)) as.integer(extra_params$hidden_dim) else 256L
 
     fit_res <- rcpp_realmlp_train(
       x_train = x_train, y_train = y_train_num,
-      x_val = if (use_es) x_val else NULL,
+      x_val = x_val,
       y_val = if (use_es) y_val_num else NULL,
       task = task, n_epochs = n_epochs, batch_size = batch_size, lr = lr_val,
       early_stopping_rounds = es_rounds_to_pass, seed = seed_val,
@@ -1224,7 +1272,11 @@ register_evaluator(
 
     preds <- NULL
     if (!is.null(x_val)) {
-      raw_preds <- rcpp_realmlp_predict(fit_res$model_state, x_val)
+      raw_preds <- if (!is.null(fit_res$val_preds)) {
+        fit_res$val_preds
+      } else {
+        rcpp_realmlp_predict(fit_res$model_state, x_val, threads = as.integer(threads))
+      }
       if (task == "multiclass") {
         probs <- as.matrix(raw_preds)
         colnames(probs) <- as.character(levels_target)
@@ -1269,7 +1321,8 @@ register_evaluator(
       col_meds = col_meds,
       levels_target = levels_target,
       best_iteration = best_it,
-      best_epoch = best_it
+      best_epoch = best_it,
+      threads = as.integer(threads)
     )
 
     list(model = wrapped_model, predictions = preds, importances = importances,
@@ -1277,19 +1330,33 @@ register_evaluator(
   },
 
   predict_func = function(model, x_new, task, ...) {
-    col_meds <- model$col_meds
     x_new <- .sanitize_feature_matrix(x_new)
 
-    if (!is.null(col_meds) && anyNA(x_new)) {
-      for (j in seq_len(ncol(x_new))) {
-        if (j <= length(col_meds)) {
-          na_mask <- is.na(x_new[, j]) | !is.finite(x_new[, j])
-          if (any(na_mask)) x_new[na_mask, j] <- col_meds[j]
+    if (anyNA(x_new)) {
+      col_meds <- model$col_meds
+      if (is.null(col_meds) && !is.null(model$model_state)) {
+        col_meds <- model$model_state$x_mean
+      }
+      if (!is.null(col_meds)) {
+        for (j in seq_len(ncol(x_new))) {
+          if (j <= length(col_meds)) {
+            col <- x_new[, j]
+            if (anyNA(col)) x_new[is.na(col), j] <- col_meds[j]
+          }
         }
       }
     }
 
-    raw_preds <- rcpp_realmlp_predict(model$model_state, x_new)
+    extra_args <- list(...)
+    th <- resolve_param_aliases(extra_args)$threads
+    n_threads <- if (!is.null(th)) {
+      as.integer(th)
+    } else if (!is.null(model$threads)) {
+      as.integer(model$threads)
+    } else {
+      as.integer(getOption("evoFE.threads", 0L))
+    }
+    raw_preds <- rcpp_realmlp_predict(model$model_state, x_new, threads = n_threads)
 
     if (task == "regression") {
       as.numeric(raw_preds)

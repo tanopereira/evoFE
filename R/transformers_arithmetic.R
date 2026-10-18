@@ -88,9 +88,7 @@ evo_transformers$divide <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "div")
 )
 
-# --- STATEFUL SUPERVISED TRANSFORMERS ---
-
-# Target Encoding
+# Normalized Difference
 evo_transformers$normalized_difference <- create_transformer(
   name = "normalized_difference",
   type = "binary",
@@ -120,7 +118,7 @@ evo_transformers$log_ratio <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "lr")
 )
 
-# Random Projection
+# Power
 evo_transformers$power <- create_transformer(
   name = "power",
   type = "unary",

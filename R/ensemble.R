@@ -585,8 +585,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         total_data_size <- nrow(x_full)
         training_size <- if (!is.null(ind_i$train_size) && is.numeric(ind_i$train_size) && ind_i$train_size > 0) {
           as.numeric(ind_i$train_size)
-        } else if (!is.null(recipe$best_individual$train_size) && is.numeric(recipe$best_individual$train_size) && recipe$best_individual$train_size > 0) {
-          as.numeric(recipe$best_individual$train_size)
+        } else if (!is.null(rec_i$best_individual$train_size) && is.numeric(rec_i$best_individual$train_size) && rec_i$best_individual$train_size > 0) {
+          as.numeric(rec_i$best_individual$train_size)
         } else {
           total_data_size
         }
@@ -654,6 +654,25 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
   }
 
+  # Compute validation ECDFs per island for calibrated test-time rank transformation
+  rank_ecdfs <- NULL
+  if (isTRUE(rank_average)) {
+    rank_ecdfs <- list()
+    for (i in seq_along(val_preds_list)) {
+      nm <- names(val_preds_list)[i]
+      vp <- val_preds_list[[i]]
+      ecdf_item <- if (is.matrix(vp)) {
+        lapply(seq_len(ncol(vp)), function(j) {
+          stats::ecdf(vp[!is.na(vp[, j]), j])
+        })
+      } else {
+        stats::ecdf(vp[!is.na(vp)])
+      }
+      if (!is.null(nm)) rank_ecdfs[[as.character(nm)]] <- ecdf_item
+      rank_ecdfs[[as.character(i)]] <- ecdf_item
+    }
+  }
+
   structure(
     list(
       active_recipes = active_recipes,
@@ -672,6 +691,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       island_headroom_closed = isl_headroom_closed,
       method = method,
       rank_average = isTRUE(rank_average),
+      rank_ecdfs = rank_ecdfs,
       stack_cv_fitness = if (!is.null(selection_res$stack_cv_fitness)) selection_res$stack_cv_fitness else NULL,
       task = task,
       evaluator = first_recipe$evaluator,

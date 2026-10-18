@@ -8,7 +8,7 @@ evo_transformers$pca <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     input_cols <- gene$input_cols
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     tryCatch({
       pca_model <- stats::prcomp(x, center = TRUE, scale. = TRUE)
@@ -22,7 +22,7 @@ evo_transformers$pca <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     
     if (is.null(state$preds_cache)) {
@@ -53,7 +53,7 @@ evo_transformers$truncated_svd <- create_transformer(
     input_cols <- gene$input_cols
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     tryCatch({
       C <- max(2L, as.integer(round(log2(ncol(x)))))
@@ -68,7 +68,7 @@ evo_transformers$truncated_svd <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (is.null(state) || !state$valid) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     
     # Calculate full projection (all nv columns)
@@ -94,8 +94,7 @@ evo_transformers$truncated_svd <- create_transformer(
 
 
 
-# --- STATEFUL CATEGORICAL TRANSFORMERS ---
-
+# UMAP Dimension Reduction
 evo_transformers$umap <- create_transformer(
   name = "umap",
   type = "multivariate",
@@ -103,10 +102,14 @@ evo_transformers$umap <- create_transformer(
   fit_func = function(data, gene, target_col = NULL) {
     input_cols <- gene$input_cols
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     
     verbose <- is_verbose()
+    if (!requireNamespace("uwot", quietly = TRUE)) {
+      if (verbose) message("  [UMAP Fit] Failed: uwot package is not available")
+      return(list(model = NULL, valid = FALSE))
+    }
     x_s <- .cluster_prep_x(x, min_rows = 15, verbose = verbose, tag = "UMAP Fit")
     if (is.null(x_s)) {
       x_s <- x
@@ -157,8 +160,12 @@ evo_transformers$umap <- create_transformer(
       }
       return(rep(0, nrow(data)))
     }
+    if (!requireNamespace("uwot", quietly = TRUE)) {
+      if (verbose) message("  [UMAP Apply] uwot package is not available.")
+      return(rep(0, nrow(data)))
+    }
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     
     compute <- function() {
@@ -198,7 +205,7 @@ evo_transformers$umap <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "ump")
 )
 
-# MST-based Anomaly Score
+# Random Projection
 evo_transformers$random_projection <- create_transformer(
   name = "random_projection",
   type = "multivariate",
@@ -215,14 +222,14 @@ evo_transformers$random_projection <- create_transformer(
     input_cols <- gene$input_cols
     if (is.null(state) || is.null(state$w)) return(rep(0, nrow(data)))
     x <- as.matrix(data[, input_cols, with = FALSE])
-    x[is.na(x)] <- 0
+    x[!is.finite(x)] <- 0
     storage.mode(x) <- "double"
     as.vector(x %*% state$w)
   },
   name_generator = function(gene) .gene_col_name(gene, "rp")
 )
 
-# Lumbermark Clustering
+# Multiple Correspondence Analysis (MCA)
 evo_transformers$mca <- create_transformer(
   name = "mca",
   type = "multivariate",
@@ -360,15 +367,10 @@ evo_transformers$famd <- create_transformer(
     sigma <- numeric(0)
     Z_num <- matrix(0, nrow = N, ncol = 0)
     if (length(num_cols) > 0) {
-      X_num <- as.matrix(data[, num_cols, with = FALSE])
-      mu <- colMeans(X_num, na.rm = TRUE)
-      sigma <- apply(X_num, 2, stats::sd, na.rm = TRUE)
-      sigma[sigma == 0 | is.na(sigma)] <- 1
-      X_num_imp <- X_num
-      for (j in seq_len(ncol(X_num_imp))) {
-        X_num_imp[is.na(X_num_imp[, j]), j] <- mu[j]
-      }
-      Z_num <- scale(X_num_imp, center = mu, scale = sigma)
+      scaled_res <- matrix_impute_and_scale(data[, num_cols, with = FALSE])
+      mu <- scaled_res$mu
+      sigma <- scaled_res$sigma
+      Z_num <- scaled_res$X
     }
     
     training_levels <- list()
@@ -446,11 +448,8 @@ evo_transformers$famd <- create_transformer(
     
     Z_num <- matrix(0, nrow = N_new, ncol = 0)
     if (length(state$num_cols) > 0) {
-      X_num <- as.matrix(data[, state$num_cols, with = FALSE])
-      for (j in seq_len(ncol(X_num))) {
-        X_num[is.na(X_num[, j]), j] <- state$mu[j]
-      }
-      Z_num <- scale(X_num, center = state$mu, scale = state$sigma)
+      scaled_res <- matrix_impute_and_scale(data[, state$num_cols, with = FALSE], stats = state)
+      Z_num <- scaled_res$X
     }
     
     Z_cat <- matrix(0, nrow = N_new, ncol = 0)
@@ -510,16 +509,10 @@ evo_transformers$between_group_pca <- create_transformer(
     
     if (length(num_cols) == 0) return(list(valid = FALSE))
     
-    X_num <- as.matrix(data[, num_cols, with = FALSE])
-    mu <- colMeans(X_num, na.rm = TRUE)
-    sigma <- apply(X_num, 2, stats::sd, na.rm = TRUE)
-    sigma[sigma == 0 | is.na(sigma)] <- 1
-    
-    X_num_imp <- X_num
-    for (j in seq_len(ncol(X_num_imp))) {
-      X_num_imp[is.na(X_num_imp[, j]), j] <- mu[j]
-    }
-    Z_num <- scale(X_num_imp, center = mu, scale = sigma)
+    scaled_res <- matrix_impute_and_scale(data[, num_cols, with = FALSE])
+    mu <- scaled_res$mu
+    sigma <- scaled_res$sigma
+    Z_num <- scaled_res$X
     
     cat_vals <- as.character(data[[cat_col]])
     cat_vals[is.na(cat_vals)] <- "NA"
@@ -540,8 +533,7 @@ evo_transformers$between_group_pca <- create_transformer(
         sigma = sigma,
         num_cols = num_cols,
         valid = TRUE,
-        preds_cache = new.env(hash = TRUE, parent = emptyenv())
-      )
+        preds_cache = new.env(hash = TRUE, parent = emptyenv()))
     }, error = function(e) {
       list(valid = FALSE)
     })
@@ -552,11 +544,8 @@ evo_transformers$between_group_pca <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
     
-    X_num <- as.matrix(data[, state$num_cols, with = FALSE])
-    for (j in seq_len(ncol(X_num))) {
-      X_num[is.na(X_num[, j]), j] <- state$mu[j]
-    }
-    Z_num <- scale(X_num, center = state$mu, scale = state$sigma)
+    scaled_res <- matrix_impute_and_scale(data[, state$num_cols, with = FALSE], stats = state)
+    Z_num <- scaled_res$X
     
     compute <- function() {
       Z_num %*% state$v
@@ -580,7 +569,7 @@ evo_transformers$between_group_pca <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "bgpca")
 )
 
-# Helper: normalize target y into a mathematically valid numeric vector for single-column target encoding
+# Supervised Between-Group PCA (Supervised BG-PCA)
 evo_transformers$supervised_bgpca <- create_transformer(
   name = "supervised_bgpca",
   type = "multivariate",
@@ -592,12 +581,10 @@ evo_transformers$supervised_bgpca <- create_transformer(
     N <- nrow(data)
     if (length(input_cols) == 0) return(list(valid = FALSE))
 
-    X <- as.matrix(data[, input_cols, with = FALSE])
-    mu <- colMeans(X, na.rm = TRUE)
-    sigma <- apply(X, 2, stats::sd, na.rm = TRUE)
-    sigma[sigma == 0 | is.na(sigma)] <- 1
-    for (j in seq_len(ncol(X))) X[is.na(X[, j]), j] <- mu[j]
-    Z <- scale(X, center = mu, scale = sigma)
+    scaled_res <- matrix_impute_and_scale(data[, input_cols, with = FALSE])
+    mu <- scaled_res$mu
+    sigma <- scaled_res$sigma
+    Z <- scaled_res$X
 
     grps <- .target_to_groups(data[[target_col]])
     dt <- data.table::data.table(grp = grps, Z)
@@ -617,9 +604,8 @@ evo_transformers$supervised_bgpca <- create_transformer(
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     if (is.null(state) || !isTRUE(state$valid)) return(rep(0, nrow(data)))
     input_cols <- gene$input_cols
-    X <- as.matrix(data[, input_cols, with = FALSE])
-    for (j in seq_len(ncol(X))) X[is.na(X[, j]), j] <- state$mu[j]
-    Z <- scale(X, center = state$mu, scale = state$sigma)
+    scaled_res <- matrix_impute_and_scale(data[, input_cols, with = FALSE], stats = state)
+    Z <- scaled_res$X
 
     compute <- function() Z %*% state$v
     if (is.null(state$preds_cache)) {
@@ -761,12 +747,10 @@ evo_transformers$supervised_famd <- create_transformer(
     mu <- numeric(0); sigma <- numeric(0)
     Z_num <- matrix(0, nrow = N, ncol = 0)
     if (length(num_cols) > 0) {
-      X_num <- as.matrix(data[, num_cols, with = FALSE])
-      mu <- colMeans(X_num, na.rm = TRUE)
-      sigma <- apply(X_num, 2, stats::sd, na.rm = TRUE)
-      sigma[sigma == 0 | is.na(sigma)] <- 1
-      for (j in seq_len(ncol(X_num))) X_num[is.na(X_num[, j]), j] <- mu[j]
-      Z_num <- scale(X_num, center = mu, scale = sigma)
+      scaled_res <- matrix_impute_and_scale(data[, num_cols, with = FALSE])
+      mu <- scaled_res$mu
+      sigma <- scaled_res$sigma
+      Z_num <- scaled_res$X
     }
 
     training_levels <- list()
@@ -830,9 +814,8 @@ evo_transformers$supervised_famd <- create_transformer(
     N_new <- nrow(data)
     Z_num <- matrix(0, nrow = N_new, ncol = 0)
     if (length(state$num_cols) > 0) {
-      X_num <- as.matrix(data[, state$num_cols, with = FALSE])
-      for (j in seq_len(ncol(X_num))) X_num[is.na(X_num[, j]), j] <- state$mu[j]
-      Z_num <- scale(X_num, center = state$mu, scale = state$sigma)
+      scaled_res <- matrix_impute_and_scale(data[, state$num_cols, with = FALSE], stats = state)
+      Z_num <- scaled_res$X
     }
     Z_cat <- matrix(0, nrow = N_new, ncol = 0)
     if (length(state$cat_cols) > 0 && length(state$p_col) > 0) {
@@ -871,7 +854,3 @@ evo_transformers$supervised_famd <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "sfamd")
 )
-
-# --- SKRUB-INSPIRED ENCODERS ---
-
-# String Similarity Encoder (Jaccard similarity of 3-grams to prototype categories)

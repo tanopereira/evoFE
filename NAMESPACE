@@ -62,8 +62,6 @@ export(policy_gibbs_push)
 export(policy_push_uniform)
 export(policy_tiered_admission)
 export(predict_model)
-export(rcpp_realmlp_predict)
-export(rcpp_realmlp_train)
 export(register_evaluator)
 export(register_transformer)
 export(resolve_migration_transactions)
@@ -88,7 +86,6 @@ importFrom(bbotk,
   opt,
   trm
 )
-importFrom(genieclust,genie)
 importFrom(lhs,maximinLHS)
 importFrom(lightgbm,lgb.train)
 importFrom(paradox,
@@ -104,6 +101,5 @@ importFrom(utils,
   modifyList,
   tail
 )
-importFrom(uwot,umap)
 importFrom(xgboost,xgb.train)
 useDynLib(evoFE, .registration = TRUE)

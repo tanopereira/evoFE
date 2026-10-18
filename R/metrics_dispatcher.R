@@ -13,7 +13,7 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL, threa
     return(metric(y_true, y_pred))
   }
 
-  metric <- tolower(metric)
+  metric <- canonical_metric_name(metric, task)
 
   if (task == "classification") {
     if (metric %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {

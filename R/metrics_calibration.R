@@ -21,15 +21,7 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
   if (is.na(th) || th < 1L) th <- 1L
 
   if (task == "classification") {
-    if (is.factor(y_true)) {
-      y_true <- as.integer(y_true) - 1L
-    } else if (is.character(y_true)) {
-      y_true <- as.integer(as.factor(y_true)) - 1L
-    } else if (is.logical(y_true)) {
-      y_true <- as.integer(y_true)
-    } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
-      y_true <- as.integer(as.factor(y_true)) - 1L
-    }
+    y_true <- encode_binary_target(y_true)
     y_true <- as.numeric(y_true)
     y_pred <- as.numeric(y_pred)
 
@@ -80,6 +72,10 @@ compute_ts_refinement <- function(y_true, y_pred, task = "classification", num_c
 compute_calibrated_rmse <- function(y_true, y_pred) {
   y_true <- as.numeric(y_true)
   y_pred <- as.numeric(y_pred)
+
+  valid <- is.finite(y_true) & is.finite(y_pred)
+  y_true <- y_true[valid]
+  y_pred <- y_pred[valid]
 
   if (length(y_true) <= 1L) {
     return(0.0)

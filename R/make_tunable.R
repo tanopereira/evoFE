@@ -165,6 +165,20 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
 
     if (!use_split && !use_fold_data) {
       folds <- sample(rep(1:mbo_folds, length.out = nrow(x_train)))
+      cv_fold_data <- lapply(seq_len(mbo_folds), function(i) {
+        idx_train <- which(folds != i)
+        idx_val <- which(folds == i)
+        list(
+          x_train = .sanitize_feature_matrix(x_train[idx_train, , drop = FALSE]),
+          y_train = y_train[idx_train],
+          x_val = .sanitize_feature_matrix(x_train[idx_val, , drop = FALSE]),
+          y_val = y_train[idx_val]
+        )
+      })
+    }
+    if (use_split) {
+      x_train <- .sanitize_feature_matrix(x_train)
+      x_val   <- .sanitize_feature_matrix(x_val)
     }
     
     # Define optimization objective function
@@ -186,6 +200,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                  metric = metric, verbose = FALSE),
             trial_params
           ))
+          if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
           scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class)
         }
         mean_score <- mean(scores)
@@ -201,6 +216,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                threads = threads, num_class = num_class, metric = metric, verbose = FALSE),
           trial_params
         ))
+        if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
         score <- compute_metric(y_val, res$predictions, task, metric = metric, num_class = num_class)
         
         if (verbose) {
@@ -209,22 +225,22 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         }
         return(score)
       } else {
-        # Cross-validation mode
+        # Cross-validation mode across pre-sliced folds
         scores <- numeric(mbo_folds)
         for (i in seq_len(mbo_folds)) {
-          idx_train <- which(folds != i)
-          idx_val <- which(folds == i)
+          fd <- cv_fold_data[[i]]
           
           res <- do.call(base_evaluator$train_func, c(
-            list(x_train = x_train[idx_train, , drop = FALSE], 
-                 y_train = y_train[idx_train], 
-                 x_val = x_train[idx_val, , drop = FALSE], 
-                 y_val = y_train[idx_val],
+            list(x_train = fd$x_train, 
+                 y_train = fd$y_train, 
+                 x_val = fd$x_val, 
+                 y_val = fd$y_val,
                  task = task, threads = threads, num_class = num_class, 
                  metric = metric, verbose = FALSE),
             trial_params
           ))
-          scores[i] <- compute_metric(y_train[idx_val], res$predictions, task, metric = metric, num_class = num_class)
+          if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
+          scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class)
         }
         
         mean_score <- mean(scores)
@@ -365,6 +381,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     name = tuner_name,
     train_func = tuned_train_func,
     predict_func = base_evaluator$predict_func,
+    cleanup_func = base_evaluator$cleanup_func,
     base_evaluator = base_model_name,
     traits = if (!is.null(base_evaluator$traits)) base_evaluator$traits else list()
   )

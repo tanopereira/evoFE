@@ -142,3 +142,19 @@ individual_to_recipe_string <- function(ind) {
   
   paste0(features_str, stats_str)
 }
+
+#' Generate an exact, untruncated cache key for an individual
+#'
+#' @param ind An evo_individual
+#' @return A character string representing the individual for fitness caching.
+#' @noRd
+individual_to_cache_key <- function(ind) {
+  raw_cols <- sort(c(ind$numeric_cols, ind$categorical_cols, ind$datetime_cols))
+  raw_part <- paste(raw_cols, collapse = ",")
+  gene_part <- if (length(ind$genes) == 0L) {
+    ""
+  } else {
+    paste(sort(vapply(ind$genes, gene_to_formula, character(1), truncate = FALSE)), collapse = ";")
+  }
+  paste0("raw:", raw_part, "|genes:", gene_part)
+}

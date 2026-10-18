@@ -17,7 +17,8 @@ evo_transformers$quantile_binning <- create_transformer(
     boundaries <- unique(boundaries)
     list(boundaries = boundaries)
   },
-  apply_func = function(data, gene, state) {
+  apply_func = function(data, gene, state = NULL) {
+    if (is.null(state) || is.null(state$boundaries)) return(rep(0, nrow(data)))
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
     boundaries <- state$boundaries
@@ -63,7 +64,8 @@ evo_transformers$quantile_binning_cat <- create_transformer(
     boundaries <- unique(boundaries)
     list(boundaries = boundaries)
   },
-  apply_func = function(data, gene, state) {
+  apply_func = function(data, gene, state = NULL) {
+    if (is.null(state) || is.null(state$boundaries)) return(factor(rep("bin_1", nrow(data))))
     input_cols <- gene$input_cols
     x <- data[[input_cols[1]]]
     boundaries <- state$boundaries
@@ -92,7 +94,7 @@ evo_transformers$log_binning_cat <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "lbc")
 )
 
-# Normalized Difference
+# Rank Transform
 evo_transformers$rank_transform <- create_transformer(
   name = "rank_transform",
   type = "unary",
@@ -117,5 +119,3 @@ evo_transformers$rank_transform <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "rnk")
 )
-
-# Weight of Evidence Encoding (binary classification only)

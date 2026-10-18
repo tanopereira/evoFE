@@ -68,14 +68,15 @@ BEGIN_RCPP
 END_RCPP
 }
 // rcpp_realmlp_predict
-NumericMatrix rcpp_realmlp_predict(List model_state, NumericMatrix x_new);
-RcppExport SEXP _evoFE_rcpp_realmlp_predict(SEXP model_stateSEXP, SEXP x_newSEXP) {
+NumericMatrix rcpp_realmlp_predict(List model_state, NumericMatrix x_new, int threads);
+RcppExport SEXP _evoFE_rcpp_realmlp_predict(SEXP model_stateSEXP, SEXP x_newSEXP, SEXP threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< List >::type model_state(model_stateSEXP);
     Rcpp::traits::input_parameter< NumericMatrix >::type x_new(x_newSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpp_realmlp_predict(model_state, x_new));
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_realmlp_predict(model_state, x_new, threads));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -159,7 +160,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_compute_ts_refinement_binary", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_binary, 5},
     {"_evoFE_rcpp_compute_ts_refinement_multiclass", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_multiclass, 6},
     {"_evoFE_rcpp_realmlp_train", (DL_FUNC) &_evoFE_rcpp_realmlp_train, 15},
-    {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 2},
+    {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 3},
     {"_evoFE_rcpp_fused_row_min", (DL_FUNC) &_evoFE_rcpp_fused_row_min, 2},
     {"_evoFE_rcpp_fused_row_max", (DL_FUNC) &_evoFE_rcpp_fused_row_max, 2},
     {"_evoFE_rcpp_fused_geometric_mean", (DL_FUNC) &_evoFE_rcpp_fused_geometric_mean, 3},

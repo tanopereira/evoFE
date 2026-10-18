@@ -217,12 +217,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         n_features = n_active_raw + n_genes
       )
       ind$penalty <- pen
-      if (task == "regression") {
-        ind$fitness <- if (raw_score <= 0) raw_score * (1 + pen) else raw_score * (1 - pen)
-      } else {
-        error_gap <- max(0, min(1.0, 1.0 - raw_score))
-        ind$fitness <- raw_score - error_gap * pen
-      }
+      ind$fitness <- apply_complexity_penalty(raw_score, pen, task)
     } else {
       ind$fitness <- raw_score
     }
@@ -499,6 +494,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$train_size <- as.integer(round(mean(fold_train_sizes)))
     }
 
+    # Propagate fitted gene states from the last successful fold before complexity penalty
+    # so pruned genes are not penalized in CV mode
+    if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
+
     # Complexity penalty: discourage long recipes (parsimony pressure)
     if (complexity_penalty > 0 && complexity_mode != "none" && is.finite(raw_score)) {
       n_samp <- if (!is.null(n_samples)) n_samples else if (!is.null(data)) nrow(data) else if (!is.null(shared_full)) nrow(shared_full) else 100
@@ -518,12 +517,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         n_features = n_active_raw + n_genes
       )
       ind$penalty <- pen
-      if (task == "regression") {
-        ind$fitness <- if (raw_score <= 0) raw_score * (1 + pen) else raw_score * (1 - pen)
-      } else {
-        error_gap <- max(0, min(1.0, 1.0 - raw_score))
-        ind$fitness <- raw_score - error_gap * pen
-      }
+      ind$fitness <- apply_complexity_penalty(raw_score, pen, task)
     } else {
       ind$fitness <- raw_score
     }
@@ -531,12 +525,12 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Aggregate importances across folds
     all_feats <- unique(unlist(lapply(fold_importances, names)))
     if (length(all_feats) > 0) {
-      avg_imp <- sapply(all_feats, function(feat) {
-        vals <- sapply(fold_importances, function(fold) {
+      avg_imp <- vapply(all_feats, function(feat) {
+        vals <- vapply(fold_importances, function(fold) {
           if (feat %in% names(fold)) fold[[feat]] else 0
-        })
+        }, numeric(1))
         mean(vals)
-      })
+      }, numeric(1))
 
       imp_sum <- sum(avg_imp, na.rm = TRUE)
       if (imp_sum > 0) {
@@ -548,9 +542,6 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       ind$importances <- numeric(0)
     }
-
-    # Propagate fitted gene states from the last successful fold
-    if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
 
     ind$holdout_fitness <- NULL
   }

@@ -2,15 +2,7 @@
 #'
 #' @noRd
 compute_exp_neg_logloss <- function(y_true, y_pred) {
-  if (is.factor(y_true)) {
-    y_true <- as.integer(y_true) - 1L
-  } else if (is.character(y_true)) {
-    y_true <- as.integer(as.factor(y_true)) - 1L
-  } else if (is.logical(y_true)) {
-    y_true <- as.integer(y_true)
-  } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
-    y_true <- as.integer(as.factor(y_true)) - 1L
-  }
+  y_true <- encode_binary_target(y_true)
   p <- pmax(pmin(as.numeric(y_pred), 1 - 1e-15), 1e-15)
   ll <- -mean(y_true * log(p) + (1 - y_true) * log(1 - p), na.rm = TRUE)
   exp(-ll)
@@ -37,15 +29,10 @@ compute_exp_neg_multiclass_logloss <- function(y_true, y_pred, num_class) {
 
 #' @noRd
 compute_auc <- function(y_true, y_pred) {
-  if (is.factor(y_true)) {
-    y_true <- as.integer(y_true) - 1L
-  } else if (is.character(y_true)) {
-    y_true <- as.integer(as.factor(y_true)) - 1L
-  } else if (is.logical(y_true)) {
-    y_true <- as.integer(y_true)
-  } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
-    y_true <- as.integer(as.factor(y_true)) - 1L
-  }
+  y_true <- encode_binary_target(y_true)
+  valid <- !is.na(y_true) & !is.na(y_pred)
+  y_true <- y_true[valid]
+  y_pred <- y_pred[valid]
   n_pos <- sum(y_true == 1, na.rm = TRUE)
   n_neg <- sum(y_true == 0, na.rm = TRUE)
   if (n_pos == 0 || n_neg == 0) {
@@ -77,15 +64,7 @@ compute_multiclass_auc <- function(y_true, y_pred_matrix, num_class) {
 
 #' @noRd
 compute_f1 <- function(y_true, y_pred) {
-  if (is.factor(y_true)) {
-    y_true <- as.integer(y_true) - 1L
-  } else if (is.character(y_true)) {
-    y_true <- as.integer(as.factor(y_true)) - 1L
-  } else if (is.logical(y_true)) {
-    y_true <- as.integer(y_true)
-  } else if (is.numeric(y_true) && !all(stats::na.omit(y_true) %in% c(0, 1))) {
-    y_true <- as.integer(as.factor(y_true)) - 1L
-  }
+  y_true <- encode_binary_target(y_true)
   preds <- as.integer(as.numeric(y_pred) >= 0.5)
   tp <- sum(y_true == 1 & preds == 1, na.rm = TRUE)
   fp <- sum(y_true == 0 & preds == 1, na.rm = TRUE)
