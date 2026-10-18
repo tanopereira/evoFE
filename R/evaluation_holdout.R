@@ -130,7 +130,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 
     if (task == "multiclass") {
       y_holdout_encoded <- encode_multiclass_target(holdout_fold[[target_col]], classes)
-      preds_holdout <- format_multiclass_predictions(preds_holdout, nrow(x_holdout), num_class, classes)
+      preds_holdout <- format_multiclass_predictions(preds_holdout, classes)
       ind$holdout_fitness <- compute_metric(y_holdout_encoded, preds_holdout, task, metric, num_class, threads = threads)
     } else if (task == "classification") {
       y_holdout_encoded <- encode_binary_target(holdout_fold[[target_col]])

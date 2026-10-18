@@ -1324,7 +1324,7 @@ evolve_features <- function(data, target_col, task = "classification",
         y_conf <- confirmation_dt[[target_col]]
         if (task == "multiclass") {
           y_conf_enc <- encode_multiclass_target(y_conf, classes)
-          preds_conf <- format_multiclass_predictions(preds_conf, nrow(x_conf), num_class, classes)
+          preds_conf <- format_multiclass_predictions(preds_conf, classes)
           conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
         } else if (task == "classification") {
           y_conf_enc <- encode_binary_target(y_conf)
