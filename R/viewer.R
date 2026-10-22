@@ -32,11 +32,27 @@ start_evolution_viewer <- function(port = NULL) {
     }
   }
 
+  safe_random_port <- function() {
+    old_seed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      get(".Random.seed", envir = globalenv(), inherits = FALSE)
+    } else {
+      NULL
+    }
+    on.exit({
+      if (!is.null(old_seed)) {
+        assign(".Random.seed", old_seed, envir = globalenv())
+      } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+        rm(".Random.seed", envir = globalenv())
+      }
+    }, add = TRUE)
+    httpuv::randomPort()
+  }
+
   if (is.null(port)) {
     port <- getOption("evoFE.viewer_port", NULL)
   }
   if (is.null(port)) {
-    port <- httpuv::randomPort()
+    port <- safe_random_port()
   }
 
   ws_connections <- list()
@@ -63,7 +79,7 @@ start_evolution_viewer <- function(port = NULL) {
   while (is.null(server) && attempts < max_attempts) {
     attempts <- attempts + 1
     if (attempts > 1 || is.null(port)) {
-      port <- httpuv::randomPort()
+      port <- safe_random_port()
     }
     server <- tryCatch({
       httpuv::startServer("127.0.0.1", port,
@@ -126,8 +142,8 @@ start_evolution_viewer <- function(port = NULL) {
       }
       ws_connections <<- alive_conns
 
-      # Service httpuv event loop
-      suppressWarnings(httpuv::service(100))
+      # Service httpuv event loop (1ms timeout)
+      suppressWarnings(httpuv::service(1))
     },
     stop = function() {
       suppressWarnings(httpuv::stopServer(server))

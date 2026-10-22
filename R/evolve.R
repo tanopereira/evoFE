@@ -751,7 +751,7 @@ evolve_features <- function(data, target_col, task = "classification",
       final = NULL
     )
 
-    viewer <- start_evolution_viewer(port = port)
+    viewer <- with_preserved_seed(start_evolution_viewer(port = port))
     on.exit(if (!is.null(viewer)) tryCatch(viewer$stop(), error = function(e) NULL), add = TRUE)
     if (interactive()) {
       utils::browseURL(viewer$url)
@@ -877,7 +877,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (record) {
     res_sample <- tryCatch(
       {
-        apply_individual(baseline_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        with_preserved_seed(apply_individual(baseline_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
       },
       error = function(e) list(train = utils::head(shared_full, 5))
     )
@@ -1361,7 +1361,7 @@ evolve_features <- function(data, target_col, task = "classification",
   if (record) {
     res_sample <- tryCatch(
       {
-        apply_individual(best_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        with_preserved_seed(apply_individual(best_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
       },
       error = function(e) list(train = utils::head(shared_full, 5))
     )

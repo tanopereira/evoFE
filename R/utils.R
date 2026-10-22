@@ -343,6 +343,32 @@ with_seed <- function(seed_val, expr) {
   if (is.function(expr)) expr() else force(expr)
 }
 
+#' Preserve RNG Seed Across Side-Effecting Operations
+#'
+#' Evaluates expression while strictly guaranteeing that `.Random.seed` is restored
+#' to its exact state prior to evaluation.
+#'
+#' @param expr Expression or zero-argument function to evaluate.
+#' @return Result of evaluating `expr`.
+#' @keywords internal
+#' @noRd
+with_preserved_seed <- function(expr) {
+  old_seed <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+    get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  } else {
+    NULL
+  }
+  on.exit({
+    if (!is.null(old_seed)) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+
+  if (is.function(expr)) expr() else force(expr)
+}
+
 #' Column Imputation, Variance Flooring, and Standardization for Numeric Matrices
 #'
 #' Imputes non-finite and missing values using column means, floors zero-variance

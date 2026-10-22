@@ -151,3 +151,28 @@ test_that("evolution log records min_fitness_threshold for tiered admission poli
   expect_equal(res$evolution_log$config$min_fitness_threshold, "mean_peer")
 })
 
+test_that("record = TRUE and record = FALSE produce identical evolutionary recipes and fitness", {
+  skip_if_not_installed("httpuv")
+  skip_if_not_installed("jsonlite")
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  res_f <- evolve_features(
+    data = df, target_col = "am", task = "classification",
+    evaluator = "lightgbm", generations = 2, pop_size = 4,
+    seed = 42, record = FALSE, verbose = FALSE
+  )
+  res_t <- evolve_features(
+    data = df, target_col = "am", task = "classification",
+    evaluator = "lightgbm", generations = 2, pop_size = 4,
+    seed = 42, record = TRUE, verbose = FALSE
+  )
+
+  expect_equal(res_f$best_fitness, res_t$best_fitness)
+  expect_identical(
+    individual_to_recipe_string(res_f$best_individual),
+    individual_to_recipe_string(res_t$best_individual)
+  )
+})
+

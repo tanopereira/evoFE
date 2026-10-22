@@ -104,7 +104,7 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
 
     res_sample <- tryCatch(
       {
-        apply_individual(pop[[1]], utils::head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        with_preserved_seed(apply_individual(pop[[1]], utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
       },
       error = function(e) list(train = utils::head(shared_full, 5))
     )
@@ -403,7 +403,7 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
   if (record) {
     res_sample <- tryCatch(
       {
-        apply_individual(global_best_individual, utils::head(shared_full, 5), NULL, NULL, state_cache = state_cache)
+        with_preserved_seed(apply_individual(global_best_individual, utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
       },
       error = function(e) list(train = utils::head(shared_full, 5))
     )
