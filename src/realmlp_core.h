@@ -240,11 +240,18 @@ inline void apply_activation_grad_and_accum_bias(const Eigen::Ref<const Eigen::M
   }
 }
 
-// Coslog4 learning rate schedule: smoothly anneals from 1.0 at t=0 to 0.0 at t=1
-inline double coslog4_schedule(double t) {
+// Multi-cycle Coslog schedule as defined in PyTabKit (David Holzmüller et al.):
+// Combines cosine annealing with logarithmic cycle layout across n_cycles.
+// Each cycle warm-starts and anneals smoothly, with cycle lengths doubling logarithmically.
+inline double coslog_schedule(double t, int n_cycles = 4) {
   t = std::clamp(t, 0.0, 1.0);
-  double tau = std::log2(1.0 + 15.0 * t) / 4.0;
-  return 0.5 * (1.0 + std::cos(M_PI * tau));
+  double scale = std::pow(2.0, n_cycles) - 1.0;
+  double u = std::log2(1.0 + scale * t);
+  return 0.5 * (1.0 - std::cos(2.0 * M_PI * u));
+}
+
+inline double coslog4_schedule(double t) {
+  return coslog_schedule(t, 4);
 }
 
 // Zero-allocation, vectorized in-place Adam optimizer state
