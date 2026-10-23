@@ -1258,6 +1258,13 @@ register_evaluator(
 
     metric_arg <- if (!is.null(extra_params$metric)) as.character(extra_params$metric) else "default"
     hidden_dim_val <- if (!is.null(extra_params$hidden_dim)) as.integer(extra_params$hidden_dim) else 256L
+    n_cycles_val <- if (!is.null(extra_params$realmlp_n_cycles)) {
+      as.integer(extra_params$realmlp_n_cycles)
+    } else if (!is.null(extra_params$n_cycles)) {
+      if (identical(extra_params$n_cycles, "auto")) 0L else as.integer(extra_params$n_cycles)
+    } else {
+      4L
+    }
 
     fit_res <- rcpp_realmlp_train(
       x_train = x_train, y_train = y_train_num,
@@ -1267,7 +1274,8 @@ register_evaluator(
       early_stopping_rounds = es_rounds_to_pass, seed = seed_val,
       verbose = verbose_int, num_classes = target$num_classes_int,
       threads = as.integer(threads), metric = metric_arg,
-      hidden_dim = hidden_dim_val
+      hidden_dim = hidden_dim_val,
+      n_cycles = n_cycles_val
     )
 
     preds <- NULL
@@ -1322,6 +1330,7 @@ register_evaluator(
       levels_target = levels_target,
       best_iteration = best_it,
       best_epoch = best_it,
+      n_cycles = as.integer(fit_res$n_cycles),
       threads = as.integer(threads)
     )
 

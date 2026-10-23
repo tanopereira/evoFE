@@ -439,6 +439,63 @@ test_that("realmlp evaluator supports configurable batch_size parameter", {
   expect_equal(length(fit_b60$predictions), 20)
 })
 
+test_that("realmlp evaluator supports configurable n_cycles parameter and auto-scaling", {
+  set.seed(42)
+  d <- data.frame(x1 = rnorm(80), x2 = rnorm(80), y = rnorm(80))
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  # Default is 4 cycles
+  fit_default <- ev$train_func(
+    x_train = d[1:60, c("x1", "x2")],
+    y_train = d$y[1:60],
+    x_val = d[61:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 5,
+    verbose = FALSE
+  )
+  expect_equal(fit_default$model$n_cycles, 4L)
+
+  # Explicit 2 cycles
+  fit_c2 <- ev$train_func(
+    x_train = d[1:60, c("x1", "x2")],
+    y_train = d$y[1:60],
+    x_val = d[61:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 5,
+    realmlp_n_cycles = 2,
+    verbose = FALSE
+  )
+  expect_equal(fit_c2$model$n_cycles, 2L)
+
+  # Auto-scaling with n_cycles = 0 (nrounds = 50 < 64 -> 2 cycles)
+  fit_auto_small <- ev$train_func(
+    x_train = d[1:60, c("x1", "x2")],
+    y_train = d$y[1:60],
+    x_val = d[61:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 50,
+    n_cycles = 0,
+    verbose = FALSE
+  )
+  expect_equal(fit_auto_small$model$n_cycles, 2L)
+
+  # Auto-scaling with n_cycles = "auto" (nrounds = 100 < 150 -> 3 cycles)
+  fit_auto_med <- ev$train_func(
+    x_train = d[1:60, c("x1", "x2")],
+    y_train = d$y[1:60],
+    x_val = d[61:80, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 100,
+    n_cycles = "auto",
+    verbose = FALSE
+  )
+  expect_equal(fit_auto_med$model$n_cycles, 3L)
+})
+
 test_that("realmlp feature importances sharply separate signal from noise", {
   set.seed(42)
   n <- 200

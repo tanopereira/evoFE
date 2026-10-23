@@ -403,6 +403,7 @@ inline MetricResult compute_val_metric(
 //' @param threads Integer: number of threads for parallel computation.
 //' @param metric String: validation metric to optimize and report.
 //' @param hidden_dim Integer: hidden layer dimension (default 256).
+//' @param n_cycles Integer: number of cycles in the coslog schedule (default 4; 0 = auto-scale based on epochs).
 //' @return A List containing model weights, training statistics, and feature importances.
 // [[Rcpp::export]]
 List rcpp_realmlp_train(NumericMatrix x_train,
@@ -419,7 +420,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
                         int num_classes = 0,
                         int threads = 1,
                         std::string metric = "default",
-                        int hidden_dim = 256) {
+                        int hidden_dim = 256,
+                        int n_cycles = 4) {
 
   int N = x_train.nrow();
   int D = x_train.ncol();
@@ -429,6 +431,17 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
   bool is_cls = (task == "classification");
   bool is_multi = (task == "multiclass");
+
+  int actual_cycles = n_cycles;
+  if (actual_cycles <= 0) {
+    if (n_epochs < 64) {
+      actual_cycles = 2;
+    } else if (n_epochs < 150) {
+      actual_cycles = 3;
+    } else {
+      actual_cycles = 4;
+    }
+  }
 
   int out_dim = 1;
   if (is_multi) {
@@ -582,8 +595,11 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   if (verbose >= 1) {
     std::string es_info = (early_stopping_rounds > 0 && has_val) ?
       (" (early stopping patience=" + std::to_string(early_stopping_rounds) + ")") : "";
-    Rprintf("    [RealMLP C++ %s] Starting training: %d rows (%d features) (epochs: %d, batch: %d, hidden: %d%s)...\n",
-            task.c_str(), N, D, n_epochs, actual_batch_size, hidden_dim, es_info.c_str());
+    std::string cycle_info = (n_cycles <= 0) ?
+      ("cycles: " + std::to_string(actual_cycles) + " [auto]") :
+      ("cycles: " + std::to_string(actual_cycles));
+    Rprintf("    [RealMLP C++ %s] Starting training: %d rows (%d features) (epochs: %d, batch: %d, hidden: %d, %s%s)...\n",
+            task.c_str(), N, D, n_epochs, actual_batch_size, hidden_dim, cycle_info.c_str(), es_info.c_str());
   }
 
   // ===== Pre-allocate ALL workspace (the key optimization) =====
@@ -641,7 +657,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       auto Y_batch = ws.Y_shuf.middleRows(start, cur_B);
 
       double t_norm = static_cast<double>(step - 1) / static_cast<double>(std::max(1, total_steps - 1));
-      double cur_lr = base_lr * coslog4_schedule(t_norm);
+      double cur_lr = base_lr * coslog_schedule(t_norm, actual_cycles);
       double b1_corr = 1.0 - std::pow(beta1, step);
       double b2_corr = 1.0 - std::pow(beta2, step);
 
@@ -946,7 +962,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     Named("stopped_epoch") = stopped_epoch,
     Named("best_epoch") = best_epoch,
     Named("best_iteration") = best_epoch,
-    Named("best_val_score") = best_val_score
+    Named("best_val_score") = best_val_score,
+    Named("n_cycles") = actual_cycles
   );
 
   return res;
