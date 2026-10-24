@@ -29,3 +29,23 @@ double rcpp_compute_ts_refinement_multiclass(IntegerVector y_true, NumericMatrix
   return evofe::compute_ts_refinement_multiclass_impl(
       y_true.begin(), y_pred.begin(), n, num_class, alpha, is_logits, threads);
 }
+
+//' Fast C++ Calibrated RMSE
+//' @keywords internal
+// [[Rcpp::export]]
+double rcpp_compute_calibrated_rmse(NumericVector y_true, NumericVector y_pred) {
+  if (y_pred.size() != y_true.size()) Rcpp::stop("y_pred and y_true must have the same length.");
+  int n = y_true.size();
+  if (n <= 1) return 0.0;
+  return evofe::compute_calibrated_rmse_impl(y_true.begin(), y_pred.begin(), n);
+}
+
+//' Fast C++ Calibrated MAE
+//' @keywords internal
+// [[Rcpp::export]]
+double rcpp_compute_calibrated_mae(NumericVector y_true, NumericVector y_pred) {
+  if (y_pred.size() != y_true.size()) Rcpp::stop("y_pred and y_true must have the same length.");
+  int n = y_true.size();
+  if (n <= 1) return 0.0;
+  return evofe::compute_calibrated_mae_impl(y_true.begin(), y_pred.begin(), n);
+}

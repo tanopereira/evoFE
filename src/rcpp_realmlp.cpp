@@ -240,6 +240,14 @@ inline MetricResult compute_val_metric(
   std::transform(m.begin(), m.end(), m.begin(), ::tolower);
 
   if (task == "regression") {
+    if (m == "cal_rmse" || m == "cal-rmse") {
+      double score = evofe::compute_calibrated_rmse_impl(y_v_ptr, val_preds.data(), N_val);
+      return { score, "Val Cal-RMSE", false };
+    }
+    if (m == "cal_mae" || m == "cal-mae") {
+      double score = evofe::compute_calibrated_mae_impl(y_v_ptr, val_preds.data(), N_val);
+      return { score, "Val Cal-MAE", false };
+    }
     if (m == "mae") {
       double sum_ae = 0.0;
       for (int i = 0; i < N_val; ++i) {

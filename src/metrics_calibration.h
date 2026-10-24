@@ -244,6 +244,187 @@ inline double compute_ts_refinement_multiclass_impl(
   return unsmoothed_loss * inv_n;
 }
 
+// Calibrated RMSE: RMSE after optimal linear post-calibration (a + b * y_pred)
+// Equivalent to sd_true * sqrt(max(0, 1 - r^2)) where r is Pearson correlation
+inline double compute_calibrated_rmse_impl(
+    const double* __restrict__ y_true_ptr,
+    const double* __restrict__ y_pred_ptr,
+    int n) {
+  if (n <= 1) return 0.0;
+
+  // Single-pass filter and accumulate means
+  double sum_yt = 0.0;
+  double sum_yp = 0.0;
+  int count = 0;
+  for (int i = 0; i < n; ++i) {
+    double yt = y_true_ptr[i];
+    double yp = y_pred_ptr[i];
+    if (std::isfinite(yt) && std::isfinite(yp)) {
+      sum_yt += yt;
+      sum_yp += yp;
+      count++;
+    }
+  }
+
+  if (count <= 1) return 0.0;
+
+  double mean_yt = sum_yt / static_cast<double>(count);
+  double mean_yp = sum_yp / static_cast<double>(count);
+
+  double var_yt = 0.0;
+  double var_yp = 0.0;
+  double cov = 0.0;
+
+  for (int i = 0; i < n; ++i) {
+    double yt = y_true_ptr[i];
+    double yp = y_pred_ptr[i];
+    if (std::isfinite(yt) && std::isfinite(yp)) {
+      double dyt = yt - mean_yt;
+      double dyp = yp - mean_yp;
+      var_yt += dyt * dyt;
+      var_yp += dyp * dyp;
+      cov += dyt * dyp;
+    }
+  }
+
+  double sd_true = std::sqrt(var_yt / (count - 1));
+  if (sd_true < 1e-9 || !std::isfinite(sd_true)) return 0.0;
+
+  double sd_pred = std::sqrt(var_yp / (count - 1));
+  if (sd_pred < 1e-9 || !std::isfinite(sd_pred)) {
+    // Constant prediction: sqrt(mean((y_true - mean(y_pred))^2))
+    double sum_sq = 0.0;
+    for (int i = 0; i < n; ++i) {
+      double yt = y_true_ptr[i];
+      double yp = y_pred_ptr[i];
+      if (std::isfinite(yt) && std::isfinite(yp)) {
+        double d = yt - mean_yp;
+        sum_sq += d * d;
+      }
+    }
+    return std::sqrt(sum_sq / count);
+  }
+
+  double denom = std::sqrt(var_yt * var_yp);
+  if (denom < 1e-12 || !std::isfinite(denom)) {
+    double sum_sq = 0.0;
+    for (int i = 0; i < n; ++i) {
+      double yt = y_true_ptr[i];
+      double yp = y_pred_ptr[i];
+      if (std::isfinite(yt) && std::isfinite(yp)) {
+        double d = yt - yp;
+        sum_sq += d * d;
+      }
+    }
+    return std::sqrt(sum_sq / count);
+  }
+
+  double r = cov / denom;
+  double r2 = std::clamp(r * r, 0.0, 1.0);
+  return sd_true * std::sqrt(1.0 - r2);
+}
+
+// Calibrated MAE: MAE after optimal L1 linear calibration a + b * y_pred
+// For any slope b, optimal a is median(y_true - b * y_pred)
+// Minimized over b via 1D Brent's method
+inline double compute_calibrated_mae_impl(
+    const double* __restrict__ y_true_ptr,
+    const double* __restrict__ y_pred_ptr,
+    int n) {
+  if (n <= 1) return 0.0;
+
+  std::vector<double> yt;
+  std::vector<double> yp;
+  yt.reserve(n);
+  yp.reserve(n);
+
+  for (int i = 0; i < n; ++i) {
+    double t_val = y_true_ptr[i];
+    double p_val = y_pred_ptr[i];
+    if (std::isfinite(t_val) && std::isfinite(p_val)) {
+      yt.push_back(t_val);
+      yp.push_back(p_val);
+    }
+  }
+
+  int valid_n = static_cast<int>(yt.size());
+  if (valid_n <= 1) return 0.0;
+
+  double sum_yt = 0.0;
+  double sum_yp = 0.0;
+  for (int i = 0; i < valid_n; ++i) {
+    sum_yt += yt[i];
+    sum_yp += yp[i];
+  }
+  double mean_yt = sum_yt / valid_n;
+  double mean_yp = sum_yp / valid_n;
+
+  double var_yp = 0.0;
+  double cov = 0.0;
+  for (int i = 0; i < valid_n; ++i) {
+    double dyt = yt[i] - mean_yt;
+    double dyp = yp[i] - mean_yp;
+    var_yp += dyp * dyp;
+    cov += dyt * dyp;
+  }
+
+  // Constant prediction case
+  if (var_yp < 1e-9 || !std::isfinite(var_yp)) {
+    std::vector<double> tmp = yt;
+    int mid = valid_n / 2;
+    std::nth_element(tmp.begin(), tmp.begin() + mid, tmp.end());
+    double a_star = tmp[mid];
+    if (valid_n % 2 == 0) {
+      auto max_lower = std::max_element(tmp.begin(), tmp.begin() + mid);
+      a_star = 0.5 * (*max_lower + tmp[mid]);
+    }
+    double sum_ae = 0.0;
+    for (int i = 0; i < valid_n; ++i) {
+      sum_ae += std::abs(yt[i] - a_star);
+    }
+    return sum_ae / valid_n;
+  }
+
+  double b_ols = cov / var_yp;
+  if (!std::isfinite(b_ols)) b_ols = 1.0;
+
+  std::vector<double> res(valid_n);
+
+  auto eval_b = [&](double b) -> double {
+    for (int i = 0; i < valid_n; ++i) {
+      res[i] = yt[i] - b * yp[i];
+    }
+    int mid = valid_n / 2;
+    std::nth_element(res.begin(), res.begin() + mid, res.end());
+    double a_star = res[mid];
+    if (valid_n % 2 == 0) {
+      auto max_lower = std::max_element(res.begin(), res.begin() + mid);
+      a_star = 0.5 * (*max_lower + res[mid]);
+    }
+    double sum_ae = 0.0;
+    for (int i = 0; i < valid_n; ++i) {
+      sum_ae += std::abs(res[i] - a_star);
+    }
+    return sum_ae / valid_n;
+  };
+
+  double span = 4.0 * std::max(1.0, std::abs(b_ols));
+  double b_low = b_ols - span;
+  double b_high = b_ols + span;
+
+  double best_b = brent_minimize(eval_b, b_low, b_high, 1e-5);
+  double min_mae = eval_b(best_b);
+
+  // Raw uncalibrated MAE fallback safety
+  double raw_ae = 0.0;
+  for (int i = 0; i < valid_n; ++i) {
+    raw_ae += std::abs(yt[i] - yp[i]);
+  }
+  double raw_mae = raw_ae / valid_n;
+
+  return std::min(min_mae, raw_mae);
+}
+
 } // namespace evofe
 
 #endif // EVOFE_METRICS_CALIBRATION_H

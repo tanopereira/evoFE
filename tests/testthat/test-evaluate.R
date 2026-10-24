@@ -496,6 +496,45 @@ test_that("realmlp evaluator supports configurable n_cycles parameter and auto-s
   expect_equal(fit_auto_med$model$n_cycles, 3L)
 })
 
+test_that("realmlp evaluator supports cal-rmse and cal-mae regression metrics with early stopping", {
+  set.seed(42)
+  n <- 80
+  d <- data.frame(x1 = rnorm(n), x2 = rnorm(n), y = rnorm(n))
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  fit_rmse <- ev$train_func(
+    x_train = d[1:50, c("x1", "x2")],
+    y_train = d$y[1:50],
+    x_val = d[51:80, c("x1", "x2")],
+    y_val = d$y[51:80],
+    task = "regression",
+    metric = "cal_rmse",
+    seed = 42,
+    nrounds = 20,
+    early_stopping_rounds = 4,
+    verbose = FALSE
+  )
+  expect_true(!is.null(fit_rmse$model))
+  expect_true(!is.null(fit_rmse$best_iteration))
+  expect_true(fit_rmse$best_iteration <= 20)
+
+  fit_mae <- ev$train_func(
+    x_train = d[1:50, c("x1", "x2")],
+    y_train = d$y[1:50],
+    x_val = d[51:80, c("x1", "x2")],
+    y_val = d$y[51:80],
+    task = "regression",
+    metric = "cal_mae",
+    seed = 42,
+    nrounds = 20,
+    early_stopping_rounds = 4,
+    verbose = FALSE
+  )
+  expect_true(!is.null(fit_mae$model))
+  expect_true(!is.null(fit_mae$best_iteration))
+  expect_true(fit_mae$best_iteration <= 20)
+})
+
 test_that("realmlp feature importances sharply separate signal from noise", {
   set.seed(42)
   n <- 200

@@ -13,6 +13,18 @@ rcpp_compute_ts_refinement_multiclass <- function(y_true, y_pred, num_class, alp
     .Call(`_evoFE_rcpp_compute_ts_refinement_multiclass`, y_true, y_pred, num_class, alpha, is_logits, threads)
 }
 
+#' Fast C++ Calibrated RMSE
+#' @keywords internal
+rcpp_compute_calibrated_rmse <- function(y_true, y_pred) {
+    .Call(`_evoFE_rcpp_compute_calibrated_rmse`, y_true, y_pred)
+}
+
+#' Fast C++ Calibrated MAE
+#' @keywords internal
+rcpp_compute_calibrated_mae <- function(y_true, y_pred) {
+    .Call(`_evoFE_rcpp_compute_calibrated_mae`, y_true, y_pred)
+}
+
 #' Train RealMLP Model in C++
 #'
 #' @param x_train Numeric matrix of training features.
