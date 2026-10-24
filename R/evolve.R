@@ -815,46 +815,68 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
+  evaluated_baselines <- list()
+  if (evaluation_strategy != "metacv" && !row_split_islands) {
+    evaluated_baselines[[evaluator_main]] <- baseline_ind
+  }
+
   if (islands > 1) {
     island_fitness_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = emptyenv()))
     island_state_caches <- lapply(seq_len(islands), function(x) new.env(hash = TRUE, parent = state_cache))
     for (j in seq_len(islands)) {
-      local_baseline <- create_individual(
-        genes = list(),
-        numeric_cols = numeric_cols,
-        categorical_cols = categorical_cols,
-        datetime_cols = datetime_cols,
-        all_numeric_cols = numeric_cols,
-        all_categorical_cols = categorical_cols,
-        all_datetime_cols = datetime_cols
-      )
-      local_baseline <- evaluate_fitness(
-        local_baseline, data, target_col,
-        task = task, cv_folds = cv_folds,
-        evaluation_strategy = evaluation_strategy,
-        split_ids = split_ids_val,
-        shared_splits = if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
-        evaluator = island_evaluators[j],
-        fold_ids = fold_ids,
-        shared_folds = if (row_split_islands) island_shared_folds[[j]] else shared_folds,
-        shared_full = shared_full,
-        state_cache = island_state_caches[[j]],
-        threads = threads, metric = metric,
-        verbose = FALSE, allow_prune = TRUE,
-        complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
-        complexity_floor = complexity_floor,
-        complexity_target = complexity_target,
-        baseline_fitness = NULL, running_best_fitness = NULL,
-        n_samples = nrow(data), ...
-      )
-      local_baseline$evaluator <- island_evaluators[j]
+      eval_j <- island_evaluators[j]
+      can_reuse <- (!row_split_islands && evaluation_strategy != "metacv" && !is.null(evaluated_baselines[[eval_j]]))
+
+      if (can_reuse) {
+        local_baseline <- evaluated_baselines[[eval_j]]
+        local_baseline$evaluator <- eval_j
+      } else {
+        local_baseline <- create_individual(
+          genes = list(),
+          numeric_cols = numeric_cols,
+          categorical_cols = categorical_cols,
+          datetime_cols = datetime_cols,
+          all_numeric_cols = numeric_cols,
+          all_categorical_cols = categorical_cols,
+          all_datetime_cols = datetime_cols
+        )
+        local_baseline <- evaluate_fitness(
+          local_baseline, data, target_col,
+          task = task, cv_folds = cv_folds,
+          evaluation_strategy = evaluation_strategy,
+          split_ids = split_ids_val,
+          shared_splits = if (row_split_islands || evaluation_strategy == "metacv") island_shared_splits[[j]] else shared_splits,
+          evaluator = eval_j,
+          fold_ids = fold_ids,
+          shared_folds = if (row_split_islands) island_shared_folds[[j]] else shared_folds,
+          shared_full = shared_full,
+          state_cache = island_state_caches[[j]],
+          threads = threads, metric = metric,
+          verbose = FALSE, allow_prune = TRUE,
+          complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+          complexity_floor = complexity_floor,
+          complexity_target = complexity_target,
+          baseline_fitness = NULL, running_best_fitness = NULL,
+          n_samples = nrow(data), ...
+        )
+        local_baseline$evaluator <- eval_j
+        if (!row_split_islands && evaluation_strategy != "metacv") {
+          evaluated_baselines[[eval_j]] <- local_baseline
+        }
+      }
       island_baseline_inds[[j]] <- local_baseline
       local_recipe_str <- individual_to_recipe_string(local_baseline)
-      local_cache_key <- digest::digest(paste0(island_evaluators[j], "::", local_recipe_str), algo = "md5", serialize = FALSE)
+      local_cache_key <- digest::digest(paste0(eval_j, "::", local_recipe_str), algo = "md5", serialize = FALSE)
       assign(local_cache_key, local_baseline, envir = island_fitness_caches[[j]])
 
+      rec_key <- individual_to_cache_key(local_baseline)
+      cache_key_rec <- digest::digest(paste0(eval_j, "::", rec_key), algo = "md5", serialize = FALSE)
+      assign(cache_key_rec, local_baseline, envir = island_fitness_caches[[j]])
+      assign(cache_key_rec, local_baseline, envir = fitness_cache)
+      fitness_cache[[rec_key]] <- local_baseline
+
       if (verbose) {
-        message(sprintf("  [Island %d Baseline] (%s) -> Fitness: %.4f", j, island_evaluators[j], local_baseline$fitness))
+        message(sprintf("  [Island %d Baseline] (%s) -> Fitness: %.4f", j, eval_j, local_baseline$fitness))
       }
     }
 

@@ -552,3 +552,37 @@ test_that("row_split_islands with many islands does not produce -Inf baseline fi
   # Best fitness must be a real number - not -Inf - even with small per-island shards.
   expect_true(all(is.finite(rec$fitness)))
 })
+
+test_that("baseline evaluations are reused across islands on shared splits", {
+  testthat::skip_on_cran()
+  set.seed(42)
+  d <- data.frame(
+    y = rnorm(60),
+    x1 = rnorm(60),
+    x2 = rnorm(60)
+  )
+
+  # 1. Single evaluator across 4 islands
+  r_single <- evolve_features(
+    d, target_col = "y", task = "regression", evaluator = "realmlp",
+    generations = 0, pop_size = 2, cv_folds = 2, islands = 4,
+    verbose = FALSE
+  )
+  expect_equal(length(r_single$island_baselines), 4)
+  # All island baseline fitness values are identical
+  expect_true(all(r_single$island_baselines == r_single$baseline_fitness))
+
+  # 2. Heterogeneous evaluators across islands
+  r_multi <- evolve_features(
+    d, target_col = "y", task = "regression",
+    evaluator = c("lightgbm", "realmlp", "lightgbm", "realmlp"),
+    generations = 0, pop_size = 2, cv_folds = 2, islands = 4,
+    verbose = FALSE
+  )
+  expect_equal(length(r_multi$island_baselines), 4)
+  # Islands 1 and 3 (lightgbm) have identical baseline fitness
+  expect_equal(r_multi$island_baselines[1], r_multi$island_baselines[3])
+  # Islands 2 and 4 (realmlp) have identical baseline fitness
+  expect_equal(r_multi$island_baselines[2], r_multi$island_baselines[4])
+})
+
