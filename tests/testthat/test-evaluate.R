@@ -317,7 +317,7 @@ test_that("realmlp evaluator trains and achieves high accuracy on iris", {
   expect_gt(acc, 0.85)
 })
 
-test_that("realmlp evaluator respects seed parameter and global set.seed", {
+test_that("realmlp evaluator respects seed parameter and has deterministic default without mutating RNG", {
   data(iris)
   train_idx <- 1:100
   test_idx <- 101:150
@@ -335,16 +335,27 @@ test_that("realmlp evaluator respects seed parameter and global set.seed", {
   p3 <- ev$predict_func(fit_s3$model, iris[test_idx, 1:4], task = "multiclass")
   expect_false(identical(p1, p3))
 
-  # 3. Global set.seed reproducibility when seed parameter is omitted
-  set.seed(777)
-  fit_g1 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", nrounds = 20, verbose = FALSE)
-  p_g1 <- ev$predict_func(fit_g1$model, iris[test_idx, 1:4], task = "multiclass")
+  # 3. realmlp_seed parameter works like seed
+  fit_s4 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", realmlp_seed = 999, nrounds = 20, verbose = FALSE)
+  p4 <- ev$predict_func(fit_s4$model, iris[test_idx, 1:4], task = "multiclass")
+  expect_identical(p3, p4)
 
-  set.seed(777)
-  fit_g2 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", nrounds = 20, verbose = FALSE)
-  p_g2 <- ev$predict_func(fit_g2$model, iris[test_idx, 1:4], task = "multiclass")
+  # 4. Deterministic default (42L) when seed is omitted, without mutating R's .Random.seed
+  set.seed(12345)
+  rng_before <- .Random.seed
+  fit_d1 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", nrounds = 20, verbose = FALSE)
+  p_d1 <- ev$predict_func(fit_d1$model, iris[test_idx, 1:4], task = "multiclass")
+  rng_after <- .Random.seed
+  expect_identical(rng_before, rng_after)
 
-  expect_identical(p_g1, p_g2)
+  # Default matches explicit seed = 42
+  expect_identical(p_d1, p1)
+
+  # Second call without seed also identical and doesn't mutate RNG
+  fit_d2 <- ev$train_func(iris[train_idx, 1:4], iris$Species[train_idx], task = "multiclass", nrounds = 20, verbose = FALSE)
+  p_d2 <- ev$predict_func(fit_d2$model, iris[test_idx, 1:4], task = "multiclass")
+  expect_identical(p_d1, p_d2)
+  expect_identical(rng_before, .Random.seed)
 })
 
 test_that("realmlp evaluator errors gracefully on unsupported task", {
