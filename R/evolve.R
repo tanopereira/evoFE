@@ -1281,7 +1281,9 @@ evolve_features <- function(data, target_col, task = "classification",
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
   final_model_args <- list(...)
   target_iters <- NULL
-  if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
+  if (unwrap_evaluator(best_evaluator) == "realmlp") {
+    final_model_args <- apply_iteration_target(final_model_args, NULL, best_evaluator)
+  } else if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
       is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
     total_data_size <- nrow(x_full)
     training_size <- if (!is.null(best_ind$train_size) && is.numeric(best_ind$train_size) && best_ind$train_size > 0) {
@@ -1305,8 +1307,7 @@ evolve_features <- function(data, target_col, task = "classification",
         message(sprintf("  Using best validation iterations scaled by data size (%.2fx: %d -> %d) for final model",
                         scale_factor, best_ind$best_iteration, target_iters))
       } else {
-        iter_label <- if (unwrap_evaluator(best_evaluator) == "realmlp") "epochs" else "iterations/rounds"
-        message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
+        message(sprintf("  Using best validation iterations/rounds for final model: %d", target_iters))
       }
     }
     final_model_args <- apply_iteration_target(final_model_args, target_iters, best_evaluator)

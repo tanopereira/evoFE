@@ -229,7 +229,7 @@ test_that("realmlp evaluator early stopping works with validation data", {
   expect_equal(fit$best_iteration, fit$model$best_iteration)
 })
 
-test_that("evolve_features trains final model with best_iteration when early stopping triggers", {
+test_that("evolve_features preserves configured epochs for final realmlp model when early stopping triggers", {
   set.seed(42)
   n <- 60
   df <- data.frame(
@@ -258,6 +258,7 @@ test_that("evolve_features trains final model with best_iteration when early sto
   expect_true(recipe$best_iteration < 100)
   expect_equal(recipe$best_individual$best_iteration, recipe$best_iteration)
   expect_true(!is.null(recipe$best_model))
+  expect_equal(recipe$best_model$n_epochs, 100L)
 })
 
 test_that("evolve_features scales best_iteration by data size for tree evaluators", {

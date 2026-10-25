@@ -484,6 +484,12 @@ default_threads <- function() {
 #' @keywords internal
 #' @noRd
 apply_iteration_target <- function(args, target_iters, evaluator) {
+  unwrapped <- unwrap_evaluator(evaluator)
+  if (identical(unwrapped, "realmlp")) {
+    args$early_stopping_rounds <- 0L
+    args$early_stopping_round <- 0L
+    return(args)
+  }
   if (is.null(target_iters) || !is.numeric(target_iters) || is.na(target_iters) || target_iters <= 0) {
     return(args)
   }
@@ -494,10 +500,6 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
     if (alias %in% names(args)) {
       args[[alias]] <- target_iters
     }
-  }
-  unwrapped <- unwrap_evaluator(evaluator)
-  if (!any(c("epochs", "n_epochs") %in% names(args)) && identical(unwrapped, "realmlp")) {
-    args$epochs <- target_iters
   }
   if (!any(c("nrounds", "iterations") %in% names(args))) {
     args$nrounds <- target_iters

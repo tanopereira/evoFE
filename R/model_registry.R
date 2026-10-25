@@ -288,7 +288,9 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
 .evaluator_control_params <- c(
   "verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design",
   "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data",
-  "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads",
+  "realmlp_device", "n_cycles", "realmlp_n_cycles", "realmlp_lr",
+  "realmlp_epochs", "realmlp_seed", "hidden_dim",
+  "nthread", "nthreads", "num_threads", "n_jobs", "threads",
   "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs",
   "n_epochs", "iterations", "n_iterations"
 )
@@ -1341,6 +1343,7 @@ register_evaluator(
       levels_target = levels_target,
       best_iteration = best_it,
       best_epoch = best_it,
+      n_epochs = as.integer(n_epochs),
       n_cycles = as.integer(fit_res$n_cycles),
       threads = as.integer(threads)
     )
