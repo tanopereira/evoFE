@@ -285,6 +285,14 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
 
 # --- Register Default Evaluators ---
 
+.evaluator_control_params <- c(
+  "verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design",
+  "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data",
+  "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads",
+  "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs",
+  "n_epochs", "iterations", "n_iterations"
+)
+
 # 1. LightGBM Evaluator
 register_evaluator(
   "lightgbm",
@@ -360,7 +368,7 @@ register_evaluator(
       params$metric <- "None"
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
+    control_params <- .evaluator_control_params
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -554,7 +562,7 @@ register_evaluator(
       params$eval_metric <- NULL
     }
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads", "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
+    control_params <- .evaluator_control_params
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
@@ -750,10 +758,7 @@ register_evaluator(
       random_seed = 42
     )
 
-    control_params <- c("verbose", "metric", "best_params", "y_val", "mbo_iters",
-                        "mbo_init_design", "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data",
-                        "device", "realmlp_device", "nthread", "nthreads", "num_threads", "n_jobs", "threads",
-                        "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs", "n_epochs", "iterations", "n_iterations")
+    control_params <- c(.evaluator_control_params, "device")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
     for (name in names(extra_params)) {
       params[[name]] <- extra_params[[name]]
