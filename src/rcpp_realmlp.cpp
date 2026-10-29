@@ -12,7 +12,7 @@
 
 // [[Rcpp::depends(RcppEigen)]]
 
-// Dynamic OpenBLAS thread control (safe fallback if OpenBLAS is not loaded or on Windows)
+// Dynamic OpenBLAS / Apple Accelerate thread control
 static inline int get_openblas_threads() {
 #if !defined(_WIN32)
   typedef int (*openblas_get_threads_fn)();
@@ -35,11 +35,34 @@ static inline void set_openblas_threads(int num_threads) {
 #endif
 }
 
-// RAII ThreadGuard to ensure CRAN-compliant thread restoration across OpenMP, Eigen, and OpenBLAS
+static inline int get_accelerate_threading() {
+#if defined(__APPLE__)
+  typedef int (*blas_get_threading_fn)();
+  blas_get_threading_fn fn = (blas_get_threading_fn)dlsym(RTLD_DEFAULT, "BLASGetThreading");
+  if (fn) {
+    return fn();
+  }
+#endif
+  return -1;
+}
+
+static inline void set_accelerate_threading(int mode) {
+#if defined(__APPLE__)
+  if (mode < 0) return;
+  typedef int (*blas_set_threading_fn)(int);
+  blas_set_threading_fn fn = (blas_set_threading_fn)dlsym(RTLD_DEFAULT, "BLASSetThreading");
+  if (fn) {
+    fn(mode);
+  }
+#endif
+}
+
+// RAII ThreadGuard to ensure CRAN-compliant thread restoration across OpenMP, Eigen, OpenBLAS, and Apple Accelerate
 struct ThreadGuard {
   int old_omp = -1;
   int old_eigen = -1;
   int old_openblas = -1;
+  int old_accelerate = -1;
 
   ThreadGuard(int threads) {
     if (threads <= 0) return;
@@ -52,6 +75,10 @@ struct ThreadGuard {
 
     old_openblas = get_openblas_threads();
     set_openblas_threads(threads);
+
+    old_accelerate = get_accelerate_threading();
+    // BLAS_THREADING_MULTI_THREADED = 0, BLAS_THREADING_SINGLE_THREADED = 1
+    set_accelerate_threading((threads == 1) ? 1 : 0);
   }
 
   ~ThreadGuard() {
@@ -66,6 +93,9 @@ struct ThreadGuard {
     if (old_openblas > 0) {
       set_openblas_threads(old_openblas);
     }
+    if (old_accelerate >= 0) {
+      set_accelerate_threading(old_accelerate);
+    }
   }
 };
 
@@ -77,10 +107,10 @@ inline Eigen::Map<Eigen::MatrixXd> map_eigen(NumericMatrix& mat) {
   return Eigen::Map<Eigen::MatrixXd>(mat.begin(), mat.nrow(), mat.ncol());
 }
 
-// Direct copy without sanitization (for model weights — memcpy speed)
-inline Eigen::MatrixXd copy_eigen_fast(const NumericMatrix& mat) {
+// Direct copy without sanitization (for model weights — casts R double to FP32)
+inline Eigen::MatrixXf copy_eigen_fast(const NumericMatrix& mat) {
   Eigen::Map<const Eigen::MatrixXd> mapped(mat.begin(), mat.nrow(), mat.ncol());
-  return mapped;
+  return mapped.cast<float>();
 }
 
 // Deep copy with fast contiguous NaN/Inf sanitization (replaces non-finite values with 0.0)
@@ -98,12 +128,20 @@ inline Eigen::MatrixXd copy_eigen_sanitized(const NumericMatrix& mat) {
   return out;
 }
 
-// Helper to convert Eigen::MatrixXd to Rcpp NumericMatrix
+// Helper to convert Eigen::MatrixXd or Eigen::MatrixXf to Rcpp NumericMatrix
 inline NumericMatrix to_rcpp(const Eigen::MatrixXd& emat) {
   int r = static_cast<int>(emat.rows());
   int c = static_cast<int>(emat.cols());
   NumericMatrix mat(r, c);
   Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat;
+  return mat;
+}
+
+inline NumericMatrix to_rcpp(const Eigen::MatrixXf& emat) {
+  int r = static_cast<int>(emat.rows());
+  int c = static_cast<int>(emat.cols());
+  NumericMatrix mat(r, c);
+  Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat.cast<double>();
   return mat;
 }
 
@@ -468,9 +506,9 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   // RAII thread state management across OpenMP, Eigen, and OpenBLAS
   ThreadGuard thread_guard(threads);
 
-  // Fast single-pass fused standardization
+  // Fast single-pass fused standardization into FP32
   const double* x_train_ptr = x_train.begin();
-  Eigen::MatrixXd X_tr(N, D);
+  Eigen::MatrixXf X_tr(N, D);
   Eigen::VectorXd x_mean(D);
   Eigen::VectorXd x_std(D);
   Eigen::VectorXd x_inv_std(D);
@@ -486,10 +524,10 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     x_inv_std(j) = stats.inv_std;
   }
 
-  fuse_standardize_matrix(x_train_ptr, X_tr.data(), N, D, x_mean.data(), x_inv_std.data());
+  fuse_standardize_matrix_f32(x_train_ptr, X_tr.data(), N, D, x_mean.data(), x_inv_std.data());
 
-  // Targets processing
-  Eigen::MatrixXd Y_tr(N, out_dim);
+  // Targets processing (FP32)
+  Eigen::MatrixXf Y_tr(N, out_dim);
   double y_mean_val = 0.0;
   double y_std_val = 1.0;
 
@@ -510,21 +548,21 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     if (y_std_val < 1e-8 || !std::isfinite(y_std_val)) y_std_val = 1.0;
 
     for (int i = 0; i < N; ++i) {
-      Y_tr(i, 0) = (y_train[i] - y_mean_val) / y_std_val;
+      Y_tr(i, 0) = static_cast<float>((y_train[i] - y_mean_val) / y_std_val);
     }
   } else if (is_cls) {
     for (int i = 0; i < N; ++i) {
       double y_val_raw = (y_train[i] > 0.0) ? 1.0 : 0.0;
-      Y_tr(i, 0) = y_val_raw * 0.9 + 0.05;
+      Y_tr(i, 0) = static_cast<float>(y_val_raw * 0.9 + 0.05);
     }
   } else {
-    double eps_smooth = 0.1;
-    double smooth_base = eps_smooth / out_dim;
+    float eps_smooth = 0.1f;
+    float smooth_base = eps_smooth / static_cast<float>(out_dim);
     Y_tr.fill(smooth_base);
     for (int i = 0; i < N; ++i) {
       int c = static_cast<int>(y_train[i]);
       if (c >= 0 && c < out_dim) {
-        Y_tr(i, c) += (1.0 - eps_smooth);
+        Y_tr(i, c) += (1.0f - eps_smooth);
       }
     }
   }
@@ -532,7 +570,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   // Validation data
   bool has_x_val = x_val.isNotNull();
   bool has_val = (has_x_val && y_val.isNotNull());
-  Eigen::MatrixXd X_v;
+  Eigen::MatrixXf X_v;
   NumericVector y_v_vec;
   const double* y_v_ptr = nullptr;
   int N_val = 0;
@@ -547,7 +585,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       y_v_ptr = y_v_vec.begin();
     }
     X_v.resize(N_val, D);
-    fuse_standardize_matrix(xv.begin(), X_v.data(), N_val, D, x_mean.data(), x_inv_std.data());
+    fuse_standardize_matrix_f32(xv.begin(), X_v.data(), N_val, D, x_mean.data(), x_inv_std.data());
   }
 
   // Initialize model
@@ -691,19 +729,20 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 
       if (task == "regression") {
         grad_out_b.noalias() = Out_b - Y_batch;
-        batch_loss = grad_out_b.squaredNorm() / cur_B;
-        grad_out_b *= (2.0 / cur_B);
+        batch_loss = static_cast<double>(grad_out_b.squaredNorm()) / cur_B;
+        grad_out_b *= (2.0f / static_cast<float>(cur_B));
       } else if (is_cls) {
         auto P_b = ws.P.topRows(cur_B);
         double loss_sum = 0.0;
         double inv_B = 1.0 / cur_B;
+        float inv_B_f = static_cast<float>(inv_B);
 
         for (int i = 0; i < cur_B; ++i) {
-          double z = std::clamp(Out_b(i, 0), -30.0, 30.0);
+          double z = std::clamp(static_cast<double>(Out_b(i, 0)), -30.0, 30.0);
           double p = 1.0 / (1.0 + std::exp(-z));
-          P_b(i, 0) = p;
-          double y = Y_batch(i, 0);
-          grad_out_b(i, 0) = inv_B * (p - y);
+          P_b(i, 0) = static_cast<float>(p);
+          double y = static_cast<double>(Y_batch(i, 0));
+          grad_out_b(i, 0) = inv_B_f * static_cast<float>(p - y);
           double p_clamped = std::clamp(p, 1e-15, 1.0 - 1e-15);
           loss_sum -= (y * std::log(p_clamped) + (1.0 - y) * std::log(1.0 - p_clamped));
         }
@@ -711,80 +750,74 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       } else {
         auto P_b = ws.P.topRows(cur_B);
         for (int i = 0; i < cur_B; ++i) {
-          double max_val = Out_b(i, 0);
+          double max_val = static_cast<double>(Out_b(i, 0));
           for (int c = 1; c < out_dim; ++c) {
-            if (Out_b(i, c) > max_val) max_val = Out_b(i, c);
+            double v = static_cast<double>(Out_b(i, c));
+            if (v > max_val) max_val = v;
           }
           double sum_exp = 0.0;
           for (int c = 0; c < out_dim; ++c) {
-            double ep = std::exp(Out_b(i, c) - max_val);
-            P_b(i, c) = ep;
+            double ep = std::exp(static_cast<double>(Out_b(i, c)) - max_val);
+            P_b(i, c) = static_cast<float>(ep);
             sum_exp += ep;
           }
           if (sum_exp > 0.0) {
-            double inv_sum = 1.0 / sum_exp;
+            float inv_sum = static_cast<float>(1.0 / sum_exp);
             for (int c = 0; c < out_dim; ++c) {
               P_b(i, c) *= inv_sum;
             }
           } else {
-            double inv_dim = 1.0 / out_dim;
+            float inv_dim = 1.0f / static_cast<float>(out_dim);
             for (int c = 0; c < out_dim; ++c) {
               P_b(i, c) = inv_dim;
             }
           }
           for (int c = 0; c < out_dim; ++c) {
-            batch_loss -= Y_batch(i, c) * std::log(std::max(1e-15, P_b(i, c)));
+            batch_loss -= static_cast<double>(Y_batch(i, c)) * std::log(std::max(1e-15, static_cast<double>(P_b(i, c))));
           }
         }
         batch_loss /= cur_B;
-        grad_out_b.noalias() = (1.0 / cur_B) * (P_b - Y_batch);
+        grad_out_b.noalias() = (1.0f / static_cast<float>(cur_B)) * (P_b - Y_batch);
       }
-      double max_g = grad_out_b.array().abs().maxCoeff();
-      if (max_g > 10.0) {
-        grad_out_b *= (10.0 / max_g);
+      float max_g = grad_out_b.array().abs().maxCoeff();
+      if (max_g > 10.0f) {
+        grad_out_b *= (10.0f / max_g);
       }
 
       epoch_loss_sum += batch_loss;
       auto t_ls1 = std::chrono::high_resolution_clock::now();
       if (verbose >= 2) t_loss_s += std::chrono::duration<double>(t_ls1 - t_ls0).count();
 
-      // 4. Backprop MLP — use pre-allocated workspace
+      // 4. Backprop MLP — use pre-allocated FP32 workspace (AMX cblas_sgemm + SELU H-reuse)
       auto t_mb0 = std::chrono::high_resolution_clock::now();
-      auto H3_b = ws.H3.topRows(cur_B);
-      auto H2_b = ws.H2.topRows(cur_B);
-      auto H1_b = ws.H1.topRows(cur_B);
-      auto H0_b = ws.H0.topRows(cur_B);
       auto E_b = ws.E.topRows(cur_B);
+      int embed_d = static_cast<int>(E_b.cols());
 
-      ws.delta3.topRows(cur_B).noalias() = grad_out_b * model.W4.val.transpose();
-      auto A3_b = ws.A3.topRows(cur_B);
-      auto delta3_b = ws.delta3.topRows(cur_B);
-      apply_activation_grad_and_accum_bias(A3_b, model.b3.val, delta3_b, ws.grad_b3, model.is_classification);
+      gemm_f32(false, true, cur_B, hidden_dim, out_dim, ws.grad_out, model.W4.val, ws.delta3);
+      Eigen::Ref<const Eigen::MatrixXf> H3_ref(ws.H3.topRows(cur_B));
+      apply_activation_grad_and_accum_bias(ws.A3.topRows(cur_B), model.b3.val, ws.delta3.topRows(cur_B), ws.grad_b3, model.is_classification, &H3_ref);
 
-      ws.delta2.topRows(cur_B).noalias() = delta3_b * model.W3.val.transpose();
-      auto A2_b = ws.A2.topRows(cur_B);
-      auto delta2_b = ws.delta2.topRows(cur_B);
-      apply_activation_grad_and_accum_bias(A2_b, model.b2.val, delta2_b, ws.grad_b2, model.is_classification);
+      gemm_f32(false, true, cur_B, hidden_dim, hidden_dim, ws.delta3, model.W3.val, ws.delta2);
+      Eigen::Ref<const Eigen::MatrixXf> H2_ref(ws.H2.topRows(cur_B));
+      apply_activation_grad_and_accum_bias(ws.A2.topRows(cur_B), model.b2.val, ws.delta2.topRows(cur_B), ws.grad_b2, model.is_classification, &H2_ref);
 
-      ws.delta1.topRows(cur_B).noalias() = delta2_b * model.W2.val.transpose();
-      auto A1_b = ws.A1.topRows(cur_B);
-      auto delta1_b = ws.delta1.topRows(cur_B);
-      apply_activation_grad_and_accum_bias(A1_b, model.b1.val, delta1_b, ws.grad_b1, model.is_classification);
+      gemm_f32(false, true, cur_B, hidden_dim, hidden_dim, ws.delta2, model.W2.val, ws.delta1);
+      Eigen::Ref<const Eigen::MatrixXf> H1_ref(ws.H1.topRows(cur_B));
+      apply_activation_grad_and_accum_bias(ws.A1.topRows(cur_B), model.b1.val, ws.delta1.topRows(cur_B), ws.grad_b1, model.is_classification, &H1_ref);
 
-      ws.delta0.topRows(cur_B).noalias() = delta1_b * model.W1.val.transpose();
+      gemm_f32(false, true, cur_B, embed_d, hidden_dim, ws.delta1, model.W1.val, ws.delta0);
       auto delta0_b = ws.delta0.topRows(cur_B);
 
       // Fused parallel column-wise pass for grad_scale and delta_E
-      int embed_d = static_cast<int>(E_b.cols());
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (embed_d >= 4)
 #endif
       for (int c = 0; c < embed_d; ++c) {
-        double sc = model.front_scale.val(0, c);
-        const double* d0_col = delta0_b.col(c).data();
-        const double* e_col = E_b.col(c).data();
-        double* de_col = ws.delta_E.col(c).data();
-        double sum_scale = 0.0;
+        float sc = model.front_scale.val(0, c);
+        const float* d0_col = delta0_b.col(c).data();
+        const float* e_col = E_b.col(c).data();
+        float* de_col = ws.delta_E.col(c).data();
+        float sum_scale = 0.0f;
         for (int r = 0; r < cur_B; ++r) {
           sum_scale += e_col[r] * d0_col[r];
           de_col[r] = d0_col[r] * sc;
@@ -792,11 +825,11 @@ List rcpp_realmlp_train(NumericMatrix x_train,
         ws.grad_scale(0, c) = sum_scale;
       }
 
-      // Computation of layer weight gradients W1, W2, W3, W4 (OpenBLAS GEMM - executed sequentially to avoid OpenMP deadlock)
-      ws.grad_W1.noalias() = H0_b.transpose() * delta1_b;
-      ws.grad_W2.noalias() = H1_b.transpose() * delta2_b;
-      ws.grad_W3.noalias() = H2_b.transpose() * delta3_b;
-      ws.grad_W4.noalias() = H3_b.transpose() * grad_out_b;
+      // Computation of layer weight gradients W1, W2, W3, W4 via Apple Accelerate cblas_sgemm
+      gemm_f32(true, false, embed_d, hidden_dim, cur_B, ws.H0, ws.delta1, ws.grad_W1);
+      gemm_f32(true, false, hidden_dim, hidden_dim, cur_B, ws.H1, ws.delta2, ws.grad_W2);
+      gemm_f32(true, false, hidden_dim, hidden_dim, cur_B, ws.H2, ws.delta3, ws.grad_W3);
+      gemm_f32(true, false, hidden_dim, out_dim, cur_B, ws.H3, ws.grad_out, ws.grad_W4);
       ws.grad_b4 = grad_out_b.colwise().sum();
       auto t_mb1 = std::chrono::high_resolution_clock::now();
       if (verbose >= 2) t_mlp_bwd_s += std::chrono::duration<double>(t_mb1 - t_mb0).count();
@@ -936,7 +969,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   // Compute feature importances via Mean Occlusion Ablation in C++
   // Use validation set if provided with labels, else training set (capped at 1,000 rows for lightning speed)
   bool use_val_for_imp = (has_val && N_val > 0 && y_v_ptr != nullptr);
-  const Eigen::MatrixXd& X_imp_source = use_val_for_imp ? X_v : X_tr;
+  const Eigen::MatrixXf& X_imp_source = use_val_for_imp ? X_v : X_tr;
   int N_avail = static_cast<int>(X_imp_source.rows());
   int N_eval = std::min(N_avail, 1000);
 

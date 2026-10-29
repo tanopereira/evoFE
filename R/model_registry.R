@@ -377,27 +377,43 @@ register_evaluator(
     }
 
     valids <- list()
-    if (!is.null(x_val) && !is.null(y_val)) {
+    needs_val <- (!is.null(early_stopping_rounds) && early_stopping_rounds > 0) || learner_verbose
+    if (needs_val && !is.null(x_val) && !is.null(y_val)) {
       dval <- lightgbm::lgb.Dataset(data = x_val, label = y_val, reference = dtrain)
       valids$val <- dval
     }
 
+    val_labels_num <- if (use_custom_eval && length(valids) > 0) {
+      if (custom_eval_type == "ts_refinement" && task == "classification") {
+        as.numeric(encode_binary_target(y_val))
+      } else {
+        as.numeric(y_val)
+      }
+    } else {
+      NULL
+    }
+
     lgb_eval <- function(preds, dtrain) {
-      labels <- lightgbm::get_field(dtrain, "label")
+      labels <- if (!is.null(val_labels_num)) val_labels_num else lightgbm::get_field(dtrain, "label")
       if (custom_eval_type == "ts_refinement") {
-        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
+        score <- if (task == "classification") {
+          rcpp_compute_ts_refinement_binary(labels, as.numeric(preds), 1.0, FALSE, as.integer(threads))
+        } else {
+          compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
+        }
         list(name = "ts_refinement", value = score, higher_better = FALSE)
       } else if (custom_eval_type == "cal_rmse") {
-        score <- compute_calibrated_rmse(labels, preds)
+        score <- rcpp_compute_calibrated_rmse(labels, as.numeric(preds))
         list(name = "cal_rmse", value = score, higher_better = FALSE)
       } else { # cal_mae
-        score <- compute_calibrated_mae(labels, preds)
+        score <- rcpp_compute_calibrated_mae(labels, as.numeric(preds))
         list(name = "cal_mae", value = score, higher_better = FALSE)
       }
     }
 
     # early_stopping_rounds requires at least one validation dataset
     esr <- if (length(valids) > 0) early_stopping_rounds else NULL
+    eval_fn <- if (use_custom_eval && length(valids) > 0) lgb_eval else NULL
 
     if (learner_verbose) {
       model <- lightgbm::lgb.train(
@@ -405,7 +421,7 @@ register_evaluator(
         data = dtrain,
         nrounds = nrounds,
         valids = valids,
-        eval = if (use_custom_eval) lgb_eval else NULL,
+        eval = eval_fn,
         early_stopping_rounds = esr,
         verbose = 1L
       )
@@ -416,7 +432,7 @@ register_evaluator(
           data = dtrain,
           nrounds = nrounds,
           valids = valids,
-          eval = if (use_custom_eval) lgb_eval else NULL,
+          eval = eval_fn,
           early_stopping_rounds = esr,
           verbose = -1L
         )
@@ -575,41 +591,54 @@ register_evaluator(
     }
 
     dval_metric <- NULL
-    # Early stopping requires a validation set in `evals`; add one whenever
-    # validation data is available and a custom metric or early stopping is used.
-    needs_val <- use_custom_eval ||
-      (!is.null(early_stopping_rounds) && early_stopping_rounds > 0)
+    # Early stopping or verbose logging requires a validation set in `evals`
+    needs_val <- (!is.null(early_stopping_rounds) && early_stopping_rounds > 0) || learner_verbose
     if (needs_val && !is.null(x_val) && !is.null(y_val)) {
       dval_metric <- xgboost::xgb.DMatrix(data = x_val, label = y_val, missing = NA, nthread = threads)
       evals <- list(val = dval_metric)
     } else {
-      evals <- list(train = dtrain)
+      evals <- list()
       early_stopping_rounds <- NULL
     }
 
+    val_labels_num <- if (use_custom_eval && length(evals) > 0) {
+      if (custom_eval_type == "ts_refinement" && task == "classification") {
+        as.numeric(encode_binary_target(y_val))
+      } else {
+        as.numeric(y_val)
+      }
+    } else {
+      NULL
+    }
+
     xgb_feval <- function(preds, dtrain) {
-      labels <- xgboost::getinfo(dtrain, "label")
+      labels <- if (!is.null(val_labels_num)) val_labels_num else xgboost::getinfo(dtrain, "label")
       if (custom_eval_type == "ts_refinement") {
-        score <- compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE, threads = threads)
+        score <- if (task == "classification") {
+          rcpp_compute_ts_refinement_binary(labels, as.numeric(preds), 1.0, TRUE, as.integer(threads))
+        } else {
+          compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE, threads = threads)
+        }
         list(metric = "ts_refinement", value = score)
       } else if (custom_eval_type == "cal_rmse") {
-        score <- compute_calibrated_rmse(labels, preds)
+        score <- rcpp_compute_calibrated_rmse(labels, as.numeric(preds))
         list(metric = "cal_rmse", value = score)
       } else { # cal_mae
-        score <- compute_calibrated_mae(labels, preds)
+        score <- rcpp_compute_calibrated_mae(labels, as.numeric(preds))
         list(metric = "cal_mae", value = score)
       }
     }
 
+    use_feval <- use_custom_eval && length(evals) > 0
     xgb_train_call <- function() {
       suppressWarnings(xgboost::xgb.train(
         params = params,
         data = dtrain,
         nrounds = nrounds,
         evals = evals,
-        custom_metric = if (use_custom_eval) xgb_feval else NULL,
+        custom_metric = if (use_feval) xgb_feval else NULL,
         early_stopping_rounds = early_stopping_rounds,
-        maximize = if (use_custom_eval) FALSE else NULL,
+        maximize = if (use_feval) FALSE else NULL,
         verbose = if (learner_verbose) 1L else 0L
       ))
     }
@@ -1394,9 +1423,7 @@ register_evaluator(
     }
   },
 
-  cleanup_func = function(model) {
-    gc(verbose = FALSE)
-  },
+  cleanup_func = NULL,
   traits = list(is_tree = FALSE, iteration_param = "epochs", scale_iterations_with_data = FALSE)
 )
 

@@ -54,24 +54,45 @@ resolve_param_aliases <- function(extra_args, defaults = list()) {
 #' @return A numeric matrix of type double with attribute `sanitized = TRUE`, or NULL if `x` is NULL.
 #' @keywords internal
 #' @noRd
-sanitize_feature_matrix <- function(x) {
+sanitize_feature_matrix <- function(x, threads = getOption("evoFE.threads", 1L)) {
   if (is.null(x)) return(NULL)
   if (isTRUE(attr(x, "sanitized", exact = TRUE))) return(x)
+  if (!is.numeric(threads) || is.na(threads) || threads < 1L) threads <- 1L
+  res <- rcpp_sanitize_feature_matrix(x, as.integer(threads))
+  if (!is.null(res)) return(res)
   if (!is.matrix(x)) {
     x <- if (is.data.frame(x)) data.matrix(x) else as.matrix(x)
   }
   if (!is.numeric(x)) {
     storage.mode(x) <- "double"
   }
-  max_float <- 3.402823e38
-  x[!is.finite(x) | abs(x) > max_float] <- NA_real_
-  attr(x, "sanitized") <- TRUE
-  x
+  rcpp_sanitize_feature_matrix(x, as.integer(threads))
 }
 
 #' @keywords internal
 #' @noRd
 .sanitize_feature_matrix <- sanitize_feature_matrix
+
+#' Shallow Copy a data.table Container Preserving evoFE Metadata Attributes
+#'
+#' Creates a new data.table column-pointer container sharing existing column vectors
+#' without deep-copying data, while preserving `.row_id` and `.global_state_cache`
+#' attributes so appending new gene columns via `:=` does not mutate shared splits.
+#'
+#' @param dt A data.table, data.frame, or NULL.
+#' @return A shallow-copied data.table with preserved attributes.
+#' @keywords internal
+#' @noRd
+shallow_copy_dt <- function(dt) {
+  if (is.null(dt)) return(NULL)
+  if (!data.table::is.data.table(dt)) return(dt)
+  row_id <- attr(dt, ".row_id", exact = TRUE)
+  gcache <- attr(dt, ".global_state_cache", exact = TRUE)
+  out <- data.table::setDT(as.list(dt))
+  if (!is.null(row_id)) data.table::setattr(out, ".row_id", row_id)
+  if (!is.null(gcache)) data.table::setattr(out, ".global_state_cache", gcache)
+  out
+}
 
 #' Encode Binary Target Vector to 0L/1L Integers
 #'

@@ -110,7 +110,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         if (out_type == "categorical") {
           new_col_full <- as.factor(new_col_full)
         } else if (is.double(new_col_full)) {
-          new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+          new_col_full <- rcpp_sanitize_numeric_vec(new_col_full)
         }
       }
       tr_idx <- attr(train_data, ".row_id")
@@ -118,56 +118,39 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         new_col_train <- new_col_full[tr_idx]
       } else {
         new_col_train <- t_def$apply_func(train_data, gene, state)
+        if (is.double(new_col_train)) {
+          new_col_train <- rcpp_sanitize_numeric_vec(new_col_train)
+        }
       }
     } else {
       new_col_train <- t_def$apply_func(train_data, gene, state)
+      if (is.double(new_col_train)) {
+        new_col_train <- rcpp_sanitize_numeric_vec(new_col_train)
+      }
     }
 
-    if (is.double(new_col_train)) {
-      new_col_train[!is.finite(new_col_train) | abs(new_col_train) > 3.402823e38] <- NA_real_
-    }
-
-    # Reject constant columns (0 variance)
-    if (!is.null(target_col) && length(unique(new_col_train[!is.na(new_col_train)])) <= 1) {
-      stop("Constant column generated")
-    }
-
-    # Reject columns that are near-perfect duplicates of existing features.
+    # Reject constant columns (0 variance) and near-perfect duplicates of existing features.
     # Guard with !is.null(target_col): during inference (holdout/predict) we
     # must apply every gene that was accepted at training time — correlation on
     # a different data split must never prune a gene the model depends on.
-    cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.99)
-    if (!is.null(target_col) && is.numeric(new_col_train) && cor_threshold < 1) {
-      num_mask <- vapply(train_data, is.numeric, logical(1))
-      existing_num_cols <- setdiff(names(train_data)[num_mask], c(gene$output_col, target_col))
-      if (gene$transformer_name %in% c("robust_scale", "smooth_clip", "box_cox", "yeo_johnson", "rank_transform")) {
-        existing_num_cols <- setdiff(existing_num_cols, gene$input_cols)
-      }
-      if (length(existing_num_cols) > 0) {
-        new_is_finite <- is.finite(new_col_train)
-        if (sum(new_is_finite) > 2 && suppressWarnings(stats::sd(new_col_train[new_is_finite])) > 0) {
-          for (ecol in existing_num_cols) {
-            ev <- train_data[[ecol]]
-            # Find indices where both vectors are finite to preserve row alignment
-            valid_idx <- new_is_finite & is.finite(ev)
-            if (sum(valid_idx) > 2) {
-              r <- tryCatch(
-                suppressWarnings(abs(stats::cor(new_col_train[valid_idx], ev[valid_idx],
-                  use = "complete.obs"
-                ))),
-                error = function(e) 0
-              )
-              if (!is.na(r) && r >= cor_threshold) stop("Redundant column")
-            }
-          }
+    if (!is.null(target_col)) {
+      if (is.numeric(new_col_train)) {
+        cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.99)
+        exclude_cols <- if (gene$transformer_name %in% c("robust_scale", "smooth_clip", "box_cox", "yeo_johnson", "rank_transform")) {
+          as.character(c(gene$output_col, target_col, gene$input_cols))
+        } else {
+          as.character(c(gene$output_col, target_col))
         }
+        v_status <- rcpp_validate_numeric_gene(new_col_train, train_data, exclude_cols, cor_threshold, 8192L)
+        if (v_status == 1L) stop("Constant column generated")
+        if (v_status == 2L) stop("Redundant column")
+      } else if (length(unique(new_col_train[!is.na(new_col_train)])) <= 1L) {
+        stop("Constant column generated")
       }
     }
 
     if (out_type == "categorical") {
       new_col_train <- as.factor(new_col_train)
-    } else if (is.double(new_col_train)) {
-      new_col_train[!is.finite(new_col_train) | abs(new_col_train) > 3.402823e38] <- NA_real_
     }
 
     if (data.table::is.data.table(train_data)) {
@@ -195,7 +178,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         if (out_type == "categorical") {
           new_col_full <- as.factor(new_col_full)
         } else if (is.double(new_col_full)) {
-          new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+          new_col_full <- rcpp_sanitize_numeric_vec(new_col_full)
         }
       }
       va_idx <- attr(val_data, ".row_id")
@@ -203,9 +186,15 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         new_col_val <- new_col_full[va_idx]
       } else {
         new_col_val <- t_def$apply_func(val_data, gene, state)
+        if (is.double(new_col_val)) {
+          new_col_val <- rcpp_sanitize_numeric_vec(new_col_val)
+        }
       }
     } else {
       new_col_val <- t_def$apply_func(val_data, gene, state)
+      if (is.double(new_col_val)) {
+        new_col_val <- rcpp_sanitize_numeric_vec(new_col_val)
+      }
     }
 
     if (out_type == "categorical") {
@@ -213,8 +202,6 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       train_factor <- train_data[[gene$output_col]]
       train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
       new_col_val <- factor(new_col_val, levels = train_levels)
-    } else if (is.double(new_col_val)) {
-      new_col_val[!is.finite(new_col_val) | abs(new_col_val) > 3.402823e38] <- NA_real_
     }
     if (data.table::is.data.table(val_data)) {
       val_data[, (gene$output_col) := new_col_val]
@@ -232,7 +219,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
         new_col_full <- factor(new_col_full, levels = train_levels)
       } else if (is.double(new_col_full)) {
-        new_col_full[!is.finite(new_col_full) | abs(new_col_full) > 3.402823e38] <- NA_real_
+        new_col_full <- rcpp_sanitize_numeric_vec(new_col_full)
       }
     }
     if (data.table::is.data.table(full_data)) {

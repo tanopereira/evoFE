@@ -233,6 +233,44 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rcpp_sanitize_numeric_vec
+SEXP rcpp_sanitize_numeric_vec(SEXP x);
+RcppExport SEXP _evoFE_rcpp_sanitize_numeric_vec(SEXP xSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type x(xSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_sanitize_numeric_vec(x));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_sanitize_feature_matrix
+SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads);
+RcppExport SEXP _evoFE_rcpp_sanitize_feature_matrix(SEXP xSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type x(xSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_sanitize_feature_matrix(x, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_validate_numeric_gene
+int rcpp_validate_numeric_gene(NumericVector new_col, SEXP train_data, CharacterVector exclude_cols, double cor_threshold, int max_cor_rows);
+RcppExport SEXP _evoFE_rcpp_validate_numeric_gene(SEXP new_colSEXP, SEXP train_dataSEXP, SEXP exclude_colsSEXP, SEXP cor_thresholdSEXP, SEXP max_cor_rowsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericVector >::type new_col(new_colSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type train_data(train_dataSEXP);
+    Rcpp::traits::input_parameter< CharacterVector >::type exclude_cols(exclude_colsSEXP);
+    Rcpp::traits::input_parameter< double >::type cor_threshold(cor_thresholdSEXP);
+    Rcpp::traits::input_parameter< int >::type max_cor_rows(max_cor_rowsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_validate_numeric_gene(new_col, train_data, exclude_cols, cor_threshold, max_cor_rows));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_compute_ts_refinement_binary", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_binary, 5},
@@ -251,6 +289,9 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_apply_yeo_johnson", (DL_FUNC) &_evoFE_rcpp_apply_yeo_johnson, 5},
     {"_evoFE_rcpp_fit_box_cox", (DL_FUNC) &_evoFE_rcpp_fit_box_cox, 1},
     {"_evoFE_rcpp_apply_box_cox", (DL_FUNC) &_evoFE_rcpp_apply_box_cox, 6},
+    {"_evoFE_rcpp_sanitize_numeric_vec", (DL_FUNC) &_evoFE_rcpp_sanitize_numeric_vec, 1},
+    {"_evoFE_rcpp_sanitize_feature_matrix", (DL_FUNC) &_evoFE_rcpp_sanitize_feature_matrix, 2},
+    {"_evoFE_rcpp_validate_numeric_gene", (DL_FUNC) &_evoFE_rcpp_validate_numeric_gene, 5},
     {NULL, NULL, 0}
 };
 

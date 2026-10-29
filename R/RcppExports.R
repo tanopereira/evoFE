@@ -118,3 +118,22 @@ rcpp_apply_box_cox <- function(x, lambda, shift, mean, sd, threads = 1L) {
     .Call(`_evoFE_rcpp_apply_box_cox`, x, lambda, shift, mean, sd, threads)
 }
 
+#' Fast C++ Single-Pass Numeric Vector Sanitization
+#' @keywords internal
+rcpp_sanitize_numeric_vec <- function(x) {
+    .Call(`_evoFE_rcpp_sanitize_numeric_vec`, x)
+}
+
+#' Fast C++ Single-Pass Feature Matrix Sanitization and Data.Frame Conversion
+#' @keywords internal
+rcpp_sanitize_feature_matrix <- function(x, threads = 1L) {
+    .Call(`_evoFE_rcpp_sanitize_feature_matrix`, x, threads)
+}
+
+#' Fast C++ Single-Pass Constant and Pairwise Redundancy Check for Numeric Genes
+#' @keywords internal
+rcpp_validate_numeric_gene <- function(new_col, train_data, exclude_cols, cor_threshold = 0.99, max_cor_rows = 8192L) {
+    .Call(`_evoFE_rcpp_validate_numeric_gene`, new_col, train_data, exclude_cols, cor_threshold, max_cor_rows)
+}
+
+

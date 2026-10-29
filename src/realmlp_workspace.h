@@ -11,11 +11,11 @@ namespace realmlp {
 // Dedicated pre-allocated workspace for per-epoch validation evaluation.
 // Eliminates all dynamic heap allocations across training epoch validation iterations.
 struct ValidationWorkspace {
-  Eigen::MatrixXd E;
-  Eigen::MatrixXd H0, A1, H1, A2, H2, A3, H3, Out;
+  Eigen::MatrixXf E;
+  Eigen::MatrixXf H0, A1, H1, A2, H2, A3, H3, Out;
   Eigen::MatrixXd preds;
   std::vector<std::pair<double, int>> auc_pairs;
-  std::vector<Eigen::MatrixXd> thread_Z_buf;
+  std::vector<Eigen::MatrixXf> thread_Z_buf;
 
   void allocate(int N_val, int D, int out_dim, int hidden_dim, int embed_dim, int k_freq, int max_threads = 1) {
     if (N_val <= 0 || D <= 0) return;
@@ -43,12 +43,12 @@ struct ValidationWorkspace {
 // Unifies E_zero into a contiguous D x (1 + d_proj) matrix and provides reusable
 // thread_Z_buf, eliminating all heap allocations inside the feature ablation loop.
 struct FeatureImportanceWorkspace {
-  Eigen::MatrixXd E_base;
-  Eigen::MatrixXd E_occ;
-  Eigen::MatrixXd H0, A1, H1, A2, H2, A3, H3, Out;
+  Eigen::MatrixXf E_base;
+  Eigen::MatrixXf E_occ;
+  Eigen::MatrixXf H0, A1, H1, A2, H2, A3, H3, Out;
   Eigen::MatrixXd preds;
-  Eigen::MatrixXd E_zero; // Contiguous D x (1 + d_proj) buffer
-  std::vector<Eigen::MatrixXd> thread_Z_buf;
+  Eigen::MatrixXf E_zero; // Contiguous D x (1 + d_proj) buffer
+  std::vector<Eigen::MatrixXf> thread_Z_buf;
 
   void allocate(int N_eval, int D, int out_dim, int hidden_dim, int embed_dim, int d_proj, int k_freq = 0, int max_threads = 1) {
     if (N_eval <= 0 || D <= 0) return;

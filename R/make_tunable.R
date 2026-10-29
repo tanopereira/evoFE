@@ -181,6 +181,13 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       x_val   <- .sanitize_feature_matrix(x_val)
     }
     
+    # Cache winning trial outputs so use_fold_data and use_split modes never retrain post-MBO
+    best_trial_cache <- new.env(parent = emptyenv())
+    best_trial_cache$score <- -Inf
+    best_trial_cache$params <- NULL
+    best_trial_cache$res <- NULL
+    best_trial_cache$fold_res <- NULL
+
     # Define optimization objective function
     fn <- function(x) {
       # Extract parameters from the MBO proposal and merge with fixed_params and extra args
@@ -191,6 +198,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       if (use_fold_data) {
         # Global cross-validation mode across pre-computed folds
         scores <- numeric(mbo_folds)
+        trial_fold_res <- vector("list", mbo_folds)
         for (i in seq_len(mbo_folds)) {
           fd <- fold_data[[i]]
           res <- do.call(base_evaluator$train_func, c(
@@ -200,10 +208,29 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                  metric = metric, verbose = FALSE),
             trial_params
           ))
-          if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
-          scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class)
+          scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
+          res$score <- scores[i]
+          if (is.null(res$best_iteration) && !is.null(res$model)) {
+            res$best_iteration <- if (!is.null(res$model$best_iteration)) {
+              res$model$best_iteration
+            } else if (!is.null(res$model$best_epoch)) {
+              res$model$best_epoch
+            } else {
+              res$model$best_iter
+            }
+          }
+          if (!is.null(base_evaluator$cleanup_func) && !is.null(res$model)) {
+            base_evaluator$cleanup_func(res$model)
+          }
+          res$model <- NULL
+          trial_fold_res[[i]] <- res
         }
         mean_score <- mean(scores)
+        if (is.finite(mean_score) && (is.null(best_trial_cache$fold_res) || mean_score > best_trial_cache$score)) {
+          best_trial_cache$score <- mean_score
+          best_trial_cache$params <- x
+          best_trial_cache$fold_res <- trial_fold_res
+        }
         if (verbose) {
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
           message(sprintf("  [MBO Eval] %s -> Global CV Fitness: %.4f", param_str, mean_score))
@@ -216,8 +243,20 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                threads = threads, num_class = num_class, metric = metric, verbose = FALSE),
           trial_params
         ))
-        if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
-        score <- compute_metric(y_val, res$predictions, task, metric = metric, num_class = num_class)
+        score <- compute_metric(y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
+        res$score <- score
+        if (is.finite(score) && (is.null(best_trial_cache$res) || score > best_trial_cache$score)) {
+          if (!is.null(base_evaluator$cleanup_func) && !is.null(best_trial_cache$res$model)) {
+            base_evaluator$cleanup_func(best_trial_cache$res$model)
+          }
+          best_trial_cache$score <- score
+          best_trial_cache$params <- x
+          best_trial_cache$res <- res
+        } else {
+          if (!is.null(base_evaluator$cleanup_func) && !is.null(res$model)) {
+            base_evaluator$cleanup_func(res$model)
+          }
+        }
         
         if (verbose) {
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
@@ -240,7 +279,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
             trial_params
           ))
           if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
-          scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class)
+          scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
         }
         
         mean_score <- mean(scores)
@@ -340,8 +379,15 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                       base_model_name, paste0(names(best_hyperparams), "=", unlist(best_hyperparams), collapse = ", ")))
     }
     
-    # 5. Train final model with the optimal parameters
+    # 5. Return cached winning trial outputs (or train on full data when no split/fold_data was used)
     if (use_fold_data) {
+      if (!is.null(best_trial_cache$fold_res)) {
+        return(list(
+          best_params = best_hyperparams,
+          fold_res = best_trial_cache$fold_res,
+          score = best_trial_cache$score
+        ))
+      }
       final_params <- utils::modifyList(list(...), fixed_params)
       final_params <- utils::modifyList(final_params, best_hyperparams)
       final_params$fold_data <- NULL
@@ -361,6 +407,12 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         best_params = best_hyperparams,
         fold_res = fold_res
       ))
+    }
+
+    if (use_split && !is.null(best_trial_cache$res)) {
+      final_res <- best_trial_cache$res
+      final_res$best_params <- best_hyperparams
+      return(final_res)
     }
 
     final_params <- utils::modifyList(list(...), fixed_params)

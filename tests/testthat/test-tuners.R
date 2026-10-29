@@ -185,3 +185,71 @@ test_that("global CV optimization sets one winning best_params across folds", {
   expect_true(is.numeric(res$best_individual$fitness))
   expect_true(length(res$best_individual$val_preds) == n)
 })
+
+test_that("make_tunable reuses winning trial outputs without post-MBO retraining in split and fold_data modes", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  call_counter <- new.env(parent = emptyenv())
+  call_counter$count <- 0L
+
+  register_evaluator(
+    "mock_counted_base",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+                          task = "regression", ...) {
+      call_counter$count <- call_counter$count + 1L
+      args <- list(...)
+      param_val <- if (!is.null(args$param_a)) args$param_a else 4.0
+      pred_val <- 4.5 - abs(param_val - 4.5)
+      list(
+        model = list(args = args, pred_val = pred_val),
+        predictions = if (!is.null(x_val)) rep(pred_val, nrow(x_val)) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train)),
+        best_iteration = 12L
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      rep(model$pred_val, nrow(x_new))
+    }
+  )
+
+  make_tunable(
+    "mock_counted_base",
+    list(param_a = list(type = "numeric", lower = 1.0, upper = 8.0)),
+    tuner_name = "mock_counted_tuned"
+  )
+
+  set.seed(42)
+  x_tr <- matrix(stats::rnorm(20), ncol = 2, dimnames = list(NULL, c("x1", "x2")))
+  y_tr <- rep(4.5, 10)
+  x_va <- matrix(stats::rnorm(10), ncol = 2, dimnames = list(NULL, c("x1", "x2")))
+  y_va <- rep(4.5, 5)
+
+  # 1. Split mode: 3 init design + 2 MBO iters = 5 total fits (zero post-MBO retrain)
+  call_counter$count <- 0L
+  fit_split <- train_model(
+    x_tr, y_tr, x_val = x_va, y_val = y_va,
+    task = "regression", evaluator = "mock_counted_tuned",
+    mbo_init_design = 3, mbo_iters = 2
+  )
+  expect_equal(call_counter$count, 5L)
+  expect_length(fit_split$predictions, 5L)
+  expect_equal(fit_split$best_iteration, 12L)
+  expect_true(is.finite(fit_split$score))
+
+  # 2. Fold-data (global CV) mode: (3 init + 2 iters) * 2 folds = 10 total fits (zero post-MBO retrain)
+  call_counter$count <- 0L
+  fold_data <- list(
+    list(x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va),
+    list(x_train = x_tr, y_train = y_tr, x_val = x_va, y_val = y_va)
+  )
+  fit_cv <- train_model(
+    x_train = NULL, y_train = NULL, x_val = NULL, y_val = NULL,
+    task = "regression", evaluator = "mock_counted_tuned",
+    fold_data = fold_data, mbo_init_design = 3, mbo_iters = 2
+  )
+  expect_equal(call_counter$count, 10L)
+  expect_length(fit_cv$fold_res, 2L)
+  expect_equal(fit_cv$fold_res[[1]]$best_iteration, 12L)
+})

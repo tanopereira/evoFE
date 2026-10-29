@@ -77,9 +77,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       data.table::setattr(val_fold, ".row_id", va_idx)
     }
 
-    # Copy train/val folds so we can modify them when applying recipe
-    train_fold <- data.table::copy(train_fold)
-    val_fold <- data.table::copy(val_fold)
+    # Shallow-copy train/val folds so appending gene columns via := never mutates shared splits
+    train_fold <- shallow_copy_dt(train_fold)
+    val_fold <- shallow_copy_dt(val_fold)
     full_split_data <- if (!is.null(shared_full)) shared_full else data
 
     # Apply genes
@@ -109,8 +109,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     features <- extract_individual_features(res$ind, target_col = target_col)
     dt_sub_tr <- train_fold_feat[, features, with = FALSE]
     dt_sub_va <- val_fold_feat[, features, with = FALSE]
-    x_train <- .sanitize_feature_matrix(dt_sub_tr)
-    x_val <- .sanitize_feature_matrix(dt_sub_va)
+    x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
+    x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
     y_train <- train_fold_feat[[target_col]]
     y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
@@ -178,19 +178,36 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
     ind$train_size <- nrow(train_fold)
 
-    # Validation score -> raw_fitness
+    eval_entry <- get_evaluator(evaluator)
+    if (!is.null(eval_entry$cleanup_func) && !is.null(res_model$model)) {
+      eval_entry$cleanup_func(res_model$model)
+    }
+
+    # Validation score -> raw_fitness (reuse precomputed score from tuned evaluator when available)
     if (task == "multiclass") {
       y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-      raw_score <- compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
+      raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
+        res_model$score
+      } else {
+        compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
+      }
       ind$val_preds <- preds
       ind$y_val <- y_val_encoded
     } else if (task == "classification") {
       y_val_encoded <- y_val
-      raw_score <- compute_metric(y_val_encoded, preds, task, metric, threads = threads)
+      raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
+        res_model$score
+      } else {
+        compute_metric(y_val_encoded, preds, task, metric, threads = threads)
+      }
       ind$val_preds <- preds
       ind$y_val <- y_val_encoded
     } else {
-      raw_score <- compute_metric(val_fold_feat[[target_col]], preds, task, metric, threads = threads)
+      raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
+        res_model$score
+      } else {
+        compute_metric(val_fold_feat[[target_col]], preds, task, metric, threads = threads)
+      }
       ind$val_preds <- preds
       ind$y_val <- val_fold_feat[[target_col]]
     }
@@ -254,8 +271,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     for (fi in seq_along(unique_folds)) {
       f <- unique_folds[fi]
       if (use_shared) {
-        train_fold <- data.table::copy(shared_folds[[f]]$train)
-        val_fold <- data.table::copy(shared_folds[[f]]$val)
+        train_fold <- shallow_copy_dt(shared_folds[[f]]$train)
+        val_fold <- shallow_copy_dt(shared_folds[[f]]$val)
         val_idx <- if (!is.null(fold_ids)) which(fold_ids == f) else seq_len(nrow(val_fold))
       } else {
         train_idx <- which(folds != f)
@@ -291,8 +308,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       features <- extract_individual_features(res$ind, target_col = target_col)
       dt_sub_tr <- train_fold_feat[, features, with = FALSE]
       dt_sub_va <- val_fold_feat[, features, with = FALSE]
-      x_train <- .sanitize_feature_matrix(dt_sub_tr)
-      x_val <- .sanitize_feature_matrix(dt_sub_va)
+      x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
+      x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
       y_train <- train_fold_feat[[target_col]]
       y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
@@ -437,7 +454,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
           if (task == "multiclass") {
             y_val_encoded <- as.integer(factor(fd$val_fold_feat[[target_col]], levels = classes)) - 1
-            metrics[orig_fi] <- compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
+            metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
+              res_m$score
+            } else {
+              compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
+            }
             if (length(val_idx) == length(y_val_encoded)) {
               if (is.matrix(preds)) {
                 oof_preds[val_idx, ] <- preds
@@ -448,20 +469,28 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
             }
           } else if (task == "classification") {
             y_val_encoded <- fd$y_val
-            metrics[orig_fi] <- compute_metric(y_val_encoded, preds, task, metric, threads = threads)
+            metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
+              res_m$score
+            } else {
+              compute_metric(y_val_encoded, preds, task, metric, threads = threads)
+            }
             if (length(val_idx) == length(preds)) {
               oof_preds[val_idx] <- preds
               oof_y[val_idx] <- y_val_encoded
             }
           } else {
-            metrics[orig_fi] <- compute_metric(fd$val_fold_feat[[target_col]], preds, task, metric, threads = threads)
+            metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
+              res_m$score
+            } else {
+              compute_metric(fd$val_fold_feat[[target_col]], preds, task, metric, threads = threads)
+            }
             if (length(val_idx) == length(preds)) {
               oof_preds[val_idx] <- preds
               oof_y[val_idx] <- fd$val_fold_feat[[target_col]]
             }
           }
 
-          if (!is.null(eval_entry$cleanup_func)) {
+          if (!is.null(eval_entry$cleanup_func) && !is.null(res_m$model)) {
             eval_entry$cleanup_func(res_m$model)
           }
         }
