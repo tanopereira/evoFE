@@ -303,8 +303,8 @@ register_evaluator(
     if (!requireNamespace("lightgbm", quietly = TRUE)) {
       stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
     }
-    x_train <- .sanitize_feature_matrix(x_train)
-    x_val   <- .sanitize_feature_matrix(x_val)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
     dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
     extra_params <- list(...)
     if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
@@ -383,37 +383,22 @@ register_evaluator(
       valids$val <- dval
     }
 
-    val_labels_num <- if (use_custom_eval && length(valids) > 0) {
-      if (custom_eval_type == "ts_refinement" && task == "classification") {
-        as.numeric(encode_binary_target(y_val))
-      } else {
-        as.numeric(y_val)
-      }
+    cal_eval_score <- if (use_custom_eval && length(valids) > 0) {
+      make_calibration_eval_fn(y_val, custom_eval_type, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
     } else {
       NULL
     }
 
-    lgb_eval <- function(preds, dtrain) {
-      labels <- if (!is.null(val_labels_num)) val_labels_num else lightgbm::get_field(dtrain, "label")
-      if (custom_eval_type == "ts_refinement") {
-        score <- if (task == "classification") {
-          rcpp_compute_ts_refinement_binary(labels, as.numeric(preds), 1.0, FALSE, as.integer(threads))
-        } else {
-          compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
-        }
-        list(name = "ts_refinement", value = score, higher_better = FALSE)
-      } else if (custom_eval_type == "cal_rmse") {
-        score <- rcpp_compute_calibrated_rmse(labels, as.numeric(preds))
-        list(name = "cal_rmse", value = score, higher_better = FALSE)
-      } else { # cal_mae
-        score <- rcpp_compute_calibrated_mae(labels, as.numeric(preds))
-        list(name = "cal_mae", value = score, higher_better = FALSE)
-      }
-    }
-
     # early_stopping_rounds requires at least one validation dataset
     esr <- if (length(valids) > 0) early_stopping_rounds else NULL
-    eval_fn <- if (use_custom_eval && length(valids) > 0) lgb_eval else NULL
+    eval_fn <- if (!is.null(cal_eval_score)) {
+      function(preds, dtrain) {
+        score <- cal_eval_score(preds, if (is.null(y_val)) lightgbm::get_field(dtrain, "label") else NULL)
+        list(name = custom_eval_type, value = score, higher_better = FALSE)
+      }
+    } else {
+      NULL
+    }
 
     if (learner_verbose) {
       model <- lightgbm::lgb.train(
@@ -511,8 +496,8 @@ register_evaluator(
     if (!requireNamespace("xgboost", quietly = TRUE)) {
       stop("The 'xgboost' package is required to use the 'xgboost' evaluator. Please install it.")
     }
-    x_train <- .sanitize_feature_matrix(x_train)
-    x_val   <- .sanitize_feature_matrix(x_val)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
     extra_params <- list(...)
     if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
     if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
@@ -601,35 +586,22 @@ register_evaluator(
       early_stopping_rounds <- NULL
     }
 
-    val_labels_num <- if (use_custom_eval && length(evals) > 0) {
-      if (custom_eval_type == "ts_refinement" && task == "classification") {
-        as.numeric(encode_binary_target(y_val))
-      } else {
-        as.numeric(y_val)
+    cal_eval_score <- if (use_custom_eval && length(evals) > 0) {
+      make_calibration_eval_fn(y_val, custom_eval_type, task = task, num_class = num_class, is_logits = TRUE, threads = threads)
+    } else {
+      NULL
+    }
+
+    xgb_feval <- if (!is.null(cal_eval_score)) {
+      function(preds, dtrain) {
+        score <- cal_eval_score(preds, if (is.null(y_val)) xgboost::getinfo(dtrain, "label") else NULL)
+        list(metric = custom_eval_type, value = score)
       }
     } else {
       NULL
     }
 
-    xgb_feval <- function(preds, dtrain) {
-      labels <- if (!is.null(val_labels_num)) val_labels_num else xgboost::getinfo(dtrain, "label")
-      if (custom_eval_type == "ts_refinement") {
-        score <- if (task == "classification") {
-          rcpp_compute_ts_refinement_binary(labels, as.numeric(preds), 1.0, TRUE, as.integer(threads))
-        } else {
-          compute_ts_refinement(labels, preds, task = task, num_class = num_class, is_logits = TRUE, threads = threads)
-        }
-        list(metric = "ts_refinement", value = score)
-      } else if (custom_eval_type == "cal_rmse") {
-        score <- rcpp_compute_calibrated_rmse(labels, as.numeric(preds))
-        list(metric = "cal_rmse", value = score)
-      } else { # cal_mae
-        score <- rcpp_compute_calibrated_mae(labels, as.numeric(preds))
-        list(metric = "cal_mae", value = score)
-      }
-    }
-
-    use_feval <- use_custom_eval && length(evals) > 0
+    use_feval <- !is.null(xgb_feval)
     xgb_train_call <- function() {
       suppressWarnings(xgboost::xgb.train(
         params = params,
@@ -743,8 +715,8 @@ register_evaluator(
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
 
-    x_train <- .sanitize_feature_matrix(x_train)
-    x_val   <- .sanitize_feature_matrix(x_val)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
 
     dtrain <- catboost::catboost.load_pool(data = x_train, label = y_train)
 
@@ -1283,8 +1255,8 @@ register_evaluator(
     use_es <- early_stopping_rounds > 0L && !is.null(x_val) && !is.null(y_val)
     es_rounds_to_pass <- if (use_es) early_stopping_rounds else 0L
 
-    x_train <- .sanitize_feature_matrix(x_train)
-    x_val   <- .sanitize_feature_matrix(x_val)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
 
     imp <- .realmlp_impute_matrix(x_train)
     x_train  <- imp$mat

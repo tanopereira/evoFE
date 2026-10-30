@@ -70,35 +70,6 @@ inline void fuse_standardize_column(
   }
 }
 
-// Single-Pass Fused Matrix Standardization:
-// OpenMP-parallelized across columns (for D >= 4) with cache-contiguous column operations
-inline void fuse_standardize_matrix(
-    const double* __restrict__ src,
-    double* __restrict__ dst,
-    int N, int D,
-    const double* __restrict__ x_mean,
-    const double* __restrict__ x_inv_std) {
-  if (N <= 0 || D <= 0) return;
-
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (D >= 2)
-#endif
-  for (int j = 0; j < D; ++j) {
-    size_t offset = static_cast<size_t>(j) * N;
-    const double* src_col = src + offset;
-    double* dst_col = dst + offset;
-    double m = x_mean[j];
-    double inv_s = x_inv_std[j];
-
-    for (int i = 0; i < N; ++i) {
-      double v = src_col[i];
-      double clean_v = std::isfinite(v) ? v : 0.0;
-      double z = (clean_v - m) * inv_s;
-      dst_col[i] = std::clamp(z, -30.0, 30.0);
-    }
-  }
-}
-
 // Single-Pass Fused Matrix Standardization into FP32 (float):
 // Computes standardization in FP64 for numerical accuracy against near-zero variance columns,
 // clamps to [-30, 30], and stores directly as FP32 for AMX/SIMD acceleration.

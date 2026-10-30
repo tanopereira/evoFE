@@ -35,9 +35,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     return(ind)
   }
 
-  train_fold <- data.table::copy(train_fold)
-  val_fold <- data.table::copy(val_fold)
-  holdout_fold <- data.table::copy(holdout_fold)
+  train_fold <- shallow_copy_dt(train_fold)
+  val_fold <- shallow_copy_dt(val_fold)
+  holdout_fold <- shallow_copy_dt(holdout_fold)
 
   res <- tryCatch(
     {
@@ -56,8 +56,8 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 
   features <- extract_individual_features(res$ind, target_col = target_col)
 
-  x_train <- .sanitize_feature_matrix(train_fold_feat[, features, with = FALSE])
-  x_val   <- .sanitize_feature_matrix(val_fold_feat[, features, with = FALSE])
+  x_train <- .sanitize_feature_matrix(train_fold_feat[, features, with = FALSE], threads = threads)
+  x_val   <- .sanitize_feature_matrix(val_fold_feat[, features, with = FALSE], threads = threads)
   y_train <- train_fold_feat[[target_col]]
   y_val <- val_fold_feat[[target_col]]
   if (task == "multiclass") {
@@ -97,21 +97,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     ind$best_params <- res_model$best_params
   }
 
-  iter_val <- if (!is.null(res_model$best_iteration)) {
-    res_model$best_iteration
-  } else if (!is.null(res_model$best_epoch)) {
-    res_model$best_epoch
-  } else if (!is.null(res_model$model$best_iteration)) {
-    res_model$model$best_iteration
-  } else if (!is.null(res_model$model$best_epoch)) {
-    res_model$model$best_epoch
-  } else if (!is.null(res_model$model$best_iter)) {
-    res_model$model$best_iter
-  } else {
-    NULL
-  }
-  if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
-    ind$best_iteration <- as.integer(round(iter_val))
+  iter_val <- extract_best_iteration(res_model)
+  if (!is.null(iter_val)) {
+    ind$best_iteration <- iter_val
   }
   ind$train_size <- nrow(train_fold)
 
@@ -123,7 +111,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   )
 
   if (!is.null(res_holdout)) {
-    x_holdout <- .sanitize_feature_matrix(res_holdout$train[, features, with = FALSE])
+    x_holdout <- .sanitize_feature_matrix(res_holdout$train[, features, with = FALSE], threads = threads)
 
     evaluator_entry <- get_evaluator(evaluator)
     preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task, threads = threads)

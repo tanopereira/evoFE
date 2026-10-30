@@ -28,8 +28,8 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
   threads <- resolved$threads
   nrounds <- resolved$nrounds
 
-  x_train <- .sanitize_feature_matrix(x_train)
-  x_val   <- .sanitize_feature_matrix(x_val)
+  x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+  x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
 
   evaluator_entry$train_func(
     x_train = x_train,

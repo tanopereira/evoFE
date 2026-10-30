@@ -169,16 +169,16 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         idx_train <- which(folds != i)
         idx_val <- which(folds == i)
         list(
-          x_train = .sanitize_feature_matrix(x_train[idx_train, , drop = FALSE]),
+          x_train = .sanitize_feature_matrix(x_train[idx_train, , drop = FALSE], threads = threads),
           y_train = y_train[idx_train],
-          x_val = .sanitize_feature_matrix(x_train[idx_val, , drop = FALSE]),
+          x_val = .sanitize_feature_matrix(x_train[idx_val, , drop = FALSE], threads = threads),
           y_val = y_train[idx_val]
         )
       })
     }
     if (use_split) {
-      x_train <- .sanitize_feature_matrix(x_train)
-      x_val   <- .sanitize_feature_matrix(x_val)
+      x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+      x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
     }
     
     # Cache winning trial outputs so use_fold_data and use_split modes never retrain post-MBO
@@ -210,15 +210,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           ))
           scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
           res$score <- scores[i]
-          if (is.null(res$best_iteration) && !is.null(res$model)) {
-            res$best_iteration <- if (!is.null(res$model$best_iteration)) {
-              res$model$best_iteration
-            } else if (!is.null(res$model$best_epoch)) {
-              res$model$best_epoch
-            } else {
-              res$model$best_iter
-            }
-          }
+          res$best_iteration <- extract_best_iteration(res)
           if (!is.null(base_evaluator$cleanup_func) && !is.null(res$model)) {
             base_evaluator$cleanup_func(res$model)
           }

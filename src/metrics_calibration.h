@@ -15,6 +15,45 @@ namespace evofe {
 
 static constexpr double MIN_LOG_PROB = -34.538776394910684; // std::log(1e-15)
 
+// Safeguarded 1D Newton-Raphson update on inverse temperature beta = 1 / T in [0.1, 1000.0].
+// Returns true when convergence tolerances are satisfied.
+inline bool step_newton_beta(double g, double hess_sum, double inv_n,
+                             double& beta, double& beta_lo, double& beta_hi) noexcept {
+  if (std::abs(g) * inv_n < 1e-7) return true;
+
+  if (g > 0.0) {
+    beta_hi = std::min(beta_hi, beta);
+  } else {
+    beta_lo = std::max(beta_lo, beta);
+  }
+
+  double cand;
+  if (hess_sum > 1e-12) {
+    double step = std::clamp(g / hess_sum, -3.0 * beta, 0.75 * beta);
+    cand = beta - step;
+  } else {
+    cand = -1.0;
+  }
+
+  if (cand <= beta_lo || cand >= beta_hi) {
+    if (g < 0.0 && beta_hi == 1000.0) {
+      cand = std::min(beta_hi, beta * 4.0);
+    } else if (g > 0.0 && beta_lo == 0.1) {
+      cand = std::max(beta_lo, beta * 0.25);
+    } else {
+      cand = std::sqrt(beta_lo * beta_hi);
+    }
+  }
+
+  cand = std::clamp(cand, 0.1, 1000.0);
+  if (std::abs(cand - beta) <= 1e-5 * beta || (beta_hi - beta_lo) <= 1e-5 * beta) {
+    beta = cand;
+    return true;
+  }
+  beta = cand;
+  return false;
+}
+
 // Binary Temperature-Scaled Refinement
 // Uses safeguarded Newton-Raphson on inverse temperature beta = 1 / T in [0.1, 1000.0],
 // exploiting strict convexity of smoothed cross-entropy in beta and hoisting sum(w_i * z_i).
@@ -87,44 +126,17 @@ inline double compute_ts_refinement_binary_impl(
     for (int i = 0; i < n; ++i) {
       float zi = z[i];
       float u = std::clamp(beta_f * zi, -35.0f, 35.0f);
-      float p = 1.0f / (1.0f + std::exp(-u));
+      float eu = std::exp(-std::abs(u));
+      float denom = 1.0f + eu;
+      float p = (u >= 0.0f) ? (1.0f / denom) : (eu / denom);
+      float pq = eu / (denom * denom);
       grad_sum += static_cast<double>(p * zi);
-      hess_sum += static_cast<double>(p * (1.0f - p) * zi * zi);
+      hess_sum += static_cast<double>(pq * zi * zi);
     }
 
-    double g = grad_sum - sum_wz;
-    if (std::abs(g) * inv_n < 1e-7) break;
-
-    if (g > 0.0) {
-      beta_hi = std::min(beta_hi, beta);
-    } else {
-      beta_lo = std::max(beta_lo, beta);
-    }
-
-    double cand;
-    if (hess_sum > 1e-12) {
-      double step = std::clamp(g / hess_sum, -3.0 * beta, 0.75 * beta);
-      cand = beta - step;
-    } else {
-      cand = -1.0;
-    }
-
-    if (cand <= beta_lo || cand >= beta_hi) {
-      if (g < 0.0 && beta_hi == 1000.0) {
-        cand = std::min(beta_hi, beta * 4.0);
-      } else if (g > 0.0 && beta_lo == 0.1) {
-        cand = std::max(beta_lo, beta * 0.25);
-      } else {
-        cand = std::sqrt(beta_lo * beta_hi);
-      }
-    }
-
-    cand = std::clamp(cand, 0.1, 1000.0);
-    if (std::abs(cand - beta) <= 1e-5 * beta || (beta_hi - beta_lo) <= 1e-5 * beta) {
-      beta = cand;
+    if (step_newton_beta(grad_sum - sum_wz, hess_sum, inv_n, beta, beta_lo, beta_hi)) {
       break;
     }
-    beta = cand;
   }
 
   // Un-smoothed log-loss at optimal inverse temperature beta = 1 / best_temp
@@ -149,7 +161,7 @@ inline double compute_ts_refinement_binary_impl(
 
 // Multiclass Temperature-Scaled Refinement
 // Uses safeguarded Newton-Raphson on inverse temperature beta = 1 / T in [0.1, 1000.0],
-// hoisting the smoothed target dot-product sum_i sum_j(S[k_i, j] * Z[i, j]).
+// row-centering logits in FP64 once and fusing the hoisted target dot-product sum_i sum_j(S[k_i, j] * Z[i, j]).
 template <typename LabelType>
 inline double compute_ts_refinement_multiclass_impl(
     const LabelType* __restrict__ y_true_0_ptr,
@@ -194,37 +206,40 @@ inline double compute_ts_refinement_multiclass_impl(
     }
   }
 
-  // Outer Calculation 3: Precompute sanitized row-major contiguous FP32 logits Z [N x C]
+  // Outer Calculation 3: Single-pass fused sanitization, FP64 row-max centering into FP32 Z [N x C],
+  // and hoisted target dot-product sum_sz = sum_i sum_j S[k_i, j] * Z[i, j].
+  // Because max_j Z[i, j] == 0.0f for every row i, exp(beta * z_j) needs no inner max pass and
+  // ez2_bar - ez_bar^2 never suffers shift cancellation on near-uniform probabilities.
   std::vector<float> Z(static_cast<size_t>(n) * c);
-  for (int j = 0; j < c; ++j) {
-    const double* col_ptr = y_pred_colmajor_ptr + static_cast<size_t>(j) * n;
-    for (int i = 0; i < n; ++i) {
-      double val;
-      if (is_logits) {
-        val = col_ptr[i];
-      } else {
-        double p = std::clamp(col_ptr[i], 1e-15, 1.0 - 1e-15);
-        val = std::log(p);
-      }
-      if (std::isnan(val) || !std::isfinite(val)) val = 0.0;
-      Z[static_cast<size_t>(i) * c + j] = static_cast<float>(std::clamp(val, -35.0, 35.0));
-    }
-  }
-
-  // Precompute hoisted target dot-product sum_sz = sum_i sum_j S[k_i, j] * Z[i, j]
   double sum_sz = 0.0;
+
 #if defined(_OPENMP)
 #pragma omp parallel for num_threads(n_threads) reduction(+:sum_sz) schedule(static) if (n >= 1024)
 #endif
   for (int i = 0; i < n; ++i) {
-    const float* __restrict__ z_row = &Z[static_cast<size_t>(i) * c];
+    float* __restrict__ z_row = &Z[static_cast<size_t>(i) * c];
     int k = static_cast<int>(y_true_0_ptr[i]);
     if (k < 0) k = 0;
     if (k >= c) k = c - 1;
     const double* __restrict__ s_row = &S[k * c];
+
+    double row_max = -35.0;
+    for (int j = 0; j < c; ++j) {
+      double raw = y_pred_colmajor_ptr[static_cast<size_t>(j) * n + i];
+      double val = is_logits ? raw : std::log(std::clamp(raw, 1e-15, 1.0 - 1e-15));
+      if (std::isnan(val) || !std::isfinite(val)) val = 0.0;
+      val = std::clamp(val, -35.0, 35.0);
+      if (j == 0 || val > row_max) row_max = val;
+    }
+
     double dot = 0.0;
     for (int j = 0; j < c; ++j) {
-      dot += s_row[j] * static_cast<double>(z_row[j]);
+      double raw = y_pred_colmajor_ptr[static_cast<size_t>(j) * n + i];
+      double val = is_logits ? raw : std::log(std::clamp(raw, 1e-15, 1.0 - 1e-15));
+      if (std::isnan(val) || !std::isfinite(val)) val = 0.0;
+      double z_centered = std::clamp(val, -35.0, 35.0) - row_max;
+      z_row[j] = static_cast<float>(z_centered);
+      dot += s_row[j] * z_centered;
     }
     sum_sz += dot;
   }
@@ -246,18 +261,12 @@ inline double compute_ts_refinement_multiclass_impl(
 #endif
     for (int i = 0; i < n; ++i) {
       const float* __restrict__ z_row = &Z[static_cast<size_t>(i) * c];
-      float m = z_row[0] * beta_f;
-      for (int j = 1; j < c; ++j) {
-        float v = z_row[j] * beta_f;
-        if (v > m) m = v;
-      }
-
       float sum_exp = 0.0f;
       float sum_ez = 0.0f;
       float sum_ez2 = 0.0f;
       for (int j = 0; j < c; ++j) {
-        float zj = z_row[j];
-        float e = std::exp(zj * beta_f - m);
+        float zj = z_row[j]; // zj <= 0.0f with max_j(zj) == 0.0f
+        float e = std::exp(zj * beta_f);
         sum_exp += e;
         sum_ez += e * zj;
         sum_ez2 += e * zj * zj;
@@ -270,39 +279,9 @@ inline double compute_ts_refinement_multiclass_impl(
       hess_sum += std::max(0.0, ez2_bar - ez_bar * ez_bar);
     }
 
-    double g = grad_sum - sum_sz;
-    if (std::abs(g) * inv_n < 1e-7) break;
-
-    if (g > 0.0) {
-      beta_hi = std::min(beta_hi, beta);
-    } else {
-      beta_lo = std::max(beta_lo, beta);
-    }
-
-    double cand;
-    if (hess_sum > 1e-12) {
-      double step = std::clamp(g / hess_sum, -3.0 * beta, 0.75 * beta);
-      cand = beta - step;
-    } else {
-      cand = -1.0;
-    }
-
-    if (cand <= beta_lo || cand >= beta_hi) {
-      if (g < 0.0 && beta_hi == 1000.0) {
-        cand = std::min(beta_hi, beta * 4.0);
-      } else if (g > 0.0 && beta_lo == 0.1) {
-        cand = std::max(beta_lo, beta * 0.25);
-      } else {
-        cand = std::sqrt(beta_lo * beta_hi);
-      }
-    }
-
-    cand = std::clamp(cand, 0.1, 1000.0);
-    if (std::abs(cand - beta) <= 1e-5 * beta || (beta_hi - beta_lo) <= 1e-5 * beta) {
-      beta = cand;
+    if (step_newton_beta(grad_sum - sum_sz, hess_sum, inv_n, beta, beta_lo, beta_hi)) {
       break;
     }
-    beta = cand;
   }
 
   // Un-smoothed multiclass log-loss at optimal inverse temperature beta = 1 / best_temp
@@ -318,17 +297,11 @@ inline double compute_ts_refinement_multiclass_impl(
     if (k < 0) k = 0;
     if (k >= c) k = c - 1;
 
-    double m = static_cast<double>(z_row[0]) * inv_best_temp;
-    for (int j = 1; j < c; ++j) {
-      double v = static_cast<double>(z_row[j]) * inv_best_temp;
-      if (v > m) m = v;
-    }
-
     double sum_exp = 0.0;
     for (int j = 0; j < c; ++j) {
-      sum_exp += std::exp(static_cast<double>(z_row[j]) * inv_best_temp - m);
+      sum_exp += std::exp(static_cast<double>(z_row[j]) * inv_best_temp);
     }
-    double log_sum_exp = m + std::log(sum_exp);
+    double log_sum_exp = std::log(sum_exp);
 
     double log_p_true = std::clamp((static_cast<double>(z_row[k]) * inv_best_temp) - log_sum_exp, MIN_LOG_PROB, 0.0);
     unsmoothed_loss -= log_p_true;

@@ -309,65 +309,64 @@ SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads = 1) {
 
 namespace {
 
-inline double compute_pair_abs_cor_dbl(const double* nc, const double* ev, int n, int step) {
-  double sum_x = 0.0, sum_y = 0.0;
-  int cnt = 0;
-  for (int i = 0; i < n; i += step) {
-    double x = nc[i];
-    double y = ev[i];
-    if (std::isfinite(x) && std::isfinite(y)) {
-      sum_x += x;
-      sum_y += y;
-      cnt++;
-    }
-  }
-  if (cnt <= 2) return 0.0;
-  double mx = sum_x / cnt;
-  double my = sum_y / cnt;
-  double sxx = 0.0, syy = 0.0, sxy = 0.0;
-  for (int i = 0; i < n; i += step) {
-    double x = nc[i];
-    double y = ev[i];
-    if (std::isfinite(x) && std::isfinite(y)) {
-      double dx = x - mx;
-      double dy = y - my;
-      sxx += dx * dx;
-      syy += dy * dy;
-      sxy += dx * dy;
-    }
-  }
-  if (sxx <= 0.0 || syy <= 0.0) return 0.0;
-  return std::abs(sxy) / std::sqrt(sxx * syy);
+template <typename T>
+inline bool is_valid_elem(T val) noexcept;
+
+template <>
+inline bool is_valid_elem<double>(double val) noexcept {
+  return std::isfinite(val);
 }
 
-inline double compute_pair_abs_cor_int(const double* nc, const int* ev, int n, int step) {
+template <>
+inline bool is_valid_elem<int>(int val) noexcept {
+  return val != NA_INTEGER;
+}
+
+template <typename T>
+inline double compute_pair_abs_cor(const double* nc, const T* ev, int n, int step,
+                                   bool nc_all_finite, double pre_mx, double pre_sxx) {
   double sum_x = 0.0, sum_y = 0.0;
   int cnt = 0;
+  int total_steps = 0;
   for (int i = 0; i < n; i += step) {
+    total_steps++;
     double x = nc[i];
-    int yi = ev[i];
-    if (std::isfinite(x) && yi != NA_INTEGER) {
+    T y_raw = ev[i];
+    if (std::isfinite(x) && is_valid_elem(y_raw)) {
       sum_x += x;
-      sum_y += static_cast<double>(yi);
+      sum_y += static_cast<double>(y_raw);
       cnt++;
     }
   }
-  if (cnt <= 2) return 0.0;
-  double mx = sum_x / cnt;
+  if (cnt <= 2) return (step > 1) ? 1.0 : 0.0;
+
   double my = sum_y / cnt;
   double sxx = 0.0, syy = 0.0, sxy = 0.0;
-  for (int i = 0; i < n; i += step) {
-    double x = nc[i];
-    int yi = ev[i];
-    if (std::isfinite(x) && yi != NA_INTEGER) {
-      double dx = x - mx;
-      double dy = static_cast<double>(yi) - my;
-      sxx += dx * dx;
+
+  if (nc_all_finite && cnt == total_steps && pre_sxx > 0.0) {
+    double mx = pre_mx;
+    sxx = pre_sxx;
+    for (int i = 0; i < n; i += step) {
+      double dx = nc[i] - mx;
+      double dy = static_cast<double>(ev[i]) - my;
       syy += dy * dy;
       sxy += dx * dy;
     }
+  } else {
+    double mx = sum_x / cnt;
+    for (int i = 0; i < n; i += step) {
+      double x = nc[i];
+      T y_raw = ev[i];
+      if (std::isfinite(x) && is_valid_elem(y_raw)) {
+        double dx = x - mx;
+        double dy = static_cast<double>(y_raw) - my;
+        sxx += dx * dx;
+        syy += dy * dy;
+        sxy += dx * dy;
+      }
+    }
   }
-  if (sxx <= 0.0 || syy <= 0.0) return 0.0;
+  if (sxx <= 0.0 || syy <= 0.0) return (step > 1) ? 1.0 : 0.0;
   return std::abs(sxy) / std::sqrt(sxx * syy);
 }
 
@@ -383,11 +382,13 @@ int rcpp_validate_numeric_gene(NumericVector new_col, SEXP train_data, Character
   if (n <= 1) return 1;
   const double* nc = new_col.begin();
 
-  // 1. Single-pass constant & finite variance check
+  // 1. Single-pass Welford constant & finite variance check
   double first_val = NA_REAL;
   bool has_first = false;
   bool has_distinct = false;
   int n_finite = 0;
+  double mean_nc = 0.0;
+  double var_nc = 0.0;
 
   for (int i = 0; i < n; ++i) {
     double v = nc[i];
@@ -399,25 +400,14 @@ int rcpp_validate_numeric_gene(NumericVector new_col, SEXP train_data, Character
       } else if (!has_distinct && v != first_val) {
         has_distinct = true;
       }
+      double delta = v - mean_nc;
+      mean_nc += delta / n_finite;
+      var_nc += delta * (v - mean_nc);
     }
   }
 
   if (!has_distinct) return 1; // Constant column (0 or 1 unique non-NA value)
   if (n_finite <= 2 || cor_threshold >= 1.0 || TYPEOF(train_data) != VECSXP) return 0;
-
-  // Check if SD > 0 on finite values
-  double sum_nc = 0.0;
-  for (int i = 0; i < n; ++i) {
-    if (std::isfinite(nc[i])) sum_nc += nc[i];
-  }
-  double mean_nc = sum_nc / n_finite;
-  double var_nc = 0.0;
-  for (int i = 0; i < n; ++i) {
-    if (std::isfinite(nc[i])) {
-      double d = nc[i] - mean_nc;
-      var_nc += d * d;
-    }
-  }
   if (var_nc <= 0.0 || !std::isfinite(var_nc)) return 0;
 
   // 2. Pairwise correlation check against existing numeric columns in train_data
@@ -425,6 +415,29 @@ int rcpp_validate_numeric_gene(NumericVector new_col, SEXP train_data, Character
   int n_cols = Rf_length(train_data);
   int n_excl = exclude_cols.size();
   int step = (max_cor_rows > 0 && n > max_cor_rows) ? (n / max_cor_rows) : 1;
+
+  bool nc_all_finite = (n_finite == n);
+  double stride_mx = mean_nc;
+  double stride_sxx = var_nc;
+  if (step > 1 && nc_all_finite) {
+    double sum_s = 0.0;
+    int cnt_s = 0;
+    for (int i = 0; i < n; i += step) {
+      sum_s += nc[i];
+      cnt_s++;
+    }
+    stride_mx = sum_s / cnt_s;
+    stride_sxx = 0.0;
+    for (int i = 0; i < n; i += step) {
+      double d = nc[i] - stride_mx;
+      stride_sxx += d * d;
+    }
+    if (stride_sxx <= 0.0) {
+      step = 1;
+      stride_mx = mean_nc;
+      stride_sxx = var_nc;
+    }
+  }
 
   for (int j = 0; j < n_cols; ++j) {
     if (!Rf_isNull(col_names)) {
@@ -440,20 +453,20 @@ int rcpp_validate_numeric_gene(NumericVector new_col, SEXP train_data, Character
     }
 
     SEXP col = VECTOR_ELT(train_data, j);
-    if (Rf_length(col) != n || Rf_isFactor(col)) continue;
+    if (Rf_length(col) != n || Rf_isObject(col)) continue;
     int ct = TYPEOF(col);
     if (ct == REALSXP) {
       const double* ev = REAL(col);
-      double r = compute_pair_abs_cor_dbl(nc, ev, n, step);
+      double r = compute_pair_abs_cor(nc, ev, n, step, nc_all_finite, stride_mx, stride_sxx);
       if (step > 1 && r >= cor_threshold - 0.02) {
-        r = compute_pair_abs_cor_dbl(nc, ev, n, 1);
+        r = compute_pair_abs_cor(nc, ev, n, 1, nc_all_finite, mean_nc, var_nc);
       }
       if (std::isfinite(r) && r >= cor_threshold) return 2;
     } else if (ct == INTSXP) {
       const int* ev = INTEGER(col);
-      double r = compute_pair_abs_cor_int(nc, ev, n, step);
+      double r = compute_pair_abs_cor(nc, ev, n, step, nc_all_finite, stride_mx, stride_sxx);
       if (step > 1 && r >= cor_threshold - 0.02) {
-        r = compute_pair_abs_cor_int(nc, ev, n, 1);
+        r = compute_pair_abs_cor(nc, ev, n, 1, nc_all_finite, mean_nc, var_nc);
       }
       if (std::isfinite(r) && r >= cor_threshold) return 2;
     }

@@ -94,6 +94,34 @@ shallow_copy_dt <- function(dt) {
   out
 }
 
+#' Extract Best Iteration / Epoch from Evaluator Result
+#'
+#' @param res_model A list returned by an evaluator training function.
+#' @return A positive integer iteration count, or NULL if unavailable.
+#' @keywords internal
+#' @noRd
+extract_best_iteration <- function(res_model) {
+  if (is.null(res_model)) return(NULL)
+  iter_val <- if (!is.null(res_model$best_iteration)) {
+    res_model$best_iteration
+  } else if (!is.null(res_model$best_epoch)) {
+    res_model$best_epoch
+  } else if (!is.null(res_model$model$best_iteration)) {
+    res_model$model$best_iteration
+  } else if (!is.null(res_model$model$best_epoch)) {
+    res_model$model$best_epoch
+  } else if (!is.null(res_model$model$best_iter)) {
+    res_model$model$best_iter
+  } else {
+    NULL
+  }
+  if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
+    as.integer(round(iter_val))
+  } else {
+    NULL
+  }
+}
+
 #' Encode Binary Target Vector to 0L/1L Integers
 #'
 #' Maps factor, character, logical, or non-0/1 numeric binary targets to 0L/1L.

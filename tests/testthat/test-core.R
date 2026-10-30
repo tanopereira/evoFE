@@ -2609,6 +2609,60 @@ test_that("predict and predict_model do not mutate newdata in-place", {
   expect_equal(ncol(test_dt), orig_cols_count)
 })
 
+test_that("rcpp_validate_numeric_gene detects sparse collinearity across strided subsampling and ignores S3 Date/POSIXct columns", {
+  n <- 10000L
+  # Sparse feature where non-zero entries fall only on odd 0-based indices (even 1-based R indices),
+  # which are skipped by step = 2 (0, 2, 4, ...) when max_cor_rows = 8192 (98% zeros < 0.99 dominance limit)
+  sparse_x <- numeric(n)
+  sparse_x[seq(2L, 400L, by = 2L)] <- seq_len(200L)
+
+  dt_sparse <- data.table::data.table(
+    sparse_col = sparse_x,
+    date_col = as.Date("2020-01-01") + seq_len(n),
+    posix_col = as.POSIXct("2020-01-01 00:00:00", tz = "UTC") + seq_len(n),
+    target = rnorm(n)
+  )
+
+  # Identical to sparse_col (stride_sxx == 0 on step = 2) -> must return 2 (collinear)
+  expect_equal(
+    evoFE:::rcpp_validate_numeric_gene(sparse_x, dt_sparse, "target", 0.99, 8192L),
+    2L
+  )
+
+  # Candidate with tiny jitter on even 0-based indices (so stride_sxx > 0 and step stays 2)
+  # compared against sparse_col where syy == 0 on step = 2 -> must fall back to step = 1 and return 2
+  jittered_x <- sparse_x
+  jittered_x[1L] <- 1e-9
+  expect_equal(
+    evoFE:::rcpp_validate_numeric_gene(jittered_x, dt_sparse, "target", 0.99, 8192L),
+    2L
+  )
+
+  # Numeric vector identical to underlying numbers of date_col/posix_col must NOT be rejected
+  # as collinear with S3 Date/POSIXct columns (since is.numeric(Date) is FALSE in R)
+  date_nums <- as.numeric(dt_sparse$date_col)
+  expect_equal(
+    evoFE:::rcpp_validate_numeric_gene(date_nums, dt_sparse, "target", 0.99, 8192L),
+    0L
+  )
+})
+
+test_that("compute_ts_refinement multiclass preserves precision on near-uniform probabilities", {
+  set.seed(123)
+  n <- 500L
+  k <- 4L
+  y_true <- sample(0:(k - 1L), n, replace = TRUE)
+  logits <- matrix(rnorm(n * k, sd = 0.01), nrow = n, ncol = k)
+  row_max <- apply(logits, 1, max)
+  exp_z <- exp(logits - row_max)
+  probs <- exp_z / rowSums(exp_z)
+
+  loss_probs <- compute_ts_refinement(y_true, probs, task = "multiclass", num_class = k, is_logits = FALSE)
+  loss_logits <- compute_ts_refinement(y_true, logits, task = "multiclass", num_class = k, is_logits = TRUE)
+  expect_equal(loss_probs, loss_logits, tolerance = 1e-6)
+})
+
+
 
 
 

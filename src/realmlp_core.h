@@ -23,24 +23,23 @@
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK 1
 #endif
+// Include cblas_new.h and vForce.h directly instead of <Accelerate/Accelerate.h>
+// because Accelerate.h pulls in Fortran blas_new.h which conflicts with RcppEigen's blas.h.
 #include <vecLib/cblas_new.h>
-extern "C" {
-  void vvcosf(float* y, const float* x, const int* n) noexcept;
-  void vvsinf(float* y, const float* x, const int* n) noexcept;
-  void vvexpf(float* y, const float* x, const int* n) noexcept;
-  void vvexpm1f(float* y, const float* x, const int* n) noexcept;
-}
+#include <vecLib/vForce.h>
 #endif
 
 namespace realmlp {
 
-// Fast SIMD-vectorizable IEEE-754 + 4th-degree minimax polynomial expf (relative error < 3e-7)
+// Fast SIMD-vectorizable IEEE-754 + 5th-degree minimax polynomial expf (relative error < 2e-7, NaN-safe)
 static inline float fast_expf(float x) noexcept {
-  x = std::clamp(x, -80.0f, 80.0f);
+  if (!(x >= -87.3f)) return 0.0f;
+  if (x > 88.0f) x = 88.0f;
   float z = x * 1.4426950408889634f;
   float k = std::nearbyintf(z);
-  float f = x - k * 0.6931471805599453f;
-  float p = 1.0f + f * (1.0f + f * (0.5f + f * (0.16666667f + f * 0.04166667f)));
+  // Two-step Cody-Waite range reduction for ln(2)
+  float f = (x - k * 0.693145751953125f) - k * 1.428606765330187e-6f;
+  float p = 1.0f + f * (1.0f + f * (0.5000009f + f * (0.1666680f + f * (0.0416520f + f * 0.0083298f))));
   int32_t ki = static_cast<int32_t>(k) + 127;
   uint32_t bits = static_cast<uint32_t>(ki) << 23;
   float scale;

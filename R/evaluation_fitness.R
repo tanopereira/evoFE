@@ -160,21 +160,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$best_params <- res_model$best_params
     }
 
-    iter_val <- if (!is.null(res_model$best_iteration)) {
-      res_model$best_iteration
-    } else if (!is.null(res_model$best_epoch)) {
-      res_model$best_epoch
-    } else if (!is.null(res_model$model$best_iteration)) {
-      res_model$model$best_iteration
-    } else if (!is.null(res_model$model$best_epoch)) {
-      res_model$model$best_epoch
-    } else if (!is.null(res_model$model$best_iter)) {
-      res_model$model$best_iter
-    } else {
-      NULL
-    }
-    if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
-      ind$best_iteration <- as.integer(round(iter_val))
+    iter_val <- extract_best_iteration(res_model)
+    if (!is.null(iter_val)) {
+      ind$best_iteration <- iter_val
     }
     ind$train_size <- nrow(train_fold)
 
@@ -184,33 +172,20 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
 
     # Validation score -> raw_fitness (reuse precomputed score from tuned evaluator when available)
-    if (task == "multiclass") {
-      y_val_encoded <- as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
-      raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
-        res_model$score
-      } else {
-        compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
-      }
-      ind$val_preds <- preds
-      ind$y_val <- y_val_encoded
+    y_val_encoded <- if (task == "multiclass") {
+      as.integer(factor(val_fold_feat[[target_col]], levels = classes)) - 1
     } else if (task == "classification") {
-      y_val_encoded <- y_val
-      raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
-        res_model$score
-      } else {
-        compute_metric(y_val_encoded, preds, task, metric, threads = threads)
-      }
-      ind$val_preds <- preds
-      ind$y_val <- y_val_encoded
+      y_val
     } else {
-      raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
-        res_model$score
-      } else {
-        compute_metric(val_fold_feat[[target_col]], preds, task, metric, threads = threads)
-      }
-      ind$val_preds <- preds
-      ind$y_val <- val_fold_feat[[target_col]]
+      val_fold_feat[[target_col]]
     }
+    raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
+      res_model$score
+    } else {
+      compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
+    }
+    ind$val_preds <- preds
+    ind$y_val <- y_val_encoded
 
     # Propagate the updated genes (with state) before complexity penalty so pruned genes are not penalized
     ind$genes <- res$ind$genes
@@ -358,21 +333,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           ind$best_params <- res_model$best_params
         }
 
-        iter_val <- if (!is.null(res_model$best_iteration)) {
-          res_model$best_iteration
-        } else if (!is.null(res_model$best_epoch)) {
-          res_model$best_epoch
-        } else if (!is.null(res_model$model$best_iteration)) {
-          res_model$model$best_iteration
-        } else if (!is.null(res_model$model$best_epoch)) {
-          res_model$model$best_epoch
-        } else if (!is.null(res_model$model$best_iter)) {
-          res_model$model$best_iter
-        } else {
-          NULL
-        }
-        if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
-          fold_best_iters <- c(fold_best_iters, as.integer(round(iter_val)))
+        iter_val <- extract_best_iteration(res_model)
+        if (!is.null(iter_val)) {
+          fold_best_iters <- c(fold_best_iters, iter_val)
         }
 
         if (task == "multiclass") {
@@ -403,7 +366,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
         # Clean up the model if the evaluator provides a cleanup function (e.g. to prevent TF memory leaks)
         eval_entry <- get_evaluator(evaluator)
-        if (!is.null(eval_entry$cleanup_func)) {
+        if (!is.null(eval_entry$cleanup_func) && !is.null(res_model$model)) {
           eval_entry$cleanup_func(res_model$model)
         }
       }
@@ -435,30 +398,24 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
             fold_importances[[orig_fi]] <- res_m$importances
           }
 
-          iter_val <- if (!is.null(res_m$best_iteration)) {
-            res_m$best_iteration
-          } else if (!is.null(res_m$best_epoch)) {
-            res_m$best_epoch
-          } else if (!is.null(res_m$model$best_iteration)) {
-            res_m$model$best_iteration
-          } else if (!is.null(res_m$model$best_epoch)) {
-            res_m$model$best_epoch
-          } else if (!is.null(res_m$model$best_iter)) {
-            res_m$model$best_iter
-          } else {
-            NULL
-          }
-          if (!is.null(iter_val) && is.numeric(iter_val) && is.finite(iter_val) && iter_val > 0) {
-            fold_best_iters <- c(fold_best_iters, as.integer(round(iter_val)))
+          iter_val <- extract_best_iteration(res_m)
+          if (!is.null(iter_val)) {
+            fold_best_iters <- c(fold_best_iters, iter_val)
           }
 
+          y_val_encoded <- if (task == "multiclass") {
+            as.integer(factor(fd$val_fold_feat[[target_col]], levels = classes)) - 1
+          } else if (task == "classification") {
+            fd$y_val
+          } else {
+            fd$val_fold_feat[[target_col]]
+          }
+          metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
+            res_m$score
+          } else {
+            compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
+          }
           if (task == "multiclass") {
-            y_val_encoded <- as.integer(factor(fd$val_fold_feat[[target_col]], levels = classes)) - 1
-            metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
-              res_m$score
-            } else {
-              compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
-            }
             if (length(val_idx) == length(y_val_encoded)) {
               if (is.matrix(preds)) {
                 oof_preds[val_idx, ] <- preds
@@ -467,27 +424,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
               }
               oof_y[val_idx] <- y_val_encoded
             }
-          } else if (task == "classification") {
-            y_val_encoded <- fd$y_val
-            metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
-              res_m$score
-            } else {
-              compute_metric(y_val_encoded, preds, task, metric, threads = threads)
-            }
-            if (length(val_idx) == length(preds)) {
-              oof_preds[val_idx] <- preds
-              oof_y[val_idx] <- y_val_encoded
-            }
-          } else {
-            metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
-              res_m$score
-            } else {
-              compute_metric(fd$val_fold_feat[[target_col]], preds, task, metric, threads = threads)
-            }
-            if (length(val_idx) == length(preds)) {
-              oof_preds[val_idx] <- preds
-              oof_y[val_idx] <- fd$val_fold_feat[[target_col]]
-            }
+          } else if (length(val_idx) == length(preds)) {
+            oof_preds[val_idx] <- preds
+            oof_y[val_idx] <- y_val_encoded
           }
 
           if (!is.null(eval_entry$cleanup_func) && !is.null(res_m$model)) {

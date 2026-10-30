@@ -113,21 +113,6 @@ inline Eigen::MatrixXf copy_eigen_fast(const NumericMatrix& mat) {
   return mapped.cast<float>();
 }
 
-// Deep copy with fast contiguous NaN/Inf sanitization (replaces non-finite values with 0.0)
-inline Eigen::MatrixXd copy_eigen_sanitized(const NumericMatrix& mat) {
-  int r = mat.nrow();
-  int c = mat.ncol();
-  Eigen::MatrixXd out(r, c);
-  const double* src = mat.begin();
-  double* dst = out.data();
-  int total = r * c;
-  for (int i = 0; i < total; ++i) {
-    double v = src[i];
-    dst[i] = std::isfinite(v) ? v : 0.0;
-  }
-  return out;
-}
-
 // Helper to convert Eigen::MatrixXd or Eigen::MatrixXf to Rcpp NumericMatrix
 inline NumericMatrix to_rcpp(const Eigen::MatrixXd& emat) {
   int r = static_cast<int>(emat.rows());
