@@ -57,6 +57,8 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         }
       }
     } else {
+      orig_ind <- pop[[i]]
+      other_keys <- vapply(pop[-i], individual_to_cache_key, character(1))
       pop[[i]] <- evaluate_fitness(pop[[i]], data, target_col,
         task = task, cv_folds = cv_folds,
         evaluation_strategy = evaluation_strategy,
@@ -72,26 +74,54 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
         running_best_fitness = running_best_fitness,
         baseline_fitness = baseline_fitness,
         n_samples = n_samples,
-        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col, ...
+        cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
+        fitness_cache = fitness_cache, fidelity_tag = fidelity_tag, ...
       )
-      assign(cache_key, pop[[i]], envir = fitness_cache)
-      fitness_cache[[rec_key]] <- pop[[i]]
+      collapsed <- isTRUE(attr(pop[[i]], "collapsed_to_cached"))
+      attr(pop[[i]], "collapsed_to_cached") <- NULL
       post_key <- individual_to_cache_key(pop[[i]])
-      if (!identical(post_key, rec_key)) {
-        post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
-        assign(post_cache_key, pop[[i]], envir = fitness_cache)
-        fitness_cache[[post_key]] <- pop[[i]]
+      pruned_dup <- FALSE
+
+      if (collapsed && (post_key %in% other_keys)) {
+        pruned_dup <- TRUE
+        orig_ind$raw_fitness <- -Inf
+        orig_ind$penalty <- 0.0
+        orig_ind$fitness <- -Inf
+        orig_ind$holdout_fitness <- NULL
+        pop[[i]] <- orig_ind
+        assign(cache_key, pop[[i]], envir = fitness_cache)
+        fitness_cache[[rec_key]] <- pop[[i]]
+      } else {
+        if (collapsed) {
+          cached <- TRUE
+        }
+        assign(cache_key, pop[[i]], envir = fitness_cache)
+        fitness_cache[[rec_key]] <- pop[[i]]
+        if (!identical(post_key, rec_key)) {
+          post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
+          if (!exists(post_cache_key, envir = fitness_cache, inherits = FALSE)) {
+            assign(post_cache_key, pop[[i]], envir = fitness_cache)
+            fitness_cache[[post_key]] <- pop[[i]]
+          }
+        }
       }
     }
 
     if (verbose) {
-      improved <- !is.na(pop[[i]]$fitness) && (is.na(running_best_fitness) || pop[[i]]$fitness > running_best_fitness)
+      improved <- !is.na(pop[[i]]$fitness) && is.finite(pop[[i]]$fitness) &&
+                  (is.na(running_best_fitness) || pop[[i]]$fitness > running_best_fitness)
       green_start <- if (supports_color()) "\033[32m" else ""
       red_start <- if (supports_color()) "\033[31m" else ""
       color_reset <- if (supports_color()) "\033[0m" else ""
 
       new_best_str <- if (improved) " (New Best!)" else ""
-      cache_str <- if (cached) " (cached)" else ""
+      cache_str <- if (exists("pruned_dup", inherits = FALSE) && isTRUE(pruned_dup)) {
+        " (pruned: constant/collinear gene)"
+      } else if (cached) {
+        " (cached)"
+      } else {
+        ""
+      }
       msg_color <- if (improved) green_start else red_start
 
       if (!is.null(island)) {

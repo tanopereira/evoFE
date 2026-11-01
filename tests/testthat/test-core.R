@@ -2856,6 +2856,35 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
   expect_false(g_noise_leaf$output_col %in% surviving_cols)
   expect_false(any(grepl("^\\.__evo_shadow", names(ind_sp_eval$importances))))
 
+  # 2b. Single-gene individual and sibling PCA pair must NEVER be stripped down to 0 genes
+  ind_one_gene <- create_individual(
+    genes = list(g_noise_leaf),
+    numeric_cols = c("x1", "x2", "n1", "n2", "z_tiny1", "z_tiny2")
+  )
+  ind_one_eval <- evaluate_fitness(
+    ind_one_gene, df, "target", task = "regression",
+    cv_folds = 4, fold_ids = fids, evaluator = "realmlp",
+    realmlp_epochs = 5, shadow_prune = TRUE, threads = 1
+  )
+  expect_length(ind_one_eval$genes, 1L)
+
+  g_pca1 <- create_gene("pca", c("x1", "x2", "n1", "n2"))
+  g_pca1$params$comp_idx <- 1L
+  g_pca1$output_col <- evo_transformers[["pca"]]$name_generator(g_pca1)
+  g_pca2 <- create_gene("pca", c("x1", "x2", "n1", "n2"))
+  g_pca2$params$comp_idx <- 2L
+  g_pca2$output_col <- evo_transformers[["pca"]]$name_generator(g_pca2)
+  ind_pca <- create_individual(
+    genes = list(g_pca1, g_pca2),
+    numeric_cols = c("x1", "x2", "n1", "n2")
+  )
+  ind_pca_eval <- evaluate_fitness(
+    ind_pca, df[, c("x1", "x2", "n1", "n2", "target")], "target", task = "regression",
+    cv_folds = 3, evaluator = "realmlp",
+    realmlp_epochs = 5, shadow_prune = TRUE, threads = 1
+  )
+  expect_length(ind_pca_eval$genes, 2L)
+
   # 3. End-to-end evolve_features with sd_penalty and shadow_prune
   expect_error(evolve_features(df, "target", task = "regression", sd_penalty = -1), "sd_penalty")
   expect_error(evolve_features(df, "target", task = "regression", shadow_prune = NA), "shadow_prune")

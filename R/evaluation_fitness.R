@@ -56,7 +56,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              target_transform = getOption("evoFE.target_transform", "none"),
                              sd_penalty = getOption("evoFE.sd_penalty", 0),
                              shadow_prune = getOption("evoFE.shadow_prune", FALSE),
-                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
+                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
+                             fitness_cache = NULL, fidelity_tag = "", ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
   }
@@ -112,6 +113,16 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       return(ind)
     }
 
+    if (!is.null(fitness_cache) && length(res$ind$genes) < length(ind$genes)) {
+      post_key <- individual_to_cache_key(res$ind)
+      post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
+      if (exists(post_cache_key, envir = fitness_cache, inherits = FALSE)) {
+        cached_ind <- get(post_cache_key, envir = fitness_cache)
+        attr(cached_ind, "collapsed_to_cached") <- TRUE
+        return(cached_ind)
+      }
+    }
+
     train_fold_feat <- res$train
     val_fold_feat <- res$val
 
@@ -163,9 +174,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       preds <- .invert_target_transform(preds, tt_state_split, use_smearing = use_smear)
     }
 
-    # Propagate the updated genes (with state) before shadow pruning and complexity penalty
+    # Propagate the updated genes (with state) and compute complexity penalty on the exact
+    # feature set used during model training before any post-hoc dead-leaf shadow pruning
     ind$genes <- res$ind$genes
-    ind <- .finalize_importances_and_shadow_prune(ind, res_model$importances, shadow_prune = shadow_prune)
     ind$fold_sd <- 0.0
 
     if (!is.null(res_model$best_params)) {
@@ -214,6 +225,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       data = data,
       shared_full = shared_full
     )
+
+    ind <- .finalize_importances_and_shadow_prune(ind, res_model$importances, shadow_prune = shadow_prune)
 
     ind$holdout_fitness <- NULL
   } else {
@@ -284,6 +297,16 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         # This fold failed (e.g. constant column on this split) — skip it.
         # The individual is only killed if every fold fails (handled below).
         next
+      }
+
+      if (fi == 1L && !is.null(fitness_cache) && length(res$ind$genes) < length(ind$genes)) {
+        post_key <- individual_to_cache_key(res$ind)
+        post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
+        if (exists(post_cache_key, envir = fitness_cache, inherits = FALSE)) {
+          cached_ind <- get(post_cache_key, envir = fitness_cache)
+          attr(cached_ind, "collapsed_to_cached") <- TRUE
+          return(cached_ind)
+        }
       }
 
       train_fold_feat <- res$train
@@ -488,16 +511,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$train_size <- as.integer(round(mean(fold_train_sizes)))
     }
 
-    # Propagate fitted gene states from the last successful fold before shadow pruning and complexity penalty
-    # so pruned genes are not penalized in CV mode
+    # Propagate fitted gene states from the last successful fold and compute complexity penalty
+    # on the exact feature set trained before pruning any dead-weight leaf genes
     if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
-
-    # Aggregate importances across folds and optionally prune shadow-dominated leaf genes
-    ind <- .finalize_importances_and_shadow_prune(
-      ind,
-      .aggregate_fold_importances(fold_importances),
-      shadow_prune = shadow_prune
-    )
 
     ind <- apply_complexity_penalty(
       raw_score = raw_score,
@@ -513,6 +529,13 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       metric = metric,
       data = data,
       shared_full = shared_full
+    )
+
+    # Aggregate importances across folds and optionally prune shadow-dominated leaf genes
+    ind <- .finalize_importances_and_shadow_prune(
+      ind,
+      .aggregate_fold_importances(fold_importances),
+      shadow_prune = shadow_prune
     )
 
     if (is.numeric(sd_penalty) && length(sd_penalty) == 1L && sd_penalty > 0 &&
@@ -555,24 +578,45 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     shadow_imp <- if (is.finite(imp_sum) && imp_sum > 0) imp_sum * null_prop else 0.0
   }
 
-  if (isTRUE(shadow_prune) && length(ind$genes) > 0L && is.finite(shadow_imp) && length(raw_imp) > 0L) {
+  if (isTRUE(shadow_prune) && length(ind$genes) >= 2L && is.finite(shadow_imp) && length(raw_imp) > 0L) {
     parent_cols <- unique(unlist(lapply(ind$genes, function(g) g$input_cols)))
-    keep_mask <- vapply(ind$genes, function(g) {
-      out_col <- g$output_col
-      if (is.null(out_col) || length(out_col) != 1L || (out_col %in% parent_cols)) {
-        return(TRUE)
-      }
-      if (!(out_col %in% names(raw_imp))) {
-        return(TRUE)
-      }
-      val <- raw_imp[[out_col]]
-      is.finite(val) && (val > shadow_imp)
-    }, logical(1))
+    gene_out_cols <- vapply(ind$genes, function(g) {
+      if (!is.null(g$output_col) && length(g$output_col) == 1L) g$output_col else ""
+    }, character(1))
+    present_gene_cols <- intersect(gene_out_cols[nzchar(gene_out_cols)], names(raw_imp))
+    max_gene_imp <- if (length(present_gene_cols) > 0L) {
+      max(raw_imp[present_gene_cols], na.rm = TRUE)
+    } else {
+      -Inf
+    }
 
-    if (!all(keep_mask)) {
-      pruned_cols <- unlist(lapply(ind$genes[!keep_mask], function(g) g$output_col))
-      raw_imp <- raw_imp[!(names(raw_imp) %in% pruned_cols)]
-      ind$genes <- ind$genes[keep_mask]
+    if (is.finite(max_gene_imp) && max_gene_imp > shadow_imp) {
+      sibling_keys <- vapply(ind$genes, function(g) {
+        t_nm <- if (!is.null(g$transformer_name)) g$transformer_name else ""
+        in_str <- if (!is.null(g$input_cols)) paste(sort(g$input_cols), collapse = ",") else ""
+        paste0(t_nm, "::", in_str)
+      }, character(1))
+
+      keep_mask <- vapply(seq_along(ind$genes), function(idx) {
+        g <- ind$genes[[idx]]
+        out_col <- g$output_col
+        if (is.null(out_col) || length(out_col) != 1L || (out_col %in% parent_cols)) {
+          return(TRUE)
+        }
+        if (!(out_col %in% names(raw_imp))) {
+          return(TRUE)
+        }
+        sib_idx <- which(sibling_keys == sibling_keys[idx])
+        sib_cols <- intersect(gene_out_cols[sib_idx], names(raw_imp))
+        val <- if (length(sib_cols) > 0L) max(raw_imp[sib_cols], na.rm = TRUE) else raw_imp[[out_col]]
+        is.finite(val) && (val > shadow_imp || val > 0.05 * max_gene_imp)
+      }, logical(1))
+
+      if (any(keep_mask) && !all(keep_mask)) {
+        pruned_cols <- unlist(lapply(ind$genes[!keep_mask], function(g) g$output_col))
+        raw_imp <- raw_imp[!(names(raw_imp) %in% pruned_cols)]
+        ind$genes <- ind$genes[keep_mask]
+      }
     }
   }
 

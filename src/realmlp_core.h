@@ -1129,7 +1129,8 @@ public:
     int d_proj = embedder.d_proj;
 
     if (ws.E_base.rows() < N_eval || ws.E_base.cols() < embed_dim ||
-        ws.E_zero.rows() < D || ws.E_zero.cols() < (1 + d_proj)) {
+        ws.E_zero.rows() < D || ws.E_zero.cols() < (1 + d_proj) ||
+        ws.base_preds.rows() < N_eval || ws.base_preds.cols() < output_dim) {
       ws.allocate(N_eval, D, output_dim, hidden_dim, embed_dim, d_proj, embedder.k_freq, 1);
     }
 
@@ -1166,9 +1167,9 @@ public:
     // 1. Precompute base embedding into ws.E_base
     embedder.forward_nocache(X_eval, ws.E_base, ws.thread_Z_buf);
 
-    // Evaluate baseline predictions directly into ws.preds
-    forward_predict_inplace(ws.E_base, N_eval, ws, ws.preds);
-    double base_loss = compute_loss(ws.preds);
+    // Evaluate baseline predictions directly into ws.base_preds
+    forward_predict_inplace(ws.E_base, N_eval, ws, ws.base_preds);
+    double base_loss = compute_loss(ws.base_preds);
 
     // 2. Precompute zero-feature embedding for all features into contiguous ws.E_zero
     for (int j = 0; j < D; ++j) {
@@ -1191,12 +1192,13 @@ public:
       // Evaluate occluded predictions in-place into ws.preds
       forward_predict_inplace(ws.E_occ, N_eval, ws, ws.preds);
       double loss_occ = compute_loss(ws.preds);
+      double pred_shift = (ws.preds.topRows(N_eval) - ws.base_preds.topRows(N_eval)).cwiseAbs().mean();
 
       // ZERO-ALLOCATION RESTORE: Restore feature j's slice directly from ws.E_base!
       ws.E_occ.block(0, out_col_start, N_eval, block_width) =
           ws.E_base.block(0, out_col_start, N_eval, block_width);
 
-      double delta_loss = std::max(0.0, loss_occ - base_loss);
+      double delta_loss = std::max(0.0, loss_occ - base_loss) + 0.1 * pred_shift;
       imp[j] = delta_loss;
     }
 

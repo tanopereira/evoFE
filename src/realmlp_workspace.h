@@ -46,6 +46,7 @@ struct FeatureImportanceWorkspace {
   Eigen::MatrixXf E_base;
   Eigen::MatrixXf E_occ;
   Eigen::MatrixXf H0, A1, H1, A2, H2, A3, H3, Out;
+  Eigen::MatrixXd base_preds;
   Eigen::MatrixXd preds;
   Eigen::MatrixXf E_zero; // Contiguous D x (1 + d_proj) buffer
   std::vector<Eigen::MatrixXf> thread_Z_buf;
@@ -62,6 +63,7 @@ struct FeatureImportanceWorkspace {
     A3.resize(N_eval, hidden_dim);
     H3.resize(N_eval, hidden_dim);
     Out.resize(N_eval, out_dim);
+    base_preds.resize(N_eval, out_dim);
     preds.resize(N_eval, out_dim);
     E_zero.resize(D, 1 + d_proj);
 
