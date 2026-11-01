@@ -350,12 +350,15 @@ search_metric <- "ts_refinement"
 # 5. Choose the parsimony & anti-overfitting defenses
 # - N > ~25k or feeding a stacker: complexity_mode = "bic_dynamic" (permissive)
 # - N < ~10k or very noisy target: complexity_mode = "pac_bayes_dynamic" (strict)
-# - Fold-Variance LCB Penalty (sd_penalty = 1.0): penalizes raw CV fitness by
-#   sd_penalty * sd(fold_scores) / sqrt(K), preventing the genetic search from
-#   picking features that spike on 1 fold and crash on another (inspect recipe$fold_sd).
-# - Shadow-Feature Null-Importance Pruning (shadow_prune = TRUE): injects 2 permuted
-#   shadow columns during evaluation and automatically prunes evolved leaf genes whose
-#   SHAP/model importance fails to beat the maximum shadow feature importance.
+# - Paired Fold-Gain LCB Penalty (sd_penalty = 0.15 - 0.25): penalizes selection
+#   fitness (while keeping raw_fitness strictly unpenalized) by
+#   sd_penalty * sd(fold_scores - baseline_fold_scores) / sqrt(K). Computing SD
+#   on paired fold gains cancels intrinsic fold difficulty and prevents features
+#   that spike on 1 fold and regress on another (inspect recipe$fold_sd).
+# - Zero-Perturbation Null-Importance Pruning (shadow_prune = TRUE): prunes dead-weight
+#   leaf genes whose model/SHAP importance falls below an adaptive null-importance floor
+#   without injecting fake noise columns into x_train (keeping feature_fraction and
+#   val_preds 100% unperturbed).
 ```
 
 ---
@@ -386,8 +389,8 @@ scout_recipe <- evolve_features(
   allowed_transformers  = "basic",
   complexity_penalty    = 0.1,
   complexity_target     = "all_features",
-  sd_penalty            = 0.5,              # Penalize fold-unstable scout features
-  shadow_prune          = TRUE,             # Strip zero-signal leaf genes below permuted shadow features
+  sd_penalty            = 0.15,             # Mild paired fold-gain SE penalty for 3-fold scout
+  shadow_prune          = TRUE,             # Strip dead-weight leaf genes below null floor
   holdout_frac          = 0,
   threads               = n_threads,
   seed                  = 42
@@ -412,7 +415,7 @@ Instead of manually guessing which transformers to assign to each model, we run 
 #### The 7 Pillars of This Architecture:
 1. **Unconstrained Feature Selection**: Passing `allowed_transformers = unsup_t` allows each evaluator to surprise you. LightGBM might find a rare UMAP boundary split; RealMLP might discover a continuous transformation of a group aggregation; XGBoost will select ratio features that stabilize its 2nd-order gradients.
 2. **Stratified MetaCV $K\times$ Speedup**: Each of the 3 passes runs with `evaluation_strategy = "metacv"` across 4 islands. Under the hood, `build_metacv_partitions()` automatically applies class/quantile stratification (or `cv_strategy = "stratified_group"` when `group_col` is supplied) across the 4 island folds, while evaluating candidate genes on **1 fold per island** to slash exploration runtime by $4\times$.
-3. **Tournament Selection + Fold-Variance LCB Penalty (`sd_penalty`)**: Setting `metacv_selection = "tournament"` runs a $K$-fold CV tournament on the island champions at the end of evolution, penalized by `sd_penalty = 0.5` ($\bar{s} - 0.5 \cdot \text{SD} / \sqrt{K}$) so single-fold spike recipes cannot win the tournament.
+3. **Tournament Selection + Paired Fold-Gain LCB Penalty (`sd_penalty = 0.15`)**: Setting `metacv_selection = "tournament"` runs a $K$-fold CV tournament on the island champions at the end of evolution. Rather than penalizing raw fold variance (which is dominated by intrinsic fold difficulty), evoFE computes $\text{SD}(\Delta_1, \dots, \Delta_K)$ on **paired fold gains over the baseline** $\Delta_k = s_k - b_k$ and penalizes selection fitness by `0.15 * SD(Δ) / sqrt(K)` while keeping `raw_fitness` strictly unpenalized.
 4. **Demand-Driven Island Migration on Complete Mesh (`dual_gibbs_pull` + `migration_interval = 1`)**:
    - **Complete Topology vs. Ring Topology**:
      - In traditional genetic algorithms, **ring topology** (`"ring"`) connects islands in a 1D circle ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$). It has an $O(K)$ graph diameter ($D = K - 1$ hops). If Island 1 discovers a breakthrough interaction feature, Island 4 must wait 3 full migration cycles to receive it—and if intermediate islands mutate or drop the feature, the innovation never reaches Island 4.
@@ -429,7 +432,7 @@ Instead of manually guessing which transformers to assign to each model, we run 
      - **Assimilation Reset**: The instant an immigrant recipe or top-20 gene improves local fitness, $s_j$ resets to 0, instantly closing the pull gate.
    - *(Note: You can also specify this explicitly using the modular config container: `migration = migration_config(topology = topology_complete(islands = 4), policy = policy_gibbs_pull(stagnation_threshold = 2))`)*.
 5. **High-Throughput Manifold & Anomaly Learning**: `uwot` and `quitefastmst` handle **20,000–50,000 landmark rows** quickly. Pass `max_clustering_size = clust_cap` to every call (the default is 5,000).
-6. **Parsimony + Null-Importance Shadow Pruning (`shadow_prune = TRUE`)**: Combining `complexity_penalty = 0.25 - 0.30` (`complexity_target = "all_features"`) with `shadow_prune = TRUE` injects 2 permuted shadow columns during evaluation and automatically prunes evolved leaf genes whose importance fails to beat the shadow features before Stage 3 synthesizes `train_mega`.
+6. **Parsimony + Zero-Perturbation Null-Importance Pruning (`shadow_prune = TRUE`)**: Combining `complexity_penalty = 0.25 - 0.30` (`complexity_target = "all_features"`) with `shadow_prune = TRUE` automatically strips dead-weight leaf genes whose model/SHAP importance falls below the adaptive null-importance floor $\tau_{\text{null}}(P) = \text{imp\_sum} \cdot \min(\text{threshold}, 0.05/P)$ before complexity penalization and before Stage 3 synthesizes `train_mega`—without injecting synthetic noise columns into `x_train`.
 7. **Adversarial Test-Matched Confirmation Holdout (`holdout_frac = 0.08, test_data = test`)**: Carves out an 8% confirmation holdout weighted toward the unlabeled `test` covariate distribution (and keeping `group_col` intact if grouped). After each search pass finishes, `recipe$holdout_fitness` and `recipe$search_gap` tell you immediately whether the discovered features generalize to test-like rows or overfit the search folds.
 
 > [!CAUTION]
@@ -461,8 +464,8 @@ rec_lgb_search <- evolve_features(
   metacv_selection      = "tournament",       # K-fold tournament for honest full OOFs
   holdout_frac          = 0.08,               # 8% untouched confirmation holdout
   test_data             = test,               # Weight holdout sampling toward test distribution
-  sd_penalty            = 0.5,                # Penalize fold variance during tournament selection
-  shadow_prune          = TRUE,               # Prune leaf genes below permuted shadow importance
+  sd_penalty            = 0.15,               # Mild paired fold-gain SE penalty in tournament
+  shadow_prune          = TRUE,               # Prune leaf genes below adaptive null-importance floor
   migration             = mig_cfg,            # Complete topology (D=1) + demand-driven Gibbs pull
   migration_interval    = 1,                  # Evaluate pull condition every generation
   migration_rate        = 1,
@@ -499,7 +502,7 @@ rec_xgb_search <- evolve_features(
   metacv_selection      = "tournament",
   holdout_frac          = 0.08,
   test_data             = test,
-  sd_penalty            = 0.5,
+  sd_penalty            = 0.15,
   shadow_prune          = TRUE,
   migration             = mig_cfg,
   migration_interval    = 1,
@@ -536,7 +539,7 @@ rec_mlp_search <- evolve_features(
   metacv_selection      = "tournament",
   holdout_frac          = 0.08,
   test_data             = test,
-  sd_penalty            = 0.5,
+  sd_penalty            = 0.15,
   shadow_prune          = TRUE,
   migration             = mig_cfg,
   migration_interval    = 1,
@@ -760,8 +763,8 @@ cat("Competition submission file generated successfully!\n")
 | **XGBoost Speed** | Exact tree search is slow | Use fast histogram method | `tree_method = "hist"` |
 | **Redundant Genes**| Collinear transformations bloat trees | Correlation pruning filter | `options(evoFE.redundancy_cor_threshold = 0.99)` |
 | **Search Overfitting**| Evolution chases CV noise | Confirmation holdout + parsimony | `holdout_frac = 0.08, complexity_mode = "bic_dynamic"` |
-| **Fold Instability** | Recipe spikes on 1 fold, drops on others | Lower Confidence Bound (1-SE) penalty | `sd_penalty = 1.0` |
-| **Noise Gene Bloat** | Uninformative leaf genes survive trees | Boruta / Null-Importance shadow pruning | `shadow_prune = TRUE` |
+| **Fold Instability** | Recipe spikes on 1 fold, drops on others | Paired fold-gain LCB SE penalty | `sd_penalty = 0.15` (or `0.25` in full CV) |
+| **Noise Gene Bloat** | Uninformative leaf genes survive trees | Zero-perturbation null-importance pruning | `shadow_prune = TRUE` |
 | **Grouped + Imbalanced** | Group leakage or unbalanced target folds | Stratified group CV + intact holdouts | `cv_strategy = "stratified_group", group_col = "id"` |
 | **Train/Test Shift** | Holdout doesn't reflect test distribution | Adversarial propensity-weighted holdout | `holdout_frac = 0.10, test_data = test` |
 | **Inference Variance** | Single refit model has higher test error | K-Fold Model Bagging across CV folds | `bag_folds = TRUE` |
@@ -1136,8 +1139,8 @@ rec_lgb_list <- lapply(seeds_lgb, function(s) {
     cv_folds              = 5,
     holdout_frac          = 0.08,             # 8% confirmation holdout
     test_data             = test,             # Adversarial test-weighted holdout sampling
-    sd_penalty            = 1.0,              # 1-SE Lower Confidence Bound across 5 folds
-    shadow_prune          = TRUE,             # Null-importance shadow gene pruning
+    sd_penalty            = 0.25,             # Paired fold-gain LCB penalty across 5 folds
+    shadow_prune          = TRUE,             # Zero-perturbation null-importance gene pruning
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1170,7 +1173,7 @@ rec_xgb_list <- lapply(seeds_xgb, function(s) {
     cv_folds              = 5,
     holdout_frac          = 0.08,
     test_data             = test,
-    sd_penalty            = 1.0,
+    sd_penalty            = 0.25,
     shadow_prune          = TRUE,
     migration             = mig_swarm,
     migration_interval    = 1,
@@ -1203,7 +1206,7 @@ rec_mlp_list <- lapply(seeds_mlp, function(s) {
     cv_folds              = 5,
     holdout_frac          = 0.08,
     test_data             = test,
-    sd_penalty            = 1.0,
+    sd_penalty            = 0.25,
     shadow_prune          = TRUE,
     migration             = mig_swarm,
     migration_interval    = 1,

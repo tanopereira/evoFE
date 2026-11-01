@@ -2794,7 +2794,8 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
   df <- data.frame(x1 = x1, x2 = x2, n1 = n1, n2 = n2, target = y)
   fids <- rep(1:4, length.out = n)
 
-  # 1. sd_penalty: verify LCB penalty = sd_penalty * fold_sd / sqrt(K)
+  # 1. sd_penalty: verify raw_fitness is unpenalized, fitness is penalized by LCB,
+  #    and paired fold-gain SD cancels intrinsic baseline fold difficulty
   ind_base <- create_individual(genes = list(), numeric_cols = c("x1", "x2", "n1", "n2"))
   ind_0 <- evaluate_fitness(
     ind_base, df, "target", task = "regression",
@@ -2808,11 +2809,24 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
   )
   expect_true(is.finite(ind_0$fold_sd) && ind_0$fold_sd > 0)
   expect_equal(ind_15$fold_sd, ind_0$fold_sd, tolerance = 1e-8)
+  expect_equal(ind_15$raw_fitness, ind_0$raw_fitness, tolerance = 1e-8)
   expect_equal(
-    ind_15$raw_fitness,
-    ind_0$raw_fitness - 1.5 * (ind_0$fold_sd / sqrt(4)),
+    ind_15$fitness,
+    ind_0$fitness - 1.5 * (ind_0$fold_sd / sqrt(4)),
     tolerance = 1e-8
   )
+
+  old_bfm <- getOption("evoFE.baseline_fold_metrics")
+  on.exit(options(evoFE.baseline_fold_metrics = old_bfm), add = TRUE)
+  options(evoFE.baseline_fold_metrics = ind_0$fold_metrics)
+  ind_paired_self <- evaluate_fitness(
+    ind_base, df, "target", task = "regression",
+    cv_folds = 4, fold_ids = fids, evaluator = "lightgbm",
+    sd_penalty = 1.5, threads = 1
+  )
+  expect_equal(ind_paired_self$fold_sd, 0.0, tolerance = 1e-12)
+  expect_equal(ind_paired_self$fitness, ind_0$fitness, tolerance = 1e-8)
+  options(evoFE.baseline_fold_metrics = old_bfm)
 
   # 2. shadow_prune: verify high-signal gene is kept, parent of high-signal gene is protected,
   #    and pure-noise leaf gene (with 0 importance) is pruned

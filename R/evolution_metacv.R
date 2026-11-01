@@ -139,11 +139,16 @@ stitch_metacv_baseline_oof <- function(island_baseline_inds, fold_ids, data, tas
       }
     }
   }
-  island_base_fits <- vapply(island_baseline_inds, function(ind) ind$fitness, numeric(1))
+  island_base_fits <- vapply(island_baseline_inds, function(ind) {
+    if (!is.null(ind$raw_fitness) && is.finite(ind$raw_fitness)) ind$raw_fitness else ind$fitness
+  }, numeric(1))
   finite_base_fits <- island_base_fits[is.finite(island_base_fits)]
   mean_base_fit <- if (length(finite_base_fits) > 0) mean(finite_base_fits) else -Inf
   baseline_ind$fitness <- mean_base_fit
   baseline_ind$raw_fitness <- mean_base_fit
+  baseline_ind$fold_metrics <- island_base_fits
+  baseline_ind$raw_fold_sd <- if (length(finite_base_fits) >= 2L) stats::sd(finite_base_fits) else 0.0
+  baseline_ind$fold_sd <- 0.0
   baseline_ind$val_preds <- oof_base_preds
   baseline_ind$evaluator <- evaluator_main
 

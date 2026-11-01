@@ -120,11 +120,6 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     dt_sub_va <- val_fold_feat[, features, with = FALSE]
     x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
     x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
-    if (isTRUE(shadow_prune) && length(res$ind$genes) > 0L) {
-      sh_mats <- .append_shadow_columns(x_train, x_val, res$ind)
-      x_train <- sh_mats$x_train
-      x_val <- sh_mats$x_val
-    }
     y_train <- train_fold_feat[[target_col]]
     y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
@@ -300,11 +295,6 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       dt_sub_va <- val_fold_feat[, features, with = FALSE]
       x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
       x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
-      if (isTRUE(shadow_prune) && length(res$ind$genes) > 0L) {
-        sh_mats <- .append_shadow_columns(x_train, x_val, res$ind)
-        x_train <- sh_mats$x_train
-        x_val <- sh_mats$x_val
-      }
       y_train <- train_fold_feat[[target_col]]
       y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
@@ -476,10 +466,15 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Fitness: average over successful folds only; -Inf only when every fold failed.
     finite_metrics <- metrics[!is.na(metrics)]
     raw_score <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
-    ind$fold_sd <- if (length(finite_metrics) >= 2L) stats::sd(finite_metrics) else 0.0
-    if (is.numeric(sd_penalty) && length(sd_penalty) == 1L && sd_penalty > 0 &&
-        length(finite_metrics) >= 2L && is.finite(raw_score)) {
-      raw_score <- raw_score - sd_penalty * (ind$fold_sd / sqrt(length(finite_metrics)))
+    ind$fold_metrics <- metrics
+    ind$raw_fold_sd <- if (length(finite_metrics) >= 2L) stats::sd(finite_metrics) else 0.0
+    base_fm <- getOption("evoFE.baseline_fold_metrics", NULL)
+    if (!is.null(base_fm) && length(base_fm) == length(metrics)) {
+      diffs <- metrics - base_fm
+      fin_diffs <- diffs[is.finite(diffs)]
+      ind$fold_sd <- if (length(fin_diffs) >= 2L) stats::sd(fin_diffs) else 0.0
+    } else {
+      ind$fold_sd <- ind$raw_fold_sd
     }
 
     ind$raw_fitness <- raw_score
@@ -520,42 +515,20 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       shared_full = shared_full
     )
 
+    if (is.numeric(sd_penalty) && length(sd_penalty) == 1L && sd_penalty > 0 &&
+        length(finite_metrics) >= 2L && is.finite(ind$fitness)) {
+      sd_pen <- sd_penalty * (ind$fold_sd / sqrt(length(finite_metrics)))
+      ind$sd_penalty_val <- sd_pen
+      ind$penalty <- ind$penalty + sd_pen
+      ind$fitness <- ind$fitness - sd_pen
+    } else {
+      ind$sd_penalty_val <- 0.0
+    }
+
     ind$holdout_fitness <- NULL
   }
 
   ind
-}
-
-#' @keywords internal
-#' @noRd
-.append_shadow_columns <- function(x_tr, x_va, ind) {
-  if (ncol(x_tr) < 1L || nrow(x_tr) < 2L || nrow(x_va) < 1L || length(ind$genes) == 0L) {
-    return(list(x_train = x_tr, x_val = x_va))
-  }
-  gene_cols <- intersect(unlist(lapply(ind$genes, function(g) g$output_col)), colnames(x_tr))
-  src_cols <- if (length(gene_cols) > 0L) gene_cols else colnames(x_tr)
-  src_col <- if (length(src_cols) == 1L) {
-    src_cols[1L]
-  } else {
-    vars <- vapply(src_cols, function(cn) stats::var(x_tr[, cn], na.rm = TRUE), numeric(1))
-    vars[!is.finite(vars)] <- -1
-    src_cols[which.max(vars)]
-  }
-  v_tr <- x_tr[, src_col]
-  v_va <- x_va[, src_col]
-  perms <- with_preserved_seed({
-    list(
-      tr1 = v_tr[sample.int(length(v_tr))],
-      tr2 = v_tr[sample.int(length(v_tr))],
-      va1 = v_va[sample.int(length(v_va))],
-      va2 = v_va[sample.int(length(v_va))]
-    )
-  })
-  x_tr_out <- cbind(x_tr, .__evo_shadow_1__ = perms$tr1, .__evo_shadow_2__ = perms$tr2)
-  x_va_out <- cbind(x_va, .__evo_shadow_1__ = perms$va1, .__evo_shadow_2__ = perms$va2)
-  attr(x_tr_out, "sanitized") <- TRUE
-  attr(x_va_out, "sanitized") <- TRUE
-  list(x_train = x_tr_out, x_val = x_va_out)
 }
 
 #' @keywords internal
@@ -574,6 +547,12 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
   }
   if (length(present_shadows) > 0L) {
     raw_imp <- raw_imp[!(names(raw_imp) %in% shadow_names)]
+  }
+  if (!is.finite(shadow_imp)) {
+    imp_sum <- sum(raw_imp, na.rm = TRUE)
+    n_feats <- max(1L, length(raw_imp))
+    null_prop <- min(getOption("evoFE.importance_threshold", 0.001), 0.05 / n_feats)
+    shadow_imp <- if (is.finite(imp_sum) && imp_sum > 0) imp_sum * null_prop else 0.0
   }
 
   if (isTRUE(shadow_prune) && length(ind$genes) > 0L && is.finite(shadow_imp) && length(raw_imp) > 0L) {

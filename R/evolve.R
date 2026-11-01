@@ -223,18 +223,21 @@ evolve_features <- function(data, target_col, task = "classification",
   old_tt_opt <- getOption("evoFE.target_transform", NULL)
   old_sdp_opt <- getOption("evoFE.sd_penalty", NULL)
   old_shp_opt <- getOption("evoFE.shadow_prune", NULL)
+  old_bfm_opt <- getOption("evoFE.baseline_fold_metrics", NULL)
   options(
     evoFE.global_unsupervised = isTRUE(global_unsupervised),
     evoFE.target_transform = target_transform,
     evoFE.sd_penalty = sd_penalty,
-    evoFE.shadow_prune = isTRUE(shadow_prune)
+    evoFE.shadow_prune = isTRUE(shadow_prune),
+    evoFE.baseline_fold_metrics = NULL
   )
   on.exit({
     options(
       evoFE.global_unsupervised = old_glob_unsup,
       evoFE.target_transform = old_tt_opt,
       evoFE.sd_penalty = old_sdp_opt,
-      evoFE.shadow_prune = old_shp_opt
+      evoFE.shadow_prune = old_shp_opt,
+      evoFE.baseline_fold_metrics = old_bfm_opt
     )
   }, add = TRUE)
 
@@ -862,8 +865,12 @@ evolve_features <- function(data, target_col, task = "classification",
       complexity_floor = complexity_floor,
       complexity_target = complexity_target,
       baseline_fitness = NULL, running_best_fitness = NULL,
-      n_samples = nrow(data), ...
+      n_samples = nrow(data), sd_penalty = 0, ...
     )
+    baseline_ind$fold_sd <- 0.0
+    if (!is.null(baseline_ind$fold_metrics)) {
+      options(evoFE.baseline_fold_metrics = baseline_ind$fold_metrics)
+    }
     if (verbose) {
       message(sprintf("  Tested Individual 1 -> Fitness: %.4f", baseline_ind$fitness))
     }
@@ -957,6 +964,9 @@ evolve_features <- function(data, target_col, task = "classification",
         islands = islands,
         verbose = verbose
       )
+      if (!is.null(baseline_ind$fold_metrics)) {
+        options(evoFE.baseline_fold_metrics = baseline_ind$fold_metrics)
+      }
     }
   }
 

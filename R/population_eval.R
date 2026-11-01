@@ -51,6 +51,10 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
           baseline_fitness = baseline_fitness,
           metric = metric
         )
+        if (!is.null(cached_ind$sd_penalty_val) && is.finite(cached_ind$sd_penalty_val) && cached_ind$sd_penalty_val > 0) {
+          pop[[i]]$penalty <- pop[[i]]$penalty + cached_ind$sd_penalty_val
+          pop[[i]]$fitness <- pop[[i]]$fitness - cached_ind$sd_penalty_val
+        }
       }
     } else {
       pop[[i]] <- evaluate_fitness(pop[[i]], data, target_col,
