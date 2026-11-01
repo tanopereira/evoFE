@@ -177,3 +177,54 @@ test_that("multi-fidelity and evaluate_pop correctly index tested individuals", 
   expect_false(any(grepl("\\[Island 3\\] Tested Individual 2", msgs)))
 })
 
+test_that("continuous regression quantile stratification, stratified_group CV, and adversarial holdout work", {
+  set.seed(123)
+  # 1. Continuous target quantile stratification in .build_cv_folds and stratified_split
+  y_skew <- exp(stats::rnorm(200, mean = 0, sd = 2))
+  df_reg <- data.frame(x = stats::rnorm(200), y = y_skew)
+  f_reg <- evoFE:::.build_cv_folds(df_reg, cv_folds = 5, strategy = "random",
+                                   target_col = "y", task = "regression")
+  expect_equal(as.numeric(table(f_reg)), rep(40, 5))
+  fold_medians <- tapply(df_reg$y, f_reg, stats::median)
+  expect_lt(max(fold_medians) - min(fold_medians), 0.35 * stats::IQR(df_reg$y))
+
+  sp_reg <- evoFE:::stratified_split(y_skew, c(0.8, 0.2))
+  expect_equal(sum(sp_reg == "train"), 160L)
+  expect_equal(sum(sp_reg == "val"), 40L)
+
+  # 2. Stratified Group K-Fold balances target classes while keeping groups intact
+  n_grp <- 20
+  grp_ids <- rep(sprintf("grp_%02d", seq_len(n_grp)), each = 5)
+  # First 4 groups are positive, remaining 16 groups are negative
+  y_grp <- c(rep(1L, 4 * 5), rep(0L, 16 * 5))
+  df_grp <- data.frame(g = grp_ids, x = stats::rnorm(length(grp_ids)), y = y_grp)
+  f_sgrp <- evoFE:::.build_cv_folds(df_grp, cv_folds = 4, strategy = "stratified_group",
+                                    group_col = "g", target_col = "y", task = "classification")
+  # Every group is in a single fold, and each of the 4 folds gets exactly 1 positive group (5 positive rows)
+  expect_true(all(tapply(f_sgrp, df_grp$g, function(z) length(unique(z))) == 1L))
+  expect_equal(as.numeric(tapply(df_grp$y, f_sgrp, sum)), rep(5L, 4))
+
+  # Group-intact stratified_split never splits a group across train/val
+  sp_grp <- evoFE:::stratified_split(df_grp$y, c(0.75, 0.25), group = df_grp$g)
+  expect_true(all(tapply(sp_grp, df_grp$g, function(z) length(unique(z))) == 1L))
+
+  # 3. Adversarial validation detects drifting features and weights holdout toward test distribution
+  set.seed(77)
+  tr_adv <- data.frame(
+    x_stable = stats::rnorm(120, mean = 0, sd = 1),
+    x_drift = stats::rnorm(120, mean = 0, sd = 1),
+    y = sample(0:1, 120, replace = TRUE)
+  )
+  te_adv <- data.frame(
+    x_stable = stats::rnorm(80, mean = 0, sd = 1),
+    x_drift = stats::rnorm(80, mean = 3.5, sd = 1)
+  )
+  adv_res <- compute_adversarial_weights(tr_adv, te_adv, target_col = "y")
+  expect_gt(adv_res$adversarial_auc, 0.85)
+  expect_true("x_drift" %in% adv_res$drifting_features)
+  expect_false("x_stable" %in% adv_res$drifting_features)
+  # Training rows with larger x_drift receive higher test-similarity weights
+  expect_gt(stats::cor(tr_adv$x_drift, adv_res$weights), 0.5)
+})
+
+

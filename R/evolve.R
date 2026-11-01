@@ -197,6 +197,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             metacv_mode = NULL,
                             record = FALSE,
                             port = NULL,
+                            test_data = NULL,
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
@@ -368,6 +369,47 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
+  # Validate holdout confirmation fraction
+  if (!is.numeric(holdout_frac) || length(holdout_frac) != 1 ||
+      is.na(holdout_frac) || holdout_frac < 0 || holdout_frac >= 0.5) {
+    stop("'holdout_frac' must be a single number in [0, 0.5).")
+  }
+
+  # Validate CV fold strategy and group_col/time_col before holdout carving
+  cv_strategy <- match.arg(cv_strategy, c("random", "time", "group", "stratified_group"))
+  if (!evaluation_strategy %in% c("cv", "metacv")) {
+    if (cv_strategy != "random") {
+      warning("'cv_strategy' is only used with evaluation_strategy = 'cv' or 'metacv'. Ignoring.")
+      cv_strategy <- "random"
+    }
+  } else if (cv_strategy == "time") {
+    if (is.null(time_col) || length(time_col) != 1 || !time_col %in% names(data)) {
+      stop("'cv_strategy = \"time\"' requires 'time_col' to name an existing column in data.")
+    }
+  } else if (cv_strategy %in% c("group", "stratified_group")) {
+    if (is.null(group_col) || length(group_col) != 1 || !group_col %in% names(data)) {
+      stop(sprintf("'cv_strategy = \"%s\"' requires 'group_col' to name an existing column in data.", cv_strategy))
+    }
+    if (group_col == target_col) {
+      stop("'group_col' must not be the target column.")
+    }
+  }
+  if (!is.null(group_col) && length(group_col) == 1L && group_col %in% names(data) && group_col == target_col) {
+    stop("'group_col' must not be the target column.")
+  }
+
+  adv_info <- NULL
+  if (!is.null(test_data) && (is.data.frame(test_data) || data.table::is.data.table(test_data))) {
+    adv_info <- compute_adversarial_weights(data, test_data, target_col = target_col)
+    if (verbose) {
+      message(sprintf("  Adversarial validation AUC (train vs. test): %.4f", adv_info$adversarial_auc))
+      if (length(adv_info$drifting_features) > 0) {
+        message(sprintf("  Covariate-drifting features (AUC >= 0.80): %s",
+                        paste(adv_info$drifting_features, collapse = ", ")))
+      }
+    }
+  }
+
   # Carve a confirmation holdout that is excluded from the entire search and
   # only scored once, after evolution completes (see holdout_frac).
   confirmation_dt <- NULL
@@ -375,10 +417,17 @@ evolve_features <- function(data, target_col, task = "classification",
     if (!evaluation_strategy %in% c("cv", "metacv")) {
       warning("'holdout_frac' is ignored with evaluation_strategy = 'split'. Use split_ids or a 3-part split_ratio instead.")
     } else {
-      conf_ids <- stratified_split(data[[target_col]], c(1 - holdout_frac, holdout_frac))
+      grp_vec <- if (!is.null(group_col) && length(group_col) == 1L && group_col %in% names(data)) data[[group_col]] else NULL
+      adv_w <- if (!is.null(adv_info) && is.finite(adv_info$adversarial_auc) && adv_info$adversarial_auc > 0.52) adv_info$weights else NULL
+      conf_ids <- stratified_split(data[[target_col]], c(1 - holdout_frac, holdout_frac),
+                                   group = grp_vec, weights = adv_w)
       conf_rows <- which(conf_ids == "val")
+      keep_rows <- which(conf_ids != "val")
       confirmation_dt <- data.table::as.data.table(data[conf_rows, ])
-      data <- data[which(conf_ids != "val"), ]
+      data <- data[keep_rows, ]
+      if (!is.null(adv_info) && length(adv_info$weights) >= max(keep_rows)) {
+        adv_info$weights <- adv_info$weights[keep_rows]
+      }
       if (verbose) {
         message(sprintf(
           "  Confirmation holdout: %d rows (%.0f%%) held out of the search entirely.",
@@ -389,32 +438,6 @@ evolve_features <- function(data, target_col, task = "classification",
         warning("Confirmation holdout has fewer than 5 rows; skipping final confirmation scoring.")
         confirmation_dt <- NULL
       }
-    }
-  }
-
-  # Validate holdout confirmation fraction
-  if (!is.numeric(holdout_frac) || length(holdout_frac) != 1 ||
-      is.na(holdout_frac) || holdout_frac < 0 || holdout_frac >= 0.5) {
-    stop("'holdout_frac' must be a single number in [0, 0.5).")
-  }
-
-  # Validate CV fold strategy
-  cv_strategy <- match.arg(cv_strategy, c("random", "time", "group"))
-  if (!evaluation_strategy %in% c("cv", "metacv")) {
-    if (cv_strategy != "random") {
-      warning("'cv_strategy' is only used with evaluation_strategy = 'cv' or 'metacv'. Ignoring.")
-      cv_strategy <- "random"
-    }
-  } else if (cv_strategy == "time") {
-    if (is.null(time_col) || length(time_col) != 1 || !time_col %in% names(data)) {
-      stop("'cv_strategy = \"time\"' requires 'time_col' to name an existing column in data.")
-    }
-  } else if (cv_strategy == "group") {
-    if (is.null(group_col) || length(group_col) != 1 || !group_col %in% names(data)) {
-      stop("'cv_strategy = \"group\"' requires 'group_col' to name an existing column in data.")
-    }
-    if (group_col == target_col) {
-      stop("'group_col' must not be the target column.")
     }
   }
 
@@ -562,7 +585,9 @@ evolve_features <- function(data, target_col, task = "classification",
     shared_splits <- NULL
   } else if (evaluation_strategy == "split") {
     if (is.null(split_ids)) {
-      split_ids_val <- stratified_split(data[[target_col]], split_ratio)
+      grp_vec <- if (!is.null(group_col) && length(group_col) == 1L && group_col %in% names(data)) data[[group_col]] else NULL
+      adv_w <- if (!is.null(adv_info) && is.finite(adv_info$adversarial_auc) && adv_info$adversarial_auc > 0.52) adv_info$weights else NULL
+      split_ids_val <- stratified_split(data[[target_col]], split_ratio, group = grp_vec, weights = adv_w)
     } else {
       split_ids_val <- split_ids
     }
@@ -1515,6 +1540,8 @@ evolve_features <- function(data, target_col, task = "classification",
     island_headroom_closed = if (!is.null(island_hr)) island_hr$headroom_closed else NULL,
     holdout_fitness = if (!is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NULL,
     search_gap = search_gap,
+    adversarial_auc = if (!is.null(adv_info)) adv_info$adversarial_auc else NULL,
+    drifting_features = if (!is.null(adv_info)) adv_info$drifting_features else NULL,
     cv_strategy = cv_strategy,
     evaluation_strategy = evaluation_strategy,
     metacv_selection = if (evaluation_strategy == "metacv") metacv_selection else NULL,

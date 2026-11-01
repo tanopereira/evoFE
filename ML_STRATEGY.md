@@ -309,10 +309,23 @@ clust_cap <- 25000L   # uwot & quitefastmst handle 25k-50k landmark rows quickly
 train <- fread("train.csv")
 test  <- fread("test.csv")
 
-# 3. Determine Validation Strategy
-# - Time series / temporal: cv_strategy = "time", time_col = "timestamp"
-# - Grouped (users/stores/patients): cv_strategy = "group", group_col = "user_id"
-# - Standard i.i.d.: cv_strategy = "random", cv_folds = 5
+# 3. Determine Validation & Holdout Strategy ("Trust Your CV")
+# - Grouped + Stratified (users/stores/patients):
+#     cv_strategy = "stratified_group", group_col = "user_id"
+#   (Balances group sizes AND target class/quantile strata simultaneously;
+#    holdout_frac and split strategies also keep groups 100% intact across train/val/holdout!)
+# - Standard i.i.d.:
+#     cv_strategy = "random", cv_folds = 5
+#   (Automatically class-stratified for classification/multiclass, and empirical
+#    quantile-stratified for continuous regression targets so skewed tails are balanced across folds.)
+# - Adversarial Covariate-Shift Check & Test-Matched Holdout:
+#   Run compute_adversarial_weights(train, test, target_col = "target") upfront or pass
+#   test_data = test to evolve_features(..., holdout_frac = 0.10, test_data = test):
+adv_diag <- compute_adversarial_weights(train, test, target_col = "target")
+if (length(adv_diag$drifting_features) > 0) {
+  message("Dropping raw ID/time-proxy columns with severe train/test drift: ",
+          paste(adv_diag$drifting_features, collapse = ", "))
+}
 
 # 4. Choose the search metric
 # - Leaderboard metric AUC: search and ensemble on metric = "ts_refinement"
