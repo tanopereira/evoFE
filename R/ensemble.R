@@ -276,21 +276,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       common_folds <- length(unique(stored_folds))
     } else {
       common_folds <- min(5L, max(2L, nrow(data) %/% 4L))
-      common_fold_ids <- if (task %in% c("classification", "multiclass")) {
-        fid <- integer(nrow(data))
-        y_fac <- as.factor(data[[target_col]])
-        for (lv in levels(y_fac)) {
-          ids <- which(as.character(y_fac) == lv)
-          if (length(ids) > 0) {
-            fid[ids] <- sample(rep(seq_len(min(common_folds, length(ids))), length.out = length(ids)))
-          }
-        }
-        un <- which(fid == 0)
-        if (length(un) > 0) fid[un] <- sample(rep(seq_len(common_folds), length.out = length(un)))
-        fid
-      } else {
-        sample(rep(seq_len(common_folds), length.out = nrow(data)))
-      }
+      common_fold_ids <- stratified_kfold_ids(data[[target_col]], common_folds, task)
     }
 
     for (nm in names(val_preds_list)) {
@@ -600,10 +586,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         final_args_i <- apply_iteration_target(final_args_i, NULL, eval_i)
       }
 
-      final_eval_i <- unwrap_evaluator(eval_i)
-      if (!is.null(ind_i$best_params) && length(ind_i$best_params) > 0) {
-        final_args_i <- utils::modifyList(final_args_i, as.list(ind_i$best_params))
-      }
+      resolved_eval_i <- resolve_tuned_evaluator(eval_i, ind_i$best_params, final_args_i, always_unwrap = TRUE)
+      final_eval_i <- resolved_eval_i$evaluator
+      final_args_i <- resolved_eval_i$extra_args
 
       cand_threads <- if (!is.null(threads)) {
         threads

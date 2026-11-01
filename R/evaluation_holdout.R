@@ -78,10 +78,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   # data, and must NEVER be used to drive parameter tuning. Therefore, we bypass the tuner (e.g.
   # lightgbm_mbo) and train the base evaluator (e.g. lightgbm) directly using the best parameters
   # found during evolution.
-  final_evaluator <- unwrap_evaluator(evaluator)
-
-  # Merge best_params into ...
-  final_args <- utils::modifyList(list(...), as.list(ind$best_params))
+  resolved_eval <- resolve_tuned_evaluator(evaluator, ind$best_params, list(...), always_unwrap = TRUE)
+  final_evaluator <- resolved_eval$evaluator
+  final_args <- resolved_eval$extra_args
 
   res_model <- do.call(train_model, c(
     list(

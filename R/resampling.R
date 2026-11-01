@@ -125,3 +125,34 @@ stratified_split <- function(y, ratio) {
   f <- cut(seq_len(n), breaks = cv_folds, labels = FALSE)
   sample(f)
 }
+
+#' Build stratified (or random) K-fold indices
+#'
+#' Stratifies fold assignments by class level for classification and multiclass
+#' tasks, and uses balanced random assignment for regression.
+#'
+#' @param y Target vector.
+#' @param k Integer number of folds.
+#' @param task Task type ("classification", "multiclass", or "regression").
+#' @return Integer vector of fold assignments in \code{1:k} of length \code{length(y)}.
+#' @keywords internal
+#' @noRd
+stratified_kfold_ids <- function(y, k, task = "regression") {
+  n <- length(y)
+  if (k <= 1L || n <= 1L) return(rep(1L, n))
+  if (task %in% c("classification", "multiclass")) {
+    fid <- integer(n)
+    y_fac <- as.factor(y)
+    for (lv in levels(y_fac)) {
+      ids <- which(as.character(y_fac) == lv)
+      if (length(ids) > 0L) {
+        fid[ids] <- sample(rep(seq_len(min(k, length(ids))), length.out = length(ids)))
+      }
+    }
+    un <- which(fid == 0L)
+    if (length(un) > 0L) fid[un] <- sample(rep(seq_len(k), length.out = length(un)))
+    fid
+  } else {
+    sample(rep(seq_len(k), length.out = n))
+  }
+}

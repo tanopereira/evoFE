@@ -1314,10 +1314,9 @@ evolve_features <- function(data, target_col, task = "classification",
     final_model_args <- apply_iteration_target(final_model_args, NULL, best_evaluator)
   }
 
-  final_evaluator <- unwrap_evaluator(best_evaluator)
-  if (!is.null(best_params) && length(best_params) > 0) {
-    final_model_args <- utils::modifyList(final_model_args, as.list(best_params))
-  }
+  resolved_final <- resolve_tuned_evaluator(best_evaluator, best_params, final_model_args, always_unwrap = TRUE)
+  final_evaluator <- resolved_final$evaluator
+  final_model_args <- resolved_final$extra_args
 
   res_model <- do.call(train_model, c(
     list(

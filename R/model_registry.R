@@ -195,6 +195,30 @@ is_tuned_evaluator <- function(evaluator) {
   FALSE
 }
 
+#' Resolve Tuned Evaluator and Merge Pre-Tuned Hyperparameters
+#'
+#' When an individual has already been tuned (non-empty \code{best_params}),
+#' unwraps the tunable evaluator to its base model and merges \code{best_params}
+#' into \code{extra_args} so post-evolution re-evaluations (tournaments, OOF
+#' harmonization, holdout scoring, and final refits) never re-run Bayesian
+#' optimization from scratch.
+#'
+#' @param evaluator Character name of evaluator or tuner.
+#' @param best_params Optional named list of pre-tuned hyperparameters.
+#' @param extra_args List of additional arguments to pass to the evaluator.
+#' @param always_unwrap Logical. If TRUE, unwraps \code{evaluator} even when
+#'   \code{best_params} is empty (used for holdout and final full-data refits).
+#' @return A list with \code{evaluator} and \code{extra_args}.
+#' @keywords internal
+#' @noRd
+resolve_tuned_evaluator <- function(evaluator, best_params = NULL, extra_args = list(), always_unwrap = FALSE) {
+  has_params <- !is.null(best_params) && length(best_params) > 0
+  list(
+    evaluator = if (always_unwrap || has_params) unwrap_evaluator(evaluator) else evaluator,
+    extra_args = if (has_params) utils::modifyList(as.list(extra_args), as.list(best_params)) else as.list(extra_args)
+  )
+}
+
 #' Check if an Evaluator is Tree-Based
 #'
 #' Inspects the traits of the evaluator (or its unwrapped base evaluator) to determine
