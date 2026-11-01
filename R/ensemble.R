@@ -239,17 +239,21 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   cand_has_na <- any(vapply(val_preds_list, anyNA, logical(1)))
 
-  # Check if row counts are inhomogeneous, contain NAs, or don't cover the full dataset when mixing recipes or in metacv
+  # Check if row counts are inhomogeneous, contain NAs, or don't cover the expected OOF partition
   is_metacv_equal <- (method == "equal" &&
                       identical(first_recipe$evaluation_strategy, "metacv") &&
                       !is.null(first_recipe$metacv_island_oof_preds) &&
                       length(recipe_list) == 1L)
 
+  expected_oof_rows <- if (!is.null(first_recipe$fold_ids)) length(first_recipe$fold_ids) else nrow(data)
+  y_vals_aligned <- length(unique(lapply(cand_metadata, function(m) m$ind$y_val))) <= 1L
+
   needs_harmonization <- !is_metacv_equal && (
     cand_has_na ||
     length(unique(cand_row_counts)) > 1L ||
-    (length(recipe_list) > 1L && any(cand_row_counts != nrow(data))) ||
-    (identical(first_recipe$evaluation_strategy, "metacv") && any(cand_row_counts != nrow(data)))
+    !y_vals_aligned ||
+    (length(recipe_list) > 1L && any(cand_row_counts != expected_oof_rows)) ||
+    (identical(first_recipe$evaluation_strategy, "metacv") && any(cand_row_counts != expected_oof_rows))
   )
 
   stored_folds <- first_recipe$fold_ids

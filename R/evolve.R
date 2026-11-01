@@ -699,10 +699,15 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(part) || nrow(part) == 0L) return(part)
       n_take <- max(30L, ceiling(nrow(part) * mf_sample_frac))
       n_take <- min(n_take, nrow(part))
-      res <- part[seq_len(n_take), ]
+      take_idx <- if (!identical(cv_strategy, "time") && target_col %in% names(part)) {
+        sort(.stratified_sample_indices(part[[target_col]], n_take))
+      } else {
+        seq_len(n_take)
+      }
+      res <- part[take_idx, ]
       row_id <- attr(part, ".row_id")
       if (!is.null(row_id)) {
-        data.table::setattr(res, ".row_id", row_id[seq_len(n_take)])
+        data.table::setattr(res, ".row_id", row_id[take_idx])
       }
       res
     }

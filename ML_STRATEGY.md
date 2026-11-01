@@ -386,6 +386,8 @@ scout_recipe <- evolve_features(
   allowed_transformers  = "basic",
   complexity_penalty    = 0.1,
   complexity_target     = "all_features",
+  sd_penalty            = 0.5,              # Penalize fold-unstable scout features
+  shadow_prune          = TRUE,             # Strip zero-signal leaf genes below permuted shadow features
   holdout_frac          = 0,
   threads               = n_threads,
   seed                  = 42
@@ -407,10 +409,10 @@ As demonstrated in Section 2, **each model family operates in a fundamentally di
 
 Instead of manually guessing which transformers to assign to each model, we run **one MetaCV exploration pass per evaluator with ALL unsupervised transformers allowed** (`allowed_transformers = unsup_t`). Each evaluator naturally picks its own optimal transformations from the full universe of leak-free features!
 
-#### The 6 Pillars of This Architecture:
+#### The 7 Pillars of This Architecture:
 1. **Unconstrained Feature Selection**: Passing `allowed_transformers = unsup_t` allows each evaluator to surprise you. LightGBM might find a rare UMAP boundary split; RealMLP might discover a continuous transformation of a group aggregation; XGBoost will select ratio features that stabilize its 2nd-order gradients.
-2. **MetaCV $K\times$ Speedup**: Each of the 3 passes runs with `evaluation_strategy = "metacv"` across 4 islands. Each island evaluates candidate genes on only **1 fold**, slashing exploration runtime by $4\times$.
-3. **Tournament Selection for Honest OOFs**: Setting `metacv_selection = "tournament"` runs a quick $K$-fold CV tournament on the island champions at the end of evolution, returning full-dataset out-of-fold predictions ready for ensembling without partition mismatch.
+2. **Stratified MetaCV $K\times$ Speedup**: Each of the 3 passes runs with `evaluation_strategy = "metacv"` across 4 islands. Under the hood, `build_metacv_partitions()` automatically applies class/quantile stratification (or `cv_strategy = "stratified_group"` when `group_col` is supplied) across the 4 island folds, while evaluating candidate genes on **1 fold per island** to slash exploration runtime by $4\times$.
+3. **Tournament Selection + Fold-Variance LCB Penalty (`sd_penalty`)**: Setting `metacv_selection = "tournament"` runs a $K$-fold CV tournament on the island champions at the end of evolution, penalized by `sd_penalty = 0.5` ($\bar{s} - 0.5 \cdot \text{SD} / \sqrt{K}$) so single-fold spike recipes cannot win the tournament.
 4. **Demand-Driven Island Migration on Complete Mesh (`dual_gibbs_pull` + `migration_interval = 1`)**:
    - **Complete Topology vs. Ring Topology**:
      - In traditional genetic algorithms, **ring topology** (`"ring"`) connects islands in a 1D circle ($1 \rightarrow 2 \rightarrow 3 \rightarrow 4$). It has an $O(K)$ graph diameter ($D = K - 1$ hops). If Island 1 discovers a breakthrough interaction feature, Island 4 must wait 3 full migration cycles to receive it—and if intermediate islands mutate or drop the feature, the innovation never reaches Island 4.
@@ -427,7 +429,8 @@ Instead of manually guessing which transformers to assign to each model, we run 
      - **Assimilation Reset**: The instant an immigrant recipe or top-20 gene improves local fitness, $s_j$ resets to 0, instantly closing the pull gate.
    - *(Note: You can also specify this explicitly using the modular config container: `migration = migration_config(topology = topology_complete(islands = 4), policy = policy_gibbs_pull(stagnation_threshold = 2))`)*.
 5. **High-Throughput Manifold & Anomaly Learning**: `uwot` and `quitefastmst` handle **20,000–50,000 landmark rows** quickly. Pass `max_clustering_size = clust_cap` to every call (the default is 5,000).
-6. **Parsimony Guardrails**: We set `complexity_penalty = 0.25 - 0.30` with `complexity_target = "all_features"`. This pushes each evaluator toward a compact feature set, preventing feature explosion when combining them.
+6. **Parsimony + Null-Importance Shadow Pruning (`shadow_prune = TRUE`)**: Combining `complexity_penalty = 0.25 - 0.30` (`complexity_target = "all_features"`) with `shadow_prune = TRUE` injects 2 permuted shadow columns during evaluation and automatically prunes evolved leaf genes whose importance fails to beat the shadow features before Stage 3 synthesizes `train_mega`.
+7. **Adversarial Test-Matched Confirmation Holdout (`holdout_frac = 0.08, test_data = test`)**: Carves out an 8% confirmation holdout weighted toward the unlabeled `test` covariate distribution (and keeping `group_col` intact if grouped). After each search pass finishes, `recipe$holdout_fitness` and `recipe$search_gap` tell you immediately whether the discovered features generalize to test-like rows or overfit the search folds.
 
 > [!CAUTION]
 > **Supervised genes leak into Stage 4.** Stage 3 materializes the discovered features on the *full* training set (`predict(ens_scouts, train)`), so any supervised transformer (`target_encode`, `pooled_target_encode`, `woe_encode`, `target_quantile_encode`, `cat_interaction_target_encode`, `supervised_*`) is fit on every row's target. Stage 4's cross-validation on `train_mega` then sees encodings that already memorized the validation targets — inflated OOF scores, wrong early stopping, and a miscalibrated stacker. This is the Pattern C trap from Section 4.
@@ -456,6 +459,10 @@ rec_lgb_search <- evolve_features(
   allowed_transformers  = unsup_t,            # Leak-free unsupervised vocabulary
   evaluation_strategy   = "metacv",
   metacv_selection      = "tournament",       # K-fold tournament for honest full OOFs
+  holdout_frac          = 0.08,               # 8% untouched confirmation holdout
+  test_data             = test,               # Weight holdout sampling toward test distribution
+  sd_penalty            = 0.5,                # Penalize fold variance during tournament selection
+  shadow_prune          = TRUE,               # Prune leaf genes below permuted shadow importance
   migration             = mig_cfg,            # Complete topology (D=1) + demand-driven Gibbs pull
   migration_interval    = 1,                  # Evaluate pull condition every generation
   migration_rate        = 1,
@@ -490,6 +497,10 @@ rec_xgb_search <- evolve_features(
   allowed_transformers  = unsup_t,
   evaluation_strategy   = "metacv",
   metacv_selection      = "tournament",
+  holdout_frac          = 0.08,
+  test_data             = test,
+  sd_penalty            = 0.5,
+  shadow_prune          = TRUE,
   migration             = mig_cfg,
   migration_interval    = 1,
   migration_rate        = 1,
@@ -523,6 +534,10 @@ rec_mlp_search <- evolve_features(
   allowed_transformers  = unsup_t,
   evaluation_strategy   = "metacv",
   metacv_selection      = "tournament",
+  holdout_frac          = 0.08,
+  test_data             = test,
+  sd_penalty            = 0.5,
+  shadow_prune          = TRUE,
   migration             = mig_cfg,
   migration_interval    = 1,
   migration_rate        = 1,
@@ -540,6 +555,13 @@ rec_mlp_search <- evolve_features(
   max_clustering_size   = clust_cap,
   seed                  = 303
 )
+
+# Verify test-weighted holdout generalization & cross-fold stability before synthesis:
+for (nm in c("lgb", "xgb", "mlp")) {
+  r <- get(paste0("rec_", nm, "_search"))
+  cat(sprintf("[%s] Holdout: %.5f | Search Gap: %+.5f | Fold SD: %.5f\n",
+              toupper(nm), r$holdout_fitness, r$search_gap, r$fold_sd))
+}
 ```
 
 #### Alternative Single-Call Architecture: Concurrent Multi-Island Portfolio
@@ -1112,6 +1134,10 @@ rec_lgb_list <- lapply(seeds_lgb, function(s) {
     allowed_transformers  = unsup_t,          # Leak-free unsupervised vocabulary
     evaluation_strategy   = "cv",             # Honest full 5-fold CV on every generation
     cv_folds              = 5,
+    holdout_frac          = 0.08,             # 8% confirmation holdout
+    test_data             = test,             # Adversarial test-weighted holdout sampling
+    sd_penalty            = 1.0,              # 1-SE Lower Confidence Bound across 5 folds
+    shadow_prune          = TRUE,             # Null-importance shadow gene pruning
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1142,6 +1168,10 @@ rec_xgb_list <- lapply(seeds_xgb, function(s) {
     allowed_transformers  = unsup_t,
     evaluation_strategy   = "cv",
     cv_folds              = 5,
+    holdout_frac          = 0.08,
+    test_data             = test,
+    sd_penalty            = 1.0,
+    shadow_prune          = TRUE,
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1171,6 +1201,10 @@ rec_mlp_list <- lapply(seeds_mlp, function(s) {
     allowed_transformers  = unsup_t,
     evaluation_strategy   = "cv",
     cv_folds              = 5,
+    holdout_frac          = 0.08,
+    test_data             = test,
+    sd_penalty            = 1.0,
+    shadow_prune          = TRUE,
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1306,39 +1340,40 @@ $$3 \text{ architectures} \times 5 \text{ seeds} \times 10 \text{ folds} = 150 \
 bag_seeds <- c(1001, 2002, 3003, 4004, 5005)
 k_folds   <- 10
 
-# 1. Fit 5 Seeds of Low-eta LightGBM (η=0.003, nrounds=50,000 ceiling)
+# 1. Fit 5 Seeds of Low-eta LightGBM (η=0.003, nrounds=50,000 ceiling, 10-fold bagged)
 lgb_models <- lapply(bag_seeds, function(sd) {
   do.call(evolve_features, c(
     list(
       data = train_mega, target_col = "target", task = "classification",
       evaluator = "lightgbm", metric = search_metric, threads = n_threads,
-      generations = 1, pop_size = 1, cv_folds = k_folds,
+      generations = 1, pop_size = 1, cv_folds = k_folds, bag_folds = TRUE,
       learning_rate = 0.003, nrounds = 50000, early_stopping_rounds = 250, seed = sd
     ),
     lgb_tuned$best_params
   ))
 })
 
-# 2. Fit 5 Seeds of Low-eta XGBoost (η=0.005, nrounds=35,000 ceiling)
+# 2. Fit 5 Seeds of Low-eta XGBoost (η=0.005, nrounds=35,000 ceiling, 10-fold bagged)
 xgb_models <- lapply(bag_seeds, function(sd) {
   do.call(evolve_features, c(
     list(
       data = train_mega, target_col = "target", task = "classification",
       evaluator = "xgboost", metric = search_metric, threads = n_threads,
       tree_method = "hist", generations = 1, pop_size = 1,
-      cv_folds = k_folds, learning_rate = 0.005, nrounds = 35000, early_stopping_rounds = 200, seed = sd
+      cv_folds = k_folds, bag_folds = TRUE,
+      learning_rate = 0.005, nrounds = 35000, early_stopping_rounds = 200, seed = sd
     ),
     xgb_tuned$best_params
   ))
 })
 
-# 3. Fit 5 Seeds of Deep RealMLP (500 epochs, cosine decay)
+# 3. Fit 5 Seeds of Deep RealMLP (500 epochs, cosine decay, 10-fold bagged)
 mlp_models <- lapply(bag_seeds, function(sd) {
   do.call(evolve_features, c(
     list(
       data = train_mega, target_col = "target", task = "classification",
       evaluator = "realmlp", metric = search_metric, threads = n_threads,
-      generations = 1, pop_size = 1, cv_folds = k_folds,
+      generations = 1, pop_size = 1, cv_folds = k_folds, bag_folds = TRUE,
       epochs = 500, early_stopping_rounds = 40, seed = sd
     ),
     mlp_tuned$best_params
@@ -1426,17 +1461,11 @@ rank_test_mat <- apply(test_matrix, 2, function(col) frank(col) / length(col))
 final_preds_auc <- as.numeric(rank_test_mat %*% final_weights)
 
 # • REGIME C: Hard Classification Metrics (F1 / MCC / Balanced Accuracy)
-#   Optimize decision threshold on out-of-fold calibrated probabilities, then binarize test:
-thresholds <- seq(0.1, 0.9, by = 0.005)
-f1_scores <- vapply(thresholds, function(th) {
-  pred_bin <- as.integer(calibrated_oof >= th)
-  tp <- sum(pred_bin == 1 & train$target == 1)
-  fp <- sum(pred_bin == 1 & train$target == 0)
-  fn <- sum(pred_bin == 0 & train$target == 1)
-  if (tp == 0) 0 else (2 * tp) / (2 * tp + fp + fn)
-}, numeric(1))
-best_th <- thresholds[which.max(f1_scores)]
-cat(sprintf("Optimal Decision Threshold: %.3f (Out-of-Fold F1: %.5f)\n", best_th, max(f1_scores)))
+#   Exact O(N log N) decision threshold optimization on out-of-fold calibrated probabilities:
+opt_th <- optimize_threshold(train$target, calibrated_oof, metric = "f1") # or "mcc", "balanced_accuracy"
+best_th <- opt_th$threshold
+cat(sprintf("Optimal Decision Threshold: %.4f (Out-of-Fold Score: %.5f vs Default 0.5: %.5f)\n",
+            best_th, opt_th$best_score, opt_th$default_score))
 final_preds_f1 <- as.integer(final_preds_prob >= best_th)
 
 # Final submission (select final_preds_prob, final_preds_auc, or final_preds_f1 for your competition)
