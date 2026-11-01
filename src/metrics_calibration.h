@@ -63,8 +63,10 @@ inline double compute_ts_refinement_binary_impl(
     int n,
     double alpha = 1.0,
     bool is_logits = false,
-    int threads = 1) {
+    int threads = 1,
+    double* out_beta = nullptr) {
 
+  if (out_beta) *out_beta = 1.0;
   if (n <= 0) return 0.0;
 
   int n_threads = (threads > 0) ? threads : 1;
@@ -140,6 +142,7 @@ inline double compute_ts_refinement_binary_impl(
   }
 
   // Un-smoothed log-loss at optimal inverse temperature beta = 1 / best_temp
+  if (out_beta) *out_beta = beta;
   const double inv_best_temp = beta;
   double unsmoothed_loss = 0.0;
 
@@ -170,8 +173,10 @@ inline double compute_ts_refinement_multiclass_impl(
     int c,
     double alpha = 1.0,
     bool is_logits = false,
-    int threads = 1) {
+    int threads = 1,
+    double* out_beta = nullptr) {
 
+  if (out_beta) *out_beta = 1.0;
   if (n <= 0 || c <= 0) return 0.0;
 
   int n_threads = (threads > 0) ? threads : 1;
@@ -285,6 +290,7 @@ inline double compute_ts_refinement_multiclass_impl(
   }
 
   // Un-smoothed multiclass log-loss at optimal inverse temperature beta = 1 / best_temp
+  if (out_beta) *out_beta = beta;
   const double inv_best_temp = beta;
   double unsmoothed_loss = 0.0;
 
@@ -315,7 +321,11 @@ inline double compute_ts_refinement_multiclass_impl(
 inline double compute_calibrated_rmse_impl(
     const double* __restrict__ y_true_ptr,
     const double* __restrict__ y_pred_ptr,
-    int n) {
+    int n,
+    double* out_a = nullptr,
+    double* out_b = nullptr) {
+  if (out_a) *out_a = 0.0;
+  if (out_b) *out_b = 1.0;
   if (n <= 1) return 0.0;
 
   // Single-pass filter and accumulate means
@@ -387,6 +397,14 @@ inline double compute_calibrated_rmse_impl(
 
   double r = cov / denom;
   double r2 = std::clamp(r * r, 0.0, 1.0);
+  double b = cov / var_yp;
+  if (std::isfinite(b) && b > 0.0) {
+    if (out_b) *out_b = b;
+    if (out_a) *out_a = mean_yt - b * mean_yp;
+  } else if (std::isfinite(mean_yt - mean_yp)) {
+    if (out_b) *out_b = 1.0;
+    if (out_a) *out_a = mean_yt - mean_yp;
+  }
   return sd_true * std::sqrt(1.0 - r2);
 }
 
@@ -396,7 +414,11 @@ inline double compute_calibrated_rmse_impl(
 inline double compute_calibrated_mae_impl(
     const double* __restrict__ y_true_ptr,
     const double* __restrict__ y_pred_ptr,
-    int n) {
+    int n,
+    double* out_a = nullptr,
+    double* out_b = nullptr) {
+  if (out_a) *out_a = 0.0;
+  if (out_b) *out_b = 1.0;
   if (n <= 1) return 0.0;
 
   std::vector<double> yt;
@@ -455,6 +477,7 @@ inline double compute_calibrated_mae_impl(
   if (!std::isfinite(b_ols)) b_ols = 1.0;
 
   std::vector<double> res(valid_n);
+  double last_a_star = 0.0;
 
   auto eval_b = [&](double b) -> double {
     for (int i = 0; i < valid_n; ++i) {
@@ -467,6 +490,7 @@ inline double compute_calibrated_mae_impl(
       auto max_lower = std::max_element(res.begin(), res.begin() + mid);
       a_star = 0.5 * (*max_lower + res[mid]);
     }
+    last_a_star = a_star;
     double sum_ae = 0.0;
     for (int i = 0; i < valid_n; ++i) {
       sum_ae += std::abs(res[i] - a_star);
@@ -480,6 +504,7 @@ inline double compute_calibrated_mae_impl(
 
   double best_b = brent_minimize(eval_b, b_low, b_high, 1e-5);
   double min_mae = eval_b(best_b);
+  double best_a = last_a_star;
 
   // Raw uncalibrated MAE fallback safety
   double raw_ae = 0.0;
@@ -487,6 +512,11 @@ inline double compute_calibrated_mae_impl(
     raw_ae += std::abs(yt[i] - yp[i]);
   }
   double raw_mae = raw_ae / valid_n;
+
+  if (min_mae < raw_mae && std::isfinite(best_b) && best_b > 0.0 && std::isfinite(best_a)) {
+    if (out_a) *out_a = best_a;
+    if (out_b) *out_b = best_b;
+  }
 
   return std::min(min_mae, raw_mae);
 }

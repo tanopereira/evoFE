@@ -80,8 +80,10 @@ validate_metacv_config <- function(evaluation_strategy, islands, cv_folds, migra
 #' @return List with fold_ids and island_shared_splits
 #' @noRd
 build_metacv_partitions <- function(data, islands, cv_strategy = "random", time_col = NULL,
-                                    group_col = NULL, verbose = FALSE) {
-  fold_ids <- .build_cv_folds(data, islands, cv_strategy, time_col, group_col)
+                                    group_col = NULL, verbose = FALSE,
+                                    target_col = NULL, task = NULL) {
+  fold_ids <- .build_cv_folds(data, islands, cv_strategy, time_col, group_col,
+                              target_col = target_col, task = task)
   island_shared_splits <- lapply(seq_len(islands), function(j) {
     tr_idx <- which(fold_ids != j)
     va_idx <- which(fold_ids == j)

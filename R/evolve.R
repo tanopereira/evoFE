@@ -527,7 +527,8 @@ evolve_features <- function(data, target_col, task = "classification",
   island_shared_folds <- NULL
 
   if (evaluation_strategy == "cv") {
-    fold_ids <- .build_cv_folds(data, cv_folds, cv_strategy, time_col, group_col)
+    fold_ids <- .build_cv_folds(data, cv_folds, cv_strategy, time_col, group_col,
+                                target_col = target_col, task = task)
 
     if (row_split_islands) {
       island_shared_folds <- lapply(seq_len(islands), function(j) list())
@@ -554,7 +555,8 @@ evolve_features <- function(data, target_col, task = "classification",
       }
     }
   } else if (evaluation_strategy == "metacv") {
-    metacv_parts <- build_metacv_partitions(data, islands, cv_strategy, time_col, group_col, verbose)
+    metacv_parts <- build_metacv_partitions(data, islands, cv_strategy, time_col, group_col, verbose,
+                                            target_col = target_col, task = task)
     fold_ids <- metacv_parts$fold_ids
     island_shared_splits <- metacv_parts$island_shared_splits
     shared_splits <- NULL
@@ -1262,13 +1264,19 @@ evolve_features <- function(data, target_col, task = "classification",
   best_params <- best_ind$best_params
   best_iteration <- best_ind$best_iteration
   train_size <- best_ind$train_size
+  cal_y_val <- best_ind$y_val
+  cal_val_preds <- best_ind$val_preds
   train_full_dt <- if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
-    data.table::as.data.table(data[split_ids_val != "holdout", ])
+    tr_ho_idx <- which(split_ids_val != "holdout")
+    tr_ho_dt <- data.table::as.data.table(data[tr_ho_idx, ])
+    data.table::setattr(tr_ho_dt, ".row_id", tr_ho_idx)
+    tr_ho_dt
   } else {
     data.table::copy(shared_full)
   }
   res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col,
-                               state_cache = state_cache, validate_genes = FALSE)
+                               state_cache = state_cache, full_data = shared_full,
+                               validate_genes = FALSE)
   best_ind <- res_full$ind
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration
@@ -1337,6 +1345,14 @@ evolve_features <- function(data, target_col, task = "classification",
     final_model_args
   ))
   best_model <- res_model$model
+  calibrator <- fit_post_calibrator(
+    y_true = cal_y_val,
+    y_pred = cal_val_preds,
+    task = task,
+    metric = metric,
+    num_class = num_class,
+    threads = threads
+  )
 
   if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
     if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
@@ -1480,6 +1496,7 @@ evolve_features <- function(data, target_col, task = "classification",
     fitness_history = fitness_history,
     task = task,
     best_model = best_model,
+    calibrator = calibrator,
     best_iteration = if (!is.null(target_iters)) target_iters else if (!is.null(best_ind$best_iteration)) best_ind$best_iteration else NULL,
     evaluator = best_evaluator,
     target_col = target_col,

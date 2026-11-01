@@ -101,7 +101,8 @@ stratified_split <- function(y, ratio) {
 #' }
 #' @noRd
 .build_cv_folds <- function(data, cv_folds, strategy = "random",
-                            time_col = NULL, group_col = NULL) {
+                            time_col = NULL, group_col = NULL,
+                            target_col = NULL, task = NULL) {
   n <- nrow(data)
   if (strategy == "time") {
     ord <- order(data[[time_col]], method = "radix")
@@ -121,6 +122,10 @@ stratified_split <- function(y, ratio) {
       fold_load[f] <- fold_load[f] + gsizes[gi]
     }
     return(gfold[match(g, ux)])
+  }
+  if (!is.null(target_col) && target_col %in% names(data) &&
+      !is.null(task) && task %in% c("classification", "multiclass")) {
+    return(stratified_kfold_ids(data[[target_col]], cv_folds, task))
   }
   f <- cut(seq_len(n), breaks = cv_folds, labels = FALSE)
   sample(f)

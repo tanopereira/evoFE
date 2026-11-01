@@ -63,7 +63,9 @@ predict.evo_ensemble <- function(object, newdata, ...) {
   for (name in names(object$active_recipes)) {
     ind_i <- object$active_recipes[[name]]
     dt_i <- data.table::copy(dt_input)
-    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
+    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL,
+                              allow_prune = TRUE, state_cache = state_cache, full_data = dt_input)
+    if (!is.null(res_i$full)) dt_input <- res_i$full
     sub_dt <- res_i$train
     new_cols <- setdiff(names(sub_dt), names(out_dt))
     if (length(new_cols) > 0) {
@@ -147,7 +149,11 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
   if (!is.null(object$classes)) {
     preds <- format_multiclass_predictions(preds, object$classes)
   }
-  
+
+  if (!is.null(object$calibrator)) {
+    preds <- apply_post_calibrator(preds, object$calibrator)
+  }
+
   preds
 }
 
@@ -188,7 +194,9 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     evaluator_entry <- get_evaluator(eval_i)
 
     dt_i <- data.table::copy(dt_input)
-    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL, allow_prune = TRUE, state_cache = state_cache)
+    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL,
+                              allow_prune = TRUE, state_cache = state_cache, full_data = dt_input)
+    if (!is.null(res_i$full)) dt_input <- res_i$full
     applied_ind <- res_i$ind
 
     features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
@@ -233,6 +241,10 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     } else {
       weighted_preds <- weighted_preds + (w * preds_i)
     }
+  }
+
+  if (!is.null(object$calibrator) && !isTRUE(object$rank_average)) {
+    weighted_preds <- apply_post_calibrator(weighted_preds, object$calibrator)
   }
 
   weighted_preds

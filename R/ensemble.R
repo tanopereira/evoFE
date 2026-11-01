@@ -547,7 +547,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
       dt_i <- data.table::copy(dt_full)
       res_full <- apply_individual(ind_i, dt_i, NULL, target_col, state_cache = state_cache,
-                                   allow_prune = TRUE, validate_genes = FALSE)
+                                   allow_prune = TRUE, full_data = dt_full, validate_genes = FALSE)
+      if (!is.null(res_full$full)) dt_full <- res_full$full
       applied_ind <- res_full$ind
       active_recipes[[name]] <- applied_ind
 
@@ -669,6 +670,33 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     }
   }
 
+  calibrator <- NULL
+  if (!isTRUE(rank_average) && is.character(metric) && length(metric) == 1L &&
+      metric %in% c("ts_refinement", "cal_rmse", "cal_mae") && length(active_names) > 0) {
+    first_vp <- val_preds_list[[active_names[1]]]
+    ens_val_preds <- if (is.matrix(first_vp)) {
+      res_mat <- matrix(0, nrow = nrow(first_vp), ncol = ncol(first_vp))
+      for (nm in active_names) {
+        res_mat <- res_mat + weights[[nm]] * val_preds_list[[nm]]
+      }
+      res_mat
+    } else {
+      res_vec <- numeric(length(first_vp))
+      for (nm in active_names) {
+        res_vec <- res_vec + weights[[nm]] * val_preds_list[[nm]]
+      }
+      res_vec
+    }
+    calibrator <- fit_post_calibrator(
+      y_true = y_val,
+      y_pred = ens_val_preds,
+      task = task,
+      metric = metric,
+      num_class = num_class,
+      threads = threads
+    )
+  }
+
   structure(
     list(
       active_recipes = active_recipes,
@@ -688,6 +716,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       method = method,
       rank_average = isTRUE(rank_average),
       rank_ecdfs = rank_ecdfs,
+      calibrator = calibrator,
       stack_cv_fitness = if (!is.null(selection_res$stack_cv_fitness)) selection_res$stack_cv_fitness else NULL,
       task = task,
       evaluator = first_recipe$evaluator,

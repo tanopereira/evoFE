@@ -66,6 +66,24 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rcpp_fit_post_calibrator
+List rcpp_fit_post_calibrator(SEXP y_true, SEXP y_pred, std::string task, std::string metric, int num_class, double alpha, bool is_logits, int threads);
+RcppExport SEXP _evoFE_rcpp_fit_post_calibrator(SEXP y_trueSEXP, SEXP y_predSEXP, SEXP taskSEXP, SEXP metricSEXP, SEXP num_classSEXP, SEXP alphaSEXP, SEXP is_logitsSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type y_true(y_trueSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type y_pred(y_predSEXP);
+    Rcpp::traits::input_parameter< std::string >::type task(taskSEXP);
+    Rcpp::traits::input_parameter< std::string >::type metric(metricSEXP);
+    Rcpp::traits::input_parameter< int >::type num_class(num_classSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< bool >::type is_logits(is_logitsSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_fit_post_calibrator(y_true, y_pred, task, metric, num_class, alpha, is_logits, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rcpp_realmlp_train
 List rcpp_realmlp_train(NumericMatrix x_train, NumericVector y_train, Nullable<NumericMatrix> x_val, Nullable<NumericVector> y_val, std::string task, int n_epochs, int batch_size, double lr, int early_stopping_rounds, int seed, int verbose, int num_classes, int threads, std::string metric, int hidden_dim, int n_cycles, int stop_epoch);
 RcppExport SEXP _evoFE_rcpp_realmlp_train(SEXP x_trainSEXP, SEXP y_trainSEXP, SEXP x_valSEXP, SEXP y_valSEXP, SEXP taskSEXP, SEXP n_epochsSEXP, SEXP batch_sizeSEXP, SEXP lrSEXP, SEXP early_stopping_roundsSEXP, SEXP seedSEXP, SEXP verboseSEXP, SEXP num_classesSEXP, SEXP threadsSEXP, SEXP metricSEXP, SEXP hidden_dimSEXP, SEXP n_cyclesSEXP, SEXP stop_epochSEXP) {
@@ -278,6 +296,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_compute_ts_refinement_multiclass", (DL_FUNC) &_evoFE_rcpp_compute_ts_refinement_multiclass, 6},
     {"_evoFE_rcpp_compute_calibrated_rmse", (DL_FUNC) &_evoFE_rcpp_compute_calibrated_rmse, 2},
     {"_evoFE_rcpp_compute_calibrated_mae", (DL_FUNC) &_evoFE_rcpp_compute_calibrated_mae, 2},
+    {"_evoFE_rcpp_fit_post_calibrator", (DL_FUNC) &_evoFE_rcpp_fit_post_calibrator, 8},
     {"_evoFE_rcpp_realmlp_train", (DL_FUNC) &_evoFE_rcpp_realmlp_train, 17},
     {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 3},
     {"_evoFE_rcpp_fused_row_min", (DL_FUNC) &_evoFE_rcpp_fused_row_min, 2},

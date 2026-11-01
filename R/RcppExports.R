@@ -25,6 +25,13 @@ rcpp_compute_calibrated_mae <- function(y_true, y_pred) {
     .Call(`_evoFE_rcpp_compute_calibrated_mae`, y_true, y_pred)
 }
 
+#' Fast C++ Post-Hoc Calibrator Parameter Fitting
+#' @keywords internal
+#' @noRd
+rcpp_fit_post_calibrator <- function(y_true, y_pred, task, metric, num_class = 0L, alpha = 1.0, is_logits = FALSE, threads = 1L) {
+    .Call(`_evoFE_rcpp_fit_post_calibrator`, y_true, y_pred, task, metric, num_class, alpha, is_logits, threads)
+}
+
 #' Train RealMLP Model in C++
 #'
 #' @param x_train Numeric matrix of training features.

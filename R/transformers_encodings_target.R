@@ -18,7 +18,7 @@ evo_transformers$target_encode <- create_transformer(
     
     # Calculate category means and counts
     dt <- data.table::data.table(x = x, y = y)
-    stats <- dt[, .(mean = mean(y, na.rm = TRUE), n = .N), by = x]
+    stats <- dt[, .(mean = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
     
     # Smoothing parameters (can be adjusted)
     min_samples_leaf <- 10
@@ -30,8 +30,16 @@ evo_transformers$target_encode <- create_transformer(
     
     mapping <- stats[, .(x, smoothed)]
     data.table::setkey(mapping, x)
+
+    # Leave-one-out (LOO) smoothed values on the training split to prevent in-sample target leakage
+    mapped <- stats[dt, on = "x"]
+    n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
+    sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
+    loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
+    loo_vals[is.na(loo_vals)] <- global_mean
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
     
-    list(mapping = mapping, global_mean = global_mean)
+    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -133,6 +141,7 @@ evo_transformers$target_encode_multiclass <- create_transformer(
     classes <- sort(unique(y))
     mappings <- list()
     global_means <- list()
+    loo_train_list <- list()
     smoothing <- 10
     
     for (k in seq_along(classes)) {
@@ -141,15 +150,22 @@ evo_transformers$target_encode_multiclass <- create_transformer(
       global_means[[k]] <- global_mean
       
       dt <- data.table::data.table(x = x, y = y_bin)
-      stats <- dt[, .(mean = mean(y, na.rm = TRUE), n = .N), by = x]
+      stats <- dt[, .(mean = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
       stats[, smoothed := (n * mean + smoothing * global_mean) / (n + smoothing)]
       
       mapping <- stats[, .(x, smoothed)]
       data.table::setkey(mapping, x)
       mappings[[k]] <- mapping
+
+      mapped <- stats[dt, on = "x"]
+      n_loo <- pmax(0, mapped$n - as.integer(!is.na(y_bin)))
+      sum_loo <- mapped$sum_y - ifelse(is.na(y_bin), 0, y_bin)
+      loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
+      loo_vals[is.na(loo_vals)] <- global_mean
+      loo_train_list[[k]] <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
     }
     
-    list(mappings = mappings, global_means = global_means, classes = classes)
+    list(mappings = mappings, global_means = global_means, classes = classes, loo_train_list = loo_train_list)
   },
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
@@ -210,7 +226,19 @@ evo_transformers$woe_encode <- create_transformer(
 
     mapping <- stats[, .(x, woe)]
     data.table::setkey(mapping, x)
-    list(mapping = mapping, global_woe = 0)
+
+    mapped <- stats[dt, on = "x"]
+    is_ev <- !is.na(y_bin) & y_bin == 1
+    is_nev <- !is.na(y_bin) & y_bin == 0
+    ev_loo <- pmax(0, mapped$n_events - ifelse(is_ev, 1, 0))
+    nev_loo <- pmax(0, mapped$n_nonevents - ifelse(is_nev, 1, 0))
+    tot_ev_loo <- pmax(1, total_events - ifelse(is_ev, 1, 0))
+    tot_nev_loo <- pmax(1, total_nonevents - ifelse(is_nev, 1, 0))
+    loo_woe <- log(((ev_loo + eps) / (tot_ev_loo + 2 * eps)) / ((nev_loo + eps) / (tot_nev_loo + 2 * eps)))
+    loo_woe[!is.finite(loo_woe)] <- 0
+    loo_train <- if (length(unique(loo_woe)) > 1L) loo_woe else NULL
+
+    list(mapping = mapping, global_woe = 0, loo_train = loo_train)
   },
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
@@ -321,7 +349,7 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
 
     global_mean <- mean(y, na.rm = TRUE)
     dt <- data.table::data.table(x_joint = x_joint, y = y)
-    stats_dt <- dt[, .(mean_y = mean(y, na.rm = TRUE), n = .N), by = x_joint]
+    stats_dt <- dt[, .(mean_y = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x_joint]
 
     smoothing <- 10
     stats_dt[, smoothed := (n * mean_y + smoothing * global_mean) / (n + smoothing)]
@@ -329,7 +357,14 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     mapping <- stats_dt[, .(x_joint, smoothed)]
     data.table::setkey(mapping, x_joint)
 
-    list(mapping = mapping, global_mean = global_mean)
+    mapped <- stats_dt[dt, on = "x_joint"]
+    n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
+    sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
+    loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
+    loo_vals[is.na(loo_vals)] <- global_mean
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {

@@ -579,4 +579,63 @@ test_that("apply_individual with validate_genes = FALSE preserves accepted genes
   expect_true(g$output_col %in% names(res_kept$train))
 })
 
+test_that("stratified CV folds and LOO target encoding and post-hoc calibration work end-to-end", {
+  # 1. Stratified CV folds preserve minority class across all folds
+  set.seed(42)
+  df_imb <- data.frame(
+    x = stats::rnorm(50),
+    y = c(rep(1L, 5), rep(0L, 45))
+  )
+  folds_strat <- .build_cv_folds(df_imb, cv_folds = 5, strategy = "random",
+                                 target_col = "y", task = "classification")
+  for (k in 1:5) {
+    expect_equal(sum(df_imb$y[folds_strat == k] == 1L), 1L)
+  }
+
+  # 2. LOO target encoding prevents self-target leakage on training split while using full map on val
+  tr_dt <- data.table::data.table(
+    cat = factor(c("A", "A", "B", "B")),
+    y = c(1, 0, 1, 0)
+  )
+  va_dt <- data.table::data.table(
+    cat = factor(c("A", "B")),
+    y = c(1, 0)
+  )
+  g_te <- create_gene("target_encode", "cat")
+  res_te <- apply_gene(g_te, data.table::copy(tr_dt), data.table::copy(va_dt),
+                       target_col = "y", validate_genes = FALSE)
+  # Row 1 (cat = A, y = 1) has LOO target = 0 inside category A, whereas Row 2 (cat = A, y = 0) has LOO target = 1
+  expect_lt(res_te$train[[g_te$output_col]][1], res_te$train[[g_te$output_col]][2])
+  # Validation set uses the full-fold category map (identical for all A rows)
+  expect_equal(res_te$val[[g_te$output_col]][1], 0.5, tolerance = 1e-6)
+
+  # 3. Post-hoc calibration for ts_refinement and cal_rmse / cal_mae
+  set.seed(99)
+  y_bin <- rep(c(0, 1), each = 30)
+  # Overconfident uncalibrated probabilities
+  p_raw <- ifelse(y_bin == 1, 0.99, 0.01)
+  p_raw[c(1, 31)] <- c(0.99, 0.01) # misclassified points with high confidence
+  cal_ts <- fit_post_calibrator(y_bin, p_raw, task = "classification", metric = "ts_refinement")
+  expect_equal(cal_ts$type, "ts_binary")
+  expect_lt(cal_ts$beta, 1.0) # temperature T > 1 softens overconfident logits
+  p_cal <- apply_post_calibrator(p_raw, cal_ts)
+  raw_ll <- -mean(y_bin * log(p_raw) + (1 - y_bin) * log(1 - p_raw))
+  cal_ll <- -mean(y_bin * log(p_cal) + (1 - y_bin) * log(1 - p_cal))
+  expect_lt(cal_ll, raw_ll)
+
+  # Linear post-hoc calibration for cal_rmse and cal_mae
+  x_reg <- seq(-2, 2, length.out = 40)
+  y_reg <- 10 + 3 * x_reg
+  cal_l2 <- fit_post_calibrator(y_reg, x_reg, task = "regression", metric = "cal_rmse")
+  expect_equal(cal_l2$type, "linear")
+  expect_equal(cal_l2$a, 10, tolerance = 1e-6)
+  expect_equal(cal_l2$b, 3, tolerance = 1e-6)
+  expect_equal(apply_post_calibrator(x_reg, cal_l2), y_reg, tolerance = 1e-6)
+
+  cal_l1 <- fit_post_calibrator(y_reg, x_reg, task = "regression", metric = "cal_mae")
+  expect_equal(cal_l1$type, "linear")
+  expect_equal(apply_post_calibrator(x_reg, cal_l1), y_reg, tolerance = 1e-3)
+})
+
+
 

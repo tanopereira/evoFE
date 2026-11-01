@@ -119,6 +119,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       tr_idx <- attr(train_data, ".row_id")
       if (!is.null(tr_idx) && length(new_col_full) >= max(tr_idx)) {
         new_col_train <- new_col_full[tr_idx]
+      } else if (is.null(tr_idx) && length(new_col_full) == nrow(train_data)) {
+        new_col_train <- new_col_full
       } else {
         new_col_train <- t_def$apply_func(train_data, gene, state)
         if (is.double(new_col_train)) {
@@ -126,7 +128,20 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
         }
       }
     } else {
-      new_col_train <- t_def$apply_func(train_data, gene, state)
+      new_col_train <- NULL
+      if (!is.null(target_col) && is_supervised && !is.null(state)) {
+        if (gene$transformer_name == "target_encode_multiclass" && !is.null(state$loo_train_list)) {
+          comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1L
+          if (comp_idx <= length(state$loo_train_list) && length(state$loo_train_list[[comp_idx]]) == nrow(train_data)) {
+            new_col_train <- state$loo_train_list[[comp_idx]]
+          }
+        } else if (!is.null(state$loo_train) && length(state$loo_train) == nrow(train_data)) {
+          new_col_train <- state$loo_train
+        }
+      }
+      if (is.null(new_col_train)) {
+        new_col_train <- t_def$apply_func(train_data, gene, state)
+      }
       if (is.double(new_col_train)) {
         new_col_train <- rcpp_sanitize_numeric_vec(new_col_train)
       }

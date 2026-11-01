@@ -217,7 +217,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       dt <- data.table::as.data.table(data)
       if (is.null(fold_ids)) {
-        folds <- .build_cv_folds(dt, cv_folds, cv_strategy, time_col, group_col)
+        folds <- .build_cv_folds(dt, cv_folds, cv_strategy, time_col, group_col,
+                                 target_col = target_col, task = task)
       } else {
         folds <- fold_ids
       }
