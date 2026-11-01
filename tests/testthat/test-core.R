@@ -2866,6 +2866,30 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
   preds <- predict_model(rec, df[1:10, c("x1", "x2", "n1", "n2", "target")])
   expect_length(preds, 10)
   expect_true(all(is.finite(preds)))
+
+  # 4. Stage 2 combination: metacv + multi_fidelity + holdout_frac + sd_penalty + shadow_prune
+  rec_mcv <- evolve_features(
+    data = df[, c("x1", "x2", "n1", "n2", "target")],
+    target_col = "target",
+    task = "regression",
+    evaluator = "lightgbm",
+    evaluation_strategy = "metacv",
+    metacv_selection = "tournament",
+    islands = 2,
+    generations = 2,
+    pop_size = 2,
+    multi_fidelity = TRUE,
+    mf_sample_frac = 0.5,
+    mf_warmup_frac = 0.5,
+    holdout_frac = 0.1,
+    sd_penalty = 0.5,
+    shadow_prune = TRUE,
+    threads = 1,
+    seed = 42,
+    verbose = FALSE
+  )
+  expect_true(is.finite(rec_mcv$holdout_fitness))
+  expect_true(is.finite(rec_mcv$fold_sd))
 })
 
 

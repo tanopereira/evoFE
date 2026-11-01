@@ -699,8 +699,8 @@ evolve_features <- function(data, target_col, task = "classification",
       if (is.null(part) || nrow(part) == 0L) return(part)
       n_take <- max(30L, ceiling(nrow(part) * mf_sample_frac))
       n_take <- min(n_take, nrow(part))
-      take_idx <- if (!identical(cv_strategy, "time") && target_col %in% names(part)) {
-        sort(.stratified_sample_indices(part[[target_col]], n_take))
+      take_idx <- if (n_take < nrow(part) && !identical(cv_strategy, "time") && target_col %in% names(part)) {
+        sort(which(stratified_split(part[[target_col]], c(n_take, nrow(part) - n_take)) == "train"))
       } else {
         seq_len(n_take)
       }
