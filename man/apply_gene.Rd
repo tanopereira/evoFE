@@ -12,7 +12,8 @@ apply_gene(
   state_cache = NULL,
   data_hash = NULL,
   full_data = NULL,
-  global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)
+  global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
+  validate_genes = TRUE
 )
 }
 \arguments{
@@ -31,6 +32,8 @@ apply_gene(
 \item{full_data}{Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.}
 
 \item{global_unsupervised}{Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).}
+
+\item{validate_genes}{Logical. If TRUE (default), checks numeric genes for zero variance and near-perfect collinearity when \code{target_col} is non-NULL. Set to FALSE during post-evolution refits so accepted genes are never pruned by full-data correlation drift.}
 }
 \value{
 A list with three elements: \code{train} (the modified training

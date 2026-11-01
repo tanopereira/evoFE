@@ -8,6 +8,7 @@
 #' @param data_hash Optional pre-computed xxhash64 digest of the target column, to avoid redundant hashing when applying multiple genes.
 #' @param full_data Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.
 #' @param global_unsupervised Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).
+#' @param validate_genes Logical. If TRUE (default), checks numeric genes for zero variance and near-perfect collinearity when \code{target_col} is non-NULL. Set to FALSE during post-evolution refits so accepted genes are never pruned by full-data correlation drift.
 #' @return A list with three elements: \code{train} (the modified training
 #'   \code{data.table} with the new gene column appended), \code{val} (the
 #'   modified validation \code{data.table} or \code{NULL}), \code{full} (the
@@ -16,7 +17,8 @@
 #'   is stateful).
 #' @export
 apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, data_hash = NULL,
-                       full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)) {
+                       full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
+                       validate_genes = TRUE) {
   t_def <- evo_transformers[[gene$transformer_name]]
 
   col_exists_train <- gene$output_col %in% names(train_data)
@@ -28,7 +30,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
   }
 
   is_supervised <- is_supervised_transformer(gene, t_def)
-  use_global_fit <- !is_supervised && !is.null(full_data) && isTRUE(global_unsupervised)
+  use_global_fit <- !is_supervised && !is.null(full_data) && isTRUE(global_unsupervised) &&
+    all(gene$input_cols %in% names(full_data))
 
   eff_global_cache <- if (!is.null(full_data)) attr(full_data, ".global_state_cache") else NULL
   if (is.null(eff_global_cache)) eff_global_cache <- state_cache
@@ -130,10 +133,10 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     }
 
     # Reject constant columns (0 variance) and near-perfect duplicates of existing features.
-    # Guard with !is.null(target_col): during inference (holdout/predict) we
+    # Guard with !is.null(target_col) && isTRUE(validate_genes): during inference or final refit we
     # must apply every gene that was accepted at training time — correlation on
     # a different data split must never prune a gene the model depends on.
-    if (!is.null(target_col)) {
+    if (!is.null(target_col) && isTRUE(validate_genes)) {
       if (is.numeric(new_col_train)) {
         cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.99)
         exclude_cols <- if (gene$transformer_name %in% c("robust_scale", "smooth_clip", "box_cox", "yeo_johnson", "rank_transform")) {
@@ -242,6 +245,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #' @param allow_prune Logical. If TRUE, genes that fail application are skipped instead of failing the entire individual.
 #' @param full_data Optional full dataset (all rows of X) for global fitting of unsupervised stateful transformers.
 #' @param global_unsupervised Logical. If TRUE, unsupervised stateful transformers fit globally on full_data (default TRUE).
+#' @param validate_genes Logical. If TRUE (default), checks numeric genes for zero variance and near-perfect collinearity when \code{target_col} is non-NULL. Set to FALSE during post-evolution refits so accepted genes are never pruned by full-data correlation drift.
 #' @return A list with elements: \code{train} (the transformed training
 #'   \code{data.table} with all gene columns applied), \code{val} (the
 #'   transformed validation \code{data.table} or \code{NULL}), \code{full} (the
@@ -249,7 +253,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
 #'   (the updated \code{evo_individual} whose genes now carry fitted states).
 #' @export
 apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL, state_cache = NULL, allow_prune = TRUE,
-                             full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE)) {
+                             full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
+                             validate_genes = TRUE) {
   dt_train <- if (data.table::is.data.table(train_data)) train_data else data.table::as.data.table(train_data)
   dt_val <- if (!is.null(val_data)) {
     if (data.table::is.data.table(val_data)) val_data else data.table::as.data.table(val_data)
@@ -277,7 +282,8 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
           stop("Input column missing")
         }
         apply_gene(gene, dt_train, dt_val, target_col, state_cache = state_cache, data_hash = pre_hash,
-                   full_data = dt_full, global_unsupervised = global_unsupervised)
+                   full_data = dt_full, global_unsupervised = global_unsupervised,
+                   validate_genes = validate_genes)
       },
       error = function(e) {
         NULL

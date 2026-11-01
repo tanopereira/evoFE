@@ -211,7 +211,7 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
       } else {
         NULL
       }
-      if (!is.null(ecdf_entry) && (NROW(preds_i) == 1L || is.null(nrow(preds_i)))) {
+      if (!is.null(ecdf_entry)) {
         if (is.matrix(preds_i) && is.list(ecdf_entry)) {
           for (k in seq_len(ncol(preds_i))) {
             preds_i[, k] <- ecdf_entry[[k]](preds_i[, k])

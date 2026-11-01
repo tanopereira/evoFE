@@ -164,7 +164,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
 
     if (!use_split && !use_fold_data) {
-      folds <- sample(rep(1:mbo_folds, length.out = nrow(x_train)))
+      folds <- stratified_kfold_ids(y_train, mbo_folds, task)
       cv_fold_data <- lapply(seq_len(mbo_folds), function(i) {
         idx_train <- which(folds != i)
         idx_val <- which(folds == i)
@@ -187,6 +187,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     best_trial_cache$params <- NULL
     best_trial_cache$res <- NULL
     best_trial_cache$fold_res <- NULL
+    best_trial_cache$best_iteration <- NULL
 
     # Define optimization objective function
     fn <- function(x) {
@@ -258,6 +259,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       } else {
         # Cross-validation mode across pre-sliced folds
         scores <- numeric(mbo_folds)
+        trial_best_iters <- integer(0)
         for (i in seq_len(mbo_folds)) {
           fd <- cv_fold_data[[i]]
           
@@ -270,11 +272,20 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                  metric = metric, verbose = FALSE),
             trial_params
           ))
+          iter_val <- extract_best_iteration(res)
+          if (!is.null(iter_val)) {
+            trial_best_iters <- c(trial_best_iters, iter_val)
+          }
           if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
           scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
         }
         
         mean_score <- mean(scores)
+        if (is.finite(mean_score) && mean_score > best_trial_cache$score) {
+          best_trial_cache$score <- mean_score
+          best_trial_cache$params <- x
+          best_trial_cache$best_iteration <- if (length(trial_best_iters) > 0) as.integer(round(mean(trial_best_iters))) else NULL
+        }
         if (verbose) {
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
           message(sprintf("  [MBO Eval] %s -> CV Fitness: %.4f", param_str, mean_score))
@@ -360,11 +371,14 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     optimizer$surrogate <- surrogate
     optimizer$optimize(instance)
     
-    # Extract best hyperparams
+    # Extract best hyperparams (including fixed_params so unwrapping preserves them)
     best_hyperparams <- as.list(instance$result[, ps$ids(), with = FALSE])
     best_hyperparams <- lapply(best_hyperparams, function(val) {
       if (is.factor(val)) as.character(val) else val
     })
+    if (length(fixed_params) > 0) {
+      best_hyperparams <- utils::modifyList(fixed_params, best_hyperparams)
+    }
     
     if (verbose) {
       message(sprintf("[MBO] Optimization Complete for %s. Best parameters: %s",
@@ -410,12 +424,24 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     final_params <- utils::modifyList(list(...), fixed_params)
     final_params <- utils::modifyList(final_params, best_hyperparams)
     final_params$fold_data <- NULL
+    target_iters <- NULL
+    if (!use_split && !use_fold_data && !is.null(best_trial_cache$best_iteration)) {
+      avg_train_size <- mean(vapply(cv_fold_data, function(fd) nrow(fd$x_train), numeric(1)))
+      target_iters <- if (is_tree_evaluator(base_model_name)) {
+        scale_evaluator_iterations(base_model_name, best_trial_cache$best_iteration, avg_train_size, nrow(x_train))
+      } else {
+        as.integer(best_trial_cache$best_iteration)
+      }
+      final_params <- apply_iteration_target(final_params, target_iters, base_model_name)
+    }
     final_res <- do.call(base_evaluator$train_func, c(
       list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task, 
            threads = threads, num_class = num_class, metric = metric, verbose = verbose),
       final_params
     ))
-    
+    if (!is.null(target_iters)) {
+      final_res$best_iteration <- target_iters
+    }
     final_res$best_params <- best_hyperparams
     return(final_res)
   }

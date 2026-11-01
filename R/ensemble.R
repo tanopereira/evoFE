@@ -169,6 +169,13 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     stop(sprintf("Target column '%s' not found in 'data'.", target_col))
   }
 
+  # Exclude holdout rows when ensembling a 3-way split recipe so final models never leak holdout data
+  if (length(recipe_list) == 1L && identical(first_recipe$evaluation_strategy, "split") &&
+      !is.null(first_recipe$split_ids) && length(first_recipe$split_ids) == nrow(data) &&
+      "holdout" %in% first_recipe$split_ids) {
+    data <- data[first_recipe$split_ids != "holdout", , drop = FALSE]
+  }
+
   task <- first_recipe$task
   metric <- first_recipe$metric
   classes <- first_recipe$classes
@@ -295,6 +302,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         list()
       }
       eval_extra <- utils::modifyList(cand_extra, list(...))
+      resolved_re <- resolve_tuned_evaluator(cand_eval, ind_re$best_params, eval_extra)
 
       cand_threads_eval <- if (!is.null(threads)) {
         threads
@@ -312,10 +320,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
           ind_re, data = data, target_col = target_col,
           task = task, cv_folds = common_folds,
           evaluation_strategy = "cv", fold_ids = common_fold_ids,
-          evaluator = cand_eval, threads = cand_threads_eval,
+          evaluator = resolved_re$evaluator, threads = cand_threads_eval,
           metric = metric, verbose = FALSE, allow_prune = TRUE
         ),
-        eval_extra
+        resolved_re$extra_args
       ))
       val_preds_list[[nm]] <- ind_re$val_preds
       cand_metadata[[nm]]$ind <- ind_re
@@ -538,7 +546,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
 
       dt_i <- data.table::copy(dt_full)
-      res_full <- apply_individual(ind_i, dt_i, NULL, target_col, state_cache = state_cache, allow_prune = TRUE)
+      res_full <- apply_individual(ind_i, dt_i, NULL, target_col, state_cache = state_cache,
+                                   allow_prune = TRUE, validate_genes = FALSE)
       applied_ind <- res_full$ind
       active_recipes[[name]] <- applied_ind
 

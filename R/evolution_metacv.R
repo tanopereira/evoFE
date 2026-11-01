@@ -306,24 +306,28 @@ select_metacv_champion <- function(island_best_individual, metacv_selection,
         ind <- island_best_individual[[j]]
         ind <- strip_individual_state(ind)
         cand_eval <- cand_evals[j]
-        ind <- evaluate_fitness(
-          ind, data, target_col,
-          task = task, cv_folds = islands,
-          evaluation_strategy = "cv",
-          split_ids = NULL, shared_splits = NULL,
-          evaluator = cand_eval, fold_ids = fold_ids,
-          shared_folds = island_shared_splits,
-          shared_full = shared_full, state_cache = state_cache,
-          threads = threads, metric = metric, verbose = FALSE,
-          allow_prune = TRUE,
-          complexity_penalty = complexity_penalty,
-          complexity_mode = complexity_mode,
-          complexity_floor = complexity_floor,
-          complexity_target = complexity_target,
-          baseline_fitness = baseline_ind$fitness,
-          running_best_fitness = global_best_fitness,
-          n_samples = nrow(data), ...
-        )
+        resolved_cand <- resolve_tuned_evaluator(cand_eval, ind$best_params, list(...))
+        ind <- do.call(evaluate_fitness, c(
+          list(
+            ind, data = data, target_col = target_col,
+            task = task, cv_folds = islands,
+            evaluation_strategy = "cv",
+            split_ids = NULL, shared_splits = NULL,
+            evaluator = resolved_cand$evaluator, fold_ids = fold_ids,
+            shared_folds = island_shared_splits,
+            shared_full = shared_full, state_cache = state_cache,
+            threads = threads, metric = metric, verbose = FALSE,
+            allow_prune = TRUE,
+            complexity_penalty = complexity_penalty,
+            complexity_mode = complexity_mode,
+            complexity_floor = complexity_floor,
+            complexity_target = complexity_target,
+            baseline_fitness = baseline_ind$fitness,
+            running_best_fitness = global_best_fitness,
+            n_samples = nrow(data)
+          ),
+          resolved_cand$extra_args
+        ))
         cv_eval_cache[[cache_key]] <- ind
         candidates[[j]] <- ind
         if (verbose) {

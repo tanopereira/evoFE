@@ -81,27 +81,34 @@ pool_final_genes <- function(pop, best_ind, data, target_col, task = "classifica
     )
 
     best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+    if (!is.null(best_ind$best_params)) {
+      super_ind$best_params <- best_ind$best_params
+    }
+    resolved_pool <- resolve_tuned_evaluator(best_eval_curr, super_ind$best_params, list(...))
 
     # 4. Evaluate the super-individual's fitness
-    super_ind <- evaluate_fitness(
-      super_ind, data, target_col,
-      task = task,
-      cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
-      evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
-      split_ids = split_ids_val,
-      shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
-      evaluator = best_eval_curr, fold_ids = fold_ids,
-      shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
-      shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
-      complexity_penalty = complexity_penalty,
-      complexity_mode = complexity_mode,
-      complexity_floor = complexity_floor,
-      complexity_target = complexity_target,
-      baseline_fitness = baseline_fitness,
-      running_best_fitness = best_ind$fitness,
-      n_samples = nrow(data), ...
-    )
+    super_ind <- do.call(evaluate_fitness, c(
+      list(
+        super_ind, data = data, target_col = target_col,
+        task = task,
+        cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
+        evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
+        split_ids = split_ids_val,
+        shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
+        evaluator = resolved_pool$evaluator, fold_ids = fold_ids,
+        shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
+        shared_full = shared_full, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
+        complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
+        baseline_fitness = baseline_fitness,
+        running_best_fitness = best_ind$fitness,
+        n_samples = nrow(data)
+      ),
+      resolved_pool$extra_args
+    ))
 
     if (is.null(super_ind$best_params) && !is.null(best_ind$best_params)) {
       super_ind$best_params <- best_ind$best_params
@@ -245,26 +252,33 @@ pool_historical_genes <- function(historical_best_genes, best_ind, data, target_
     )
 
     best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+    if (!is.null(best_ind$best_params)) {
+      super_ind_hist$best_params <- best_ind$best_params
+    }
+    resolved_hist <- resolve_tuned_evaluator(best_eval_curr, super_ind_hist$best_params, list(...))
     # Evaluate the historical super-individual's fitness
-    super_ind_hist <- evaluate_fitness(
-      super_ind_hist, data, target_col,
-      task = task,
-      cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
-      evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
-      split_ids = split_ids_val,
-      shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
-      evaluator = best_eval_curr, fold_ids = fold_ids,
-      shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
-      shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
-      complexity_penalty = complexity_penalty,
-      complexity_mode = complexity_mode,
-      complexity_floor = complexity_floor,
-      complexity_target = complexity_target,
-      baseline_fitness = baseline_fitness,
-      running_best_fitness = best_ind$fitness,
-      n_samples = nrow(data), ...
-    )
+    super_ind_hist <- do.call(evaluate_fitness, c(
+      list(
+        super_ind_hist, data = data, target_col = target_col,
+        task = task,
+        cv_folds = if (evaluation_strategy == "metacv") islands else cv_folds,
+        evaluation_strategy = if (evaluation_strategy == "metacv") "cv" else evaluation_strategy,
+        split_ids = split_ids_val,
+        shared_splits = if (evaluation_strategy == "metacv") NULL else shared_splits,
+        evaluator = resolved_hist$evaluator, fold_ids = fold_ids,
+        shared_folds = if (evaluation_strategy == "metacv") island_shared_splits else shared_folds,
+        shared_full = shared_full, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = verbose, allow_prune = TRUE,
+        complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
+        baseline_fitness = baseline_fitness,
+        running_best_fitness = best_ind$fitness,
+        n_samples = nrow(data)
+      ),
+      resolved_hist$extra_args
+    ))
 
     if (is.null(super_ind_hist$best_params) && !is.null(best_ind$best_params)) {
       super_ind_hist$best_params <- best_ind$best_params

@@ -41,7 +41,8 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 
   res <- tryCatch(
     {
-      apply_individual(ind, train_fold, val_fold, target_col, state_cache = state_cache)
+      apply_individual(ind, train_fold, val_fold, target_col,
+                       state_cache = state_cache, validate_genes = FALSE)
     },
     error = function(e) NULL
   )

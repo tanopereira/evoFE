@@ -1028,27 +1028,31 @@ evolve_features <- function(data, target_col, task = "classification",
         message(sprintf("\nRunning final tournament: re-evaluating best individual from each of %d islands on full training dataset...", islands))
       }
       candidates <- lapply(seq_len(islands), function(j) {
-        ind <- strip_individual_state(island_best_individual[[j]])
+        ind <- strip_individual_state(island_best_individual[[j]], keep_unsupervised = FALSE)
         ind$fitness <- NA_real_
         cand_eval <- if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
-        ind <- evaluate_fitness(
-          ind, data, target_col,
-          task = task, cv_folds = cv_folds,
-          evaluation_strategy = evaluation_strategy,
-          split_ids = split_ids_val, shared_splits = shared_splits,
-          evaluator = cand_eval, fold_ids = fold_ids,
-          shared_folds = shared_folds,
-          shared_full = shared_full, state_cache = state_cache,
-          threads = threads, metric = metric, verbose = FALSE,
-          allow_prune = TRUE,
-          complexity_penalty = complexity_penalty,
-          complexity_mode = complexity_mode,
-          complexity_floor = complexity_floor,
-          complexity_target = complexity_target,
-          baseline_fitness = baseline_ind$fitness,
-          running_best_fitness = global_best_fitness,
-          n_samples = nrow(data), ...
-        )
+        resolved_cand <- resolve_tuned_evaluator(cand_eval, ind$best_params, list(...))
+        ind <- do.call(evaluate_fitness, c(
+          list(
+            ind, data = data, target_col = target_col,
+            task = task, cv_folds = cv_folds,
+            evaluation_strategy = evaluation_strategy,
+            split_ids = split_ids_val, shared_splits = shared_splits,
+            evaluator = resolved_cand$evaluator, fold_ids = fold_ids,
+            shared_folds = shared_folds,
+            shared_full = shared_full, state_cache = state_cache,
+            threads = threads, metric = metric, verbose = FALSE,
+            allow_prune = TRUE,
+            complexity_penalty = complexity_penalty,
+            complexity_mode = complexity_mode,
+            complexity_floor = complexity_floor,
+            complexity_target = complexity_target,
+            baseline_fitness = baseline_ind$fitness,
+            running_best_fitness = global_best_fitness,
+            n_samples = nrow(data)
+          ),
+          resolved_cand$extra_args
+        ))
         if (verbose) {
           message(sprintf("  [Island %d] Global fitness: %.4f  Recipe: %s", j, ind$fitness, individual_to_recipe_string(ind)))
         }
@@ -1067,27 +1071,31 @@ evolve_features <- function(data, target_col, task = "classification",
         message("\nRe-evaluating island bests on full training dataset...")
       }
       island_best_individual <- lapply(seq_len(islands), function(j) {
-        ind_j <- strip_individual_state(island_best_individual[[j]])
+        ind_j <- strip_individual_state(island_best_individual[[j]], keep_unsupervised = FALSE)
         ind_j$fitness <- NA_real_
         cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
-        evaluate_fitness(
-          ind_j, data, target_col,
-          task = task, cv_folds = cv_folds,
-          evaluation_strategy = evaluation_strategy,
-          split_ids = split_ids_val, shared_splits = shared_splits,
-          evaluator = cand_eval, fold_ids = fold_ids,
-          shared_folds = shared_folds,
-          shared_full = shared_full, state_cache = state_cache,
-          threads = threads, metric = metric, verbose = FALSE,
-          allow_prune = FALSE,
-          complexity_penalty = complexity_penalty,
-          complexity_mode = complexity_mode,
-          complexity_floor = complexity_floor,
-          complexity_target = complexity_target,
-          baseline_fitness = baseline_ind$fitness,
-          running_best_fitness = global_best_fitness,
-          n_samples = nrow(data), ...
-        )
+        resolved_cand <- resolve_tuned_evaluator(cand_eval, ind_j$best_params, list(...))
+        do.call(evaluate_fitness, c(
+          list(
+            ind_j, data = data, target_col = target_col,
+            task = task, cv_folds = cv_folds,
+            evaluation_strategy = evaluation_strategy,
+            split_ids = split_ids_val, shared_splits = shared_splits,
+            evaluator = resolved_cand$evaluator, fold_ids = fold_ids,
+            shared_folds = shared_folds,
+            shared_full = shared_full, state_cache = state_cache,
+            threads = threads, metric = metric, verbose = FALSE,
+            allow_prune = FALSE,
+            complexity_penalty = complexity_penalty,
+            complexity_mode = complexity_mode,
+            complexity_floor = complexity_floor,
+            complexity_target = complexity_target,
+            baseline_fitness = baseline_ind$fitness,
+            running_best_fitness = global_best_fitness,
+            n_samples = nrow(data)
+          ),
+          resolved_cand$extra_args
+        ))
       })
       winner_idx <- which.max(sapply(island_best_individual, function(ind) ind$fitness))
       best_ind <- island_best_individual[[winner_idx]]
@@ -1259,7 +1267,8 @@ evolve_features <- function(data, target_col, task = "classification",
   } else {
     data.table::copy(shared_full)
   }
-  res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col, state_cache = state_cache)
+  res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col,
+                               state_cache = state_cache, validate_genes = FALSE)
   best_ind <- res_full$ind
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration

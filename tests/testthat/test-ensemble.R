@@ -511,4 +511,72 @@ test_that("ensemble_islands supports rank_average parameter and defaults for auc
   expect_true(all(p_caruana >= 0 & p_caruana <= 1))
 })
 
+test_that("ensemble_islands excludes holdout rows on 3-way split recipes and multiclass rank_average is batch-size invariant", {
+  set.seed(77)
+  n <- 60
+  df_split <- data.frame(
+    x1 = stats::rnorm(n),
+    x2 = stats::rnorm(n),
+    y = stats::rnorm(n)
+  )
+
+  rec_split <- evolve_features(
+    df_split, "y",
+    task = "regression",
+    evaluator = "realmlp",
+    evaluation_strategy = "split",
+    split_ratio = c(0.6, 0.2, 0.2),
+    islands = 2,
+    generations = 1,
+    pop_size = 2,
+    realmlp_epochs = 10,
+    verbose = FALSE
+  )
+
+  n_non_holdout <- sum(rec_split$split_ids != "holdout")
+  ens_split <- ensemble_islands(rec_split, df_split, method = "equal", verbose = FALSE)
+  expect_s3_class(ens_split, "evo_ensemble")
+  for (ind_act in ens_split$active_recipes) {
+    expect_lte(ind_act$train_size, n_non_holdout)
+  }
+
+  # Multiclass rank_average batch-size invariance (single row vs batch uses same validation ECDF)
+  rec_mc <- evolve_features(
+    iris, "Species",
+    task = "multiclass",
+    evaluator = "realmlp",
+    islands = 2,
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 2,
+    realmlp_epochs = 10,
+    verbose = FALSE
+  )
+  ens_mc_rank <- ensemble_islands(rec_mc, iris, method = "equal", rank_average = TRUE, verbose = FALSE)
+  preds_batch <- predict_model(ens_mc_rank, iris[1:5, ])
+  preds_single <- predict_model(ens_mc_rank, iris[1, , drop = FALSE])
+  expect_equal(as.numeric(preds_batch[1, ]), as.numeric(preds_single[1, ]), tolerance = 1e-12)
+})
+
+test_that("apply_individual with validate_genes = FALSE preserves accepted genes during full-data refit", {
+  dt <- data.table::data.table(
+    x1 = seq(1, 20, length.out = 20),
+    x2 = seq(1, 20, length.out = 20) + stats::rnorm(20, sd = 1e-4),
+    y = seq(1, 20, length.out = 20)
+  )
+  g <- create_gene("add", c("x1", "x2"))
+  ind <- create_individual(genes = list(g), numeric_cols = c("x1", "x2"))
+
+  # With validate_genes = TRUE and target_col set, add(x1, x2) is collinear (>0.99) with x1 and gets pruned
+  res_pruned <- apply_individual(ind, data.table::copy(dt), NULL, target_col = "y",
+                                 allow_prune = TRUE, validate_genes = TRUE)
+  expect_length(res_pruned$ind$genes, 0L)
+
+  # With validate_genes = FALSE (post-evolution refit), the accepted gene is preserved
+  res_kept <- apply_individual(ind, data.table::copy(dt), NULL, target_col = "y",
+                               allow_prune = TRUE, validate_genes = FALSE)
+  expect_length(res_kept$ind$genes, 1L)
+  expect_true(g$output_col %in% names(res_kept$train))
+})
+
 

@@ -252,4 +252,92 @@ test_that("make_tunable reuses winning trial outputs without post-MBO retraining
   expect_equal(call_counter$count, 10L)
   expect_length(fit_cv$fold_res, 2L)
   expect_equal(fit_cv$fold_res[[1]]$best_iteration, 12L)
+
+  # 3. Standalone CV mode preserves fixed_params in best_params and applies best_iteration on final refit
+  make_tunable(
+    "mock_counted_base",
+    list(
+      param_a = list(type = "numeric", lower = 1.0, upper = 8.0),
+      fixed_flag = list(tunable = FALSE, value = "locked_val")
+    ),
+    tuner_name = "mock_counted_tuned_fixed"
+  )
+  fit_standalone_cv <- train_model(
+    x_tr, y_tr,
+    task = "regression", evaluator = "mock_counted_tuned_fixed",
+    mbo_folds = 2, mbo_init_design = 3, mbo_iters = 1
+  )
+  expect_equal(fit_standalone_cv$best_params$fixed_flag, "locked_val")
+  expect_equal(fit_standalone_cv$best_iteration, 12L)
+  expect_equal(fit_standalone_cv$model$args$nrounds, 12L)
+  expect_equal(fit_standalone_cv$model$args$fixed_flag, "locked_val")
+})
+
+test_that("metacv tournament and ensemble_islands OOF harmonization unwrap pre-tuned evaluators without re-running MBO", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  call_log <- new.env(parent = emptyenv())
+  call_log$last_args <- list()
+
+  register_evaluator(
+    "mock_harm_base",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+                          task = "regression", ...) {
+      args <- list(...)
+      call_log$last_args <- args
+      p_a <- if (!is.null(args$param_a)) args$param_a else 1.0
+      list(
+        model = list(args = args),
+        predictions = if (!is.null(x_val)) rep(p_a, nrow(x_val)) else NULL,
+        importances = stats::setNames(rep(1, ncol(x_train)), colnames(x_train)),
+        best_iteration = 9L
+      )
+    },
+    predict_func = function(model, x_new, task, ...) {
+      p_a <- if (!is.null(model$args$param_a)) model$args$param_a else 1.0
+      rep(p_a, nrow(x_new))
+    }
+  )
+
+  make_tunable(
+    "mock_harm_base",
+    list(
+      param_a = list(type = "numeric", lower = 2.0, upper = 6.0),
+      fixed_tag = list(tunable = FALSE, value = "kept_tag")
+    ),
+    tuner_name = "mock_harm_mbo"
+  )
+
+  set.seed(123)
+  df <- data.frame(
+    x1 = stats::rnorm(30),
+    x2 = stats::rnorm(30),
+    y = stats::rnorm(30)
+  )
+
+  rec <- evolve_features(
+    df, "y",
+    task = "regression",
+    evaluator = "mock_harm_mbo",
+    evaluation_strategy = "metacv",
+    metacv_selection = "tournament",
+    islands = 2,
+    generations = 1,
+    pop_size = 2,
+    mbo_init_design = 3,
+    mbo_iters = 1,
+    verbose = FALSE
+  )
+
+  expect_equal(rec$best_individual$best_params$fixed_tag, "kept_tag")
+  expect_equal(rec$best_model$args$fixed_tag, "kept_tag")
+
+  # Harmonizing in ensemble_islands should unwrap mock_harm_mbo and reuse best_params
+  ens <- ensemble_islands(rec, df, method = "caruana", caruana_rounds = 5, verbose = FALSE)
+  expect_s3_class(ens, "evo_ensemble")
+  for (mod in ens$active_models) {
+    expect_equal(mod$args$fixed_tag, "kept_tag")
+  }
 })
