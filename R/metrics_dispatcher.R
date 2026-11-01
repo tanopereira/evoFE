@@ -23,6 +23,8 @@ compute_metric <- function(y_true, y_pred, task, metric, num_class = NULL, threa
     switch(metric,
       auc = compute_auc(y_true, y_pred),
       f1 = compute_f1(y_true, y_pred),
+      mcc = compute_mcc(y_true, y_pred),
+      balanced_accuracy = compute_balanced_accuracy(y_true, y_pred),
       compute_exp_neg_logloss(y_true, y_pred)
     )
   } else if (task == "multiclass") {

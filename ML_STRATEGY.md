@@ -332,10 +332,19 @@ if (length(adv_diag$drifting_features) > 0) {
           paste(adv_diag$drifting_features, collapse = ", "))
 }
 
-# 4. Choose the search metric
-# - Leaderboard metric AUC: search and ensemble on metric = "ts_refinement"
+# 4. Choose the search metric & target transformation
+# - Leaderboard metric AUC / Log-Loss: search and ensemble on metric = "ts_refinement"
 #   (temperature-scaled log-loss = pure refinement; smooth, margin-sensitive, and
-#   usually yields higher test AUC than optimizing AUC directly).
+#   usually yields higher test AUC/Log-Loss than optimizing AUC directly).
+# - Leaderboard metric F1 / MCC / Balanced Accuracy: set metric = "f1", "mcc", or
+#   "balanced_accuracy". evoFE automatically finds the exact global OOF threshold tau*
+#   via optimize_threshold() and shifts predicted probabilities in predict_model() so
+#   that tau* maps to 0.5 (you can also inspect recipe$calibrator$threshold directly).
+# - Skewed Regression Targets (e.g. prices, claims, durations): pass
+#   target_transform = "log1p" (with automatic Duan's smearing correction for RMSE),
+#   "yeo_johnson", or "rank_gauss". You can even ensemble recipes trained with
+#   different target_transform modes because oof_preds and predict_model() are always
+#   evaluated on the original untransformed target scale!
 search_metric <- "ts_refinement"
 
 # 5. Choose the parsimony mode

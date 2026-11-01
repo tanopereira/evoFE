@@ -504,6 +504,9 @@ canonical_metric_name <- function(metric, task = NULL) {
   if (m %in% c("binary_logloss", "multi_logloss", "mlogloss")) {
     return("logloss")
   }
+  if (m %in% c("balanced-accuracy", "bal_acc", "bal-acc")) {
+    return("balanced_accuracy")
+  }
   m
 }
 

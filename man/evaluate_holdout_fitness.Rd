@@ -17,6 +17,7 @@ evaluate_holdout_fitness(
   classes,
   num_class,
   metric = "default",
+  target_transform = getOption("evoFE.target_transform", "none"),
   verbose = FALSE,
   ...
 )

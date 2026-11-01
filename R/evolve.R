@@ -126,6 +126,9 @@
 #' @param metacv_mode Deprecated alias for \code{metacv_selection}.
 #' @param record Logical. If TRUE, records detailed evolutionary logs and launches the interactive evolution live viewer (default FALSE).
 #' @param port Optional port number for the live viewer server. If NULL, a random free port is used (or retrieves from the global option 'evoFE.viewer_port').
+#' @param test_data Optional unlabeled test data.frame or data.table used to weight holdout sampling toward the test distribution when \code{holdout_frac > 0}.
+#' @param bag_folds Logical. When \code{TRUE} and \code{evaluation_strategy} is \code{"cv"} or \code{"metacv"}, trains and stores all $K$ fold-specific models so \code{\link{predict_model}} and \code{\link{ensemble_islands}} can average K-fold bagged predictions at test time.
+#' @param target_transform Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
@@ -199,15 +202,24 @@ evolve_features <- function(data, target_col, task = "classification",
                             port = NULL,
                             test_data = NULL,
                             bag_folds = FALSE,
+                            target_transform = "none",
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
   threads <- resolve_thread_count(threads, extra_args_top)
+  target_transform <- match.arg(target_transform, c("none", "log1p", "yeo_johnson", "rank_gauss"))
 
   old_glob_unsup <- getOption("evoFE.global_unsupervised", NULL)
-  options(evoFE.global_unsupervised = isTRUE(global_unsupervised))
+  old_tt_opt <- getOption("evoFE.target_transform", NULL)
+  options(
+    evoFE.global_unsupervised = isTRUE(global_unsupervised),
+    evoFE.target_transform = target_transform
+  )
   on.exit({
-    options(evoFE.global_unsupervised = old_glob_unsup)
+    options(
+      evoFE.global_unsupervised = old_glob_unsup,
+      evoFE.target_transform = old_tt_opt
+    )
   }, add = TRUE)
 
   # Validate complexity arguments
@@ -337,7 +349,10 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.function(metric)) {
     metric_lower <- tolower(metric)
     valid_metrics <- list(
-      classification = c("default", "auc", "f1", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
+      classification = c(
+        "default", "auc", "f1", "mcc", "balanced_accuracy", "balanced-accuracy",
+        "bal_acc", "bal-acc", "eval-ts-refinement", "ts-refinement", "ts_refinement"
+      ),
       multiclass = c("default", "auc", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
       regression = c("default", "mae", "cal_rmse", "cal-rmse", "cal_mae", "cal-mae")
     )
@@ -1361,6 +1376,16 @@ evolve_features <- function(data, target_col, task = "classification",
   final_evaluator <- resolved_final$evaluator
   final_model_args <- resolved_final$extra_args
 
+  use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
+  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
+  target_transform_state <- NULL
+  y_full_raw <- y_full
+  if (use_tt) {
+    tt_full_fit <- .fit_target_transform(y_full, target_transform)
+    y_full <- tt_full_fit$y_trans
+    target_transform_state <- tt_full_fit$state
+  }
+
   res_model <- do.call(train_model, c(
     list(
       x_train = x_full, y_train = y_full,
@@ -1371,6 +1396,15 @@ evolve_features <- function(data, target_col, task = "classification",
     final_model_args
   ))
   best_model <- res_model$model
+  if (use_tt && !is.null(target_transform_state) && identical(target_transform_state$method, "log1p")) {
+    in_preds_tr <- tryCatch(
+      get_evaluator(final_evaluator)$predict_func(best_model, x_full, task = task, threads = threads),
+      error = function(e) NULL
+    )
+    if (!is.null(in_preds_tr)) {
+      target_transform_state <- .update_target_transform_smearing(target_transform_state, y_full_raw, in_preds_tr)
+    }
+  }
   fold_models <- NULL
   if (isTRUE(bag_folds) && evaluation_strategy %in% c("cv", "metacv") && !is.null(fold_ids)) {
     if (verbose) {
@@ -1382,7 +1416,7 @@ evolve_features <- function(data, target_col, task = "classification",
       num_class = num_class, metric = metric, evaluator = best_evaluator,
       best_params = best_params, extra_args = list(...), threads = threads,
       seed = seed, state_cache = state_cache, shared_full = shared_full,
-      verbose = verbose
+      target_transform = target_transform, verbose = verbose
     )
   }
   calibrator <- fit_post_calibrator(
@@ -1420,9 +1454,15 @@ evolve_features <- function(data, target_col, task = "classification",
           get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
           error = function(e) NULL
         )
+        if (!is.null(preds_conf) && !is.null(target_transform_state)) {
+          preds_conf <- .invert_target_transform(preds_conf, target_transform_state, use_smearing = use_smear)
+        }
       }
     }
     if (!is.null(preds_conf)) {
+      if (!is.null(calibrator)) {
+        preds_conf <- apply_post_calibrator(preds_conf, calibrator)
+      }
       y_conf <- confirmation_dt[[target_col]]
       if (task == "multiclass") {
         y_conf_enc <- encode_multiclass_target(y_conf, classes)
@@ -1551,6 +1591,9 @@ evolve_features <- function(data, target_col, task = "classification",
     best_model = best_model,
     fold_models = fold_models,
     bag_folds = isTRUE(bag_folds),
+    target_transform = target_transform,
+    target_transform_state = target_transform_state,
+    use_smearing = use_smear,
     calibrator = calibrator,
     best_iteration = if (!is.null(target_iters)) target_iters else if (!is.null(best_ind$best_iteration)) best_ind$best_iteration else NULL,
     evaluator = best_evaluator,

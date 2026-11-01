@@ -50,10 +50,14 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              running_best_fitness = NULL, baseline_fitness = NULL,
                              n_samples = NULL, cv_strategy = "random",
                              time_col = NULL, group_col = NULL,
+                             target_transform = getOption("evoFE.target_transform", "none"),
                              global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
   }
+
+  use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
+  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
 
   num_class <- NULL
   classes <- NULL
@@ -134,6 +138,14 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }
     }
 
+    tt_state_split <- NULL
+    if (use_tt) {
+      tt_fit <- .fit_target_transform(y_train, target_transform)
+      y_train <- tt_fit$y_trans
+      y_val <- .apply_target_transform(y_val, tt_fit$state)
+      tt_state_split <- tt_fit$state
+    }
+
     res_model <- train_model(x_train, y_train, x_val,
       y_val = y_val, task = task,
       evaluator = evaluator, threads = threads,
@@ -141,6 +153,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       verbose = verbose, ...
     )
     preds <- res_model$predictions
+    if (use_tt && !is.null(tt_state_split)) {
+      tt_state_split <- .update_target_transform_smearing(tt_state_split, val_fold_feat[[target_col]], preds)
+      preds <- .invert_target_transform(preds, tt_state_split, use_smearing = use_smear)
+    }
 
     # Store importances (single fold)
     if (!is.null(res_model$importances) && length(res_model$importances) > 0) {
@@ -179,7 +195,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     } else {
       val_fold_feat[[target_col]]
     }
-    raw_score <- if (!is.null(res_model$score) && is.finite(res_model$score)) {
+    raw_score <- if (!use_tt && !is.null(res_model$score) && is.finite(res_model$score)) {
       res_model$score
     } else {
       compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
@@ -309,6 +325,14 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         }
       }
 
+      tt_state_fi <- NULL
+      if (use_tt) {
+        tt_fit <- .fit_target_transform(y_train, target_transform)
+        y_train <- tt_fit$y_trans
+        y_val <- .apply_target_transform(y_val, tt_fit$state)
+        tt_state_fi <- tt_fit$state
+      }
+
       if (is_tuned) {
         fold_data[[fi]] <- list(
           x_train = x_train,
@@ -317,7 +341,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           y_val = y_val,
           val_idx = val_idx,
           val_fold_feat = val_fold_feat,
-          fold_idx = fi
+          fold_idx = fi,
+          tt_state = tt_state_fi
         )
       } else {
         res_model <- train_model(x_train, y_train, x_val,
@@ -327,6 +352,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           verbose = verbose, ...
         )
         preds <- res_model$predictions
+        if (use_tt && !is.null(tt_state_fi)) {
+          tt_state_fi <- .update_target_transform_smearing(tt_state_fi, val_fold_feat[[target_col]], preds)
+          preds <- .invert_target_transform(preds, tt_state_fi, use_smearing = use_smear)
+        }
         if (!is.null(res_model$importances)) {
           fold_importances[[fi]] <- res_model$importances
         }
@@ -393,6 +422,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           orig_fi <- fd$fold_idx
           res_m <- res_model$fold_res[[i]]
           preds <- res_m$predictions
+          if (use_tt && !is.null(fd$tt_state)) {
+            tt_st <- .update_target_transform_smearing(fd$tt_state, fd$val_fold_feat[[target_col]], preds)
+            preds <- .invert_target_transform(preds, tt_st, use_smearing = use_smear)
+          }
           val_idx <- fd$val_idx
 
           if (!is.null(res_m$importances)) {
@@ -411,7 +444,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           } else {
             fd$val_fold_feat[[target_col]]
           }
-          metrics[orig_fi] <- if (!is.null(res_m$score) && is.finite(res_m$score)) {
+          metrics[orig_fi] <- if (!use_tt && !is.null(res_m$score) && is.finite(res_m$score)) {
             res_m$score
           } else {
             compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)

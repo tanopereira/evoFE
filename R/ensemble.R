@@ -514,6 +514,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   active_recipes <- list()
   active_models <- list()
   active_fold_models <- list()
+  active_target_transforms <- list()
   active_evaluators <- list()
 
   if (is.null(bag_folds)) {
@@ -546,6 +547,12 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
       active_recipes[[name]] <- rec_i$best_individual
       active_models[[name]] <- rec_i$best_model
+      if (!is.null(rec_i$target_transform_state)) {
+        active_target_transforms[[name]] <- list(
+          state = rec_i$target_transform_state,
+          use_smearing = !identical(rec_i$use_smearing, FALSE)
+        )
+      }
       if (isTRUE(bag_folds)) {
         if (!is.null(rec_i$fold_models) && length(rec_i$fold_models) > 0) {
           active_fold_models[[name]] <- rec_i$fold_models
@@ -553,13 +560,15 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
           folds_i <- if (!is.null(rec_i$fold_ids) && length(rec_i$fold_ids) == nrow(dt_full)) rec_i$fold_ids else stored_folds
           if (!is.null(folds_i) && length(folds_i) == nrow(dt_full)) {
             base_extra <- if (!is.null(rec_i$extra_args)) rec_i$extra_args else list()
+            tt_mode_i <- if (!is.null(rec_i$target_transform)) rec_i$target_transform else "none"
             active_fold_models[[name]] <- .fit_fold_models_bag(
               ind = rec_i$best_individual, data_dt = dt_full, fold_ids = folds_i,
               target_col = target_col, task = task, classes = classes,
               num_class = num_class, metric = metric, evaluator = eval_i,
               best_params = rec_i$best_individual$best_params,
               extra_args = base_extra, threads = threads, seed = seed,
-              state_cache = state_cache, shared_full = dt_full, verbose = verbose
+              state_cache = state_cache, shared_full = dt_full,
+              target_transform = tt_mode_i, verbose = verbose
             )
           }
         }
@@ -589,6 +598,16 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       # Train model using candidate's specific evaluator and best params
       cand_info <- cand_metadata[[name]]
       rec_i <- cand_info$recipe
+      tt_mode_i <- if (!is.null(rec_i$target_transform)) rec_i$target_transform else "none"
+      use_tt_i <- identical(task, "regression") && !identical(tt_mode_i, "none")
+      use_smear_i <- !identical(canonical_metric_name(metric, task), "mae")
+      y_full_raw_i <- y_full
+      tt_state_i <- NULL
+      if (use_tt_i) {
+        tt_fit_i <- .fit_target_transform(y_full, tt_mode_i)
+        y_full <- tt_fit_i$y_trans
+        tt_state_i <- tt_fit_i$state
+      }
 
       base_extra <- if (!is.null(ind_i$extra_args) && length(ind_i$extra_args) > 0) {
         ind_i$extra_args
@@ -645,6 +664,18 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         final_args_i
       ))
       active_models[[name]] <- res_m$model
+      if (use_tt_i && !is.null(tt_state_i)) {
+        if (identical(tt_state_i$method, "log1p")) {
+          in_p_i <- tryCatch(
+            get_evaluator(final_eval_i)$predict_func(res_m$model, x_full, task = task, threads = cand_threads),
+            error = function(e) NULL
+          )
+          if (!is.null(in_p_i)) {
+            tt_state_i <- .update_target_transform_smearing(tt_state_i, y_full_raw_i, in_p_i)
+          }
+        }
+        active_target_transforms[[name]] <- list(state = tt_state_i, use_smearing = use_smear_i)
+      }
       if (isTRUE(bag_folds)) {
         folds_i <- if (!is.null(rec_i$fold_ids) && length(rec_i$fold_ids) == nrow(dt_full)) rec_i$fold_ids else stored_folds
         if (!is.null(folds_i) && length(folds_i) == nrow(dt_full)) {
@@ -655,7 +686,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
             best_params = ind_i$best_params,
             extra_args = utils::modifyList(base_extra, list(...)),
             threads = cand_threads, seed = seed,
-            state_cache = state_cache, shared_full = dt_full, verbose = verbose
+            state_cache = state_cache, shared_full = dt_full,
+            target_transform = tt_mode_i, verbose = verbose
           )
         }
       }
@@ -740,6 +772,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       active_recipes = active_recipes,
       active_models = active_models,
       active_fold_models = if (length(active_fold_models) > 0) active_fold_models else NULL,
+      active_target_transforms = if (length(active_target_transforms) > 0) active_target_transforms else NULL,
       bag_folds = isTRUE(bag_folds),
       active_evaluators = active_evaluators,
       weights = weights,

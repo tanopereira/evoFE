@@ -32,6 +32,7 @@ evaluate_fitness(
   cv_strategy = "random",
   time_col = NULL,
   group_col = NULL,
+  target_transform = getOption("evoFE.target_transform", "none"),
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )

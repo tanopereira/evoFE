@@ -56,10 +56,14 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
                                  evaluator = "lightgbm", best_params = NULL,
                                  extra_args = list(), threads = default_threads(),
                                  seed = NULL, state_cache = NULL, shared_full = NULL,
+                                 target_transform = getOption("evoFE.target_transform", "none"),
                                  verbose = FALSE) {
   if (is.null(fold_ids) || length(fold_ids) != nrow(data_dt)) return(NULL)
   u_folds <- sort(unique(fold_ids[!is.na(fold_ids)]))
   if (length(u_folds) < 2L) return(NULL)
+
+  use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
+  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
 
   resolved <- resolve_tuned_evaluator(evaluator, best_params, extra_args, always_unwrap = TRUE)
   final_eval <- resolved$evaluator
@@ -101,6 +105,15 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       y_va <- encode_binary_target(y_va)
     }
 
+    tt_state_f <- NULL
+    y_va_raw <- y_va
+    if (use_tt) {
+      tt_fit <- .fit_target_transform(y_tr, target_transform)
+      y_tr <- tt_fit$y_trans
+      y_va <- .apply_target_transform(y_va, tt_fit$state)
+      tt_state_f <- tt_fit$state
+    }
+
     fold_seed <- if (!is.null(seed) && is.finite(seed)) as.integer(seed) + as.integer(idx) else NULL
     res_m <- do.call(train_model, c(
       list(
@@ -113,11 +126,16 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       ),
       model_args
     ))
+    if (use_tt && !is.null(tt_state_f)) {
+      tt_state_f <- .update_target_transform_smearing(tt_state_f, y_va_raw, res_m$predictions)
+    }
     fold_models[[idx]] <- list(
       ind = ind_f,
       model = res_m$model,
       evaluator = final_eval,
-      best_iteration = extract_best_iteration(res_m)
+      best_iteration = extract_best_iteration(res_m),
+      target_transform_state = tt_state_f,
+      use_smearing = use_smear
     )
   }
 
@@ -151,6 +169,13 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       list(model = fm$model, x_new = x_new, task = task, threads = threads),
       user_args
     ))
+    if (!is.null(fm$target_transform_state)) {
+      preds_f <- .invert_target_transform(
+        preds_f,
+        fm$target_transform_state,
+        use_smearing = !identical(fm$use_smearing, FALSE)
+      )
+    }
     if (!is.null(classes)) {
       preds_f <- format_multiclass_predictions(preds_f, classes)
     }

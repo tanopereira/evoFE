@@ -2732,6 +2732,56 @@ test_that("competition feature primitives (groupby_diff, groupby_median_diff, gr
   expect_equal(res_rnac$val[[g_rnac$output_col]], c(1, 2, 0))
 })
 
+test_that("OOF threshold optimization (f1, mcc, balanced_accuracy) and regression target_transform work end-to-end", {
+  set.seed(101)
+  # 1. Imbalanced binary classification where positives have probabilities around 0.20-0.45
+  y_imb <- c(rep(0L, 90), rep(1L, 10))
+  p_imb <- c(runif(90, 0.01, 0.18), runif(10, 0.22, 0.45))
+
+  opt_f1 <- optimize_threshold(y_imb, p_imb, metric = "f1")
+  expect_lt(opt_f1$threshold, 0.5)
+  expect_gt(opt_f1$best_score, opt_f1$default_score)
+
+  cal_mcc <- evoFE:::fit_post_calibrator(y_imb, p_imb, task = "classification", metric = "mcc")
+  expect_equal(cal_mcc$type, "threshold_shift")
+  # At the optimal threshold tau*, calibrated probability equals exactly 0.5
+  expect_equal(evoFE:::apply_post_calibrator(cal_mcc$threshold, cal_mcc), 0.5, tolerance = 1e-8)
+  p_cal <- evoFE:::apply_post_calibrator(p_imb, cal_mcc)
+  expect_gt(evoFE:::compute_mcc(y_imb, p_cal), evoFE:::compute_mcc(y_imb, p_imb))
+
+  # 2. Regression target_transform ("log1p", "yeo_johnson", "rank_gauss")
+  n <- 60L
+  x1 <- runif(n, 0, 4)
+  x2 <- rnorm(n)
+  # Skewed positive target on ~[1, 5000] scale
+  y_skew <- exp(2 * x1 + 0.1 * x2) + 10
+  df_skew <- data.frame(x1 = x1, x2 = x2, target = y_skew)
+
+  for (tt_mode in c("log1p", "yeo_johnson", "rank_gauss")) {
+    rec_tt <- evolve_features(
+      data = df_skew,
+      target_col = "target",
+      task = "regression",
+      evaluator = "lm",
+      generations = 1,
+      pop_size = 1,
+      cv_folds = 3,
+      bag_folds = TRUE,
+      target_transform = tt_mode,
+      seed = 42,
+      verbose = FALSE
+    )
+    expect_equal(rec_tt$target_transform, tt_mode)
+    expect_true(!is.null(rec_tt$target_transform_state))
+    # OOF predictions and predict_model outputs must be inverted back to original scale (> 5)
+    expect_gt(mean(rec_tt$oof_preds, na.rm = TRUE), 20)
+    preds_bag <- predict_model(rec_tt, df_skew[1:10, ], bag_folds = TRUE)
+    preds_single <- predict_model(rec_tt, df_skew[1:10, ], bag_folds = FALSE)
+    expect_gt(mean(preds_bag), 20)
+    expect_gt(mean(preds_single), 20)
+  }
+})
+
 
 
 

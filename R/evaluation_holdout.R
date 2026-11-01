@@ -19,7 +19,10 @@
 evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
                                      target_col, task, evaluator, threads,
                                      state_cache, classes, num_class, metric = "default",
+                                     target_transform = getOption("evoFE.target_transform", "none"),
                                      verbose = FALSE, ...) {
+  use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
+  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
   if (!is.null(shared_splits)) {
     train_fold <- shared_splits$train
     val_fold <- shared_splits$val
@@ -75,6 +78,14 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     }
   }
 
+  tt_state_ho <- NULL
+  if (use_tt) {
+    tt_fit <- .fit_target_transform(y_train, target_transform)
+    y_train <- tt_fit$y_trans
+    y_val <- .apply_target_transform(y_val, tt_fit$state)
+    tt_state_ho <- tt_fit$state
+  }
+
   # Crucial distinction: The holdout fold is strictly for testing generalization performance on unseen
   # data, and must NEVER be used to drive parameter tuning. Therefore, we bypass the tuner (e.g.
   # lightgbm_mbo) and train the base evaluator (e.g. lightgbm) directly using the best parameters
@@ -92,6 +103,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
     ),
     final_args
   ))
+  if (use_tt && !is.null(tt_state_ho)) {
+    tt_state_ho <- .update_target_transform_smearing(tt_state_ho, val_fold_feat[[target_col]], res_model$predictions)
+  }
 
   if (!is.null(res_model$best_params)) {
     ind$best_params <- res_model$best_params
@@ -115,6 +129,9 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
 
     evaluator_entry <- get_evaluator(evaluator)
     preds_holdout <- evaluator_entry$predict_func(res_model$model, x_holdout, task = task, threads = threads)
+    if (use_tt && !is.null(tt_state_ho)) {
+      preds_holdout <- .invert_target_transform(preds_holdout, tt_state_ho, use_smearing = use_smear)
+    }
 
     if (task == "multiclass") {
       y_holdout_encoded <- encode_multiclass_target(holdout_fold[[target_col]], classes)

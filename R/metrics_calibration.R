@@ -172,7 +172,11 @@ make_calibration_eval_fn <- function(y_val, custom_eval_type, task = "classifica
 #' @noRd
 fit_post_calibrator <- function(y_true, y_pred, task = "classification", metric = NULL,
                                 num_class = NULL, threads = 1L) {
-  if (!is.character(metric) || length(metric) != 1L || !metric %in% c("ts_refinement", "cal_rmse", "cal_mae")) {
+  if (!is.character(metric) || length(metric) != 1L) {
+    return(NULL)
+  }
+  metric <- canonical_metric_name(metric, task)
+  if (!metric %in% c("ts_refinement", "cal_rmse", "cal_mae", "f1", "mcc", "balanced_accuracy")) {
     return(NULL)
   }
   if (is.null(y_true) || is.null(y_pred) || length(y_true) == 0L) {
@@ -187,6 +191,16 @@ fit_post_calibrator <- function(y_true, y_pred, task = "classification", metric 
     if (sum(keep) < 2L) return(NULL)
     rcpp_fit_post_calibrator(yt[keep], yp[keep], task = "classification",
                              metric = "ts_refinement", threads = th)
+  } else if (metric %in% c("f1", "mcc", "balanced_accuracy") && task == "classification") {
+    opt <- optimize_threshold(y_true, y_pred, metric = metric)
+    if (is.null(opt) || !is.finite(opt$threshold)) return(NULL)
+    list(
+      type = "threshold_shift",
+      metric = metric,
+      threshold = opt$threshold,
+      best_score = opt$best_score,
+      default_score = opt$default_score
+    )
   } else if (metric == "ts_refinement" && task == "multiclass") {
     n_cls <- if (!is.null(num_class)) as.integer(num_class) else if (is.matrix(y_pred)) ncol(y_pred) else 0L
     if (is.na(n_cls) || n_cls < 2L) return(NULL)
@@ -210,7 +224,8 @@ fit_post_calibrator <- function(y_true, y_pred, task = "classification", metric 
 
 #' Apply a Fitted Post-Hoc Calibrator to Predictions
 #'
-#' Applies temperature scaling (\code{ts_binary} / \code{ts_multiclass}) or affine
+#' Applies temperature scaling (\code{ts_binary} / \code{ts_multiclass}),
+#' decision-boundary prior-odds shift (\code{threshold_shift}), or affine
 #' calibration (\code{linear}) fitted by \code{fit_post_calibrator}.
 #'
 #' @param preds Numeric vector or matrix of raw model predictions.
@@ -229,6 +244,16 @@ apply_post_calibrator <- function(preds, calibrator) {
     z <- pmin(pmax(log(p / (1.0 - p)), -35.0), 35.0)
     z[!is.finite(z)] <- 0.0
     out <- 1.0 / (1.0 + exp(-beta * z))
+    pmin(pmax(out, 1e-15), 1.0 - 1e-15)
+  } else if (calibrator$type == "threshold_shift") {
+    tau <- as.numeric(calibrator$threshold)
+    if (!is.finite(tau) || tau <= 0 || tau >= 1 || abs(tau - 0.5) < 1e-6) {
+      return(preds)
+    }
+    p <- pmin(pmax(as.numeric(preds), 1e-15), 1.0 - 1e-15)
+    odds_p <- p / tau
+    odds_neg <- (1.0 - p) / (1.0 - tau)
+    out <- odds_p / (odds_p + odds_neg)
     pmin(pmax(out, 1e-15), 1.0 - 1e-15)
   } else if (calibrator$type == "ts_multiclass") {
     beta <- as.numeric(calibrator$beta)

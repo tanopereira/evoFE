@@ -165,6 +165,13 @@ predict_model.evo_recipe <- function(object, newdata, bag_folds = NULL, ...) {
     list(model = object$best_model, x_new = x_new, task = object$task, threads = th),
     user_args
   ))
+  if (!is.null(object$target_transform_state)) {
+    preds <- .invert_target_transform(
+      preds,
+      object$target_transform_state,
+      use_smearing = !identical(object$use_smearing, FALSE)
+    )
+  }
   
   if (!is.null(object$classes)) {
     preds <- format_multiclass_predictions(preds, object$classes)
@@ -243,6 +250,14 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
         list(model = mod_i, x_new = x_new, task = object$task, threads = th),
         user_args
       ))
+      if (!is.null(object$active_target_transforms) && !is.null(object$active_target_transforms[[name]])) {
+        tt_entry <- object$active_target_transforms[[name]]
+        preds_i <- .invert_target_transform(
+          preds_i,
+          tt_entry$state,
+          use_smearing = !identical(tt_entry$use_smearing, FALSE)
+        )
+      }
     }
 
     if (isTRUE(object$rank_average)) {
