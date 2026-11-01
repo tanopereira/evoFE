@@ -31,6 +31,9 @@
 #' @param cv_strategy Fold construction strategy for CV: \code{"random"} (default), \code{"time"}, or \code{"group"}.
 #' @param time_col Column name used when \code{cv_strategy = "time"}.
 #' @param group_col Column name used when \code{cv_strategy = "group"}.
+#' @param target_transform Optional regression target transformation (\code{"none"}, \code{"log1p"}, \code{"yeo_johnson"}, \code{"rank_gauss"}).
+#' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}).
+#' @param shadow_prune Logical (default \code{FALSE}). When \code{TRUE}, injects permuted shadow features during fitness evaluation and prunes evolved leaf genes whose importance does not exceed the shadow features before applying the complexity penalty.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
@@ -51,6 +54,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              n_samples = NULL, cv_strategy = "random",
                              time_col = NULL, group_col = NULL,
                              target_transform = getOption("evoFE.target_transform", "none"),
+                             sd_penalty = getOption("evoFE.sd_penalty", 0),
+                             shadow_prune = getOption("evoFE.shadow_prune", FALSE),
                              global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
@@ -115,6 +120,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     dt_sub_va <- val_fold_feat[, features, with = FALSE]
     x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
     x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
+    if (isTRUE(shadow_prune) && length(res$ind$genes) > 0L) {
+      sh_mats <- .append_shadow_columns(x_train, x_val, res$ind)
+      x_train <- sh_mats$x_train
+      x_val <- sh_mats$x_val
+    }
     y_train <- train_fold_feat[[target_col]]
     y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
@@ -158,19 +168,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       preds <- .invert_target_transform(preds, tt_state_split, use_smearing = use_smear)
     }
 
-    # Store importances (single fold)
-    if (!is.null(res_model$importances) && length(res_model$importances) > 0) {
-      imp <- res_model$importances
-      imp_sum <- sum(imp, na.rm = TRUE)
-      if (imp_sum > 0) {
-        imp <- imp / imp_sum
-        threshold <- getOption("evoFE.importance_threshold", 0.001)
-        imp[imp < threshold] <- 0
-      }
-      ind$importances <- imp
-    } else {
-      ind$importances <- numeric(0)
-    }
+    # Propagate the updated genes (with state) before shadow pruning and complexity penalty
+    ind$genes <- res$ind$genes
+    ind <- .finalize_importances_and_shadow_prune(ind, res_model$importances, shadow_prune = shadow_prune)
+    ind$fold_sd <- 0.0
 
     if (!is.null(res_model$best_params)) {
       ind$best_params <- res_model$best_params
@@ -202,9 +203,6 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
     ind$val_preds <- preds
     ind$y_val <- y_val_encoded
-
-    # Propagate the updated genes (with state) before complexity penalty so pruned genes are not penalized
-    ind$genes <- res$ind$genes
 
     ind <- apply_complexity_penalty(
       raw_score = raw_score,
@@ -302,6 +300,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       dt_sub_va <- val_fold_feat[, features, with = FALSE]
       x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
       x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
+      if (isTRUE(shadow_prune) && length(res$ind$genes) > 0L) {
+        sh_mats <- .append_shadow_columns(x_train, x_val, res$ind)
+        x_train <- sh_mats$x_train
+        x_val <- sh_mats$x_val
+      }
       y_train <- train_fold_feat[[target_col]]
       y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
@@ -473,6 +476,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Fitness: average over successful folds only; -Inf only when every fold failed.
     finite_metrics <- metrics[!is.na(metrics)]
     raw_score <- if (length(finite_metrics) == 0) -Inf else mean(finite_metrics)
+    ind$fold_sd <- if (length(finite_metrics) >= 2L) stats::sd(finite_metrics) else 0.0
+    if (is.numeric(sd_penalty) && length(sd_penalty) == 1L && sd_penalty > 0 &&
+        length(finite_metrics) >= 2L && is.finite(raw_score)) {
+      raw_score <- raw_score - sd_penalty * (ind$fold_sd / sqrt(length(finite_metrics)))
+    }
 
     ind$raw_fitness <- raw_score
     ind$penalty <- 0.0
@@ -485,9 +493,16 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       ind$train_size <- as.integer(round(mean(fold_train_sizes)))
     }
 
-    # Propagate fitted gene states from the last successful fold before complexity penalty
+    # Propagate fitted gene states from the last successful fold before shadow pruning and complexity penalty
     # so pruned genes are not penalized in CV mode
     if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
+
+    # Aggregate importances across folds and optionally prune shadow-dominated leaf genes
+    ind <- .finalize_importances_and_shadow_prune(
+      ind,
+      .aggregate_fold_importances(fold_importances),
+      shadow_prune = shadow_prune
+    )
 
     ind <- apply_complexity_penalty(
       raw_score = raw_score,
@@ -505,29 +520,113 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       shared_full = shared_full
     )
 
-    # Aggregate importances across folds
-    all_feats <- unique(unlist(lapply(fold_importances, names)))
-    if (length(all_feats) > 0) {
-      avg_imp <- vapply(all_feats, function(feat) {
-        vals <- vapply(fold_importances, function(fold) {
-          if (feat %in% names(fold)) fold[[feat]] else 0
-        }, numeric(1))
-        mean(vals)
-      }, numeric(1))
-
-      imp_sum <- sum(avg_imp, na.rm = TRUE)
-      if (imp_sum > 0) {
-        avg_imp <- avg_imp / imp_sum
-        threshold <- getOption("evoFE.importance_threshold", 0.001)
-        avg_imp[avg_imp < threshold] <- 0
-      }
-      ind$importances <- avg_imp
-    } else {
-      ind$importances <- numeric(0)
-    }
-
     ind$holdout_fitness <- NULL
   }
 
   ind
+}
+
+#' @keywords internal
+#' @noRd
+.append_shadow_columns <- function(x_tr, x_va, ind) {
+  if (ncol(x_tr) < 1L || nrow(x_tr) < 2L || nrow(x_va) < 1L || length(ind$genes) == 0L) {
+    return(list(x_train = x_tr, x_val = x_va))
+  }
+  gene_cols <- intersect(unlist(lapply(ind$genes, function(g) g$output_col)), colnames(x_tr))
+  src_cols <- if (length(gene_cols) > 0L) gene_cols else colnames(x_tr)
+  src_col <- if (length(src_cols) == 1L) {
+    src_cols[1L]
+  } else {
+    vars <- vapply(src_cols, function(cn) stats::var(x_tr[, cn], na.rm = TRUE), numeric(1))
+    vars[!is.finite(vars)] <- -1
+    src_cols[which.max(vars)]
+  }
+  v_tr <- x_tr[, src_col]
+  v_va <- x_va[, src_col]
+  perms <- with_preserved_seed({
+    list(
+      tr1 = v_tr[sample.int(length(v_tr))],
+      tr2 = v_tr[sample.int(length(v_tr))],
+      va1 = v_va[sample.int(length(v_va))],
+      va2 = v_va[sample.int(length(v_va))]
+    )
+  })
+  x_tr_out <- cbind(x_tr, .__evo_shadow_1__ = perms$tr1, .__evo_shadow_2__ = perms$tr2)
+  x_va_out <- cbind(x_va, .__evo_shadow_1__ = perms$va1, .__evo_shadow_2__ = perms$va2)
+  attr(x_tr_out, "sanitized") <- TRUE
+  attr(x_va_out, "sanitized") <- TRUE
+  list(x_train = x_tr_out, x_val = x_va_out)
+}
+
+#' @keywords internal
+#' @noRd
+.finalize_importances_and_shadow_prune <- function(ind, raw_imp, shadow_prune = FALSE) {
+  if (is.null(raw_imp) || length(raw_imp) == 0L) {
+    ind$importances <- numeric(0)
+    return(ind)
+  }
+  shadow_names <- c(".__evo_shadow__", ".__evo_shadow_1__", ".__evo_shadow_2__")
+  present_shadows <- intersect(shadow_names, names(raw_imp))
+  shadow_imp <- if (length(present_shadows) > 0L) {
+    max(raw_imp[present_shadows], na.rm = TRUE)
+  } else {
+    NA_real_
+  }
+  if (length(present_shadows) > 0L) {
+    raw_imp <- raw_imp[!(names(raw_imp) %in% shadow_names)]
+  }
+
+  if (isTRUE(shadow_prune) && length(ind$genes) > 0L && is.finite(shadow_imp) && length(raw_imp) > 0L) {
+    parent_cols <- unique(unlist(lapply(ind$genes, function(g) g$input_cols)))
+    keep_mask <- vapply(ind$genes, function(g) {
+      out_col <- g$output_col
+      if (is.null(out_col) || length(out_col) != 1L || (out_col %in% parent_cols)) {
+        return(TRUE)
+      }
+      if (!(out_col %in% names(raw_imp))) {
+        return(TRUE)
+      }
+      val <- raw_imp[[out_col]]
+      is.finite(val) && (val > shadow_imp)
+    }, logical(1))
+
+    if (!all(keep_mask)) {
+      pruned_cols <- unlist(lapply(ind$genes[!keep_mask], function(g) g$output_col))
+      raw_imp <- raw_imp[!(names(raw_imp) %in% pruned_cols)]
+      ind$genes <- ind$genes[keep_mask]
+    }
+  }
+
+  ind$importances <- .normalize_importances(raw_imp)
+  ind
+}
+
+#' @keywords internal
+#' @noRd
+.aggregate_fold_importances <- function(fold_importances) {
+  all_feats <- unique(unlist(lapply(fold_importances, names)))
+  if (length(all_feats) == 0L) {
+    return(numeric(0))
+  }
+  vapply(all_feats, function(feat) {
+    vals <- vapply(fold_importances, function(fold) {
+      if (feat %in% names(fold)) fold[[feat]] else 0
+    }, numeric(1))
+    mean(vals)
+  }, numeric(1))
+}
+
+#' @keywords internal
+#' @noRd
+.normalize_importances <- function(imp) {
+  if (is.null(imp) || length(imp) == 0L) {
+    return(numeric(0))
+  }
+  imp_sum <- sum(imp, na.rm = TRUE)
+  if (imp_sum > 0) {
+    imp <- imp / imp_sum
+    threshold <- getOption("evoFE.importance_threshold", 0.001)
+    imp[imp < threshold] <- 0
+  }
+  imp
 }

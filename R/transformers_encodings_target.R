@@ -80,7 +80,7 @@ evo_transformers$pooled_target_encode <- create_transformer(
     
     # Calculate category means, within-category variances, and counts
     dt <- data.table::data.table(x = x, y = y)
-    stats <- dt[, .(mean = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), var = stats::var(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
+    stats <- dt[, .(mean = mean(y, na.rm = TRUE), var = stats::var(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
     
     # Estimate pooled within-category variance (sigma^2)
     df_sum <- sum(stats$n - 1, na.rm = TRUE)
@@ -105,15 +105,8 @@ evo_transformers$pooled_target_encode <- create_transformer(
     
     mapping <- stats[, .(x, smoothed)]
     data.table::setkey(mapping, x)
-
-    mapped <- stats[dt, on = "x"]
-    n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
-    sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
-    loo_vals <- if (is.infinite(k)) rep(global_mean, length(y)) else (sum_loo + k * global_mean) / (n_loo + k)
-    loo_vals[is.na(loo_vals)] <- global_mean
-    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
     
-    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
+    list(mapping = mapping, global_mean = global_mean)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {

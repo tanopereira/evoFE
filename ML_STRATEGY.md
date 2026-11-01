@@ -347,9 +347,15 @@ if (length(adv_diag$drifting_features) > 0) {
 #   evaluated on the original untransformed target scale!
 search_metric <- "ts_refinement"
 
-# 5. Choose the parsimony mode
+# 5. Choose the parsimony & anti-overfitting defenses
 # - N > ~25k or feeding a stacker: complexity_mode = "bic_dynamic" (permissive)
 # - N < ~10k or very noisy target: complexity_mode = "pac_bayes_dynamic" (strict)
+# - Fold-Variance LCB Penalty (sd_penalty = 1.0): penalizes raw CV fitness by
+#   sd_penalty * sd(fold_scores) / sqrt(K), preventing the genetic search from
+#   picking features that spike on 1 fold and crash on another (inspect recipe$fold_sd).
+# - Shadow-Feature Null-Importance Pruning (shadow_prune = TRUE): injects 2 permuted
+#   shadow columns during evaluation and automatically prunes evolved leaf genes whose
+#   SHAP/model importance fails to beat the maximum shadow feature importance.
 ```
 
 ---
@@ -732,6 +738,13 @@ cat("Competition submission file generated successfully!\n")
 | **XGBoost Speed** | Exact tree search is slow | Use fast histogram method | `tree_method = "hist"` |
 | **Redundant Genes**| Collinear transformations bloat trees | Correlation pruning filter | `options(evoFE.redundancy_cor_threshold = 0.99)` |
 | **Search Overfitting**| Evolution chases CV noise | Confirmation holdout + parsimony | `holdout_frac = 0.08, complexity_mode = "bic_dynamic"` |
+| **Fold Instability** | Recipe spikes on 1 fold, drops on others | Lower Confidence Bound (1-SE) penalty | `sd_penalty = 1.0` |
+| **Noise Gene Bloat** | Uninformative leaf genes survive trees | Boruta / Null-Importance shadow pruning | `shadow_prune = TRUE` |
+| **Grouped + Imbalanced** | Group leakage or unbalanced target folds | Stratified group CV + intact holdouts | `cv_strategy = "stratified_group", group_col = "id"` |
+| **Train/Test Shift** | Holdout doesn't reflect test distribution | Adversarial propensity-weighted holdout | `holdout_frac = 0.10, test_data = test` |
+| **Inference Variance** | Single refit model has higher test error | K-Fold Model Bagging across CV folds | `bag_folds = TRUE` |
+| **Skewed Regression** | Heavy-tailed target distorts squared loss | Forward/inverse target transform + Duan smearing | `target_transform = "log1p"` (or `"yeo_johnson"`, `"rank_gauss"`) |
+| **Hard-Threshold Metric** | Default 0.5 cutoff sub-optimal for F1/MCC | Exact $O(N \log N)$ OOF threshold calibration | `metric = "f1"`, `"mcc"`, or `"balanced_accuracy"` |
 | **Island Diversity** | Ring topology bottlenecks diffusion (D=K-1); push swamps islands | Complete topology + demand-driven Gibbs pull evaluated every gen | `migration = migration_config(topology = topology_complete(4), policy = policy_gibbs_pull(2)), migration_interval = 1` |
 | **MetaCV Stacking** | Single-fold island evaluations lack full OOFs | End-of-search K-fold tournament | `metacv_selection = "tournament"` |
 

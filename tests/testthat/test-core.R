@@ -2782,6 +2782,93 @@ test_that("OOF threshold optimization (f1, mcc, balanced_accuracy) and regressio
   }
 })
 
+test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and evolve_features", {
+  set.seed(2026)
+  n <- 80L
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  n1 <- rnorm(n)
+  n2 <- rnorm(n)
+  # Strong multiplicative signal: y = 10 * x1 * x2 + small noise
+  y <- 10 * x1 * x2 + rnorm(n, sd = 0.05)
+  df <- data.frame(x1 = x1, x2 = x2, n1 = n1, n2 = n2, target = y)
+  fids <- rep(1:4, length.out = n)
+
+  # 1. sd_penalty: verify LCB penalty = sd_penalty * fold_sd / sqrt(K)
+  ind_base <- create_individual(genes = list(), numeric_cols = c("x1", "x2", "n1", "n2"))
+  ind_0 <- evaluate_fitness(
+    ind_base, df, "target", task = "regression",
+    cv_folds = 4, fold_ids = fids, evaluator = "lightgbm",
+    sd_penalty = 0, threads = 1
+  )
+  ind_15 <- evaluate_fitness(
+    ind_base, df, "target", task = "regression",
+    cv_folds = 4, fold_ids = fids, evaluator = "lightgbm",
+    sd_penalty = 1.5, threads = 1
+  )
+  expect_true(is.finite(ind_0$fold_sd) && ind_0$fold_sd > 0)
+  expect_equal(ind_15$fold_sd, ind_0$fold_sd, tolerance = 1e-8)
+  expect_equal(
+    ind_15$raw_fitness,
+    ind_0$raw_fitness - 1.5 * (ind_0$fold_sd / sqrt(4)),
+    tolerance = 1e-8
+  )
+
+  # 2. shadow_prune: verify high-signal gene is kept, parent of high-signal gene is protected,
+  #    and pure-noise leaf gene (with 0 importance) is pruned
+  g_parent <- create_gene("add", c("n1", "n2"))
+  # g_signal depends on g_parent so g_parent is a non-leaf parent gene, and g_signal itself is mul(x1, x2)
+  g_sig <- create_gene("multiply", c("x1", "x2"))
+  g_chain_leaf <- create_gene("add", c(g_parent$output_col, g_sig$output_col))
+  # Make a pure-noise leaf gene that is orthogonal/ignored by L1 or tree splits
+  df$z_tiny1 <- rep(c(1e-6, -1e-6), length.out = n)
+  df$z_tiny2 <- rep(c(1e-6, 1e-6, -1e-6, -1e-6), length.out = n)
+  g_noise_leaf <- create_gene("add", c("z_tiny1", "z_tiny2"))
+
+  ind_sp <- create_individual(
+    genes = list(g_parent, g_sig, g_chain_leaf, g_noise_leaf),
+    numeric_cols = c("x1", "x2", "n1", "n2", "z_tiny1", "z_tiny2")
+  )
+
+  ind_sp_eval <- evaluate_fitness(
+    ind_sp, df, "target", task = "regression",
+    cv_folds = 4, fold_ids = fids, evaluator = "lightgbm",
+    shadow_prune = TRUE, threads = 1
+  )
+  surviving_cols <- vapply(ind_sp_eval$genes, function(g) g$output_col, character(1))
+  # High-signal gene and non-leaf parent gene must survive; zero-signal leaf gene is pruned
+  expect_true(g_sig$output_col %in% surviving_cols)
+  expect_true(g_parent$output_col %in% surviving_cols)
+  expect_false(g_noise_leaf$output_col %in% surviving_cols)
+  expect_false(any(grepl("^\\.__evo_shadow", names(ind_sp_eval$importances))))
+
+  # 3. End-to-end evolve_features with sd_penalty and shadow_prune
+  expect_error(evolve_features(df, "target", task = "regression", sd_penalty = -1), "sd_penalty")
+  expect_error(evolve_features(df, "target", task = "regression", shadow_prune = NA), "shadow_prune")
+
+  rec <- evolve_features(
+    data = df[, c("x1", "x2", "n1", "n2", "target")],
+    target_col = "target",
+    task = "regression",
+    evaluator = "lightgbm",
+    generations = 1,
+    pop_size = 3,
+    cv_folds = 3,
+    sd_penalty = 1.0,
+    shadow_prune = TRUE,
+    threads = 1,
+    seed = 42,
+    verbose = FALSE
+  )
+  expect_equal(rec$sd_penalty, 1.0)
+  expect_true(rec$shadow_prune)
+  expect_true(is.numeric(rec$fold_sd) && rec$fold_sd >= 0)
+  preds <- predict_model(rec, df[1:10, c("x1", "x2", "n1", "n2", "target")])
+  expect_length(preds, 10)
+  expect_true(all(is.finite(preds)))
+})
+
+
 
 
 

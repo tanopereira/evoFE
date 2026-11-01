@@ -33,6 +33,8 @@ evaluate_fitness(
   time_col = NULL,
   group_col = NULL,
   target_transform = getOption("evoFE.target_transform", "none"),
+  sd_penalty = getOption("evoFE.sd_penalty", 0),
+  shadow_prune = getOption("evoFE.shadow_prune", FALSE),
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )
@@ -92,6 +94,12 @@ evaluate_fitness(
 \item{time_col}{Column name used when \code{cv_strategy = "time"}.}
 
 \item{group_col}{Column name used when \code{cv_strategy = "group"}.}
+
+\item{target_transform}{Optional regression target transformation (\code{"none"}, \code{"log1p"}, \code{"yeo_johnson"}, \code{"rank_gauss"}).}
+
+\item{sd_penalty}{Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}).}
+
+\item{shadow_prune}{Logical (default \code{FALSE}). When \code{TRUE}, injects permuted shadow features during fitness evaluation and prunes evolved leaf genes whose importance does not exceed the shadow features before applying the complexity penalty.}
 
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 

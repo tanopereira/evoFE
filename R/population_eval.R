@@ -72,6 +72,12 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
       )
       assign(cache_key, pop[[i]], envir = fitness_cache)
       fitness_cache[[rec_key]] <- pop[[i]]
+      post_key <- individual_to_cache_key(pop[[i]])
+      if (!identical(post_key, rec_key)) {
+        post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
+        assign(post_cache_key, pop[[i]], envir = fitness_cache)
+        fitness_cache[[post_key]] <- pop[[i]]
+      }
     }
 
     if (verbose) {
