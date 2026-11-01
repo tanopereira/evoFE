@@ -567,10 +567,11 @@ cat(sprintf("Mega Matrix features:    %d\n", ncol(train_mega) - 1))
 
 **Goal**: Train the 3 complementary model families (**LightGBM**, **XGBoost**, **RealMLP**) with low $\eta$ and long schedules **directly inside evoFE**.
 
-By setting `generations = 1, pop_size = 1`, evoFE acts as an automated 5-fold CV trainer and full-data model fitter:
+By setting `generations = 1, pop_size = 1, bag_folds = TRUE`, evoFE acts as an automated 5-fold CV trainer, K-fold bagged model fitter, and full-data model fitter:
 - Automatically tracks validation folds and records `oof_preds`.
-- Scales `best_iteration` from early stopping to full dataset size.
-- Prepares full S3 `evo_recipe` objects ready for `ensemble_islands()`.
+- When `bag_folds = TRUE`, retains all $K$ fold-fitted feature pipelines and fold-validated models (`recipe$fold_models`), so `predict_model()` averages predictions across all $K$ fold models (each stopped at its exact validation optimum with its own fold-fitted LOO target encodings) rather than relying solely on a single unvalidated full-data refit.
+- Scales `best_iteration` from early stopping to full dataset size for `recipe$best_model` (available via `predict_model(..., bag_folds = FALSE)`).
+- Prepares full S3 `evo_recipe` objects ready for `ensemble_islands()` (which automatically inherits `bag_folds = TRUE` with zero redundant retraining).
 
 > [!TIP]
 > **Why `nrounds = 50,000` is the right ceiling with low $\eta$**: `nrounds` is purely a safety ceiling, not a fixed compute requirement. At $\eta \le 0.005$ on wide feature matrices with column subsampling (`feature_fraction = 0.70 - 0.75`), gradient boosting takes very small, regularized steps per split. 15,000 trees are often not enough — the validation loss is frequently still climbing/dropping when 15,000 is hit, cutting training short and underfitting the final scaled model. Setting `nrounds = 50000` with `early_stopping_rounds = 200 - 300` guarantees you never truncate training prematurely, while early stopping safely halts when the true validation minimum is reached.
@@ -596,6 +597,7 @@ rec_final_lgb <- evolve_features(
   generations           = 1,
   pop_size              = 1,
   cv_folds              = 5,
+  bag_folds             = TRUE,              # Retain all 5 fold models for fold-bagged test inference
   learning_rate         = 0.005,
   num_leaves            = 63,
   feature_fraction      = 0.75,
@@ -621,6 +623,7 @@ rec_final_xgb <- evolve_features(
   generations           = 1,
   pop_size              = 1,
   cv_folds              = 5,
+  bag_folds             = TRUE,
   tree_method           = "hist",            # Fast histogram binning
   learning_rate         = 0.008,
   max_depth             = 6,
@@ -645,6 +648,7 @@ rec_final_mlp <- evolve_features(
   generations           = 1,
   pop_size              = 1,
   cv_folds              = 5,
+  bag_folds             = TRUE,
   epochs                = 250,
   batch_size            = 2048,          # Fast OpenMP GEMM BLAS throughput
   lr                    = 0.005,         # Cosine annealing schedule
@@ -883,6 +887,7 @@ rec_final_mlp <- evolve_features(
   generations           = 1,
   pop_size              = 1,
   cv_folds              = 5,
+  bag_folds             = TRUE,
   epochs                = 250,
   early_stopping_rounds = 30,
   mbo_iters             = 8,                   # Neural nets: fewer MBO trials

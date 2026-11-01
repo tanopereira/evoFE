@@ -116,12 +116,15 @@ predict_model <- function(object, newdata, ...) {
 }
 
 #' @rdname predict_model
+#' @param bag_folds Optional logical. When \code{TRUE} (the default if \code{object} was
+#'   trained with \code{bag_folds = TRUE}), averages predictions across the stored K-fold
+#'   models rather than using only the single full-data refit model.
 #' @export
-predict_model.evo_recipe <- function(object, newdata, ...) {
-  if (is.null(object$best_model)) {
+predict_model.evo_recipe <- function(object, newdata, bag_folds = NULL, ...) {
+  if (is.null(object$best_model) && (is.null(object$fold_models) || length(object$fold_models) == 0)) {
     stop("No model was trained or saved during evolution.")
   }
-  
+
   user_args <- list(...)
   resolved_th <- resolve_param_aliases(user_args)$threads
   th <- if (!is.null(resolved_th)) {
@@ -132,6 +135,23 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
     default_threads()
   }
   user_args[c("threads", "nthreads", "nthread", "num_threads", "n_jobs")] <- NULL
+
+  use_bag <- if (!is.null(bag_folds)) isTRUE(bag_folds) else (isTRUE(object$bag_folds) || !is.null(object$fold_models))
+  if (use_bag && !is.null(object$fold_models) && length(object$fold_models) > 0) {
+    preds <- .predict_fold_models_bag(
+      fold_models = object$fold_models,
+      dt_input = data.table::as.data.table(newdata),
+      target_col = object$target_col,
+      task = object$task,
+      classes = object$classes,
+      threads = th,
+      user_args = user_args
+    )
+    if (!is.null(object$calibrator)) {
+      preds <- apply_post_calibrator(preds, object$calibrator)
+    }
+    return(preds)
+  }
 
   # Step 1: Evolve features for newdata
   features_dt <- stats::predict(object, newdata)
@@ -159,7 +179,7 @@ predict_model.evo_recipe <- function(object, newdata, ...) {
 
 #' @rdname predict_model
 #' @export
-predict_model.evo_ensemble <- function(object, newdata, ...) {
+predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
   if (is.null(object$active_models) || length(object$active_models) == 0) {
     stop("No active models available in evo_ensemble object.")
   }
@@ -181,6 +201,7 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
   }
   user_args[c("threads", "nthreads", "nthread", "num_threads", "n_jobs")] <- NULL
 
+  use_bag <- if (!is.null(bag_folds)) isTRUE(bag_folds) else (isTRUE(object$bag_folds) || !is.null(object$active_fold_models))
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
   dt_input <- data.table::as.data.table(newdata)
   weighted_preds <- NULL
@@ -191,23 +212,38 @@ predict_model.evo_ensemble <- function(object, newdata, ...) {
     mod_i <- object$active_models[[name]]
     eval_i <- if (!is.null(object$active_evaluators[[name]])) object$active_evaluators[[name]] else object$evaluator
 
-    evaluator_entry <- get_evaluator(eval_i)
+    if (use_bag && !is.null(object$active_fold_models) &&
+        !is.null(object$active_fold_models[[name]]) &&
+        length(object$active_fold_models[[name]]) > 0) {
+      preds_i <- .predict_fold_models_bag(
+        fold_models = object$active_fold_models[[name]],
+        dt_input = dt_input,
+        target_col = object$target_col,
+        task = object$task,
+        classes = NULL,
+        threads = th,
+        user_args = user_args,
+        state_cache = state_cache
+      )
+    } else {
+      evaluator_entry <- get_evaluator(eval_i)
 
-    dt_i <- data.table::copy(dt_input)
-    res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL,
-                              allow_prune = TRUE, state_cache = state_cache, full_data = dt_input)
-    if (!is.null(res_i$full)) dt_input <- res_i$full
-    applied_ind <- res_i$ind
+      dt_i <- data.table::copy(dt_input)
+      res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL,
+                                allow_prune = TRUE, state_cache = state_cache, full_data = dt_input)
+      if (!is.null(res_i$full)) dt_input <- res_i$full
+      applied_ind <- res_i$ind
 
-    features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
+      features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
 
-    feat_dt <- res_i$train[, features, with = FALSE]
-    x_new <- .sanitize_feature_matrix(feat_dt)
+      feat_dt <- res_i$train[, features, with = FALSE]
+      x_new <- .sanitize_feature_matrix(feat_dt)
 
-    preds_i <- do.call(evaluator_entry$predict_func, c(
-      list(model = mod_i, x_new = x_new, task = object$task, threads = th),
-      user_args
-    ))
+      preds_i <- do.call(evaluator_entry$predict_func, c(
+        list(model = mod_i, x_new = x_new, task = object$task, threads = th),
+        user_args
+      ))
+    }
 
     if (isTRUE(object$rank_average)) {
       ecdf_entry <- if (!is.null(object$rank_ecdfs)) {

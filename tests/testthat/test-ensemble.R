@@ -637,5 +637,45 @@ test_that("stratified CV folds and LOO target encoding and post-hoc calibration 
   expect_equal(apply_post_calibrator(x_reg, cal_l1), y_reg, tolerance = 1e-3)
 })
 
+test_that("bag_folds = TRUE trains and averages K fold models in evolve_features and ensemble_islands", {
+  set.seed(42)
+  df <- data.frame(
+    x1 = stats::rnorm(60),
+    x2 = stats::rnorm(60),
+    cat = factor(sample(c("A", "B", "C"), 60, replace = TRUE))
+  )
+  df$y <- as.integer(df$x1 + ifelse(df$cat == "A", 0.8, -0.4) > 0)
+
+  rec_bag <- evolve_features(
+    df, "y",
+    task = "classification",
+    evaluator = "realmlp",
+    generations = 1,
+    pop_size = 2,
+    cv_folds = 3,
+    bag_folds = TRUE,
+    realmlp_epochs = 10,
+    verbose = FALSE
+  )
+
+  expect_true(isTRUE(rec_bag$bag_folds))
+  expect_length(rec_bag$fold_models, 3L)
+
+  preds_bag <- predict_model(rec_bag, df[1:10, ])
+  preds_single <- predict_model(rec_bag, df[1:10, ], bag_folds = FALSE)
+  expect_length(preds_bag, 10L)
+  expect_true(all(preds_bag >= 0 & preds_bag <= 1))
+  # K-fold bagged predictions differ from single unvalidated full-data refit
+  expect_false(isTRUE(all.equal(preds_bag, preds_single)))
+
+  # ensemble_islands inherits bag_folds and reuses fold_models without retraining
+  ens_bag <- ensemble_islands(rec_bag, df, method = "equal", verbose = FALSE)
+  expect_true(isTRUE(ens_bag$bag_folds))
+  expect_false(is.null(ens_bag$active_fold_models))
+  ens_preds <- predict_model(ens_bag, df[1:10, ])
+  expect_equal(ens_preds, preds_bag, tolerance = 1e-12)
+})
+
+
 
 

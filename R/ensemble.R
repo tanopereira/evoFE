@@ -86,6 +86,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              stack_folds = NULL,
                              stack_alpha = 0.5,
                              rank_average = NULL,
+                             bag_folds = NULL,
                              seed = NULL,
                              threads = NULL,
                              verbose = TRUE, ...) {
@@ -512,7 +513,12 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   active_recipes <- list()
   active_models <- list()
+  active_fold_models <- list()
   active_evaluators <- list()
+
+  if (is.null(bag_folds)) {
+    bag_folds <- any(vapply(recipe_list, function(r) isTRUE(r$bag_folds) || !is.null(r$fold_models), logical(1)))
+  }
 
   # Shared state cache for dataset transformation
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
@@ -540,6 +546,24 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
       active_recipes[[name]] <- rec_i$best_individual
       active_models[[name]] <- rec_i$best_model
+      if (isTRUE(bag_folds)) {
+        if (!is.null(rec_i$fold_models) && length(rec_i$fold_models) > 0) {
+          active_fold_models[[name]] <- rec_i$fold_models
+        } else {
+          folds_i <- if (!is.null(rec_i$fold_ids) && length(rec_i$fold_ids) == nrow(dt_full)) rec_i$fold_ids else stored_folds
+          if (!is.null(folds_i) && length(folds_i) == nrow(dt_full)) {
+            base_extra <- if (!is.null(rec_i$extra_args)) rec_i$extra_args else list()
+            active_fold_models[[name]] <- .fit_fold_models_bag(
+              ind = rec_i$best_individual, data_dt = dt_full, fold_ids = folds_i,
+              target_col = target_col, task = task, classes = classes,
+              num_class = num_class, metric = metric, evaluator = eval_i,
+              best_params = rec_i$best_individual$best_params,
+              extra_args = base_extra, threads = threads, seed = seed,
+              state_cache = state_cache, shared_full = dt_full, verbose = verbose
+            )
+          }
+        }
+      }
     } else {
       if (verbose) {
         message(sprintf("  [%s] Evaluator: %s | Weight: %5.1f%% | Lazily training final model on full dataset...", name, eval_i, weights[[name]] * 100))
@@ -621,6 +645,20 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         final_args_i
       ))
       active_models[[name]] <- res_m$model
+      if (isTRUE(bag_folds)) {
+        folds_i <- if (!is.null(rec_i$fold_ids) && length(rec_i$fold_ids) == nrow(dt_full)) rec_i$fold_ids else stored_folds
+        if (!is.null(folds_i) && length(folds_i) == nrow(dt_full)) {
+          active_fold_models[[name]] <- .fit_fold_models_bag(
+            ind = applied_ind, data_dt = dt_full, fold_ids = folds_i,
+            target_col = target_col, task = task, classes = classes,
+            num_class = num_class, metric = metric, evaluator = eval_i,
+            best_params = ind_i$best_params,
+            extra_args = utils::modifyList(base_extra, list(...)),
+            threads = cand_threads, seed = seed,
+            state_cache = state_cache, shared_full = dt_full, verbose = verbose
+          )
+        }
+      }
     }
   }
 
@@ -701,6 +739,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     list(
       active_recipes = active_recipes,
       active_models = active_models,
+      active_fold_models = if (length(active_fold_models) > 0) active_fold_models else NULL,
+      bag_folds = isTRUE(bag_folds),
       active_evaluators = active_evaluators,
       weights = weights,
       caruana_history = selection_res$history,

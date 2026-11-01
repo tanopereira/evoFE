@@ -198,6 +198,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             record = FALSE,
                             port = NULL,
                             test_data = NULL,
+                            bag_folds = FALSE,
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
@@ -1370,6 +1371,20 @@ evolve_features <- function(data, target_col, task = "classification",
     final_model_args
   ))
   best_model <- res_model$model
+  fold_models <- NULL
+  if (isTRUE(bag_folds) && evaluation_strategy %in% c("cv", "metacv") && !is.null(fold_ids)) {
+    if (verbose) {
+      message(sprintf("Training %d-fold bagged model ensemble...", length(unique(fold_ids))))
+    }
+    fold_models <- .fit_fold_models_bag(
+      ind = best_ind, data_dt = train_full_dt, fold_ids = fold_ids,
+      target_col = target_col, task = task, classes = classes,
+      num_class = num_class, metric = metric, evaluator = best_evaluator,
+      best_params = best_params, extra_args = list(...), threads = threads,
+      seed = seed, state_cache = state_cache, shared_full = shared_full,
+      verbose = verbose
+    )
+  }
   calibrator <- fit_post_calibrator(
     y_true = cal_y_val,
     y_pred = cal_val_preds,
@@ -1382,31 +1397,44 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
     if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
     conf_fitness <- NA_real_
-    res_conf <- tryCatch(
-      apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
-      error = function(e) NULL
-    )
-    if (!is.null(res_conf)) {
-      conf_features <- extract_individual_features(res_conf$ind, target_col = target_col)
-      x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
+    preds_conf <- NULL
+    if (!is.null(fold_models) && length(fold_models) > 0) {
       preds_conf <- tryCatch(
-        get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
+        .predict_fold_models_bag(
+          fold_models, data.table::copy(confirmation_dt),
+          target_col = target_col, task = task, classes = NULL,
+          threads = threads, state_cache = state_cache
+        ),
         error = function(e) NULL
       )
-      if (!is.null(preds_conf)) {
-        y_conf <- confirmation_dt[[target_col]]
-        if (task == "multiclass") {
-          y_conf_enc <- encode_multiclass_target(y_conf, classes)
-          preds_conf <- format_multiclass_predictions(preds_conf, classes)
-          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
-        } else if (task == "classification") {
-          y_conf_enc <- encode_binary_target(y_conf)
-          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, threads = threads)
-        } else {
-          conf_fitness <- compute_metric(y_conf, preds_conf, task, metric, threads = threads)
-        }
-        best_ind$holdout_fitness <- conf_fitness
+    }
+    if (is.null(preds_conf)) {
+      res_conf <- tryCatch(
+        apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
+        error = function(e) NULL
+      )
+      if (!is.null(res_conf)) {
+        conf_features <- extract_individual_features(res_conf$ind, target_col = target_col)
+        x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
+        preds_conf <- tryCatch(
+          get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
+          error = function(e) NULL
+        )
       }
+    }
+    if (!is.null(preds_conf)) {
+      y_conf <- confirmation_dt[[target_col]]
+      if (task == "multiclass") {
+        y_conf_enc <- encode_multiclass_target(y_conf, classes)
+        preds_conf <- format_multiclass_predictions(preds_conf, classes)
+        conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
+      } else if (task == "classification") {
+        y_conf_enc <- encode_binary_target(y_conf)
+        conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, threads = threads)
+      } else {
+        conf_fitness <- compute_metric(y_conf, preds_conf, task, metric, threads = threads)
+      }
+      best_ind$holdout_fitness <- conf_fitness
     }
     if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
   }
@@ -1521,6 +1549,8 @@ evolve_features <- function(data, target_col, task = "classification",
     fitness_history = fitness_history,
     task = task,
     best_model = best_model,
+    fold_models = fold_models,
+    bag_folds = isTRUE(bag_folds),
     calibrator = calibrator,
     best_iteration = if (!is.null(target_iters)) target_iters else if (!is.null(best_ind$best_iteration)) best_ind$best_iteration else NULL,
     evaluator = best_evaluator,
