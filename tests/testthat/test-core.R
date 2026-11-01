@@ -2662,6 +2662,76 @@ test_that("compute_ts_refinement multiclass preserves precision on near-uniform 
   expect_equal(loss_probs, loss_logits, tolerance = 1e-6)
 })
 
+test_that("competition feature primitives (groupby_diff, groupby_median_diff, groupby_range_pos, groupby_rank, groupby_nunique, target_sd_encode, row_sd, row_na_count) work properly", {
+  set.seed(42)
+  dt_tr <- data.table::data.table(
+    cat1 = c(rep("A", 5), rep("B", 5), rep("C", 5)),
+    cat2 = c("x", "x", "y", "z", "z", "x", "y", "y", "y", "y", "p", "q", "r", "s", "t"),
+    num1 = c(10, 20, 30, 40, 50, 100, 110, 120, 130, 140, 1, 2, 3, 4, 5),
+    num2 = c(15, 25, 35, NA, 55, 105, 115, 125, 135, 145, 2, 4, 6, 8, 10),
+    num3 = c(NA, 10, 20, NA, 30, 50, 60, 70, 80, 90, 5, 5, 5, 5, 5),
+    target = c(1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 10, 11, 12, 13, 14)
+  )
+  dt_va <- data.table::data.table(
+    cat1 = c("A", "B", "UNSEEN"),
+    cat2 = c("x", "y", "z"),
+    num1 = c(25, 120, 30),
+    num2 = c(30, NA, 40),
+    num3 = c(NA, NA, 50),
+    target = c(2, 25, 12)
+  )
+
+  # 1. groupby_diff: x - group_mean
+  g_diff <- create_gene("groupby_diff", c("cat1", "num1"))
+  res_diff <- apply_gene(g_diff, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", global_unsupervised = FALSE)
+  expect_equal(res_diff$train[[g_diff$output_col]][1:5], c(-20, -10, 0, 10, 20))
+  expect_equal(res_diff$val[[g_diff$output_col]][1:2], c(-5, 0))
+
+  # 2. groupby_median_diff: x - group_median
+  g_mdiff <- create_gene("groupby_median_diff", c("cat1", "num1"))
+  res_mdiff <- apply_gene(g_mdiff, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", global_unsupervised = FALSE, validate_genes = FALSE)
+  expect_equal(res_mdiff$train[[g_mdiff$output_col]][1:5], c(-20, -10, 0, 10, 20))
+  expect_equal(res_mdiff$val[[g_mdiff$output_col]][1:2], c(-5, 0))
+
+  # 3. groupby_range_pos: (x - min) / (max - min) in [0, 1]
+  g_rpos <- create_gene("groupby_range_pos", c("cat1", "num1"))
+  res_rpos <- apply_gene(g_rpos, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", global_unsupervised = FALSE, validate_genes = FALSE)
+  expect_equal(res_rpos$train[[g_rpos$output_col]][1:5], c(0, 0.25, 0.5, 0.75, 1.0))
+  expect_equal(res_rpos$val[[g_rpos$output_col]][1:2], c(15 / 40, 0.5))
+
+  # 4. groupby_rank: within-group empirical percentile rank in [0, 1]
+  g_rnk <- create_gene("groupby_rank", c("cat1", "num1"))
+  res_rnk <- apply_gene(g_rnk, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", global_unsupervised = FALSE, validate_genes = FALSE)
+  expect_equal(res_rnk$train[[g_rnk$output_col]][1:5], c(0.1, 0.3, 0.5, 0.7, 0.9))
+  expect_true(all(res_rnk$val[[g_rnk$output_col]] >= 0 & res_rnk$val[[g_rnk$output_col]] <= 1))
+
+  # 5. groupby_nunique: distinct levels of cat2 per cat1 (A -> 3, B -> 2, C -> 5)
+  g_nu <- create_gene("groupby_nunique", c("cat1", "cat2"))
+  res_nu <- apply_gene(g_nu, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", global_unsupervised = FALSE, validate_genes = FALSE)
+  expect_equal(res_nu$train[[g_nu$output_col]], c(rep(3, 5), rep(2, 5), rep(5, 5)))
+  expect_equal(res_nu$val[[g_nu$output_col]], c(3, 2, 3)) # median(3, 2, 5) = 3 for UNSEEN
+
+  # 6. target_sd_encode: LOO target SD on train, full smoothed target SD on val
+  g_tsd <- create_gene("target_sd_encode", "cat1")
+  expect_true(is_supervised_transformer(g_tsd))
+  res_tsd <- apply_gene(g_tsd, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", validate_genes = FALSE)
+  expect_true(!is.null(res_tsd$gene$state$loo_train))
+  # Group B has much higher target SD (sd(10,20,30,40,50) = 15.81) than A or C (sd = 1.58)
+  expect_gt(res_tsd$val[[g_tsd$output_col]][2], res_tsd$val[[g_tsd$output_col]][1])
+  # LOO on train gives distinct values within group B depending on whether extreme (10/50) or middle (30) is held out
+  expect_gt(length(unique(res_tsd$train[[g_tsd$output_col]][6:10])), 1L)
+
+  # 7. row_sd and row_na_count
+  g_rsd <- create_gene("row_sd", c("num1", "num2", "num3"))
+  res_rsd <- apply_gene(g_rsd, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", validate_genes = FALSE)
+  expect_equal(res_rsd$train[[g_rsd$output_col]][2], stats::sd(c(20, 25, 10)))
+
+  g_rnac <- create_gene("row_na_count", c("num1", "num2", "num3"))
+  res_rnac <- apply_gene(g_rnac, data.table::copy(dt_tr), data.table::copy(dt_va), target_col = "target", validate_genes = FALSE)
+  expect_equal(res_rnac$train[[g_rnac$output_col]][1:5], c(1, 0, 0, 2, 0))
+  expect_equal(res_rnac$val[[g_rnac$output_col]], c(1, 2, 0))
+})
+
 
 
 

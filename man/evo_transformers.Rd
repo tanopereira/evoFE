@@ -33,6 +33,8 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{fourier_basis}}{Multi-component Fourier harmonic basis with data-adaptive robust normalization: paired sine and cosine dyadic harmonics (\code{comp_idx} 1--4, 1--6, or 1--8; orders 1, 2, 4, 8) across octave frequency scales and non-redundant phases.}
   \item{\code{row_min}}{Row-wise minimum across 2+ numeric columns (dealbreaker metric).}
   \item{\code{row_max}}{Row-wise maximum across 2+ numeric columns.}
+  \item{\code{row_sd}}{Row-wise standard deviation across 2+ numeric columns.}
+  \item{\code{row_na_count}}{Row-wise count of missing or non-finite values across 2+ numeric columns.}
   \item{\code{relative_rating}}{Difference between primary numeric column and mean of other columns (rater debiasing).}
   \item{\code{geometric_mean}}{Geometric mean across 2+ numeric columns with positive clamping.}
   \item{\code{harmonic_mean}}{Harmonic mean across 2+ numeric columns with positive clamping (soft bottleneck / rate mean).}
@@ -61,6 +63,11 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{groupby_quantile}}{Per-group Q1 or Q3 (\code{q} sampled from
     \{0.25, 0.75\}).}
   \item{\code{groupby_signed_log}}{\code{sign(value - group_mean) * log1p(|value - group_mean|)}.}
+  \item{\code{groupby_diff}}{Centered group residual: \code{value - group_mean}.}
+  \item{\code{groupby_median_diff}}{Robust centered group residual: \code{value - group_median}.}
+  \item{\code{groupby_range_pos}}{Within-group min-max position: \code{(value - group_min) / (group_max - group_min)} in \eqn{[0, 1]}.}
+  \item{\code{groupby_rank}}{Within-group empirical percentile rank in \eqn{[0, 1]}.}
+  \item{\code{groupby_nunique}}{Per-group count of distinct levels of a second categorical feature (\code{cat x cat -> numeric}).}
 }
 
 \strong{Supervised categorical encodings (categorical -> numeric, stateful)}
@@ -73,6 +80,7 @@ for the evolutionary feature-engineering search.  Every entry is an
     for multiclass tasks.}
   \item{\code{target_quantile_encode}}{Category target encoding using smoothed target
     quantiles (\code{q} sampled from \{0.25, 0.50, 0.75\}).}
+  \item{\code{target_sd_encode}}{Smoothed within-category target standard deviation encoding with Leave-One-Out training jackknife.}
   \item{\code{cat_interaction_target_encode}}{Smoothed mean-target encoding for joint
     Cartesian interaction of two categorical columns.}
   \item{\code{woe_encode}}{Weight of Evidence encoding for binary

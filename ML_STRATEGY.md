@@ -114,18 +114,23 @@ While LightGBM is blazingly fast, **models find and thrive on fundamentally diff
 | **`log_ratio` & `groupby_ratio`**| ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Moderate | Eliminates scale variance across subgroups, preventing depth-wise tree imbalance |
 | **`mst_score` & `deadwood`** | ⭐⭐⭐ Good | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | Continuous Euclidean density metric directly utilized by neural coordinate layers |
 | **`groupby_mean` (high card)** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Moderate | ⭐⭐ Low / Risky | Leaf-wise trees greedily isolate small pockets; NNs risk overfitting unnormalized shifts |
+| **`groupby_diff` / `groupby_median_diff`** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐ Strong | Centered group residuals ($x - \bar{x}_g$, $x - \tilde{x}_g$) isolate within-cohort anomalies while removing group baseline shifts |
+| **`groupby_range_pos` / `groupby_rank`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐⭐ Highest | Normalizes values to $[0, 1]$ within each cohort (min-max position or empirical percentile rank), ideal for both trees and NNs |
+| **`groupby_nunique`** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Good | Captures behavioral breadth (e.g. distinct merchants or categories visited per user/entity) |
+| **`target_sd_encode` (LOO)** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐ Good | Encodes within-category target volatility ($\text{SD}(y \mid c)$) with Leave-One-Out jackknife protection |
 | **`woe_encode`** | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Good | Linear in log-odds; matches XGBoost's Taylor expansion perfectly |
-| **`harmonic_mean` / `row_min`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | Packs a multi-column "weakest link" interaction into one column that a single split can use |
+| **`harmonic_mean` / `row_min` / `row_sd` / `row_na_count`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | Packs multi-column bottleneck, dispersion, and missingness patterns into single-split summary features |
 | **`numeric_freq`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐ Good | Turns repeated values (routes, price points) into a density signal without destroying numeric order |
 
 ### Ordinal, Likert & "Spiky" Numerics
 Converting Likert scales or repeated-value numerics (flight distances, price points) to categoricals rarely helps: it destroys order, adds subset-split noise in trees, and is ~collinear with the raw column. Keep them numeric and let evolution combine them with the row-wise transformers:
-- `row_min` / `row_max` — dealbreaker / best-aspect across a rating battery.
+- `row_min` / `row_max` / `row_sd` — dealbreaker, best-aspect, and within-row dispersion across a rating or sensor battery.
+- `row_na_count` — non-random missingness count across numeric feature subsets (often a top predictor in credit, medical, and survey data).
 - `harmonic_mean` (smooth bottleneck), `geometric_mean` (multiplicative utility), `pythagorean_imbalance` ($\text{AM} - \text{HM}$, rating polarization).
 - `relative_rating` — one item minus the mean of the others (rater-bias removal).
 - `numeric_freq` — count of each exact value (traffic/popularity proxy for spiky numerics).
 
-All of these are included in the `"basic"` and `"robust"` presets and run as fused OpenMP C++ kernels.
+All of these are included in the `"basic"` and `"robust"` presets.
 
 > [!CAUTION]
 > **The Consequence of Mono-Evaluator Exploration**:

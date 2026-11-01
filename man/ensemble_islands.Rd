@@ -15,6 +15,7 @@ ensemble_islands(
   stack_folds = NULL,
   stack_alpha = 0.5,
   rank_average = NULL,
+  bag_folds = NULL,
   seed = NULL,
   threads = NULL,
   verbose = TRUE,

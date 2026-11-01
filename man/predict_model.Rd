@@ -8,9 +8,9 @@
 \usage{
 predict_model(object, newdata, ...)
 
-\method{predict_model}{evo_recipe}(object, newdata, ...)
+\method{predict_model}{evo_recipe}(object, newdata, bag_folds = NULL, ...)
 
-\method{predict_model}{evo_ensemble}(object, newdata, ...)
+\method{predict_model}{evo_ensemble}(object, newdata, bag_folds = NULL, ...)
 }
 \arguments{
 \item{object}{An evo_recipe or evo_ensemble object containing trained model(s)}
@@ -18,6 +18,10 @@ predict_model(object, newdata, ...)
 \item{newdata}{A data.frame or data.table to make predictions on}
 
 \item{...}{Additional arguments (currently unused)}
+
+\item{bag_folds}{Optional logical. When \code{TRUE} (the default if \code{object} was
+trained with \code{bag_folds = TRUE}), averages predictions across the stored K-fold
+models rather than using only the single full-data refit model.}
 }
 \value{
 For binary classification and regression tasks a numeric vector of

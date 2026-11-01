@@ -412,3 +412,51 @@ evo_transformers$pythagorean_imbalance <- create_transformer(
   allow_replace = FALSE
 )
 
+evo_transformers$row_sd <- create_transformer(
+  name = "row_sd",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    n_rows <- nrow(data)
+    if (n_rows == 0L) return(numeric(0))
+    k <- length(gene$input_cols)
+    if (k < 2L) return(rep(0.0, n_rows))
+    cols_list <- lapply(gene$input_cols, function(c) {
+      v <- as.numeric(data[[c]])
+      v[!is.finite(v)] <- 0.0
+      v
+    })
+    ref <- cols_list[[1L]]
+    s1 <- numeric(n_rows)
+    s2 <- numeric(n_rows)
+    for (j in 2L:k) {
+      d <- cols_list[[j]] - ref
+      s1 <- s1 + d
+      s2 <- s2 + d * d
+    }
+    res <- sqrt(pmax(0.0, (s2 - (s1 * s1) / k) / (k - 1.0)))
+    res[!is.finite(res)] <- 0.0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rsd"),
+  allow_replace = FALSE
+)
+
+evo_transformers$row_na_count <- create_transformer(
+  name = "row_na_count",
+  type = "multivariate",
+  input_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    n_rows <- nrow(data)
+    if (n_rows == 0L || length(gene$input_cols) == 0L) return(rep(0.0, n_rows))
+    res <- numeric(n_rows)
+    for (c in gene$input_cols) {
+      v <- suppressWarnings(as.numeric(data[[c]]))
+      res <- res + as.numeric(!is.finite(v))
+    }
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rnac"),
+  allow_replace = FALSE
+)
+

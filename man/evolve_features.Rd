@@ -56,6 +56,8 @@ evolve_features(
   metacv_mode = NULL,
   record = FALSE,
   port = NULL,
+  test_data = NULL,
+  bag_folds = FALSE,
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )

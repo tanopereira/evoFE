@@ -80,7 +80,7 @@ evo_transformers$pooled_target_encode <- create_transformer(
     
     # Calculate category means, within-category variances, and counts
     dt <- data.table::data.table(x = x, y = y)
-    stats <- dt[, .(mean = mean(y, na.rm = TRUE), var = stats::var(y, na.rm = TRUE), n = .N), by = x]
+    stats <- dt[, .(mean = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), var = stats::var(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
     
     # Estimate pooled within-category variance (sigma^2)
     df_sum <- sum(stats$n - 1, na.rm = TRUE)
@@ -105,8 +105,15 @@ evo_transformers$pooled_target_encode <- create_transformer(
     
     mapping <- stats[, .(x, smoothed)]
     data.table::setkey(mapping, x)
+
+    mapped <- stats[dt, on = "x"]
+    n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
+    sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
+    loo_vals <- if (is.infinite(k)) rep(global_mean, length(y)) else (sum_loo + k * global_mean) / (n_loo + k)
+    loo_vals[is.na(loo_vals)] <- global_mean
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
     
-    list(mapping = mapping, global_mean = global_mean)
+    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -383,4 +390,72 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     res
   },
   name_generator = function(gene) .gene_col_name(gene, "cite")
+)
+
+# Target Standard Deviation Encoding (with Leave-One-Out jackknife SD on training data)
+evo_transformers$target_sd_encode <- create_transformer(
+  name = "target_sd_encode",
+  type = "supervised_unary",
+  input_type = "categorical",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(mapping = NULL, global_sd = 0, valid = FALSE))
+    }
+
+    global_mean <- mean(y, na.rm = TRUE)
+    if (is.na(global_mean)) global_mean <- 0
+    global_sd <- .safe_sd(y)
+    y_c <- y - global_mean
+
+    dt <- data.table::data.table(x = x, yc = y_c)
+    stats_dt <- dt[, .(
+      sum_yc = sum(yc, na.rm = TRUE),
+      sum_yc2 = sum(yc * yc, na.rm = TRUE),
+      n = sum(!is.na(yc))
+    ), by = x]
+
+    stats_dt[, raw_sd := ifelse(
+      n >= 2L,
+      sqrt(pmax(0.0, (sum_yc2 - (sum_yc * sum_yc) / n) / (n - 1.0))),
+      global_sd
+    )]
+    smoothing <- 10
+    stats_dt[, smoothed := (n * raw_sd + smoothing * global_sd) / (n + smoothing)]
+
+    mapping <- stats_dt[, .(x, smoothed)]
+    data.table::setkey(mapping, x)
+
+    mapped <- stats_dt[dt, on = "x"]
+    has_y <- !is.na(y_c)
+    n_loo <- pmax(0L, mapped$n - as.integer(has_y))
+    yc_clean <- ifelse(has_y, y_c, 0.0)
+    s1_loo <- mapped$sum_yc - yc_clean
+    s2_loo <- mapped$sum_yc2 - yc_clean * yc_clean
+    sd_loo <- ifelse(
+      n_loo >= 2L,
+      sqrt(pmax(0.0, (s2_loo - (s1_loo * s1_loo) / pmax(1L, n_loo)) / pmax(1.0, n_loo - 1.0))),
+      global_sd
+    )
+    loo_vals <- (n_loo * sd_loo + smoothing * global_sd) / (n_loo + smoothing)
+    loo_vals[!is.finite(loo_vals)] <- global_sd
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+    list(mapping = mapping, global_sd = global_sd, loo_train = loo_train)
+  },
+  apply_func = function(data, gene, state) {
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
+      return(rep(0, nrow(data)))
+    }
+    input_cols <- gene$input_cols
+    x <- data[[input_cols[1]]]
+    dt <- data.table::data.table(x = x)
+    res <- state$mapping[dt, on = "x"]$smoothed
+    res[is.na(res)] <- state$global_sd
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "tsd")
 )

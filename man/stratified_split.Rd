@@ -2,11 +2,26 @@
 % Please edit documentation in R/resampling.R
 \name{stratified_split}
 \alias{stratified_split}
-\title{Stratified or random splitting helper}
+\title{Stratified, group-aware, and importance-weighted splitting helper}
 \usage{
-stratified_split(y, ratio)
+stratified_split(y, ratio, group = NULL, weights = NULL)
+}
+\arguments{
+\item{y}{Target vector.}
+
+\item{ratio}{Numeric vector of length 2 (\code{c(train, val)}) or 3 (\code{c(train, val, holdout)}).}
+
+\item{group}{Optional vector of group IDs. When provided, all rows sharing a group ID
+are placed in the same split partition.}
+
+\item{weights}{Optional numeric vector of positive sampling weights for selecting
+validation/holdout rows (e.g. adversarial test-to-train density ratios).}
+}
+\value{
+Character vector of length \code{length(y)} with labels \code{"train"}, \code{"val"},
+  and optionally \code{"holdout"}.
 }
 \description{
-Stratified or random splitting helper
+Stratified, group-aware, and importance-weighted splitting helper
 }
 \keyword{internal}

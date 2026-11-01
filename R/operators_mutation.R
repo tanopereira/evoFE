@@ -365,7 +365,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         allowed_t <- allowed_transformers
       }
       if (task == "multiclass") {
-        allowed_t <- setdiff(allowed_t, c("target_encode", "pooled_target_encode"))
+        allowed_t <- setdiff(allowed_t, c("target_encode", "pooled_target_encode", "target_sd_encode"))
       } else {
         allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
       }
@@ -417,12 +417,12 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         } else if (t_def$type %in% c("unary", "supervised_unary")) {
           cols <- weighted_sample(available_cols, 1)
         } else if (t_def$type == "binary") {
-          allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff")) FALSE else TRUE
+          allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff", "groupby_nunique")) FALSE else TRUE
           if (!allow_rep && length(available_cols) < 2) next
           cols <- weighted_sample(available_cols, 2, replace = allow_rep)
         } else if (t_def$type == "multivariate") {
           if (length(available_cols) < 2) next
-          max_cols <- if (t_name %in% c("add", "multiply", "row_min", "row_max", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
+          max_cols <- if (t_name %in% c("add", "multiply", "row_min", "row_max", "row_sd", "row_na_count", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
             min(5, length(available_cols))
           } else if (t_name == "concat") {
             min(3, length(available_cols))
