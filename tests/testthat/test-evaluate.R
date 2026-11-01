@@ -259,6 +259,31 @@ test_that("evolve_features preserves configured epochs for final realmlp model w
   expect_equal(recipe$best_individual$best_iteration, recipe$best_iteration)
   expect_true(!is.null(recipe$best_model))
   expect_equal(recipe$best_model$n_epochs, 100L)
+  expect_equal(recipe$best_model$best_iteration, recipe$best_iteration)
+  expect_equal(recipe$best_model$best_epoch, recipe$best_iteration)
+
+  # Verify ensemble_islands also stops lazy island refits at each island's validated best_iteration
+  # while preserving the 100-epoch coslog schedule horizon
+  recipe_isl <- evolve_features(
+    data = df,
+    target_col = "y",
+    task = "regression",
+    evaluator = "realmlp",
+    generations = 1,
+    pop_size = 2,
+    islands = 2,
+    evaluation_strategy = "split",
+    split_ratio = c(0.7, 0.3, 0),
+    epochs = 100,
+    early_stopping_rounds = 3,
+    verbose = FALSE,
+    seed = 42
+  )
+  ens <- ensemble_islands(recipe_isl, data = df, method = "equal", verbose = FALSE)
+  for (nm in names(ens$active_models)) {
+    expect_equal(ens$active_models[[nm]]$n_epochs, 100L)
+    expect_equal(ens$active_models[[nm]]$best_iteration, ens$active_recipes[[nm]]$best_iteration)
+  }
 })
 
 test_that("evolve_features scales best_iteration by data size for tree evaluators", {

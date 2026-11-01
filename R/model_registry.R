@@ -289,7 +289,7 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   "verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design",
   "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data",
   "realmlp_device", "n_cycles", "realmlp_n_cycles", "realmlp_lr",
-  "realmlp_epochs", "realmlp_seed", "hidden_dim",
+  "realmlp_epochs", "realmlp_seed", "hidden_dim", "stop_epoch",
   "nthread", "nthreads", "num_threads", "n_jobs", "threads",
   "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs",
   "n_epochs", "iterations", "n_iterations"
@@ -1254,6 +1254,12 @@ register_evaluator(
 
     use_es <- early_stopping_rounds > 0L && !is.null(x_val) && !is.null(y_val)
     es_rounds_to_pass <- if (use_es) early_stopping_rounds else 0L
+    stop_epoch_val <- if (!use_es && !is.null(extra_params$stop_epoch) &&
+                          is.numeric(extra_params$stop_epoch) && extra_params$stop_epoch > 0) {
+      as.integer(min(extra_params$stop_epoch, n_epochs))
+    } else {
+      0L
+    }
 
     x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
@@ -1289,7 +1295,8 @@ register_evaluator(
       verbose = verbose_int, num_classes = target$num_classes_int,
       threads = as.integer(threads), metric = metric_arg,
       hidden_dim = hidden_dim_val,
-      n_cycles = n_cycles_val
+      n_cycles = n_cycles_val,
+      stop_epoch = stop_epoch_val
     )
 
     preds <- NULL
@@ -1312,6 +1319,8 @@ register_evaluator(
       as.integer(fit_res$best_epoch)
     } else if (use_es && !is.null(fit_res$stopped_epoch) && fit_res$stopped_epoch > 0) {
       as.integer(fit_res$stopped_epoch)
+    } else if (stop_epoch_val > 0L) {
+      stop_epoch_val
     } else {
       NULL
     }
@@ -1322,6 +1331,8 @@ register_evaluator(
         sprintf("stopped at epoch %d, best epoch %d (patience=%d)", fit_res$stopped_epoch, fit_res$best_epoch, early_stopping_rounds)
       } else if (use_es) {
         sprintf("best epoch %d (patience=%d)", fit_res$best_epoch, early_stopping_rounds)
+      } else if (stop_epoch_val > 0L && stop_epoch_val < n_epochs) {
+        sprintf("target best epoch %d/%d", stop_epoch_val, n_epochs)
       } else {
         "OFF"
       }

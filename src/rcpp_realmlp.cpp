@@ -435,6 +435,7 @@ inline MetricResult compute_val_metric(
 //' @param metric String: validation metric to optimize and report.
 //' @param hidden_dim Integer: hidden layer dimension (default 256).
 //' @param n_cycles Integer: number of cycles in the coslog schedule (default 4; 0 = auto-scale based on epochs).
+//' @param stop_epoch Integer: optional target stopping epoch (<= n_epochs) when refitting without validation while preserving the n_epochs coslog schedule horizon (default 0 = run all n_epochs).
 //' @return A List containing model weights, training statistics, and feature importances.
 // [[Rcpp::export]]
 List rcpp_realmlp_train(NumericMatrix x_train,
@@ -452,7 +453,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
                         int threads = 1,
                         std::string metric = "default",
                         int hidden_dim = 256,
-                        int n_cycles = 4) {
+                        int n_cycles = 4,
+                        int stop_epoch = 0) {
 
   int N = x_train.nrow();
   int D = x_train.ncol();
@@ -612,20 +614,23 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   for (int i = 0; i < N; ++i) perm[i] = i;
 
 
+  int max_epochs = (stop_epoch > 0 && stop_epoch < n_epochs) ? stop_epoch : n_epochs;
+
   double best_val_score = std::numeric_limits<double>::quiet_NaN();
   std::string val_metric_nm = "Val metric";
   RealMLPModel::StateSnapshot best_snapshot;
   bool has_best_snapshot = false;
   int no_improve_epochs = 0;
   bool stopped_early = false;
-  int stopped_epoch = n_epochs;
-  int best_epoch = n_epochs;
+  int stopped_epoch = max_epochs;
+  int best_epoch = max_epochs;
 
   int log_interval = (verbose >= 3) ? 1 : ((verbose >= 2) ? 32 : 64);
 
   if (verbose >= 1) {
     std::string es_info = (early_stopping_rounds > 0 && has_val) ?
-      (" (early stopping patience=" + std::to_string(early_stopping_rounds) + ")") : "";
+      (" (early stopping patience=" + std::to_string(early_stopping_rounds) + ")") :
+      ((max_epochs < n_epochs) ? (" (target best epoch=" + std::to_string(max_epochs) + ")") : "");
     std::string cycle_info = (n_cycles <= 0) ?
       ("cycles: " + std::to_string(actual_cycles) + " [auto]") :
       ("cycles: " + std::to_string(actual_cycles));
@@ -654,7 +659,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   double t_shuf_s = 0.0, t_emb_fwd_s = 0.0, t_mlp_fwd_s = 0.0, t_loss_s = 0.0;
   double t_mlp_bwd_s = 0.0, t_emb_bwd_s = 0.0, t_adam_mlp_s = 0.0, t_imp_s = 0.0;
 
-  for (int epoch = 0; epoch < n_epochs; ++epoch) {
+  for (int epoch = 0; epoch < max_epochs; ++epoch) {
     auto t_sh0 = std::chrono::high_resolution_clock::now();
     // Shuffle dataset once per epoch: column-contiguous for hardware prefetching
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
@@ -907,7 +912,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     bool should_log = (verbose >= 1) && (
       cur_epoch % log_interval == 0 ||
       cur_epoch == 1 ||
-      cur_epoch == n_epochs ||
+      cur_epoch == max_epochs ||
       (verbose >= 2 && is_best)
     );
 

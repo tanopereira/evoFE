@@ -580,9 +580,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         list()
       }
       final_args_i <- utils::modifyList(base_extra, list(...))
-      if (unwrap_evaluator(eval_i) == "realmlp") {
-        final_args_i <- apply_iteration_target(final_args_i, NULL, eval_i)
-      } else if (!is.null(ind_i$best_iteration) && is.numeric(ind_i$best_iteration) &&
+      if (!is.null(ind_i$best_iteration) && is.numeric(ind_i$best_iteration) &&
           is.finite(ind_i$best_iteration) && ind_i$best_iteration > 0) {
         total_data_size <- nrow(x_full)
         training_size <- if (!is.null(ind_i$train_size) && is.numeric(ind_i$train_size) && ind_i$train_size > 0) {
@@ -598,6 +596,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
           as.integer(ind_i$best_iteration)
         }
         final_args_i <- apply_iteration_target(final_args_i, target_iters, eval_i)
+      } else if (unwrap_evaluator(eval_i) == "realmlp") {
+        final_args_i <- apply_iteration_target(final_args_i, NULL, eval_i)
       }
 
       final_eval_i <- unwrap_evaluator(eval_i)

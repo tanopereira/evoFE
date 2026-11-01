@@ -537,6 +537,9 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
   if (identical(unwrapped, "realmlp")) {
     args$early_stopping_rounds <- 0L
     args$early_stopping_round <- 0L
+    if (!is.null(target_iters) && is.numeric(target_iters) && !is.na(target_iters) && target_iters > 0) {
+      args$stop_epoch <- as.integer(target_iters)
+    }
     return(args)
   }
   if (is.null(target_iters) || !is.numeric(target_iters) || is.na(target_iters) || target_iters <= 0) {
