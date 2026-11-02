@@ -184,18 +184,23 @@ strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.glo
 #' @param allowed_transformers A character vector of allowed transformer names,
 #'   or NULL/"all" to allow all.
 #' @param mask_temp_factor Numeric > 0. Temperature scaling factor applied to
-#'   feature importances during active mask initialization.  Higher values
-#'   flatten the importance distribution (more uniform sampling); lower values
-#'   concentrate sampling on the highest-importance features.  Default
-#'   \code{0.5}.
+#'   feature importances during active mask initialization when \code{mask_raw_at_init = TRUE}.
+#'   Higher values flatten the importance distribution (more uniform sampling); lower values
+#'   concentrate sampling on the highest-importance features. Default \code{0.5}.
+#' @param mask_raw_at_init Logical. If TRUE, samples active raw feature masks during population
+#'   initialization based on baseline importances. Default \code{FALSE} (every individual starts with
+#'   100\% of raw features active so candidate genes are tested fairly on the full feature set).
 #' @return A list of \code{evo_individual} objects of length \code{pop_size}.
 #'   The first individual is a baseline with no genes; the remaining
 #'   individuals each carry \code{initial_genes} randomly generated genes.
 #' @export
-initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0), initial_genes = 2, task = "classification", importances = NULL, allowed_transformers = NULL, mask_temp_factor = 0.5) {
+initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0),
+                                  initial_genes = 2, task = "classification", importances = NULL,
+                                  allowed_transformers = NULL, mask_temp_factor = 0.5,
+                                  mask_raw_at_init = FALSE) {
   pop <- list()
   for (i in 1:pop_size) {
-    if (i == 1) {
+    if (i == 1 || !isTRUE(mask_raw_at_init)) {
       ind <- create_individual(
         genes = list(),
         numeric_cols = numeric_cols,

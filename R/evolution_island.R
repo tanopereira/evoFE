@@ -12,6 +12,7 @@
 #' @param island_baseline_inds List of baseline individuals per island
 #' @param allowed_transformers Allowed transformer list or character vector
 #' @param mask_temp_factor Feature mask sampling temperature
+#' @param mask_raw_at_init Logical. Whether to mask raw features during population initialization
 #' @param seed Optional random seed
 #' @return List of island populations
 #' @noRd
@@ -19,6 +20,7 @@ initialize_island_populations <- function(islands, pop_size, numeric_cols, categ
                                           datetime_cols = NULL, task = "classification",
                                           baseline_ind = NULL, island_baseline_inds = list(),
                                           allowed_transformers = "all", mask_temp_factor = 0.5,
+                                          mask_raw_at_init = FALSE,
                                           seed = NULL) {
   pop_list <- list()
   for (j in seq_len(islands)) {
@@ -32,7 +34,8 @@ initialize_island_populations <- function(islands, pop_size, numeric_cols, categ
       datetime_cols = datetime_cols,
       initial_genes = 2, task = task, importances = baseline_ind$importances,
       allowed_transformers = trans_j,
-      mask_temp_factor = mask_temp_factor
+      mask_temp_factor = mask_temp_factor,
+      mask_raw_at_init = mask_raw_at_init
     )
     if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]])) {
       pop_list[[j]][[1]] <- island_baseline_inds[[j]]

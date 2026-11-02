@@ -105,18 +105,33 @@ test_that("initialize_population creates baseline and importance-guided populati
   cols <- c("x1", "x2", "x3", "x4")
   imps <- c(x1 = 0.5, x2 = 0.5, x3 = 0.0, x4 = 0.0)
   
-  # 1. Verify individual 1 (baseline) is indeed all active
-  pop <- initialize_population(
+  # 1. Verify that by default (mask_raw_at_init = FALSE), EVERY individual has 100% raw features
+  pop_default <- initialize_population(
+    pop_size = 3,
+    numeric_cols = cols,
+    categorical_cols = character(0),
+    initial_genes = 0,
+    importances = imps,
+    mask_temp_factor = 0.5,
+    mask_raw_at_init = FALSE
+  )
+  expect_equal(pop_default[[1]]$numeric_cols, cols)
+  expect_equal(pop_default[[2]]$numeric_cols, cols)
+  expect_equal(pop_default[[3]]$numeric_cols, cols)
+  
+  # 2. When mask_raw_at_init = TRUE, individual 1 is 100% and individual 2+ is importance-guided
+  pop_masked <- initialize_population(
     pop_size = 2,
     numeric_cols = cols,
     categorical_cols = character(0),
     initial_genes = 0,
     importances = imps,
-    mask_temp_factor = 0.5
+    mask_temp_factor = 0.5,
+    mask_raw_at_init = TRUE
   )
-  expect_equal(pop[[1]]$numeric_cols, cols)
+  expect_equal(pop_masked[[1]]$numeric_cols, cols)
   
-  # 2. Run statistical check on mask initialization over 100 trials
+  # 3. Run statistical check on mask initialization over 100 trials with mask_raw_at_init = TRUE
   x1_active_count <- 0
   x3_active_count <- 0
   
@@ -127,7 +142,8 @@ test_that("initialize_population creates baseline and importance-guided populati
       categorical_cols = character(0),
       initial_genes = 0,
       importances = imps,
-      mask_temp_factor = 0.5
+      mask_temp_factor = 0.5,
+      mask_raw_at_init = TRUE
     )
     active <- pop_trial[[2]]$numeric_cols
     if ("x1" %in% active) x1_active_count <- x1_active_count + 1

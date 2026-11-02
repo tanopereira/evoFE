@@ -110,12 +110,16 @@
 #' @param recalculate_mask_prob Numeric in \code{[0, 1]}. Probability that a
 #'   mutation event completely recalculates the individual's active raw feature
 #'   mask from scratch using feature importances and a sigmoid inclusion
-#'   probability.  Default \code{0.05}.
+#'   probability.  Default \code{0.0} (to prevent sudden bulk feature loss during mutation).
 #' @param mask_temp_factor Numeric > 0. Temperature scaling factor applied to
 #'   feature importances during active mask initialization and recalculation.
 #'   Higher values flatten the importance distribution (more uniform sampling);
 #'   lower values concentrate sampling on the highest-importance features.
 #'   Default \code{0.5}.
+#' @param mask_raw_at_init Logical. If TRUE, samples active raw feature masks
+#'   during population initialization based on baseline importances. Default
+#'   \code{FALSE} (every individual starts with 100\% of raw features active so
+#'   candidate genes are tested fairly on the full feature set).
 #' @param row_split_islands Logical. If TRUE, splits data rows across islands (default FALSE).
 #' @param per_island_validation Logical. If TRUE, evaluates candidate recipes using each island's specific row split (default FALSE).
 #' @param metacv_selection Strategy to select the winning recipe after MetaCV evolution: \code{"fitness"}
@@ -194,8 +198,9 @@ evolve_features <- function(data, target_col, task = "classification",
                             migration_temperature = 1.0,
                             pull_stagnation_threshold = 3,
                             raw_toggle_prob = 0.15,
-                            recalculate_mask_prob = 0.05,
+                            recalculate_mask_prob = 0.0,
                             mask_temp_factor = 0.5,
+                            mask_raw_at_init = getOption("evoFE.mask_raw_at_init", FALSE),
                             row_split_islands = FALSE,
                             per_island_validation = FALSE,
                             metacv_selection = c("fitness", "tournament", "headroom"),
@@ -1011,7 +1016,8 @@ evolve_features <- function(data, target_col, task = "classification",
       datetime_cols = datetime_cols, initial_genes = 2,
       task = task, importances = baseline_ind$importances,
       allowed_transformers = allowed_transformers,
-      mask_temp_factor = mask_temp_factor
+      mask_temp_factor = mask_temp_factor,
+      mask_raw_at_init = mask_raw_at_init
     )
     pop[[1]] <- baseline_ind
     pop_init <- pop
@@ -1026,7 +1032,9 @@ evolve_features <- function(data, target_col, task = "classification",
       datetime_cols = datetime_cols, task = task,
       baseline_ind = baseline_ind, island_baseline_inds = island_baseline_inds,
       allowed_transformers = allowed_transformers,
-      mask_temp_factor = mask_temp_factor, seed = seed
+      mask_temp_factor = mask_temp_factor,
+      mask_raw_at_init = mask_raw_at_init,
+      seed = seed
     )
     pop_init <- NULL
     pop_list_init <- pop_list
