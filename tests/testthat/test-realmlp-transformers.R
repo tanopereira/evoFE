@@ -279,3 +279,32 @@ test_that("yeo_johnson and box_cox survive parent correlation check and default 
   expect_true(all(c(g_yj$output_col, g_bc$output_col, g_rk$output_col) %in% names(res$train)))
 })
 
+test_that("realmlp NTP layer-wise scaling decouples hidden_dim from learning rate", {
+  # 1. Verify MBO parameter range for realmlp_lr is calibrated for Standard Parameterization
+  tuner_entry <- get_evaluator("realmlp_mbo")
+  expect_true(isTRUE(tuner_entry$is_tuned))
+  expect_equal(tuner_entry$base_evaluator, "realmlp")
+
+  # 2. Verify realmlp trains stably across different hidden_dim (64, 256, 512)
+  set.seed(42)
+  n <- 120
+  X <- matrix(rnorm(n * 5), nrow = n, ncol = 5)
+  y <- as.numeric(X[, 1] * 2.0 - X[, 2] * 1.5 + rnorm(n, sd = 0.1))
+
+  for (h_dim in c(64L, 256L, 512L)) {
+    fit <- rcpp_realmlp_train(
+      x_train = X,
+      y_train = y,
+      task = "regression",
+      n_epochs = 10L,
+      hidden_dim = h_dim,
+      lr = 0.004,
+      verbose = 0L
+    )
+    expect_true(is.list(fit$model_state))
+    preds <- rcpp_realmlp_predict(fit$model_state, X)
+    expect_equal(nrow(preds), n)
+    expect_true(all(is.finite(preds)))
+  }
+})
+

@@ -613,6 +613,12 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   std::vector<int> perm(N);
   for (int i = 0; i < N; ++i) perm[i] = i;
 
+  // NTP layer-wise learning rate scaling factors (anchored to reference width 256.0):
+  // Decouples effective activation step size from hidden_dim and in_dim so that
+  // hyperparameter tuning (e.g. MBO varying hidden_dim) explores orthogonal dimensions.
+  constexpr double ref_dim = 256.0;
+  double lr_mult_w1 = std::sqrt(ref_dim / static_cast<double>(std::max(1, embed_dim)));
+  double lr_mult_whidden = std::sqrt(ref_dim / static_cast<double>(std::max(1, hidden_dim)));
 
   int max_epochs = (stop_epoch > 0 && stop_epoch < n_epochs) ? stop_epoch : n_epochs;
 
@@ -842,34 +848,34 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 #pragma omp section
         {
           model.front_scale.update_serial(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
-          model.W1.update_serial(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W1.update_serial(ws.grad_W1, cur_lr * lr_mult_w1, beta1, beta2, eps, b1_corr, b2_corr);
           model.b1.update_serial(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
 #pragma omp section
         {
-          model.W2.update_serial(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W2.update_serial(ws.grad_W2, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
           model.b2.update_serial(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
 #pragma omp section
         {
-          model.W3.update_serial(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W3.update_serial(ws.grad_W3, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
           model.b3.update_serial(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
 #pragma omp section
         {
-          model.W4.update_serial(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W4.update_serial(ws.grad_W4, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
           model.b4.update_serial(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
       }
 #else
       model.front_scale.update_serial(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W1.update_serial(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W1.update_serial(ws.grad_W1, cur_lr * lr_mult_w1, beta1, beta2, eps, b1_corr, b2_corr);
       model.b1.update_serial(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W2.update_serial(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W2.update_serial(ws.grad_W2, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
       model.b2.update_serial(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W3.update_serial(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W3.update_serial(ws.grad_W3, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
       model.b3.update_serial(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W4.update_serial(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W4.update_serial(ws.grad_W4, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
       model.b4.update_serial(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
 #endif
       auto t_ad1 = std::chrono::high_resolution_clock::now();

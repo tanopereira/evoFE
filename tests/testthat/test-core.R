@@ -1,3 +1,5 @@
+old_red_opt <- getOption("evoFE.redundancy_cor_threshold")
+withr::defer(options(evoFE.redundancy_cor_threshold = old_red_opt), teardown_env())
 options(evoFE.redundancy_cor_threshold = 1.0)
 
 test_that("Gene creation and formula representation works", {

@@ -92,7 +92,8 @@ register_evaluator <- function(name, train_func, predict_func, base_evaluator = 
     predict_func = predict_func,
     base_evaluator = base_evaluator,
     cleanup_func = cleanup_func,
-    traits = traits
+    traits = traits,
+    is_tuned = !is.null(base_evaluator) && is.character(base_evaluator) && length(base_evaluator) == 1 && nzchar(base_evaluator) && base_evaluator != name
   )
   assign(name, entry, envir = evo_evaluators)
   invisible(entry)
