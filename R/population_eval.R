@@ -23,23 +23,12 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
 
   for (i in seq_along(pop)) {
     if (!is.na(pop[[i]]$fitness)) {
-      if (verbose && !is.null(ind_indices)) {
+      if (verbose && identical(fidelity_tag, ":lf") && !is.null(ind_indices)) {
         ind_idx <- if (length(ind_indices) >= i) ind_indices[i] else i
-        is_lf <- identical(fidelity_tag, ":lf")
-        if (is_lf) {
-          tag_str <- " [MF Screen]"
-          score_lbl <- "Score"
-          if (!is.null(island)) {
-            message(sprintf("  [Island %d]%s Individual %d -> %s: %.4f (prior full-fidelity best)", island, tag_str, ind_idx, score_lbl, pop[[i]]$fitness))
-          } else {
-            message(sprintf("  %s Individual %d -> %s: %.4f (prior full-fidelity best)", trimws(tag_str), ind_idx, score_lbl, pop[[i]]$fitness))
-          }
+        if (!is.null(island)) {
+          message(sprintf("  [Island %d] [MF Screen] Individual %d -> Score: %.4f (prior full-fidelity best)", island, ind_idx, pop[[i]]$fitness))
         } else {
-          if (!is.null(island)) {
-            message(sprintf("  [Island %d] Tested Individual %d -> Fitness: %.4f (prior full-fidelity best)", island, ind_idx, pop[[i]]$fitness))
-          } else {
-            message(sprintf("  Tested Individual %d -> Fitness: %.4f (prior full-fidelity best)", ind_idx, pop[[i]]$fitness))
-          }
+          message(sprintf("  [MF Screen] Individual %d -> Score: %.4f (prior full-fidelity best)", ind_idx, pop[[i]]$fitness))
         }
       }
       next
@@ -274,7 +263,7 @@ evaluate_pop_mf <- function(pop, data, target_col, task, cv_folds, evaluation_st
   }
 
   if (!mf_on || (is.null(lf_shared_folds) && is.null(lf_shared_splits))) {
-    return(.do_eval(pop, shared_splits, shared_folds, shared_full, "", verbose, running_best_fitness, indices = seq_along(pop)))
+    return(.do_eval(pop, shared_splits, shared_folds, shared_full, "", verbose, running_best_fitness, indices = NULL))
   }
 
   rb_in <- running_best_fitness
