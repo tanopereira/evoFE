@@ -119,6 +119,41 @@ test_that("multi_fidelity runs and promotes at full fidelity", {
   expect_lte(best$fitness, Inf)
 })
 
+test_that("multi_fidelity displays verbose progress when verbose = TRUE", {
+  skip_on_cran()
+  set.seed(42)
+  n <- 100
+  d <- data.table::data.table(
+    x1 = rnorm(n),
+    x2 = runif(n),
+    y = rnorm(n)
+  )
+
+  msgs <- character(0)
+  recipe <- withCallingHandlers({
+    evolve_features(
+      data = d, target_col = "y", task = "regression",
+      generations = 2, pop_size = 4, cv_folds = 2,
+      evaluation_strategy = "cv", multi_fidelity = TRUE,
+      mf_sample_frac = 0.5, mf_warmup_frac = 0.5, mf_promote_frac = 0.5,
+      evaluator = "lightgbm", verbose = TRUE
+    )
+  }, message = function(m) {
+    msgs <<- c(msgs, conditionMessage(m))
+    invokeRestart("muffleMessage")
+  })
+
+  expect_s3_class(recipe, "evo_recipe")
+  all_text <- paste(msgs, collapse = "\n")
+  expect_match(all_text, "Multi-Fidelity: screening on")
+  expect_match(all_text, "Multi-Fidelity Screening")
+  expect_match(all_text, "\\[MF Screen\\]")
+  expect_match(all_text, "\\[MF Promotion\\] Top 2/4 candidates promoted")
+  expect_match(all_text, "\\[MF Filtered\\] 2 candidates filtered out")
+  expect_match(all_text, "Full-Fidelity Evaluation \\(2 promoted candidates")
+  expect_match(all_text, "Warmup screening complete")
+})
+
 test_that("invalid new arguments produce clear errors", {
   d <- data.frame(x = 1:50, y = rnorm(50))
   expect_error(

@@ -748,7 +748,7 @@ cat("Competition submission file generated successfully!\n")
 | **Model Diversity** | Single evaluator misses neural/scale features | Tri-Evaluator MetaCV Exploration | 3 fast MetaCV passes with `allowed_transformers = unsup_t` |
 | **CV Runtime** | 1M+ rows, 5-fold CV takes hours | Switch to MetaCV (1 fold per island) | `evaluation_strategy = "metacv"` |
 | **Row Count** | 5M+ rows, RAM or CPU exhaustion | Split rows across islands | `row_split_islands = TRUE, islands = 6` |
-| **Early Generations**| Bad recipes waste full CV time | Subsample rows during warmup | `multi_fidelity = TRUE, mf_sample_frac = 0.3` |
+| **Early Generations**| Bad recipes waste full CV time | Subsample rows during warmup with live progress | `multi_fidelity = TRUE, mf_sample_frac = 0.3, mf_promote_frac = 0.5` |
 | **Manifold / UMAP** | UMAP & MST take $O(N^2)$ time | C++ multi-threaded landmark cap | `max_clustering_size = 25000` (or `50000`) |
 | **RealMLP Speed** | Small batch size stalls OpenMP threads | Scale mini-batch size | `batch_size = 2048` or `4096` |
 | **RealMLP Memory**| 150+ features blow up PBLD embeddings | Aggressive feature parsimony | `complexity_penalty = 0.3, complexity_target = "all_features"` |

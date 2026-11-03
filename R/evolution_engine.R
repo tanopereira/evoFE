@@ -36,7 +36,8 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
                                    metric, complexity_penalty, complexity_mode,
                                    complexity_floor, complexity_target, baseline_ind,
                                    cv_strategy, time_col, group_col, multi_fidelity,
-                                   mf_warmup_gens, mf_shared_splits, mf_shared_folds, mf_shared_full,
+                                   mf_warmup_gens, mf_promote_frac = 0.5,
+                                   mf_shared_splits, mf_shared_folds, mf_shared_full,
                                    record, viewer, evolution_log, global_best_fitness,
                                    generations_without_improvement, early_stopping_generations,
                                    generations, pop_size, dynamic_population,
@@ -44,10 +45,18 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
                                    current_pop_size, crossover_type, allowed_transformers,
                                    raw_toggle_prob, recalculate_mask_prob, historical_best_genes, ...) {
   if (verbose) {
-    if (global_best_fitness > -Inf) {
-      message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
+    if (multi_fidelity && g == mf_warmup_gens + 1L) {
+      message("\n*** [Multi-Fidelity] Warmup screening complete. Switching to 100% full-fidelity evaluation for remaining generations. ***")
+    }
+    mf_info_str <- if (multi_fidelity && g <= mf_warmup_gens) {
+      sprintf(" [Multi-Fidelity Warmup: Gen %d/%d]", g, mf_warmup_gens)
     } else {
-      message(sprintf("\n--- Generation %d / %d ---", g, generations))
+      ""
+    }
+    if (global_best_fitness > -Inf) {
+      message(sprintf("\n--- Generation %d / %d%s (Current Best Fitness: %.4f) ---", g, generations, mf_info_str, global_best_fitness))
+    } else {
+      message(sprintf("\n--- Generation %d / %d%s ---", g, generations, mf_info_str))
     }
     for (i in seq_along(pop)) {
       fit_str <- if (is.na(pop[[i]]$fitness)) "Unevaluated" else sprintf("%.4f", pop[[i]]$fitness)
@@ -72,7 +81,8 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
     cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
     mf_on = multi_fidelity && g <= mf_warmup_gens,
     lf_shared_splits = mf_shared_splits,
-    lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
+    lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full,
+    mf_promote_frac = mf_promote_frac, ...
   )
   pop <- eval_res$pop
   running_best_fitness <- eval_res$running_best_fitness
@@ -291,7 +301,8 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
                                   metric, complexity_penalty, complexity_mode,
                                   complexity_floor, complexity_target, island_baseline_inds, baseline_ind,
                                   cv_strategy, time_col, group_col, multi_fidelity,
-                                  mf_warmup_gens, mf_shared_splits, mf_island_shared_splits,
+                                  mf_warmup_gens, mf_promote_frac = 0.5,
+                                  mf_shared_splits, mf_island_shared_splits,
                                   mf_shared_folds, mf_island_shared_folds, mf_shared_full,
                                   record, viewer, evolution_log, global_best_fitness,
                                   global_best_individual, best_ind_source,
@@ -309,10 +320,18 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
   prev_global_best_fitness <- global_best_fitness
 
   if (verbose) {
-    if (global_best_fitness > -Inf) {
-      message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
+    if (multi_fidelity && g == mf_warmup_gens + 1L) {
+      message("\n*** [Multi-Fidelity] Warmup screening complete. Switching to 100% full-fidelity evaluation for remaining generations. ***")
+    }
+    mf_info_str <- if (multi_fidelity && g <= mf_warmup_gens) {
+      sprintf(" [Multi-Fidelity Warmup: Gen %d/%d]", g, mf_warmup_gens)
     } else {
-      message(sprintf("\n--- Generation %d / %d ---", g, generations))
+      ""
+    }
+    if (global_best_fitness > -Inf) {
+      message(sprintf("\n--- Generation %d / %d%s (Current Best Fitness: %.4f) ---", g, generations, mf_info_str, global_best_fitness))
+    } else {
+      message(sprintf("\n--- Generation %d / %d%s ---", g, generations, mf_info_str))
     }
   }
 
@@ -349,7 +368,8 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
       mf_on = multi_fidelity && g <= mf_warmup_gens,
       lf_shared_splits = if (row_split_islands || evaluation_strategy == "metacv") mf_island_shared_splits[[j]] else mf_shared_splits,
       lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
-      lf_shared_full = mf_shared_full, ...
+      lf_shared_full = mf_shared_full,
+      mf_promote_frac = mf_promote_frac, ...
     )
     pop_list[[j]] <- eval_res$pop
 
@@ -746,7 +766,8 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
                                metric, complexity_penalty, complexity_mode,
                                complexity_floor, complexity_target, island_baseline_inds, baseline_ind,
                                cv_strategy, time_col, group_col, multi_fidelity,
-                               mf_warmup_frac, mf_shared_splits, mf_island_shared_splits,
+                               mf_warmup_frac, mf_promote_frac = 0.5,
+                               mf_shared_splits, mf_island_shared_splits,
                                mf_shared_folds, mf_island_shared_folds, mf_shared_full,
                                record, viewer, evolution_log,
                                early_stopping_generations, dynamic_population,
@@ -783,6 +804,7 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         complexity_target = complexity_target, baseline_ind = baseline_ind,
         cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
         multi_fidelity = multi_fidelity, mf_warmup_gens = mf_warmup_gens,
+        mf_promote_frac = mf_promote_frac,
         mf_shared_splits = mf_shared_splits, mf_shared_folds = mf_shared_folds,
         mf_shared_full = mf_shared_full, record = record, viewer = viewer,
         evolution_log = evolution_log, global_best_fitness = global_best_fitness,
@@ -827,7 +849,8 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
       cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
       mf_on = multi_fidelity && (length(fitness_history) <= mf_warmup_gens),
       lf_shared_splits = mf_shared_splits,
-      lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full, ...
+      lf_shared_folds = mf_shared_folds, lf_shared_full = mf_shared_full,
+      mf_promote_frac = mf_promote_frac, ...
     )
     pop <- eval_res$pop
     fitness_vals <- sapply(pop, function(ind) ind$fitness)
@@ -883,6 +906,7 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         island_baseline_inds = island_baseline_inds, baseline_ind = baseline_ind,
         cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
         multi_fidelity = multi_fidelity, mf_warmup_gens = mf_warmup_gens,
+        mf_promote_frac = mf_promote_frac,
         mf_shared_splits = mf_shared_splits,
         mf_island_shared_splits = mf_island_shared_splits,
         mf_shared_folds = mf_shared_folds,
@@ -956,7 +980,8 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         mf_on = multi_fidelity && (length(fitness_history) <= mf_warmup_gens),
         lf_shared_splits = if (row_split_islands || evaluation_strategy == "metacv") mf_island_shared_splits[[j]] else mf_shared_splits,
         lf_shared_folds = if (row_split_islands) mf_island_shared_folds[[j]] else mf_shared_folds,
-        lf_shared_full = mf_shared_full, ...
+        lf_shared_full = mf_shared_full,
+        mf_promote_frac = mf_promote_frac, ...
       )
       pop_list[[j]] <- eval_res$pop
       fitness_vals <- sapply(pop_list[[j]], function(ind) ind$fitness)
@@ -990,6 +1015,9 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         p_j <- ind_j$val_preds
         n_rows_j <- if (is.matrix(p_j)) nrow(p_j) else length(p_j)
         if (evaluation_strategy != "metacv" && n_rows_j < nrow(data)) {
+          if (verbose) {
+            message(sprintf("  [Island %d] [Multi-Fidelity] Re-evaluating best candidate at 100%% full fidelity...", j))
+          }
           ind_j$fitness <- NA_real_
           cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
           ind_j <- evaluate_fitness(

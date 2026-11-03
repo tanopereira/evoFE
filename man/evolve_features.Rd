@@ -21,6 +21,7 @@ evolve_features(
   multi_fidelity = FALSE,
   mf_sample_frac = 0.5,
   mf_warmup_frac = 0.5,
+  mf_promote_frac = 0.5,
   early_stopping_generations = 3,
   evaluator = "lightgbm",
   seed = NULL,
@@ -48,8 +49,9 @@ evolve_features(
   migration_temperature = 1,
   pull_stagnation_threshold = 3,
   raw_toggle_prob = 0.15,
-  recalculate_mask_prob = 0.05,
+  recalculate_mask_prob = 0,
   mask_temp_factor = 0.5,
+  mask_raw_at_init = getOption("evoFE.mask_raw_at_init", FALSE),
   row_split_islands = FALSE,
   per_island_validation = FALSE,
   metacv_selection = c("fitness", "tournament", "headroom"),
@@ -60,7 +62,6 @@ evolve_features(
   bag_folds = FALSE,
   target_transform = "none",
   sd_penalty = 0,
-  shadow_prune = FALSE,
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )
@@ -124,6 +125,9 @@ screening, in \code{(0, 1)}.}
 
 \item{mf_warmup_frac}{Fraction of generations (of \code{generations}) run in
 low-fidelity screening mode before full-fidelity-only evaluation begins.}
+
+\item{mf_promote_frac}{Fraction of top-performing individuals on the subsample
+promoted to full-fidelity evaluation during multi-fidelity warmup (in \code{(0, 1]}, default 0.5).}
 
 \item{early_stopping_generations}{Stop if fitness doesn't improve for this
 many generations}
@@ -219,13 +223,18 @@ distribution determines how many features are toggled per event.  Default
 \item{recalculate_mask_prob}{Numeric in \code{[0, 1]}. Probability that a
 mutation event completely recalculates the individual's active raw feature
 mask from scratch using feature importances and a sigmoid inclusion
-probability.  Default \code{0.05}.}
+probability.  Default \code{0.0} (to prevent sudden bulk feature loss during mutation).}
 
 \item{mask_temp_factor}{Numeric > 0. Temperature scaling factor applied to
 feature importances during active mask initialization and recalculation.
 Higher values flatten the importance distribution (more uniform sampling);
 lower values concentrate sampling on the highest-importance features.
 Default \code{0.5}.}
+
+\item{mask_raw_at_init}{Logical. If TRUE, samples active raw feature masks
+during population initialization based on baseline importances. Default
+\code{FALSE} (every individual starts with 100\% of raw features active so
+candidate genes are tested fairly on the full feature set).}
 
 \item{row_split_islands}{Logical. If TRUE, splits data rows across islands (default FALSE).}
 
@@ -250,8 +259,6 @@ the highest normalized headroom closed).}
 \item{target_transform}{Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.}
 
 \item{sd_penalty}{Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.}
-
-\item{shadow_prune}{Logical (default \code{FALSE}). When \code{TRUE}, injects permuted shadow features during fitness evaluation and prunes evolved leaf genes whose importance does not exceed the shadow features before applying the complexity penalty.}
 
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 

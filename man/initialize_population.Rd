@@ -13,7 +13,8 @@ initialize_population(
   task = "classification",
   importances = NULL,
   allowed_transformers = NULL,
-  mask_temp_factor = 0.5
+  mask_temp_factor = 0.5,
+  mask_raw_at_init = FALSE
 )
 }
 \arguments{
@@ -35,10 +36,13 @@ initialize_population(
 or NULL/"all" to allow all.}
 
 \item{mask_temp_factor}{Numeric > 0. Temperature scaling factor applied to
-feature importances during active mask initialization.  Higher values
-flatten the importance distribution (more uniform sampling); lower values
-concentrate sampling on the highest-importance features.  Default
-\code{0.5}.}
+feature importances during active mask initialization when \code{mask_raw_at_init = TRUE}.
+Higher values flatten the importance distribution (more uniform sampling); lower values
+concentrate sampling on the highest-importance features. Default \code{0.5}.}
+
+\item{mask_raw_at_init}{Logical. If TRUE, samples active raw feature masks during population
+initialization based on baseline importances. Default \code{FALSE} (every individual starts with
+100\% of raw features active so candidate genes are tested fairly on the full feature set).}
 }
 \value{
 A list of \code{evo_individual} objects of length \code{pop_size}.

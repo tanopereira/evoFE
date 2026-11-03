@@ -16,5 +16,5 @@ Numeric calibrated MAE score.
 }
 \description{
 Computes the Mean Absolute Error (MAE) of y_pred after optimal L1 linear post-calibration.
-Finds intercept 'a' and slope 'b' minimizing Mean(|y_true - (a + b * y_pred)|) via 2D optimization.
+Finds intercept 'a' and slope 'b' minimizing Mean(|y_true - (a + b * y_pred)|) via fast C++ Brent minimization.
 }

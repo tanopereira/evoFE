@@ -43,6 +43,8 @@
 #'   screening, in \code{(0, 1)}.
 #' @param mf_warmup_frac Fraction of generations (of \code{generations}) run in
 #'   low-fidelity screening mode before full-fidelity-only evaluation begins.
+#' @param mf_promote_frac Fraction of top-performing individuals on the subsample
+#'   promoted to full-fidelity evaluation during multi-fidelity warmup (in \code{(0, 1]}, default 0.5).
 #' @param early_stopping_generations Stop if fitness doesn't improve for this
 #'   many generations
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
@@ -171,7 +173,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             holdout_frac = 0,
                             cv_strategy = "random", time_col = NULL, group_col = NULL,
                             multi_fidelity = FALSE, mf_sample_frac = 0.5,
-                            mf_warmup_frac = 0.5,
+                            mf_warmup_frac = 0.5, mf_promote_frac = 0.5,
                             early_stopping_generations = 3, evaluator = "lightgbm",
                             seed = NULL,
                             dynamic_population = TRUE,
@@ -485,6 +487,10 @@ evolve_features <- function(data, target_col, task = "classification",
       is.na(mf_warmup_frac) || mf_warmup_frac < 0 || mf_warmup_frac > 1) {
     stop("'mf_warmup_frac' must be a single number in [0, 1].")
   }
+  if (!is.numeric(mf_promote_frac) || length(mf_promote_frac) != 1 ||
+      is.na(mf_promote_frac) || mf_promote_frac <= 0 || mf_promote_frac > 1) {
+    stop("'mf_promote_frac' must be a single number in (0, 1].")
+  }
 
   # Validate island parameters
   if (islands > 1) {
@@ -736,9 +742,38 @@ evolve_features <- function(data, target_col, task = "classification",
     # so global unsupervised transformers learn and cache the full data manifold.
     mf_shared_full <- shared_full
     if (verbose) {
+      n_tr_full <- if (!is.null(shared_splits$train)) {
+        nrow(shared_splits$train)
+      } else if (!is.null(shared_folds) && length(shared_folds) > 0 && !is.null(shared_folds[[1]]$train)) {
+        nrow(shared_folds[[1]]$train)
+      } else if (!is.null(island_shared_splits) && length(island_shared_splits) > 0 && !is.null(island_shared_splits[[1]]$train)) {
+        nrow(island_shared_splits[[1]]$train)
+      } else if (!is.null(island_shared_folds) && length(island_shared_folds) > 0 &&
+                 length(island_shared_folds[[1]]) > 0 && !is.null(island_shared_folds[[1]][[1]]$train)) {
+        nrow(island_shared_folds[[1]][[1]]$train)
+      } else {
+        NA_integer_
+      }
+      n_tr_sub <- if (!is.null(mf_shared_splits$train)) {
+        nrow(mf_shared_splits$train)
+      } else if (!is.null(mf_shared_folds) && length(mf_shared_folds) > 0 && !is.null(mf_shared_folds[[1]]$train)) {
+        nrow(mf_shared_folds[[1]]$train)
+      } else if (!is.null(mf_island_shared_splits) && length(mf_island_shared_splits) > 0 && !is.null(mf_island_shared_splits[[1]]$train)) {
+        nrow(mf_island_shared_splits[[1]]$train)
+      } else if (!is.null(mf_island_shared_folds) && length(mf_island_shared_folds) > 0 &&
+                 length(mf_island_shared_folds[[1]]) > 0 && !is.null(mf_island_shared_folds[[1]][[1]]$train)) {
+        nrow(mf_island_shared_folds[[1]][[1]]$train)
+      } else {
+        NA_integer_
+      }
+      rows_info <- if (!is.na(n_tr_full) && !is.na(n_tr_sub)) {
+        sprintf(" (%s -> %s rows/fold)", format(n_tr_full, big.mark = ","), format(n_tr_sub, big.mark = ","))
+      } else {
+        ""
+      }
       message(sprintf(
-        "  Multi-fidelity: screening on %.0f%% of training rows (min 30 rows floor) for the first %d generation(s), then full-fidelity promotion.",
-        100 * mf_sample_frac, mf_warmup_gens
+        "  Multi-Fidelity: screening on %.0f%% subsample%s for warmup generations 1..%d, top %.0f%% promoted to full fidelity.",
+        100 * mf_sample_frac, rows_info, mf_warmup_gens, 100 * mf_promote_frac
       ))
     }
   }
@@ -1060,6 +1095,7 @@ evolve_features <- function(data, target_col, task = "classification",
     island_baseline_inds = island_baseline_inds, baseline_ind = baseline_ind,
     cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
     multi_fidelity = multi_fidelity, mf_warmup_frac = mf_warmup_frac,
+    mf_promote_frac = mf_promote_frac,
     mf_shared_splits = mf_shared_splits,
     mf_island_shared_splits = mf_island_shared_splits,
     mf_shared_folds = mf_shared_folds,

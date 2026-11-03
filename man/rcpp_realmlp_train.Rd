@@ -19,7 +19,9 @@ rcpp_realmlp_train(
   num_classes = 0L,
   threads = 1L,
   metric = "default",
-  hidden_dim = 256L
+  hidden_dim = 256L,
+  n_cycles = 4L,
+  stop_epoch = 0L
 )
 }
 \arguments{
@@ -52,6 +54,10 @@ rcpp_realmlp_train(
 \item{metric}{String: validation metric to optimize and report.}
 
 \item{hidden_dim}{Integer: hidden layer dimension (default 256).}
+
+\item{n_cycles}{Integer: number of cycles in the coslog schedule (default 4; 0 = auto-scale based on epochs).}
+
+\item{stop_epoch}{Integer: optional target stopping epoch (<= n_epochs) when refitting without validation while preserving the n_epochs coslog schedule horizon (default 0 = run all n_epochs).}
 }
 \value{
 A List containing model weights, training statistics, and feature importances.
