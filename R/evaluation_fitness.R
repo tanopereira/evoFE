@@ -33,7 +33,6 @@
 #' @param group_col Column name used when \code{cv_strategy = "group"}.
 #' @param target_transform Optional regression target transformation (\code{"none"}, \code{"log1p"}, \code{"yeo_johnson"}, \code{"rank_gauss"}).
 #' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}).
-#' @param shadow_prune Logical (default \code{FALSE}). When \code{TRUE}, injects permuted shadow features during fitness evaluation and prunes evolved leaf genes whose importance does not exceed the shadow features before applying the complexity penalty.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
@@ -55,7 +54,6 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              time_col = NULL, group_col = NULL,
                              target_transform = getOption("evoFE.target_transform", "none"),
                              sd_penalty = getOption("evoFE.sd_penalty", 0),
-                             shadow_prune = getOption("evoFE.shadow_prune", FALSE),
                              global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
                              fitness_cache = NULL, fidelity_tag = "", ...) {
   if (!is.na(ind$fitness)) {
@@ -175,7 +173,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     }
 
     # Propagate the updated genes (with state) and compute complexity penalty on the exact
-    # feature set used during model training before any post-hoc dead-leaf shadow pruning
+    # feature set used during model training
     ind$genes <- res$ind$genes
     ind$fold_sd <- 0.0
 
@@ -226,7 +224,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       shared_full = shared_full
     )
 
-    ind <- .finalize_importances_and_shadow_prune(ind, res_model$importances, shadow_prune = shadow_prune)
+    ind <- .finalize_importances(ind, res_model$importances)
 
     ind$holdout_fitness <- NULL
   } else {
@@ -531,11 +529,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       shared_full = shared_full
     )
 
-    # Aggregate importances across folds and optionally prune shadow-dominated leaf genes
-    ind <- .finalize_importances_and_shadow_prune(
+    # Aggregate importances across folds
+    ind <- .finalize_importances(
       ind,
-      .aggregate_fold_importances(fold_importances),
-      shadow_prune = shadow_prune
+      .aggregate_fold_importances(fold_importances)
     )
 
     if (is.numeric(sd_penalty) && length(sd_penalty) == 1L && sd_penalty > 0 &&
@@ -556,70 +553,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
 #' @keywords internal
 #' @noRd
-.finalize_importances_and_shadow_prune <- function(ind, raw_imp, shadow_prune = FALSE) {
+.finalize_importances <- function(ind, raw_imp) {
   if (is.null(raw_imp) || length(raw_imp) == 0L) {
     ind$importances <- numeric(0)
     return(ind)
   }
-  shadow_names <- c(".__evo_shadow__", ".__evo_shadow_1__", ".__evo_shadow_2__")
-  present_shadows <- intersect(shadow_names, names(raw_imp))
-  shadow_imp <- if (length(present_shadows) > 0L) {
-    max(raw_imp[present_shadows], na.rm = TRUE)
-  } else {
-    NA_real_
-  }
-  if (length(present_shadows) > 0L) {
-    raw_imp <- raw_imp[!(names(raw_imp) %in% shadow_names)]
-  }
-  if (!is.finite(shadow_imp)) {
-    imp_sum <- sum(raw_imp, na.rm = TRUE)
-    n_feats <- max(1L, length(raw_imp))
-    null_prop <- min(getOption("evoFE.importance_threshold", 0.001), 0.05 / n_feats)
-    shadow_imp <- if (is.finite(imp_sum) && imp_sum > 0) imp_sum * null_prop else 0.0
-  }
-
-  if (isTRUE(shadow_prune) && length(ind$genes) >= 2L && is.finite(shadow_imp) && length(raw_imp) > 0L) {
-    parent_cols <- unique(unlist(lapply(ind$genes, function(g) g$input_cols)))
-    gene_out_cols <- vapply(ind$genes, function(g) {
-      if (!is.null(g$output_col) && length(g$output_col) == 1L) g$output_col else ""
-    }, character(1))
-    present_gene_cols <- intersect(gene_out_cols[nzchar(gene_out_cols)], names(raw_imp))
-    max_gene_imp <- if (length(present_gene_cols) > 0L) {
-      max(raw_imp[present_gene_cols], na.rm = TRUE)
-    } else {
-      -Inf
-    }
-
-    if (is.finite(max_gene_imp) && max_gene_imp > shadow_imp) {
-      sibling_keys <- vapply(ind$genes, function(g) {
-        t_nm <- if (!is.null(g$transformer_name)) g$transformer_name else ""
-        in_str <- if (!is.null(g$input_cols)) paste(sort(g$input_cols), collapse = ",") else ""
-        paste0(t_nm, "::", in_str)
-      }, character(1))
-
-      keep_mask <- vapply(seq_along(ind$genes), function(idx) {
-        g <- ind$genes[[idx]]
-        out_col <- g$output_col
-        if (is.null(out_col) || length(out_col) != 1L || (out_col %in% parent_cols)) {
-          return(TRUE)
-        }
-        if (!(out_col %in% names(raw_imp))) {
-          return(TRUE)
-        }
-        sib_idx <- which(sibling_keys == sibling_keys[idx])
-        sib_cols <- intersect(gene_out_cols[sib_idx], names(raw_imp))
-        val <- if (length(sib_cols) > 0L) max(raw_imp[sib_cols], na.rm = TRUE) else raw_imp[[out_col]]
-        is.finite(val) && (val > shadow_imp || val > 0.05 * max_gene_imp)
-      }, logical(1))
-
-      if (any(keep_mask) && !all(keep_mask)) {
-        pruned_cols <- unlist(lapply(ind$genes[!keep_mask], function(g) g$output_col))
-        raw_imp <- raw_imp[!(names(raw_imp) %in% pruned_cols)]
-        ind$genes <- ind$genes[keep_mask]
-      }
-    }
-  }
-
   ind$importances <- .normalize_importances(raw_imp)
   ind
 }

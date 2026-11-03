@@ -134,7 +134,6 @@
 #' @param bag_folds Logical. When \code{TRUE} and \code{evaluation_strategy} is \code{"cv"} or \code{"metacv"}, trains and stores all $K$ fold-specific models so \code{\link{predict_model}} and \code{\link{ensemble_islands}} can average K-fold bagged predictions at test time.
 #' @param target_transform Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.
 #' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.
-#' @param shadow_prune Logical (default \code{FALSE}). When \code{TRUE}, injects permuted shadow features during fitness evaluation and prunes evolved leaf genes whose importance does not exceed the shadow features before applying the complexity penalty.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
@@ -211,7 +210,6 @@ evolve_features <- function(data, target_col, task = "classification",
                             bag_folds = FALSE,
                             target_transform = "none",
                             sd_penalty = 0,
-                            shadow_prune = FALSE,
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
@@ -220,20 +218,15 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.numeric(sd_penalty) || length(sd_penalty) != 1L || is.na(sd_penalty) || sd_penalty < 0) {
     stop("'sd_penalty' must be a non-negative number.")
   }
-  if (!is.logical(shadow_prune) || length(shadow_prune) != 1L || is.na(shadow_prune)) {
-    stop("'shadow_prune' must be TRUE or FALSE.")
-  }
 
   old_glob_unsup <- getOption("evoFE.global_unsupervised", NULL)
   old_tt_opt <- getOption("evoFE.target_transform", NULL)
   old_sdp_opt <- getOption("evoFE.sd_penalty", NULL)
-  old_shp_opt <- getOption("evoFE.shadow_prune", NULL)
   old_bfm_opt <- getOption("evoFE.baseline_fold_metrics", NULL)
   options(
     evoFE.global_unsupervised = isTRUE(global_unsupervised),
     evoFE.target_transform = target_transform,
     evoFE.sd_penalty = sd_penalty,
-    evoFE.shadow_prune = isTRUE(shadow_prune),
     evoFE.baseline_fold_metrics = NULL
   )
   on.exit({
@@ -241,7 +234,6 @@ evolve_features <- function(data, target_col, task = "classification",
       evoFE.global_unsupervised = old_glob_unsup,
       evoFE.target_transform = old_tt_opt,
       evoFE.sd_penalty = old_sdp_opt,
-      evoFE.shadow_prune = old_shp_opt,
       evoFE.baseline_fold_metrics = old_bfm_opt
     )
   }, add = TRUE)
@@ -1654,7 +1646,6 @@ evolve_features <- function(data, target_col, task = "classification",
     search_gap = search_gap,
     fold_sd = if (!is.null(best_ind$fold_sd)) best_ind$fold_sd else NULL,
     sd_penalty = sd_penalty,
-    shadow_prune = isTRUE(shadow_prune),
     adversarial_auc = if (!is.null(adv_info)) adv_info$adversarial_auc else NULL,
     drifting_features = if (!is.null(adv_info)) adv_info$drifting_features else NULL,
     cv_strategy = cv_strategy,

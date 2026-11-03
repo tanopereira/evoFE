@@ -2782,7 +2782,7 @@ test_that("OOF threshold optimization (f1, mcc, balanced_accuracy) and regressio
   }
 })
 
-test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and evolve_features", {
+test_that("sd_penalty works correctly in evaluate_fitness and evolve_features", {
   set.seed(2026)
   n <- 80L
   x1 <- rnorm(n)
@@ -2828,66 +2828,8 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
   expect_equal(ind_paired_self$fitness, ind_0$fitness, tolerance = 1e-8)
   options(evoFE.baseline_fold_metrics = old_bfm)
 
-  # 2. shadow_prune: verify high-signal gene is kept, parent of high-signal gene is protected,
-  #    and pure-noise leaf gene (with 0 importance) is pruned
-  g_parent <- create_gene("add", c("n1", "n2"))
-  # g_signal depends on g_parent so g_parent is a non-leaf parent gene, and g_signal itself is mul(x1, x2)
-  g_sig <- create_gene("multiply", c("x1", "x2"))
-  g_chain_leaf <- create_gene("add", c(g_parent$output_col, g_sig$output_col))
-  # Make a pure-noise leaf gene that is orthogonal/ignored by L1 or tree splits
-  df$z_tiny1 <- rep(c(1e-6, -1e-6), length.out = n)
-  df$z_tiny2 <- rep(c(1e-6, 1e-6, -1e-6, -1e-6), length.out = n)
-  g_noise_leaf <- create_gene("add", c("z_tiny1", "z_tiny2"))
-
-  ind_sp <- create_individual(
-    genes = list(g_parent, g_sig, g_chain_leaf, g_noise_leaf),
-    numeric_cols = c("x1", "x2", "n1", "n2", "z_tiny1", "z_tiny2")
-  )
-
-  ind_sp_eval <- evaluate_fitness(
-    ind_sp, df, "target", task = "regression",
-    cv_folds = 4, fold_ids = fids, evaluator = "lightgbm",
-    shadow_prune = TRUE, threads = 1
-  )
-  surviving_cols <- vapply(ind_sp_eval$genes, function(g) g$output_col, character(1))
-  # High-signal gene and non-leaf parent gene must survive; zero-signal leaf gene is pruned
-  expect_true(g_sig$output_col %in% surviving_cols)
-  expect_true(g_parent$output_col %in% surviving_cols)
-  expect_false(g_noise_leaf$output_col %in% surviving_cols)
-  expect_false(any(grepl("^\\.__evo_shadow", names(ind_sp_eval$importances))))
-
-  # 2b. Single-gene individual and sibling PCA pair must NEVER be stripped down to 0 genes
-  ind_one_gene <- create_individual(
-    genes = list(g_noise_leaf),
-    numeric_cols = c("x1", "x2", "n1", "n2", "z_tiny1", "z_tiny2")
-  )
-  ind_one_eval <- evaluate_fitness(
-    ind_one_gene, df, "target", task = "regression",
-    cv_folds = 4, fold_ids = fids, evaluator = "realmlp",
-    realmlp_epochs = 5, shadow_prune = TRUE, threads = 1
-  )
-  expect_length(ind_one_eval$genes, 1L)
-
-  g_pca1 <- create_gene("pca", c("x1", "x2", "n1", "n2"))
-  g_pca1$params$comp_idx <- 1L
-  g_pca1$output_col <- evo_transformers[["pca"]]$name_generator(g_pca1)
-  g_pca2 <- create_gene("pca", c("x1", "x2", "n1", "n2"))
-  g_pca2$params$comp_idx <- 2L
-  g_pca2$output_col <- evo_transformers[["pca"]]$name_generator(g_pca2)
-  ind_pca <- create_individual(
-    genes = list(g_pca1, g_pca2),
-    numeric_cols = c("x1", "x2", "n1", "n2")
-  )
-  ind_pca_eval <- evaluate_fitness(
-    ind_pca, df[, c("x1", "x2", "n1", "n2", "target")], "target", task = "regression",
-    cv_folds = 3, evaluator = "realmlp",
-    realmlp_epochs = 5, shadow_prune = TRUE, threads = 1
-  )
-  expect_length(ind_pca_eval$genes, 2L)
-
-  # 3. End-to-end evolve_features with sd_penalty and shadow_prune
+  # 2. End-to-end evolve_features with sd_penalty
   expect_error(evolve_features(df, "target", task = "regression", sd_penalty = -1), "sd_penalty")
-  expect_error(evolve_features(df, "target", task = "regression", shadow_prune = NA), "shadow_prune")
 
   rec <- evolve_features(
     data = df[, c("x1", "x2", "n1", "n2", "target")],
@@ -2898,19 +2840,17 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
     pop_size = 3,
     cv_folds = 3,
     sd_penalty = 1.0,
-    shadow_prune = TRUE,
     threads = 1,
     seed = 42,
     verbose = FALSE
   )
   expect_equal(rec$sd_penalty, 1.0)
-  expect_true(rec$shadow_prune)
   expect_true(is.numeric(rec$fold_sd) && rec$fold_sd >= 0)
   preds <- predict_model(rec, df[1:10, c("x1", "x2", "n1", "n2", "target")])
   expect_length(preds, 10)
   expect_true(all(is.finite(preds)))
 
-  # 4. Stage 2 combination: metacv + multi_fidelity + holdout_frac + sd_penalty + shadow_prune
+  # 3. Stage 2 combination: metacv + multi_fidelity + holdout_frac + sd_penalty
   rec_mcv <- evolve_features(
     data = df[, c("x1", "x2", "n1", "n2", "target")],
     target_col = "target",
@@ -2926,7 +2866,6 @@ test_that("sd_penalty and shadow_prune work correctly in evaluate_fitness and ev
     mf_warmup_frac = 0.5,
     holdout_frac = 0.1,
     sd_penalty = 0.5,
-    shadow_prune = TRUE,
     threads = 1,
     seed = 42,
     verbose = FALSE

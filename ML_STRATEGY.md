@@ -355,10 +355,6 @@ search_metric <- "ts_refinement"
 #   sd_penalty * sd(fold_scores - baseline_fold_scores) / sqrt(K). Computing SD
 #   on paired fold gains cancels intrinsic fold difficulty and prevents features
 #   that spike on 1 fold and regress on another (inspect recipe$fold_sd).
-# - Zero-Perturbation Null-Importance Pruning (shadow_prune = TRUE): prunes dead-weight
-#   leaf genes whose model/SHAP importance falls below an adaptive null-importance floor
-#   without injecting fake noise columns into x_train (keeping feature_fraction and
-#   val_preds 100% unperturbed).
 ```
 
 ---
@@ -390,7 +386,6 @@ scout_recipe <- evolve_features(
   complexity_penalty    = 0.1,
   complexity_target     = "all_features",
   sd_penalty            = 0.15,             # Mild paired fold-gain SE penalty for 3-fold scout
-  shadow_prune          = TRUE,             # Strip dead-weight leaf genes below null floor
   holdout_frac          = 0,
   threads               = n_threads,
   seed                  = 42
@@ -432,7 +427,7 @@ Instead of manually guessing which transformers to assign to each model, we run 
      - **Assimilation Reset**: The instant an immigrant recipe or top-20 gene improves local fitness, $s_j$ resets to 0, instantly closing the pull gate.
    - *(Note: You can also specify this explicitly using the modular config container: `migration = migration_config(topology = topology_complete(islands = 4), policy = policy_gibbs_pull(stagnation_threshold = 2))`)*.
 5. **High-Throughput Manifold & Anomaly Learning**: `uwot` and `quitefastmst` handle **20,000–50,000 landmark rows** quickly. Pass `max_clustering_size = clust_cap` to every call (the default is 5,000).
-6. **Parsimony + Zero-Perturbation Null-Importance Pruning (`shadow_prune = TRUE`)**: Combining `complexity_penalty = 0.25 - 0.30` (`complexity_target = "all_features"`) with `shadow_prune = TRUE` automatically strips dead-weight leaf genes whose model/SHAP importance falls below the adaptive null-importance floor $\tau_{\text{null}}(P) = \text{imp\_sum} \cdot \min(\text{threshold}, 0.05/P)$ before complexity penalization and before Stage 3 synthesizes `train_mega`—without injecting synthetic noise columns into `x_train`.
+6. **Feature Parsimony via Dynamic Complexity (`complexity_penalty = 0.25 - 0.30`, `complexity_mode = "bic_dynamic"`)**: Penalizing total active features prevents tree bloat without artificially eliminating beneficial interaction features.
 7. **Adversarial Test-Matched Confirmation Holdout (`holdout_frac = 0.08, test_data = test`)**: Carves out an 8% confirmation holdout weighted toward the unlabeled `test` covariate distribution (and keeping `group_col` intact if grouped). After each search pass finishes, `recipe$holdout_fitness` and `recipe$search_gap` tell you immediately whether the discovered features generalize to test-like rows or overfit the search folds.
 
 > [!CAUTION]
@@ -465,7 +460,6 @@ rec_lgb_search <- evolve_features(
   holdout_frac          = 0.08,               # 8% untouched confirmation holdout
   test_data             = test,               # Weight holdout sampling toward test distribution
   sd_penalty            = 0.15,               # Mild paired fold-gain SE penalty in tournament
-  shadow_prune          = TRUE,               # Prune leaf genes below adaptive null-importance floor
   migration             = mig_cfg,            # Complete topology (D=1) + demand-driven Gibbs pull
   migration_interval    = 1,                  # Evaluate pull condition every generation
   migration_rate        = 1,
@@ -503,7 +497,6 @@ rec_xgb_search <- evolve_features(
   holdout_frac          = 0.08,
   test_data             = test,
   sd_penalty            = 0.15,
-  shadow_prune          = TRUE,
   migration             = mig_cfg,
   migration_interval    = 1,
   migration_rate        = 1,
@@ -540,7 +533,6 @@ rec_mlp_search <- evolve_features(
   holdout_frac          = 0.08,
   test_data             = test,
   sd_penalty            = 0.15,
-  shadow_prune          = TRUE,
   migration             = mig_cfg,
   migration_interval    = 1,
   migration_rate        = 1,
@@ -764,7 +756,7 @@ cat("Competition submission file generated successfully!\n")
 | **Redundant Genes**| Collinear transformations bloat trees | Correlation pruning filter | `options(evoFE.redundancy_cor_threshold = 0.99)` |
 | **Search Overfitting**| Evolution chases CV noise | Confirmation holdout + parsimony | `holdout_frac = 0.08, complexity_mode = "bic_dynamic"` |
 | **Fold Instability** | Recipe spikes on 1 fold, drops on others | Paired fold-gain LCB SE penalty | `sd_penalty = 0.15` (or `0.25` in full CV) |
-| **Noise Gene Bloat** | Uninformative leaf genes survive trees | Zero-perturbation null-importance pruning | `shadow_prune = TRUE` |
+| **Noise Gene Bloat** | Uninformative genes survive tree splits | Dynamic BIC complexity penalty | `complexity_penalty = 0.25, complexity_target = "all_features"` |
 | **Grouped + Imbalanced** | Group leakage or unbalanced target folds | Stratified group CV + intact holdouts | `cv_strategy = "stratified_group", group_col = "id"` |
 | **Train/Test Shift** | Holdout doesn't reflect test distribution | Adversarial propensity-weighted holdout | `holdout_frac = 0.10, test_data = test` |
 | **Inference Variance** | Single refit model has higher test error | K-Fold Model Bagging across CV folds | `bag_folds = TRUE` |
@@ -1140,7 +1132,6 @@ rec_lgb_list <- lapply(seeds_lgb, function(s) {
     holdout_frac          = 0.08,             # 8% confirmation holdout
     test_data             = test,             # Adversarial test-weighted holdout sampling
     sd_penalty            = 0.25,             # Paired fold-gain LCB penalty across 5 folds
-    shadow_prune          = TRUE,             # Zero-perturbation null-importance gene pruning
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1174,7 +1165,6 @@ rec_xgb_list <- lapply(seeds_xgb, function(s) {
     holdout_frac          = 0.08,
     test_data             = test,
     sd_penalty            = 0.25,
-    shadow_prune          = TRUE,
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1207,7 +1197,6 @@ rec_mlp_list <- lapply(seeds_mlp, function(s) {
     holdout_frac          = 0.08,
     test_data             = test,
     sd_penalty            = 0.25,
-    shadow_prune          = TRUE,
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
