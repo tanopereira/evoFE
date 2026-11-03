@@ -2876,6 +2876,9 @@ test_that("sd_penalty works correctly in evaluate_fitness and evolve_features", 
   expect_true(is.finite(rec_mcv$fold_sd))
 })
 
+options(evoFE.redundancy_cor_threshold = old_red_opt)
+
+
 
 
 

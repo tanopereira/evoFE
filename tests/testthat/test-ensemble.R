@@ -559,24 +559,26 @@ test_that("ensemble_islands excludes holdout rows on 3-way split recipes and mul
 })
 
 test_that("apply_individual with validate_genes = FALSE preserves accepted genes during full-data refit", {
-  dt <- data.table::data.table(
-    x1 = seq(1, 20, length.out = 20),
-    x2 = seq(1, 20, length.out = 20) + stats::rnorm(20, sd = 1e-4),
-    y = seq(1, 20, length.out = 20)
-  )
-  g <- create_gene("add", c("x1", "x2"))
-  ind <- create_individual(genes = list(g), numeric_cols = c("x1", "x2"))
+  withr::with_options(list(evoFE.redundancy_cor_threshold = 0.99), {
+    dt <- data.table::data.table(
+      x1 = seq(1, 20, length.out = 20),
+      x2 = seq(1, 20, length.out = 20) + stats::rnorm(20, sd = 1e-4),
+      y = seq(1, 20, length.out = 20)
+    )
+    g <- create_gene("add", c("x1", "x2"))
+    ind <- create_individual(genes = list(g), numeric_cols = c("x1", "x2"))
 
-  # With validate_genes = TRUE and target_col set, add(x1, x2) is collinear (>0.99) with x1 and gets pruned
-  res_pruned <- apply_individual(ind, data.table::copy(dt), NULL, target_col = "y",
-                                 allow_prune = TRUE, validate_genes = TRUE)
-  expect_length(res_pruned$ind$genes, 0L)
+    # With validate_genes = TRUE and target_col set, add(x1, x2) is collinear (>0.99) with x1 and gets pruned
+    res_pruned <- apply_individual(ind, data.table::copy(dt), NULL, target_col = "y",
+                                   allow_prune = TRUE, validate_genes = TRUE)
+    expect_length(res_pruned$ind$genes, 0L)
 
-  # With validate_genes = FALSE (post-evolution refit), the accepted gene is preserved
-  res_kept <- apply_individual(ind, data.table::copy(dt), NULL, target_col = "y",
-                               allow_prune = TRUE, validate_genes = FALSE)
-  expect_length(res_kept$ind$genes, 1L)
-  expect_true(g$output_col %in% names(res_kept$train))
+    # With validate_genes = FALSE (post-evolution refit), the accepted gene is preserved
+    res_kept <- apply_individual(ind, data.table::copy(dt), NULL, target_col = "y",
+                                 allow_prune = TRUE, validate_genes = FALSE)
+    expect_length(res_kept$ind$genes, 1L)
+    expect_true(g$output_col %in% names(res_kept$train))
+  })
 })
 
 test_that("stratified CV folds and LOO target encoding and post-hoc calibration work end-to-end", {

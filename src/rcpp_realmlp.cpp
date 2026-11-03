@@ -484,10 +484,10 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     out_dim = num_classes;
   }
 
-  // Tuned defaults for learning rate
+  // Tuned defaults for learning rate (matches PyTabKit NTP defaults: 0.04 for classification, 0.07 for regression)
   double base_lr = lr;
   if (base_lr <= 0.0) {
-    base_lr = (is_cls || is_multi) ? 0.01 : 0.005;
+    base_lr = (is_cls || is_multi) ? 0.04 : 0.07;
   }
 
   // RAII thread state management across OpenMP, Eigen, and OpenBLAS
@@ -613,12 +613,10 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   std::vector<int> perm(N);
   for (int i = 0; i < N; ++i) perm[i] = i;
 
-  // NTP layer-wise learning rate scaling factors (anchored to reference width 256.0):
-  // Decouples effective activation step size from hidden_dim and in_dim so that
-  // hyperparameter tuning (e.g. MBO varying hidden_dim) explores orthogonal dimensions.
-  constexpr double ref_dim = 256.0;
-  double lr_mult_w1 = std::sqrt(ref_dim / static_cast<double>(std::max(1, embed_dim)));
-  double lr_mult_whidden = std::sqrt(ref_dim / static_cast<double>(std::max(1, hidden_dim)));
+  // PyTabKit Neural Tangent Parameterization (NTP) scaling factors:
+  // Fused directly into BLAS cblas_sgemm alpha parameter for zero overhead.
+  float inv_sqrt_w1 = 1.0f / std::sqrt(static_cast<float>(std::max(1, embed_dim)));
+  float inv_sqrt_hidden = 1.0f / std::sqrt(static_cast<float>(std::max(1, hidden_dim)));
 
   int max_epochs = (stop_epoch > 0 && stop_epoch < n_epochs) ? stop_epoch : n_epochs;
 
@@ -789,19 +787,19 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       auto E_b = ws.E.topRows(cur_B);
       int embed_d = static_cast<int>(E_b.cols());
 
-      gemm_f32(false, true, cur_B, hidden_dim, out_dim, ws.grad_out, model.W4.val, ws.delta3);
+      gemm_f32(false, true, cur_B, hidden_dim, out_dim, ws.grad_out, model.W4.val, ws.delta3, inv_sqrt_hidden);
       Eigen::Ref<const Eigen::MatrixXf> H3_ref(ws.H3.topRows(cur_B));
       apply_activation_grad_and_accum_bias(ws.A3.topRows(cur_B), model.b3.val, ws.delta3.topRows(cur_B), ws.grad_b3, model.is_classification, &H3_ref);
 
-      gemm_f32(false, true, cur_B, hidden_dim, hidden_dim, ws.delta3, model.W3.val, ws.delta2);
+      gemm_f32(false, true, cur_B, hidden_dim, hidden_dim, ws.delta3, model.W3.val, ws.delta2, inv_sqrt_hidden);
       Eigen::Ref<const Eigen::MatrixXf> H2_ref(ws.H2.topRows(cur_B));
       apply_activation_grad_and_accum_bias(ws.A2.topRows(cur_B), model.b2.val, ws.delta2.topRows(cur_B), ws.grad_b2, model.is_classification, &H2_ref);
 
-      gemm_f32(false, true, cur_B, hidden_dim, hidden_dim, ws.delta2, model.W2.val, ws.delta1);
+      gemm_f32(false, true, cur_B, hidden_dim, hidden_dim, ws.delta2, model.W2.val, ws.delta1, inv_sqrt_hidden);
       Eigen::Ref<const Eigen::MatrixXf> H1_ref(ws.H1.topRows(cur_B));
       apply_activation_grad_and_accum_bias(ws.A1.topRows(cur_B), model.b1.val, ws.delta1.topRows(cur_B), ws.grad_b1, model.is_classification, &H1_ref);
 
-      gemm_f32(false, true, cur_B, embed_d, hidden_dim, ws.delta1, model.W1.val, ws.delta0);
+      gemm_f32(false, true, cur_B, embed_d, hidden_dim, ws.delta1, model.W1.val, ws.delta0, inv_sqrt_w1);
       auto delta0_b = ws.delta0.topRows(cur_B);
 
       // Fused parallel column-wise pass for grad_scale and delta_E
@@ -822,10 +820,10 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       }
 
       // Computation of layer weight gradients W1, W2, W3, W4 via Apple Accelerate cblas_sgemm
-      gemm_f32(true, false, embed_d, hidden_dim, cur_B, ws.H0, ws.delta1, ws.grad_W1);
-      gemm_f32(true, false, hidden_dim, hidden_dim, cur_B, ws.H1, ws.delta2, ws.grad_W2);
-      gemm_f32(true, false, hidden_dim, hidden_dim, cur_B, ws.H2, ws.delta3, ws.grad_W3);
-      gemm_f32(true, false, hidden_dim, out_dim, cur_B, ws.H3, ws.grad_out, ws.grad_W4);
+      gemm_f32(true, false, embed_d, hidden_dim, cur_B, ws.H0, ws.delta1, ws.grad_W1, inv_sqrt_w1);
+      gemm_f32(true, false, hidden_dim, hidden_dim, cur_B, ws.H1, ws.delta2, ws.grad_W2, inv_sqrt_hidden);
+      gemm_f32(true, false, hidden_dim, hidden_dim, cur_B, ws.H2, ws.delta3, ws.grad_W3, inv_sqrt_hidden);
+      gemm_f32(true, false, hidden_dim, out_dim, cur_B, ws.H3, ws.grad_out, ws.grad_W4, inv_sqrt_hidden);
       ws.grad_b4 = grad_out_b.colwise().sum();
       auto t_mb1 = std::chrono::high_resolution_clock::now();
       if (verbose >= 2) t_mlp_bwd_s += std::chrono::duration<double>(t_mb1 - t_mb0).count();
@@ -840,7 +838,7 @@ List rcpp_realmlp_train(NumericMatrix x_train,
       auto t_eb1 = std::chrono::high_resolution_clock::now();
       if (verbose >= 2) t_emb_bwd_s += std::chrono::duration<double>(t_eb1 - t_eb0).count();
 
-      // 6. Parallel layer-wise Adam update across threads
+      // 6. Parallel layer-wise Adam update across threads (exact PyTabKit multipliers: scale 6.0, weights 1.0, bias 0.1)
       auto t_ad0 = std::chrono::high_resolution_clock::now();
 #if defined(_OPENMP)
 #pragma omp parallel sections if (max_threads >= 2)
@@ -848,34 +846,34 @@ List rcpp_realmlp_train(NumericMatrix x_train,
 #pragma omp section
         {
           model.front_scale.update_serial(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
-          model.W1.update_serial(ws.grad_W1, cur_lr * lr_mult_w1, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W1.update_serial(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
           model.b1.update_serial(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
 #pragma omp section
         {
-          model.W2.update_serial(ws.grad_W2, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W2.update_serial(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
           model.b2.update_serial(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
 #pragma omp section
         {
-          model.W3.update_serial(ws.grad_W3, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W3.update_serial(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
           model.b3.update_serial(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
 #pragma omp section
         {
-          model.W4.update_serial(ws.grad_W4, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
+          model.W4.update_serial(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
           model.b4.update_serial(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
         }
       }
 #else
       model.front_scale.update_serial(ws.grad_scale, cur_lr * 6.0, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W1.update_serial(ws.grad_W1, cur_lr * lr_mult_w1, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W1.update_serial(ws.grad_W1, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
       model.b1.update_serial(ws.grad_b1, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W2.update_serial(ws.grad_W2, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W2.update_serial(ws.grad_W2, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
       model.b2.update_serial(ws.grad_b2, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W3.update_serial(ws.grad_W3, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W3.update_serial(ws.grad_W3, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
       model.b3.update_serial(ws.grad_b3, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
-      model.W4.update_serial(ws.grad_W4, cur_lr * lr_mult_whidden, beta1, beta2, eps, b1_corr, b2_corr);
+      model.W4.update_serial(ws.grad_W4, cur_lr * 1.0, beta1, beta2, eps, b1_corr, b2_corr);
       model.b4.update_serial(ws.grad_b4, cur_lr * 0.1, beta1, beta2, eps, b1_corr, b2_corr);
 #endif
       auto t_ad1 = std::chrono::high_resolution_clock::now();

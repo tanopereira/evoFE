@@ -51,26 +51,26 @@ static inline float fast_expf(float x) noexcept {
 // (bypassing Fortran sgemm_ shadowing by R's libopenblas), with Eigen fallback on other platforms.
 inline void gemm_f32(bool transA, bool transB, int M, int N, int K,
                      const Eigen::MatrixXf& A, const Eigen::MatrixXf& B,
-                     Eigen::MatrixXf& C) {
+                     Eigen::MatrixXf& C, float alpha = 1.0f) {
   if (M <= 0 || N <= 0 || K <= 0) return;
 #if defined(__APPLE__)
   cblas_sgemm(CblasColMajor,
               transA ? CblasTrans : CblasNoTrans,
               transB ? CblasTrans : CblasNoTrans,
-              M, N, K, 1.0f,
+              M, N, K, alpha,
               A.data(), static_cast<int>(A.outerStride()),
               B.data(), static_cast<int>(B.outerStride()),
               0.0f,
               C.data(), static_cast<int>(C.outerStride()));
 #else
   if (!transA && !transB) {
-    C.block(0, 0, M, N).noalias() = A.block(0, 0, M, K) * B.block(0, 0, K, N);
+    C.block(0, 0, M, N).noalias() = (A.block(0, 0, M, K) * B.block(0, 0, K, N)) * alpha;
   } else if (!transA && transB) {
-    C.block(0, 0, M, N).noalias() = A.block(0, 0, M, K) * B.block(0, 0, N, K).transpose();
+    C.block(0, 0, M, N).noalias() = (A.block(0, 0, M, K) * B.block(0, 0, N, K).transpose()) * alpha;
   } else if (transA && !transB) {
-    C.block(0, 0, M, N).noalias() = A.block(0, 0, K, M).transpose() * B.block(0, 0, K, N);
+    C.block(0, 0, M, N).noalias() = (A.block(0, 0, K, M).transpose() * B.block(0, 0, K, N)) * alpha;
   } else {
-    C.block(0, 0, M, N).noalias() = A.block(0, 0, K, M).transpose() * B.block(0, 0, N, K).transpose();
+    C.block(0, 0, M, N).noalias() = (A.block(0, 0, K, M).transpose() * B.block(0, 0, N, K).transpose()) * alpha;
   }
 #endif
 }
@@ -925,8 +925,7 @@ public:
         W.val.setZero();
         b.val.setZero();
       } else {
-        double stddev = 1.0 / std::sqrt(static_cast<double>(fan_in));
-        std::normal_distribution<double> dist(0.0, stddev);
+        std::normal_distribution<double> dist(0.0, 1.0);
         for (int r = 0; r < fan_in; ++r) {
           for (int c = 0; c < fan_out; ++c) {
             W.val(r, c) = static_cast<float>(dist(rng));
@@ -939,7 +938,7 @@ public:
     init_linear(W1, b1, in_dim, hidden_dim, false);
     init_linear(W2, b2, hidden_dim, hidden_dim, false);
     init_linear(W3, b3, hidden_dim, hidden_dim, false);
-    init_linear(W4, b4, hidden_dim, output_dim, false);
+    init_linear(W4, b4, hidden_dim, output_dim, true);
   }
 
   // Forward pass through MLP — writes into pre-allocated FP32 workspace (dispatches sgemm to Apple AMX)
@@ -949,6 +948,9 @@ public:
                    Eigen::MatrixXf& A3, Eigen::MatrixXf& H3,
                    Eigen::MatrixXf& Out) const {
     int embed_d = static_cast<int>(E.cols());
+    float inv_sqrt_w1 = 1.0f / std::sqrt(static_cast<float>(std::max(1, embed_d)));
+    float inv_sqrt_hidden = 1.0f / std::sqrt(static_cast<float>(std::max(1, hidden_dim)));
+
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (embed_d >= 4)
 #endif
@@ -961,16 +963,16 @@ public:
       }
     }
 
-    gemm_f32(false, false, cur_B, hidden_dim, embed_d, H0, W1.val, A1);
+    gemm_f32(false, false, cur_B, hidden_dim, embed_d, H0, W1.val, A1, inv_sqrt_w1);
     apply_activation_with_bias(A1.topRows(cur_B), b1.val, H1.topRows(cur_B), is_classification);
 
-    gemm_f32(false, false, cur_B, hidden_dim, hidden_dim, H1, W2.val, A2);
+    gemm_f32(false, false, cur_B, hidden_dim, hidden_dim, H1, W2.val, A2, inv_sqrt_hidden);
     apply_activation_with_bias(A2.topRows(cur_B), b2.val, H2.topRows(cur_B), is_classification);
 
-    gemm_f32(false, false, cur_B, hidden_dim, hidden_dim, H2, W3.val, A3);
+    gemm_f32(false, false, cur_B, hidden_dim, hidden_dim, H2, W3.val, A3, inv_sqrt_hidden);
     apply_activation_with_bias(A3.topRows(cur_B), b3.val, H3.topRows(cur_B), is_classification);
 
-    gemm_f32(false, false, cur_B, output_dim, hidden_dim, H3, W4.val, Out);
+    gemm_f32(false, false, cur_B, output_dim, hidden_dim, H3, W4.val, Out, inv_sqrt_hidden);
     Out.topRows(cur_B).rowwise() += b4.val.row(0);
   }
 
