@@ -68,7 +68,6 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
       }
     } else {
       orig_ind <- pop[[i]]
-      other_keys <- vapply(pop[-i], individual_to_cache_key, character(1))
       pop[[i]] <- evaluate_fitness(pop[[i]], data, target_col,
         task = task, cv_folds = cv_folds,
         evaluation_strategy = evaluation_strategy,
@@ -93,7 +92,17 @@ evaluate_pop <- function(pop, data, target_col, task, cv_folds, evaluation_strat
       post_key <- individual_to_cache_key(pop[[i]])
       pruned_dup <- FALSE
 
-      if (collapsed && (post_key %in% other_keys)) {
+      is_dup <- FALSE
+      if (collapsed) {
+        for (other_idx in seq_along(pop)) {
+          if (other_idx != i && identical(individual_to_cache_key(pop[[other_idx]]), post_key)) {
+            is_dup <- TRUE
+            break
+          }
+        }
+      }
+
+      if (is_dup) {
         pruned_dup <- TRUE
         orig_ind$raw_fitness <- -Inf
         orig_ind$penalty <- 0.0
