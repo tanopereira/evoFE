@@ -154,7 +154,7 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     if (!is.null(target_col) && isTRUE(validate_genes)) {
       if (is.numeric(new_col_train)) {
         cor_threshold <- getOption("evoFE.redundancy_cor_threshold", 0.99)
-        exclude_cols <- if (gene$transformer_name %in% c("robust_scale", "smooth_clip", "box_cox", "yeo_johnson", "rank_transform")) {
+        exclude_cols <- if (gene$transformer_name %in% c("robust_scale", "smooth_clip", "box_cox", "yeo_johnson", "rank_transform", "round_transform")) {
           as.character(c(gene$output_col, target_col, gene$input_cols))
         } else {
           as.character(c(gene$output_col, target_col))

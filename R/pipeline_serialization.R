@@ -55,6 +55,8 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     sprintf("pow%.4g(%s)", gene$params[["p"]], cols_str)
   } else if (!is.null(gene$params[["displacement"]])) {
     sprintf("dlog%.2f(%s)", gene$params[["displacement"]], cols_str)
+  } else if (!is.null(gene$params[["digits"]])) {
+    sprintf("%s_d%d(%s)", gene$transformer_name, gene$params[["digits"]], cols_str)
   } else if (!is.null(gene$params[["q"]])) {
     sprintf("%s_q%.2f(%s)", gene$transformer_name, gene$params[["q"]], cols_str)
   } else if (gene$transformer_name == "umap_genie") {

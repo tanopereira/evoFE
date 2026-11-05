@@ -61,6 +61,12 @@ create_gene <- function(transformer_name, input_cols) {
     params$Q <- sample(3:10, 1)
   } else if (transformer_name %in% c("log_binning", "log_binning_cat")) {
     params$base <- sample(2:10, 1)
+  } else if (transformer_name == "knn_target_encode") {
+    params$k <- sample(c(3L, 5L, 10L, 25L), 1)
+  } else if (transformer_name == "round_transform") {
+    params$digits <- sample(c(0L, 1L, 2L, 3L), 1)
+  } else if (transformer_name == "decimal_digit") {
+    params$digits <- sample(c(1L, 2L, 3L, 4L), 1)
   } else if (transformer_name == "target_encode_multiclass") {
     params$comp_idx <- sample(1:5, 1)
   } else if (transformer_name == "datetime_extract") {

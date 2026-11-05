@@ -452,3 +452,110 @@ evo_transformers$target_sd_encode <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "tsd")
 )
+
+# k-Nearest Neighbors Target Encoding
+evo_transformers$knn_target_encode <- create_transformer(
+  name = "knn_target_encode",
+  type = "supervised_multivariate",
+  input_type = "numeric",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(valid = FALSE, global_mean = 0.0, loo_train = NULL))
+    }
+    global_mean <- mean(y, na.rm = TRUE)
+    if (!is.finite(global_mean)) global_mean <- 0.0
+
+    X <- as.matrix(data[, input_cols, with = FALSE])
+    if (!is.numeric(X)) storage.mode(X) <- "double"
+    mu <- colMeans(X, na.rm = TRUE)
+    sigma <- apply(X, 2, stats::sd, na.rm = TRUE)
+    sigma[is.na(sigma) | sigma < 1e-8] <- 1.0
+    mu[is.na(mu)] <- 0.0
+
+    for (j in seq_len(ncol(X))) {
+      nas <- is.na(X[, j]) | !is.finite(X[, j])
+      if (any(nas)) X[nas, j] <- mu[j]
+    }
+
+    X_scaled <- sweep(sweep(X, 2, mu, "-"), 2, sigma, "/")
+    X_query <- if (ncol(X_scaled) == 1L) cbind(X_scaled, 0.0) else X_scaled
+
+    N <- nrow(X_query)
+    if (N < 2L) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = rep(global_mean, N)))
+    }
+
+    k_req <- if (!is.null(gene$params$k)) as.integer(gene$params$k) else 5L
+    k_eff <- min(k_req, N - 1L)
+    if (k_eff < 1L) k_eff <- 1L
+
+    nn_res <- tryCatch({
+      quitefastmst::knn_euclid(X_query, k = k_eff, Y = NULL)
+    }, error = function(e) NULL)
+
+    if (is.null(nn_res) || is.null(nn_res$nn.index)) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
+    }
+
+    nn_idx <- nn_res$nn.index
+    y_clean <- y
+    y_clean[is.na(y_clean)] <- global_mean
+    y_neighbors <- matrix(y_clean[nn_idx], nrow = N, ncol = k_eff)
+    mean_nn <- rowMeans(y_neighbors)
+
+    s <- 2.0
+    loo_vals <- (k_eff * mean_nn + s * global_mean) / (k_eff + s)
+    loo_vals[!is.finite(loo_vals)] <- global_mean
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+    list(
+      valid = TRUE,
+      x_train_scaled = X_query,
+      y_train = y_clean,
+      mu = mu,
+      sigma = sigma,
+      k = k_eff,
+      global_mean = global_mean,
+      loo_train = loo_train
+    )
+  },
+  apply_func = function(data, gene, state) {
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$x_train_scaled)) {
+      return(rep(0.0, nrow(data)))
+    }
+    input_cols <- gene$input_cols
+    X <- as.matrix(data[, input_cols, with = FALSE])
+    if (!is.numeric(X)) storage.mode(X) <- "double"
+
+    for (j in seq_len(ncol(X))) {
+      nas <- is.na(X[, j]) | !is.finite(X[, j])
+      if (any(nas)) X[nas, j] <- state$mu[j]
+    }
+
+    X_scaled <- sweep(sweep(X, 2, state$mu, "-"), 2, state$sigma, "/")
+    X_query <- if (ncol(X_scaled) == 1L) cbind(X_scaled, 0.0) else X_scaled
+
+    if (nrow(X_query) == 0L) return(numeric(0))
+
+    nn_res <- tryCatch({
+      quitefastmst::knn_euclid(state$x_train_scaled, k = state$k, Y = X_query)
+    }, error = function(e) NULL)
+
+    if (is.null(nn_res) || is.null(nn_res$nn.index)) {
+      return(rep(state$global_mean, nrow(data)))
+    }
+
+    nn_idx <- nn_res$nn.index
+    y_neighbors <- matrix(state$y_train[nn_idx], nrow = nrow(X_query), ncol = state$k)
+    mean_nn <- rowMeans(y_neighbors)
+
+    s <- 2.0
+    res <- (state$k * mean_nn + s * state$global_mean) / (state$k + s)
+    res[!is.finite(res)] <- state$global_mean
+    as.numeric(res)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "knnte")
+)

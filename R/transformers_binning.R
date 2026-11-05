@@ -119,3 +119,38 @@ evo_transformers$rank_transform <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "rnk")
 )
+
+# Round Transform (discretization onto decimal grid)
+evo_transformers$round_transform <- create_transformer(
+  name = "round_transform",
+  type = "unary",
+  input_type = "numeric",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.numeric(data[[input_cols[1]]])
+    d <- if (!is.null(gene$params$digits)) as.integer(gene$params$digits) else 1L
+    res <- round(x, digits = d)
+    res[!is.finite(res)] <- 0.0
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rnd")
+)
+
+# Decimal Digit Extraction (extracts d-th digit after decimal point)
+evo_transformers$decimal_digit <- create_transformer(
+  name = "decimal_digit",
+  type = "unary",
+  input_type = "numeric",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    input_cols <- gene$input_cols
+    x <- as.numeric(data[[input_cols[1]]])
+    d <- if (!is.null(gene$params$digits)) as.integer(gene$params$digits) else 1L
+    mult <- 10^d
+    res <- as.integer(floor(abs(x) * mult) %% 10L)
+    res[!is.finite(res)] <- 0L
+    as.numeric(res)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "ddig")
+)

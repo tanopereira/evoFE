@@ -150,7 +150,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     gene_to_mod <- ind$genes[[idx]]
     t_name <- gene_to_mod$transformer_name
     t_def <- evo_transformers[[t_name]]
-    is_multi <- t_def$type == "multivariate"
+    is_multi <- t_def$type %in% c("multivariate", "supervised_multivariate")
     old_formula <- gene_to_formula(gene_to_mod)
     
     gene_num_ex <- setdiff(gene_num, gene_to_mod$output_col)
@@ -242,8 +242,12 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         old_val <- gene_to_mod$params[[param_name]]
         
         new_val <- if (param_name == "k") {
-          # k for clustering: sample from 2:5, excluding current value if possible
-          candidates <- setdiff(2:5, old_val)
+          cand_k <- if (identical(gene_to_mod$transformer_name, "knn_target_encode")) c(3L, 5L, 10L, 25L) else 2:5
+          candidates <- setdiff(cand_k, old_val)
+          if (length(candidates) > 0) sample(candidates, 1) else old_val
+        } else if (param_name == "digits") {
+          cand_digits <- if (identical(gene_to_mod$transformer_name, "round_transform")) c(0L, 1L, 2L, 3L) else c(1L, 2L, 3L, 4L)
+          candidates <- setdiff(cand_digits, old_val)
           if (length(candidates) > 0) sample(candidates, 1) else old_val
         } else if (param_name == "gini_threshold") {
           round(stats::runif(1, 0.1, 0.9), 2)
@@ -416,15 +420,15 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           }
         } else if (t_def$type %in% c("unary", "supervised_unary")) {
           cols <- weighted_sample(available_cols, 1)
-        } else if (t_def$type == "binary") {
-          allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff", "groupby_nunique")) FALSE else TRUE
+        } else if (t_def$type %in% c("binary", "supervised_binary")) {
+          allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff", "groupby_nunique", "cat_interaction_target_encode")) FALSE else TRUE
           if (!allow_rep && length(available_cols) < 2) next
           cols <- weighted_sample(available_cols, 2, replace = allow_rep)
-        } else if (t_def$type == "multivariate") {
+        } else if (t_def$type %in% c("multivariate", "supervised_multivariate")) {
           if (length(available_cols) < 2) next
           max_cols <- if (t_name %in% c("add", "multiply", "row_min", "row_max", "row_sd", "row_na_count", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
             min(5, length(available_cols))
-          } else if (t_name == "concat") {
+          } else if (t_name %in% c("concat", "knn_target_encode")) {
             min(3, length(available_cols))
           } else {
             max(2, floor((1 - exp(-1)) * length(available_cols)))
