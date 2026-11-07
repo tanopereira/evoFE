@@ -70,7 +70,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
   model_args <- resolved$extra_args
   clean_ind <- strip_individual_state(ind)
   if (is.null(state_cache)) state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  if (is.null(shared_full)) shared_full <- data.table::as.data.table(data_dt)
+  if (is.null(shared_full)) shared_full <- shallow_copy_dt(data.table::as.data.table(data_dt))
 
   fold_models <- vector("list", length(u_folds))
   for (idx in seq_along(u_folds)) {
@@ -79,8 +79,8 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
     va_idx <- which(fold_ids == f)
     if (length(tr_idx) == 0L || length(va_idx) == 0L) next
 
-    tr_dt <- data.table::as.data.table(data_dt[tr_idx, ])
-    va_dt <- data.table::as.data.table(data_dt[va_idx, ])
+    tr_dt <- shallow_copy_dt(data.table::as.data.table(data_dt[tr_idx, ]))
+    va_dt <- shallow_copy_dt(data.table::as.data.table(data_dt[va_idx, ]))
     data.table::setattr(tr_dt, ".row_id", tr_idx)
     data.table::setattr(va_dt, ".row_id", va_idx)
 
@@ -150,19 +150,18 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
                                      threads = default_threads(), user_args = list(),
                                      state_cache = NULL) {
   if (is.null(fold_models) || length(fold_models) == 0L) return(NULL)
-  if (is.null(state_cache)) state_cache <- new.env(hash = TRUE, parent = emptyenv())
+  dt_base <- shallow_copy_dt(data.table::as.data.table(dt_input))
   avg_preds <- NULL
   n_valid <- 0L
 
   for (fm in fold_models) {
     if (is.null(fm) || is.null(fm$model) || is.null(fm$ind)) next
     eval_entry <- get_evaluator(fm$evaluator)
-    dt_f <- data.table::copy(dt_input)
+    dt_f <- shallow_copy_dt(dt_base)
     res_f <- apply_individual(
       fm$ind, dt_f, val_data = NULL, target_col = NULL,
-      allow_prune = TRUE, state_cache = state_cache, full_data = dt_input
+      allow_prune = TRUE, state_cache = NULL, full_data = NULL
     )
-    if (!is.null(res_f$full)) dt_input <- res_f$full
     feats <- extract_individual_features(res_f$ind, target_col = target_col, unique = TRUE)
     x_new <- .sanitize_feature_matrix(res_f$train[, feats, with = FALSE], threads = threads)
     preds_f <- do.call(eval_entry$predict_func, c(

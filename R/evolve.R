@@ -577,7 +577,7 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  shared_full <- data.table::as.data.table(data)
+  shared_full <- shallow_copy_dt(data.table::as.data.table(data))
 
   # Pre-calculate fixed CV folds or split IDs
   fold_ids <- NULL

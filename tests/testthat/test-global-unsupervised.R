@@ -383,5 +383,123 @@ test_that("cross-island evaluation reuses global state cache and avoids redundan
   expect_equal(res2$val[["test_counted_col"]], dt[["test_counted_col"]][va2_idx])
 })
 
+test_that("hierarchical children of supervised genes never leak via full_data across folds", {
+  dt <- data.table::data.table(
+    x1 = seq(-1, 1, length.out = 20),
+    cat = rep(paste0("c", 1:10), each = 2),
+    target = c(rep(1, 10), rep(0, 10))
+  )
+
+  g_te <- create_gene("target_encode", "cat")
+  g_log <- create_gene("log", g_te$output_col)
+  g_pca <- create_gene("pca", c(g_te$output_col, "x1"))
+  g_pca$params$comp_idx <- 1L
+
+  ind1 <- create_individual(
+    genes = list(g_te, g_log, g_pca),
+    numeric_cols = "x1", categorical_cols = "cat",
+    all_numeric_cols = "x1", all_categorical_cols = "cat"
+  )
+  ind2 <- create_individual(
+    genes = list(g_te, g_log, g_pca),
+    numeric_cols = "x1", categorical_cols = "cat",
+    all_numeric_cols = "x1", all_categorical_cols = "cat"
+  )
+
+  shared_full <- data.table::copy(dt)
+  cache <- new.env(hash = TRUE, parent = emptyenv())
+
+  f1_tr <- data.table::copy(dt[1:14, ]); data.table::setattr(f1_tr, ".row_id", 1:14)
+  f1_va <- data.table::copy(dt[15:20, ]); data.table::setattr(f1_va, ".row_id", 15:20)
+  res1 <- apply_individual(ind1, f1_tr, f1_va, target_col = "target",
+                           state_cache = cache, allow_prune = FALSE,
+                           full_data = shared_full, global_unsupervised = TRUE,
+                           validate_genes = FALSE)
+
+  # Neither supervised gene nor its downstream children may be written into shared_full
+  expect_false(g_te$output_col %in% names(shared_full))
+  expect_false(g_log$output_col %in% names(shared_full))
+  expect_false(g_pca$output_col %in% names(shared_full))
+
+  # Fold 2 holds out rows 1:6 (which were in Fold 1's training split with target == 1)
+  f2_tr <- data.table::copy(dt[7:20, ]); data.table::setattr(f2_tr, ".row_id", 7:20)
+  f2_va <- data.table::copy(dt[1:6, ]); data.table::setattr(f2_va, ".row_id", 1:6)
+  res2_global <- apply_individual(ind2, data.table::copy(f2_tr), data.table::copy(f2_va),
+                                  target_col = "target", state_cache = cache, allow_prune = FALSE,
+                                  full_data = shared_full, global_unsupervised = TRUE,
+                                  validate_genes = FALSE)
+  res2_local <- apply_individual(ind2, data.table::copy(f2_tr), data.table::copy(f2_va),
+                                 target_col = "target", state_cache = NULL, allow_prune = FALSE,
+                                 full_data = NULL, global_unsupervised = FALSE,
+                                 validate_genes = FALSE)
+
+  expect_equal(res2_global$val[[g_log$output_col]], res2_local$val[[g_log$output_col]])
+  expect_equal(res2_global$val[[g_pca$output_col]], res2_local$val[[g_pca$output_col]])
+
+  # strip_individual_state must also strip transitively supervised child states
+  stripped <- strip_individual_state(res1$ind, keep_unsupervised = TRUE)
+  expect_null(stripped$genes[[1]]$state)
+  expect_null(stripped$genes[[3]]$state)
+})
+
+test_that("bagged fold and ensemble predictions isolate per-model encoder states and preserve caller data.table", {
+  g_te <- create_gene("target_encode", "cat")
+  g_logx <- create_gene("log", "x")
+  tr1 <- data.table::data.table(x = 1:4, cat = c("a", "a", "b", "b"), y = c(0, 0, 1, 1))
+  tr2 <- data.table::data.table(x = 1:4, cat = c("a", "a", "b", "b"), y = c(1, 1, 0, 0))
+
+  ind1 <- apply_individual(
+    create_individual(genes = list(g_te, g_logx), numeric_cols = character(0), all_categorical_cols = "cat"),
+    tr1, target_col = "y", validate_genes = FALSE
+  )$ind
+  ind2 <- apply_individual(
+    create_individual(genes = list(g_te, g_logx), numeric_cols = character(0), all_categorical_cols = "cat"),
+    tr2, target_col = "y", validate_genes = FALSE
+  )$ind
+
+  register_evaluator(
+    "__echo_te_critical",
+    train_func = function(x_train, y_train, ...) list(model = 1L),
+    predict_func = function(model, x_new, ...) as.numeric(x_new[, g_te$output_col])
+  )
+  on.exit(rm("__echo_te_critical", envir = evo_evaluators), add = TRUE)
+
+  rec_bag <- structure(list(
+    best_individual = ind1,
+    best_model = 1L,
+    fold_models = list(
+      list(ind = ind1, model = 1L, evaluator = "__echo_te_critical"),
+      list(ind = ind2, model = 1L, evaluator = "__echo_te_critical")
+    ),
+    bag_folds = TRUE,
+    evaluator = "__echo_te_critical",
+    target_col = "y",
+    task = "regression"
+  ), class = "evo_recipe")
+
+  ens <- structure(list(
+    active_recipes = list(m1 = ind1, m2 = ind2),
+    active_models = list(m1 = 1L, m2 = 1L),
+    active_evaluators = list(m1 = "__echo_te_critical", m2 = "__echo_te_critical"),
+    weights = c(m1 = 0.5, m2 = 0.5),
+    evaluator = "__echo_te_critical",
+    target_col = "y",
+    task = "regression"
+  ), class = "evo_ensemble")
+
+  test_dt <- data.table::data.table(x = 1:2, cat = c("a", "b"))
+  data.table::setalloccol(test_dt, 64L)
+  orig_cols <- copy(names(test_dt))
+
+  preds_bag <- predict_model(rec_bag, test_dt, bag_folds = TRUE)
+  preds_ens <- predict_model(ens, test_dt)
+
+  # Symmetric opposite encodings on tr1 and tr2 must average strictly to 0.5
+  expect_equal(preds_bag, c(0.5, 0.5), tolerance = 1e-12)
+  expect_equal(preds_ens, c(0.5, 0.5), tolerance = 1e-12)
+  expect_equal(names(test_dt), orig_cols)
+})
+
+
 
 

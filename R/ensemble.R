@@ -527,7 +527,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   # Shared state cache for dataset transformation
   state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  dt_full <- data.table::as.data.table(data)
+  dt_full <- shallow_copy_dt(data.table::as.data.table(data))
 
   # Lazy training: Reuse best_model for matching global best island, fit remaining active islands
   for (name in active_names) {

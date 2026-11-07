@@ -169,8 +169,14 @@ strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.glo
   ind$val_preds <- NULL
   ind$y_val <- NULL
   if (length(ind$genes) > 0) {
+    tainted_cols <- character(0)
     for (i in seq_along(ind$genes)) {
-      if (!isTRUE(keep_unsupervised) || is_supervised_transformer(ind$genes[[i]])) {
+      g <- ind$genes[[i]]
+      is_tainted <- is_supervised_transformer(g) || any(g$input_cols %in% tainted_cols)
+      if (is_tainted && !is.null(g$output_col)) {
+        tainted_cols <- c(tainted_cols, g$output_col)
+      }
+      if (!isTRUE(keep_unsupervised) || is_tainted) {
         ind$genes[[i]]$state <- NULL
       }
     }

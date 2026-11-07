@@ -20,18 +20,17 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
                        full_data = NULL, global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
                        validate_genes = TRUE) {
   t_def <- evo_transformers[[gene$transformer_name]]
+  is_supervised <- is_supervised_transformer(gene, t_def)
+  use_global_fit <- !is_supervised && !is.null(full_data) && isTRUE(global_unsupervised) &&
+    all(gene$input_cols %in% names(full_data))
 
   col_exists_train <- gene$output_col %in% names(train_data)
   col_exists_val <- if (!is.null(val_data)) gene$output_col %in% names(val_data) else TRUE
-  col_exists_full <- if (!is.null(full_data)) gene$output_col %in% names(full_data) else TRUE
+  col_exists_full <- if (use_global_fit) gene$output_col %in% names(full_data) else TRUE
 
   if (col_exists_train && col_exists_val && col_exists_full && (!is.null(gene$state) || is.null(t_def$fit_func))) {
     return(list(train = train_data, val = val_data, full = full_data, gene = gene))
   }
-
-  is_supervised <- is_supervised_transformer(gene, t_def)
-  use_global_fit <- !is_supervised && !is.null(full_data) && isTRUE(global_unsupervised) &&
-    all(gene$input_cols %in% names(full_data))
 
   eff_global_cache <- if (!is.null(full_data)) attr(full_data, ".global_state_cache") else NULL
   if (is.null(eff_global_cache)) eff_global_cache <- state_cache
@@ -228,8 +227,8 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     }
   }
 
-  # Apply to full_data (if provided and column doesn't already exist, e.g. for supervised transformers)
-  if (!is.null(full_data) && !col_exists_full) {
+  # Apply to full_data only when global unsupervised fitting is active
+  if (can_use_global && !col_exists_full) {
     if (is.null(new_col_full)) {
       new_col_full <- t_def$apply_func(full_data, gene, state)
       if (out_type == "categorical") {

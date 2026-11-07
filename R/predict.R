@@ -32,7 +32,7 @@
 predict.evo_recipe <- function(object, newdata, ...) {
   ind <- object$best_individual
   
-  dt_input <- data.table::copy(data.table::as.data.table(newdata))
+  dt_input <- shallow_copy_dt(data.table::as.data.table(newdata))
   res <- apply_individual(ind, dt_input, val_data = NULL, target_col = NULL, allow_prune = TRUE)
   applied_ind <- res$ind
   
@@ -55,17 +55,15 @@ predict.evo_ensemble <- function(object, newdata, ...) {
     stop("No active recipes available in evo_ensemble object.")
   }
 
-  state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  dt_input <- data.table::as.data.table(newdata)
-  out_dt <- data.table::copy(dt_input)
+  dt_base <- shallow_copy_dt(data.table::as.data.table(newdata))
+  out_dt <- shallow_copy_dt(dt_base)
   all_features <- character(0)
 
   for (name in names(object$active_recipes)) {
     ind_i <- object$active_recipes[[name]]
-    dt_i <- data.table::copy(dt_input)
+    dt_i <- shallow_copy_dt(dt_base)
     res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL,
-                              allow_prune = TRUE, state_cache = state_cache, full_data = dt_input)
-    if (!is.null(res_i$full)) dt_input <- res_i$full
+                              allow_prune = TRUE, state_cache = NULL, full_data = NULL)
     sub_dt <- res_i$train
     new_cols <- setdiff(names(sub_dt), names(out_dt))
     if (length(new_cols) > 0) {
@@ -140,7 +138,7 @@ predict_model.evo_recipe <- function(object, newdata, bag_folds = NULL, ...) {
   if (use_bag && !is.null(object$fold_models) && length(object$fold_models) > 0) {
     preds <- .predict_fold_models_bag(
       fold_models = object$fold_models,
-      dt_input = data.table::as.data.table(newdata),
+      dt_input = shallow_copy_dt(data.table::as.data.table(newdata)),
       target_col = object$target_col,
       task = object$task,
       classes = object$classes,
@@ -209,8 +207,7 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
   user_args[c("threads", "nthreads", "nthread", "num_threads", "n_jobs")] <- NULL
 
   use_bag <- if (!is.null(bag_folds)) isTRUE(bag_folds) else (isTRUE(object$bag_folds) || !is.null(object$active_fold_models))
-  state_cache <- new.env(hash = TRUE, parent = emptyenv())
-  dt_input <- data.table::as.data.table(newdata)
+  dt_base <- shallow_copy_dt(data.table::as.data.table(newdata))
   weighted_preds <- NULL
 
   for (name in active_names) {
@@ -224,21 +221,19 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
         length(object$active_fold_models[[name]]) > 0) {
       preds_i <- .predict_fold_models_bag(
         fold_models = object$active_fold_models[[name]],
-        dt_input = dt_input,
+        dt_input = dt_base,
         target_col = object$target_col,
         task = object$task,
         classes = NULL,
         threads = th,
-        user_args = user_args,
-        state_cache = state_cache
+        user_args = user_args
       )
     } else {
       evaluator_entry <- get_evaluator(eval_i)
 
-      dt_i <- data.table::copy(dt_input)
+      dt_i <- shallow_copy_dt(dt_base)
       res_i <- apply_individual(ind_i, dt_i, val_data = NULL, target_col = NULL,
-                                allow_prune = TRUE, state_cache = state_cache, full_data = dt_input)
-      if (!is.null(res_i$full)) dt_input <- res_i$full
+                                allow_prune = TRUE, state_cache = NULL, full_data = NULL)
       applied_ind <- res_i$ind
 
       features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
