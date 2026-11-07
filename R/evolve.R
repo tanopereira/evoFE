@@ -364,23 +364,7 @@ evolve_features <- function(data, target_col, task = "classification",
     stop("task must be one of: 'classification', 'multiclass', 'regression'.")
   }
 
-  if (!is.function(metric)) {
-    metric_lower <- tolower(metric)
-    valid_metrics <- list(
-      classification = c(
-        "default", "auc", "f1", "mcc", "balanced_accuracy", "balanced-accuracy",
-        "bal_acc", "bal-acc", "eval-ts-refinement", "ts-refinement", "ts_refinement"
-      ),
-      multiclass = c("default", "auc", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
-      regression = c("default", "mae", "cal_rmse", "cal-rmse", "cal_mae", "cal-mae")
-    )
-    if (!metric_lower %in% valid_metrics[[task]]) {
-      stop(sprintf(
-        "Metric '%s' is not supported for task '%s'. Supported metrics are: %s",
-        metric, task, paste(valid_metrics[[task]], collapse = ", ")
-      ))
-    }
-  }
+  validate_metric(metric, task)
 
   if (!target_col %in% names(data)) {
     stop(sprintf("Target column '%s' not found in the dataset.", target_col))

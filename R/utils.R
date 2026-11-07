@@ -475,41 +475,6 @@ matrix_impute_and_scale <- function(X, stats = NULL) {
   )
 }
 
-#' Resolve Canonical Metric Name from Aliases
-#'
-#' Normalizes metric strings and aliases (e.g. hyphens vs underscores, calibration
-#' and refinement prefixes) to their canonical internal identifiers.
-#'
-#' @param metric Character string or custom metric function.
-#' @return Canonical metric name string, or the original metric function if a function was provided.
-#' @keywords internal
-#' @noRd
-canonical_metric_name <- function(metric, task = NULL) {
-  if (is.null(metric) || is.function(metric)) {
-    return(metric)
-  }
-  m <- tolower(trimws(as.character(metric)))
-  if (m %in% c("default", "") && !is.null(task)) {
-    return(if (identical(task, "regression")) "rmse" else "logloss")
-  }
-  if (m %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
-    return("ts_refinement")
-  }
-  if (m %in% c("cal_rmse", "cal-rmse")) {
-    return("cal_rmse")
-  }
-  if (m %in% c("cal_mae", "cal-mae")) {
-    return("cal_mae")
-  }
-  if (m %in% c("binary_logloss", "multi_logloss", "mlogloss")) {
-    return("logloss")
-  }
-  if (m %in% c("balanced-accuracy", "bal_acc", "bal-acc")) {
-    return("balanced_accuracy")
-  }
-  m
-}
-
 #' Default Physical Core Thread Count
 #'
 #' @return Integer scalar representing default threads on host machine.

@@ -1,3 +1,64 @@
+#' Resolve Canonical Metric Name from Aliases
+#'
+#' Normalizes metric strings and aliases (e.g. hyphens vs underscores, calibration
+#' and refinement prefixes) to their canonical internal identifiers.
+#'
+#' @param metric Character string or custom metric function.
+#' @param task Optional task string ("classification", "multiclass", "regression").
+#' @return Canonical metric name string, or the original metric function if a function was provided.
+#' @keywords internal
+#' @noRd
+canonical_metric_name <- function(metric, task = NULL) {
+  if (is.null(metric) || is.function(metric)) {
+    return(metric)
+  }
+  m <- tolower(trimws(as.character(metric)))
+  if (m %in% c("default", "") && !is.null(task)) {
+    return(if (identical(task, "regression")) "rmse" else "logloss")
+  }
+  if (m %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+    return("ts_refinement")
+  }
+  if (m %in% c("cal_rmse", "cal-rmse")) {
+    return("cal_rmse")
+  }
+  if (m %in% c("cal_mae", "cal-mae")) {
+    return("cal_mae")
+  }
+  if (m %in% c("binary_logloss", "multi_logloss", "mlogloss")) {
+    return("logloss")
+  }
+  if (m %in% c("balanced-accuracy", "bal_acc", "bal-acc")) {
+    return("balanced_accuracy")
+  }
+  m
+}
+
+#' Validate that a metric is supported for the given task
+#' @keywords internal
+#' @noRd
+validate_metric <- function(metric, task) {
+  if (is.function(metric)) {
+    return(invisible(TRUE))
+  }
+  metric_lower <- tolower(metric)
+  valid_metrics <- list(
+    classification = c(
+      "default", "auc", "f1", "mcc", "balanced_accuracy", "balanced-accuracy",
+      "bal_acc", "bal-acc", "eval-ts-refinement", "ts-refinement", "ts_refinement"
+    ),
+    multiclass = c("default", "auc", "eval-ts-refinement", "ts-refinement", "ts_refinement"),
+    regression = c("default", "mae", "cal_rmse", "cal-rmse", "cal_mae", "cal-mae")
+  )
+  if (!metric_lower %in% valid_metrics[[task]]) {
+    stop(sprintf(
+      "Metric '%s' is not supported for task '%s'. Supported metrics are: %s",
+      metric, task, paste(valid_metrics[[task]], collapse = ", ")
+    ))
+  }
+  invisible(TRUE)
+}
+
 #' Dispatch evaluation metric computation
 #'
 #' @param y_true True labels/values
