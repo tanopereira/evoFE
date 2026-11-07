@@ -146,6 +146,31 @@ test_that("run_competition_pipeline executes full 2-phase strategy on classifica
   expect_true(all(is.finite(sub_disk$price) & sub_disk$price > 0))
 })
 
+test_that("run_competition_pipeline handles character/factor binary targets with xgboost and lazy ensemble refits", {
+  skip_if_not_installed("lightgbm")
+  skip_if_not_installed("xgboost")
+
+  set.seed(808)
+  n_tr <- 120L
+  n_te <- 25L
+  mk <- function(n) data.table::data.table(
+    x1 = stats::rnorm(n), x2 = stats::rnorm(n),
+    grp = sample(c("a", "b", "c"), n, replace = TRUE)
+  )
+  tr <- mk(n_tr)
+  tr[, Will_Buy := ifelse(stats::rbinom(.N, 1L, stats::plogis(1.3 * x1 - x2)) == 1L, "Yes", "No")]
+  te <- mk(n_te)
+
+  res <- run_competition_pipeline(
+    train = tr, test = te, target_col = "Will_Buy",
+    preset = "fast", evaluators = c("lightgbm", "xgboost"),
+    cv_folds = 3L, threads = 1L, seed = 5L, verbose = FALSE
+  )
+  expect_equal(res$task, "classification")
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions) & res$predictions >= 0 & res$predictions <= 1))
+})
+
 test_that("seed_genes and decoupled supervised_stage4 search fast and refit 1-gen per fold leak-free", {
   skip_if_not_installed("lightgbm")
 

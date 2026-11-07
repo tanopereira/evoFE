@@ -600,6 +600,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       y_full <- res_full$train[[target_col]]
       if (task == "multiclass") {
         y_full <- as.integer(factor(y_full, levels = classes)) - 1
+      } else if (task == "classification") {
+        y_full <- encode_binary_target(y_full)
       }
 
       # Train model using candidate's specific evaluator and best params
