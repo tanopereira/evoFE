@@ -176,7 +176,7 @@ fit_post_calibrator <- function(y_true, y_pred, task = "classification", metric 
     return(NULL)
   }
   metric <- canonical_metric_name(metric, task)
-  if (!metric %in% c("ts_refinement", "cal_rmse", "cal_mae", "f1", "mcc", "balanced_accuracy")) {
+  if (!metric %in% c("ts_refinement", "cal_rmse", "cal_mae", "f1", "mcc", "balanced_accuracy", "accuracy", "qwk")) {
     return(NULL)
   }
   if (is.null(y_true) || is.null(y_pred) || length(y_true) == 0L) {
@@ -191,7 +191,7 @@ fit_post_calibrator <- function(y_true, y_pred, task = "classification", metric 
     if (sum(keep) < 2L) return(NULL)
     rcpp_fit_post_calibrator(yt[keep], yp[keep], task = "classification",
                              metric = "ts_refinement", threads = th)
-  } else if (metric %in% c("f1", "mcc", "balanced_accuracy") && task == "classification") {
+  } else if (metric %in% c("f1", "mcc", "balanced_accuracy", "accuracy", "qwk") && task == "classification") {
     opt <- optimize_threshold(y_true, y_pred, metric = metric)
     if (is.null(opt) || !is.finite(opt$threshold)) return(NULL)
     list(

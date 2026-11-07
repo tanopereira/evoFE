@@ -156,3 +156,22 @@ evo_transformers$decimal_digit <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "ddig")
 )
+
+# Fractional Part Extraction (|x| - floor(|x|), preserving NA)
+evo_transformers$frac_part <- create_transformer(
+  name = "frac_part",
+  type = "unary",
+  input_type = "numeric",
+  output_type = "numeric",
+  apply_func = function(data, gene, state = NULL) {
+    x <- as.numeric(data[[gene$input_cols[1]]])
+    fin <- is.finite(x)
+    res <- rep(NA_real_, length(x))
+    if (any(fin)) {
+      ax <- abs(x[fin])
+      res[fin] <- ax - floor(ax)
+    }
+    res
+  },
+  name_generator = function(gene) .gene_col_name(gene, "frac")
+)

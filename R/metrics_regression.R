@@ -10,6 +10,82 @@ compute_rmse <- function(y_true, y_pred) {
   sqrt(mean((as.numeric(y_true) - as.numeric(y_pred))^2, na.rm = TRUE))
 }
 
+#' @noRd
+compute_rmsle <- function(y_true, y_pred) {
+  yt <- pmax(0.0, as.numeric(y_true))
+  yp <- pmax(0.0, as.numeric(y_pred))
+  sqrt(mean((log1p(yt) - log1p(yp))^2, na.rm = TRUE))
+}
+
+#' @noRd
+compute_r2 <- function(y_true, y_pred) {
+  yt <- as.numeric(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- is.finite(yt) & is.finite(yp)
+  if (sum(keep) < 2L) return(0.0)
+  yt_k <- yt[keep]
+  yp_k <- yp[keep]
+  ss_res <- sum((yt_k - yp_k)^2)
+  ss_tot <- sum((yt_k - mean(yt_k))^2)
+  if (!is.finite(ss_tot) || ss_tot <= 1e-15) {
+    return(if (is.finite(ss_res) && ss_res <= 1e-15) 1.0 else 0.0)
+  }
+  1.0 - ss_res / ss_tot
+}
+
+#' @noRd
+compute_mape <- function(y_true, y_pred) {
+  yt <- as.numeric(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- is.finite(yt) & is.finite(yp)
+  if (!any(keep)) return(0.0)
+  denom <- pmax(abs(yt[keep]), 1e-8)
+  mean(abs(yt[keep] - yp[keep]) / denom)
+}
+
+#' @noRd
+compute_smape <- function(y_true, y_pred) {
+  yt <- as.numeric(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- is.finite(yt) & is.finite(yp)
+  if (!any(keep)) return(0.0)
+  yt_k <- yt[keep]
+  yp_k <- yp[keep]
+  den <- abs(yt_k) + abs(yp_k)
+  ratio <- ifelse(den > 1e-12, (2.0 * abs(yt_k - yp_k)) / den, 0.0)
+  mean(ratio)
+}
+
+#' Shared O(N) Quadratic Weighted Kappa on integer ratings (exact concordance identity)
+#' @noRd
+compute_qwk_from_ints <- function(y_int, p_int) {
+  keep <- is.finite(y_int) & is.finite(p_int)
+  if (!any(keep)) return(0.0)
+  yi <- as.numeric(y_int[keep])
+  pi <- as.numeric(p_int[keep])
+  num <- mean((yi - pi)^2)
+  my <- mean(yi)
+  mp <- mean(pi)
+  den <- mean(yi * yi) + mean(pi * pi) - 2.0 * my * mp
+  if (!is.finite(den) || den <= 1e-15) {
+    return(if (is.finite(num) && num <= 1e-15) 1.0 else 0.0)
+  }
+  1.0 - num / den
+}
+
+#' @noRd
+compute_qwk_regression <- function(y_true, y_pred) {
+  yt <- as.numeric(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- is.finite(yt) & is.finite(yp)
+  if (!any(keep)) return(0.0)
+  yt_int <- round(yt[keep])
+  min_y <- min(yt_int)
+  max_y <- max(yt_int)
+  yp_int <- pmin(pmax(round(yp[keep]), min_y), max_y)
+  compute_qwk_from_ints(yt_int, yp_int)
+}
+
 #' Fit a Forward Target Transformation on Regression Training Targets
 #'
 #' @param y Numeric training target vector.

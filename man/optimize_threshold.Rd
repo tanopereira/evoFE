@@ -7,7 +7,7 @@
 optimize_threshold(
   y_true,
   y_pred,
-  metric = c("f1", "mcc", "balanced_accuracy")
+  metric = c("f1", "mcc", "balanced_accuracy", "accuracy", "qwk")
 )
 }
 \arguments{
@@ -15,7 +15,8 @@ optimize_threshold(
 
 \item{y_pred}{Predicted positive-class probabilities in \eqn{[0, 1]}.}
 
-\item{metric}{Character string: \code{"f1"}, \code{"mcc"}, or \code{"balanced_accuracy"}.}
+\item{metric}{Character string: \code{"f1"}, \code{"mcc"}, \code{"balanced_accuracy"},
+\code{"accuracy"}, or \code{"qwk"}.}
 }
 \value{
 A list with \code{threshold} (optimal \eqn{\tau^*}), \code{best_score},
@@ -23,6 +24,6 @@ A list with \code{threshold} (optimal \eqn{\tau^*}), \code{best_score},
 }
 \description{
 Computes the exact global optimum decision threshold \eqn{\tau^* \in [0.02, 0.98]}
-maximizing \code{"f1"}, \code{"mcc"}, or \code{"balanced_accuracy"} in a single
-sorted cumulative-sum pass.
+maximizing \code{"f1"}, \code{"mcc"}, \code{"balanced_accuracy"}, \code{"accuracy"},
+or \code{"qwk"} in a single sorted cumulative-sum pass.
 }

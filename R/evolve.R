@@ -136,6 +136,7 @@
 #' @param bag_folds Logical. When \code{TRUE} and \code{evaluation_strategy} is \code{"cv"} or \code{"metacv"}, trains and stores all $K$ fold-specific models so \code{\link{predict_model}} and \code{\link{ensemble_islands}} can average K-fold bagged predictions at test time.
 #' @param target_transform Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.
 #' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.
+#' @param confirm_top_k Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
@@ -212,6 +213,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             bag_folds = FALSE,
                             target_transform = "none",
                             sd_penalty = 0,
+                            confirm_top_k = 0L,
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
@@ -220,6 +222,10 @@ evolve_features <- function(data, target_col, task = "classification",
   if (!is.numeric(sd_penalty) || length(sd_penalty) != 1L || is.na(sd_penalty) || sd_penalty < 0) {
     stop("'sd_penalty' must be a non-negative number.")
   }
+  if (!is.numeric(confirm_top_k) || length(confirm_top_k) != 1L || is.na(confirm_top_k) || confirm_top_k < 0) {
+    stop("'confirm_top_k' must be a single non-negative integer.")
+  }
+  confirm_top_k <- as.integer(confirm_top_k)
 
   old_glob_unsup <- getOption("evoFE.global_unsupervised", NULL)
   old_tt_opt <- getOption("evoFE.target_transform", NULL)
@@ -1309,6 +1315,47 @@ evolve_features <- function(data, target_col, task = "classification",
     evolution_log <- hist_res$evolution_log
   }
 
+  confirm_fitness_val <- NULL
+  mean_cv_fitness_val <- NULL
+  if (confirm_top_k > 0L) {
+    if (evaluation_strategy != "cv") {
+      if (verbose) {
+        message("Skipping confirm_top_k gate: only applicable when evaluation_strategy = 'cv'.")
+      }
+    } else if (identical(cv_strategy, "time")) {
+      if (verbose) {
+        message("Skipping confirm_top_k gate: chronological folds (cv_strategy = 'time') are deterministic.")
+      }
+    } else {
+      extra_cands_pool <- c(
+        if (exists("pool_res") && !is.null(pool_res$best_ind)) list(pool_res$best_ind) else list(),
+        if (exists("hist_res") && !is.null(hist_res$best_ind)) list(hist_res$best_ind) else list(),
+        if (exists("candidates") && !is.null(candidates)) candidates else list()
+      )
+      conf_res <- confirm_top_k_candidates(
+        confirm_top_k = confirm_top_k, best_ind = best_ind, pop = pop,
+        island_best_individual = if (exists("island_best_individual")) island_best_individual else NULL,
+        extra_candidates = extra_cands_pool, data = data, target_col = target_col,
+        task = task, cv_folds = cv_folds, cv_strategy = cv_strategy,
+        time_col = time_col, group_col = group_col,
+        evaluator_main = evaluator_main, shared_full = shared_full,
+        state_cache = state_cache, threads = threads, metric = metric,
+        verbose = verbose, complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode, complexity_floor = complexity_floor,
+        complexity_target = complexity_target, baseline_fitness = baseline_ind$fitness,
+        sd_penalty = sd_penalty, seed = seed, record = record,
+        evolution_log = evolution_log, viewer = viewer,
+        best_ind_source = best_ind_source, oof_preds = oof_preds, ...
+      )
+      best_ind <- conf_res$best_ind
+      best_ind_source <- conf_res$best_ind_source
+      oof_preds <- conf_res$oof_preds
+      evolution_log <- conf_res$evolution_log
+      confirm_fitness_val <- conf_res$confirm_fitness
+      mean_cv_fitness_val <- conf_res$mean_cv_fitness
+    }
+  }
+
   # Holdout evaluation for split strategy
   if (evaluation_strategy == "split" && ("holdout" %in% split_ids_val || !is.null(shared_splits$holdout))) {
     best_eval_curr <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
@@ -1369,6 +1416,12 @@ evolve_features <- function(data, target_col, task = "classification",
   }
   if (!is.null(train_size)) {
     best_ind$train_size <- train_size
+  }
+  if (!is.null(confirm_fitness_val)) {
+    best_ind$confirm_fitness <- confirm_fitness_val
+  }
+  if (!is.null(mean_cv_fitness_val)) {
+    best_ind$mean_cv_fitness <- mean_cv_fitness_val
   }
 
   features <- extract_individual_features(best_ind, target_col = target_col)
@@ -1661,6 +1714,8 @@ evolve_features <- function(data, target_col, task = "classification",
     island_improvements = if (!is.null(island_hr)) island_hr$improvement else NULL,
     island_headroom_closed = if (!is.null(island_hr)) island_hr$headroom_closed else NULL,
     holdout_fitness = if (!is.null(best_ind$holdout_fitness)) best_ind$holdout_fitness else NULL,
+    confirm_fitness = confirm_fitness_val,
+    mean_cv_fitness = mean_cv_fitness_val,
     search_gap = search_gap,
     fold_sd = if (!is.null(best_ind$fold_sd)) best_ind$fold_sd else NULL,
     sd_penalty = sd_penalty,

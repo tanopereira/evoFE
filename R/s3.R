@@ -35,6 +35,11 @@ print.evo_recipe <- function(x, ...) {
   } else {
     cat(sprintf("  Best Fitness:     %.4f\n", x$best_individual$fitness))
   }
+  if (!is.null(x$confirm_fitness) && is.finite(x$confirm_fitness)) {
+    cat(sprintf("  Confirmed Score:  %.4f  (2-Repeat Mean: %.4f)\n",
+                x$confirm_fitness,
+                if (!is.null(x$mean_cv_fitness) && is.finite(x$mean_cv_fitness)) x$mean_cv_fitness else x$confirm_fitness))
+  }
   if (!is.null(x$baseline_fitness) && is.finite(x$baseline_fitness)) {
     gain_str <- if (!is.null(x$improvement) && is.finite(x$improvement)) {
       sprintf("%+.4f", x$improvement)
@@ -113,6 +118,8 @@ summary.evo_recipe <- function(object, ...) {
     island_improvements = object$island_improvements,
     island_headroom_closed = object$island_headroom_closed,
     holdout_fitness = object$best_individual$holdout_fitness,
+    confirm_fitness = object$confirm_fitness,
+    mean_cv_fitness = object$mean_cv_fitness,
     search_gap = object$search_gap,
     num_genes = length(object$best_individual$genes),
     genes_summary = data.frame(
@@ -175,6 +182,12 @@ print.summary_evo_recipe <- function(x, ...) {
       "-"
     }
     cat(sprintf("Gain over Baseline:       %s (Headroom Closed: %s)\n", gain_str, headroom_str))
+  }
+  if (!is.null(x$confirm_fitness) && is.finite(x$confirm_fitness)) {
+    cat(sprintf("Confirmed Split-2 Score:  %.6f\n", x$confirm_fitness))
+    if (!is.null(x$mean_cv_fitness) && is.finite(x$mean_cv_fitness)) {
+      cat(sprintf("Mean 2-Repeat CV Score:   %.6f\n", x$mean_cv_fitness))
+    }
   }
   if (!is.null(x$holdout_fitness) && !is.na(x$holdout_fitness)) {
     cat(sprintf("Best Holdout Fitness:     %.6f\n", x$holdout_fitness))

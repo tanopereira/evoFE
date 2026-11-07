@@ -227,7 +227,8 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
 #' @noRd
 .build_cv_folds <- function(data, cv_folds, strategy = "random",
                             time_col = NULL, group_col = NULL,
-                            target_col = NULL, task = NULL) {
+                            target_col = NULL, task = NULL,
+                            shuffle_groups = FALSE) {
   n <- nrow(data)
   if (strategy == "time") {
     ord <- order(data[[time_col]], method = "radix")
@@ -243,6 +244,11 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
     gsizes <- tabulate(g_match, nbins = n_g)
     fold_load <- integer(cv_folds)
     gfold <- integer(n_g)
+    g_order <- if (isTRUE(shuffle_groups) && n_g > 1L) {
+      order(gsizes, sample.int(n_g), decreasing = TRUE)
+    } else {
+      order(gsizes, decreasing = TRUE)
+    }
 
     has_target <- !is.null(target_col) && target_col %in% names(data)
     if (has_target && (strategy == "stratified_group" || length(unique(data[[target_col]])) > 1L)) {
@@ -256,7 +262,7 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
       fold_strata <- matrix(0, nrow = cv_folds, ncol = n_s)
       strata_totals <- pmax(1.0, colSums(g_strata) / cv_folds)
 
-      for (gi in order(gsizes, decreasing = TRUE)) {
+      for (gi in g_order) {
         sz <- gsizes[gi]
         gs <- g_strata[gi, ]
         # Restrict candidate folds to those with minimum current load (or within 10% of min load
@@ -267,6 +273,9 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
         if (length(cand_folds) == 1L) {
           best_f <- cand_folds
         } else {
+          if (isTRUE(shuffle_groups)) {
+            cand_folds <- sample(cand_folds)
+          }
           best_f <- cand_folds[1L]
           best_cost <- Inf
           for (cf in cand_folds) {
@@ -286,8 +295,13 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
       return(gfold[g_match])
     }
 
-    for (gi in order(gsizes, decreasing = TRUE)) {
-      f <- which.min(fold_load)
+    for (gi in g_order) {
+      if (isTRUE(shuffle_groups)) {
+        min_f <- which(fold_load == min(fold_load))
+        f <- if (length(min_f) > 1L) sample(min_f, 1L) else min_f
+      } else {
+        f <- which.min(fold_load)
+      }
       gfold[gi] <- f
       fold_load[f] <- fold_load[f] + gsizes[gi]
     }

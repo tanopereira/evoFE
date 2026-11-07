@@ -688,3 +688,129 @@ evo_transformers$knn_target_encode <- create_transformer(
   },
   name_generator = function(gene) .gene_col_name(gene, "knnte")
 )
+
+.build_ridge_basis <- function(X_sub, mu_k, sigma_k, degree) {
+  Z <- sweep(sweep(X_sub, 2L, mu_k, "-"), 2L, sigma_k, "/")
+  Z[!is.finite(Z)] <- 0.0
+  Z <- pmin(pmax(Z, -10.0), 10.0)
+  if (identical(as.integer(degree), 2L)) {
+    cbind(Z, (Z * Z - 1.0) * sqrt(0.5))
+  } else {
+    Z
+  }
+}
+
+# Closed-Form Hat-Matrix Leave-One-Out Ridge Target Encoding (linear / quadratic)
+evo_transformers$ridge_oof_encode <- create_transformer(
+  name = "ridge_oof_encode",
+  type = "supervised_multivariate",
+  input_type = "numeric",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    input_cols <- gene$input_cols
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y)) {
+      return(list(valid = FALSE, global_mean = 0.0, loo_train = NULL))
+    }
+    valid_y <- is.finite(y)
+    if (sum(valid_y) < 4L) {
+      return(list(valid = FALSE, global_mean = 0.0, loo_train = NULL))
+    }
+    y_fit <- y[valid_y]
+    global_mean <- mean(y_fit)
+    if (!is.finite(global_mean)) global_mean <- 0.0
+    if (.safe_sd(y_fit) < 1e-12) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
+    }
+
+    X <- as.matrix(data[, input_cols, with = FALSE])
+    if (!is.numeric(X)) storage.mode(X) <- "double"
+    X_fit <- X[valid_y, , drop = FALSE]
+    mu <- colMeans(X_fit, na.rm = TRUE)
+    sigma <- apply(X_fit, 2L, stats::sd, na.rm = TRUE)
+    keep_cols <- which(!is.na(sigma) & is.finite(sigma) & sigma >= 1e-8)
+    if (length(keep_cols) == 0L) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
+    }
+    mu_k <- as.numeric(mu[keep_cols])
+    sigma_k <- as.numeric(sigma[keep_cols])
+
+    lambda <- if (!is.null(gene$params$lambda) && is.numeric(gene$params$lambda) &&
+                  is.finite(gene$params$lambda) && gene$params$lambda > 0) {
+      as.numeric(gene$params$lambda)
+    } else {
+      1.0
+    }
+    degree <- if (!is.null(gene$params$degree)) as.integer(gene$params$degree) else 1L
+
+    B_all <- .build_ridge_basis(X[, keep_cols, drop = FALSE], mu_k, sigma_k, degree)
+    B_fit_raw <- B_all[valid_y, , drop = FALSE]
+    phi_mean <- as.numeric(colMeans(B_fit_raw))
+    Phi_all <- sweep(B_all, 2L, phi_mean, "-")
+    Phi_fit <- Phi_all[valid_y, , drop = FALSE]
+    y_centered <- y_fit - global_mean
+
+    d <- ncol(Phi_fit)
+    A <- crossprod(Phi_fit) + diag(rep(lambda, d), nrow = d, ncol = d)
+    R_chol <- tryCatch(chol(A), error = function(e) NULL)
+    if (is.null(R_chol)) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
+    }
+    A_inv <- chol2inv(R_chol)
+    beta <- as.numeric(A_inv %*% crossprod(Phi_fit, y_centered))
+
+    r_hat_fit <- as.numeric(Phi_fit %*% beta)
+    h_diag <- rowSums((Phi_fit %*% A_inv) * Phi_fit)
+    denom <- 1.0 - h_diag
+    # Centering y by fixed global_mean prevents -y_i / (N - 1) intercept leakage as lambda -> Inf
+    loo_fit <- global_mean + ifelse(denom > 1e-4, (r_hat_fit - h_diag * y_centered) / denom, 0.0)
+
+    loo_vals <- global_mean + as.numeric(Phi_all %*% beta)
+    loo_vals[valid_y] <- loo_fit
+
+    is_bin <- all(y_fit == 0.0 | y_fit == 1.0)
+    clip_bounds <- if (is_bin) {
+      c(0.0, 1.0)
+    } else {
+      s_y <- .safe_sd(y_fit)
+      c(min(y_fit) - s_y, max(y_fit) + s_y)
+    }
+    loo_vals <- pmin(pmax(loo_vals, clip_bounds[1L]), clip_bounds[2L])
+    loo_vals[!is.finite(loo_vals)] <- global_mean
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+    list(
+      valid = TRUE,
+      keep_cols = keep_cols,
+      mu = mu_k,
+      sigma = sigma_k,
+      phi_mean = phi_mean,
+      degree = degree,
+      lambda = lambda,
+      beta = beta,
+      clip_bounds = clip_bounds,
+      global_mean = global_mean,
+      loo_train = loo_train
+    )
+  },
+  apply_func = function(data, gene, state) {
+    n_out <- nrow(data)
+    if (n_out == 0L) return(numeric(0))
+    g_mean <- if (!is.null(state) && !is.null(state$global_mean) && is.finite(state$global_mean)) state$global_mean else 0.0
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$beta) || is.null(state$keep_cols)) {
+      return(rep(g_mean, n_out))
+    }
+    input_cols <- gene$input_cols
+    X <- as.matrix(data[, input_cols, with = FALSE])
+    if (!is.numeric(X)) storage.mode(X) <- "double"
+    B_new <- .build_ridge_basis(X[, state$keep_cols, drop = FALSE], state$mu, state$sigma, state$degree)
+    Phi_new <- sweep(B_new, 2L, state$phi_mean, "-")
+    preds <- g_mean + as.numeric(Phi_new %*% state$beta)
+    if (!is.null(state$clip_bounds) && length(state$clip_bounds) == 2L) {
+      preds <- pmin(pmax(preds, state$clip_bounds[1L]), state$clip_bounds[2L])
+    }
+    preds[!is.finite(preds)] <- g_mean
+    preds
+  },
+  name_generator = function(gene) .gene_col_name(gene, "rdgte")
+)

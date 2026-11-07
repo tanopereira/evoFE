@@ -82,6 +82,7 @@ for the evolutionary feature-engineering search.  Every entry is an
     quantiles (\code{q} sampled from \{0.25, 0.50, 0.75\}).}
   \item{\code{target_sd_encode}}{Smoothed within-category target standard deviation encoding with Leave-One-Out training jackknife.}
   \item{\code{knn_target_encode}}{Out-of-fold k-nearest-neighbors target encoding across 1--3 standardized numeric features (\code{k} sampled from \{3, 5, 10, 25\}).}
+  \item{\code{ridge_oof_encode}}{Exact closed-form hat-matrix leave-one-out Ridge target encoding across 2--5 standardized numeric features (\code{lambda} sampled from \{0.1, 1, 10, 100\}, polynomial \code{degree} sampled from \{1, 2\}).}
   \item{\code{cat_interaction_target_encode}}{Smoothed mean-target encoding for joint
     Cartesian interaction of two categorical columns.}
   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
@@ -108,6 +109,7 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{log_binning_cat}}{Same, with categorical output.}
   \item{\code{round_transform}}{Rounds continuous numeric feature to \code{digits} decimal places (\code{digits} sampled from \{0, 1, 2, 3\}).}
   \item{\code{decimal_digit}}{Extracts the \code{digits}-th decimal place digit (0--9) of a continuous numeric feature (\code{digits} sampled from \{1, 2, 3, 4\}).}
+  \item{\code{frac_part}}{Extracts continuous fractional remainder \code{|x| - floor(|x|)} in \eqn{[0, 1)}, preserving \code{NA}.}
   \item{\code{datetime_extract}}{Extracts year, month, day, hour, day-of-week,
     or weekend indicator from date/datetime columns.}
   \item{\code{datetime_cyclic}}{Sine and cosine cyclic encoding for periodic date/time

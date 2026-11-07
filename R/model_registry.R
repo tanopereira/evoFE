@@ -350,9 +350,24 @@ register_evaluator(
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
-    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
+    cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
+      canonical_metric_name(metric_arg, task)
+    } else {
+      NULL
+    }
+    is_mae_metric <- !is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")
     reg_obj <- if (is_mae_metric) "regression_l1" else "regression"
-    reg_metric <- if (is_mae_metric) "mae" else "rmse"
+    reg_metric <- if (is_mae_metric) "mae" else if (identical(cm_arg, "mape")) "mape" else "rmse"
+    cls_metric <- if (identical(cm_arg, "auc")) {
+      "auc"
+    } else if (identical(cm_arg, "aucpr")) {
+      "average_precision"
+    } else if (identical(cm_arg, "accuracy")) {
+      "binary_error"
+    } else {
+      "binary_logloss"
+    }
+    mc_metric <- if (identical(cm_arg, "accuracy")) "multi_error" else "multi_logloss"
 
     learner_verbose <- is_learner_verbose(extra_params$verbose)
     seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
@@ -368,8 +383,8 @@ register_evaluator(
         reg_obj
       ),
       metric = switch(task,
-        classification = "binary_logloss",
-        multiclass     = "multi_logloss",
+        classification = cls_metric,
+        multiclass     = mc_metric,
         reg_metric
       ),
       num_leaves = 15,
@@ -548,9 +563,24 @@ register_evaluator(
     metric_arg <- extra_params$metric
     early_stopping_rounds <- extra_params$early_stopping_rounds
 
-    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
+    cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
+      canonical_metric_name(metric_arg, task)
+    } else {
+      NULL
+    }
+    is_mae_metric <- !is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")
     reg_obj <- if (is_mae_metric) "reg:absoluteerror" else "reg:squarederror"
-    reg_eval_metric <- if (is_mae_metric) "mae" else "rmse"
+    reg_eval_metric <- if (is_mae_metric) "mae" else if (identical(cm_arg, "mape")) "mape" else "rmse"
+    cls_eval_metric <- if (identical(cm_arg, "auc")) {
+      "auc"
+    } else if (identical(cm_arg, "aucpr")) {
+      "aucpr"
+    } else if (identical(cm_arg, "accuracy")) {
+      "error"
+    } else {
+      "logloss"
+    }
+    mc_eval_metric <- if (identical(cm_arg, "accuracy")) "merror" else "mlogloss"
 
     learner_verbose <- is_learner_verbose(extra_params$verbose)
     seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
@@ -566,8 +596,8 @@ register_evaluator(
         reg_obj
       ),
       eval_metric = switch(task,
-        classification = "logloss",
-        multiclass     = "mlogloss",
+        classification = cls_eval_metric,
+        multiclass     = mc_eval_metric,
         reg_eval_metric
       ),
       nthread = threads,

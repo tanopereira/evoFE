@@ -755,7 +755,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   calibrator <- NULL
   if (!isTRUE(rank_average) && is.character(metric) && length(metric) == 1L &&
-      metric %in% c("ts_refinement", "cal_rmse", "cal_mae") && length(active_names) > 0) {
+      metric %in% c("ts_refinement", "cal_rmse", "cal_mae", "f1", "mcc", "balanced_accuracy", "accuracy", "qwk") &&
+      length(active_names) > 0) {
     first_vp <- val_preds_list[[active_names[1]]]
     ens_val_preds <- if (is.matrix(first_vp)) {
       res_mat <- matrix(0, nrow = nrow(first_vp), ncol = ncol(first_vp))

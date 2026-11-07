@@ -17,9 +17,9 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
         "row_min", "row_max", "row_sd", "row_na_count",
         "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance",
         "one_hot_encode", "target_encode", "pooled_target_encode", "target_sd_encode", "target_encode_multiclass",
-        "knn_target_encode", "feature_hash",
+        "knn_target_encode", "ridge_oof_encode", "feature_hash",
         "rank_transform", "robust_scale", "smooth_clip", "yeo_johnson", "box_cox",
-        "round_transform", "decimal_digit",
+        "round_transform", "decimal_digit", "frac_part",
         "groupby_mean", "groupby_min", "groupby_max", "groupby_diff", "groupby_nunique", "concat"
       ))
     } else if (at == "clustering") {
@@ -37,7 +37,7 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
         "row_min", "row_max", "row_sd", "row_na_count",
         "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance",
         "target_encode", "pooled_target_encode", "target_sd_encode", "woe_encode", "frequency_encode", "numeric_freq",
-        "knn_target_encode", "round_transform", "decimal_digit",
+        "knn_target_encode", "ridge_oof_encode", "round_transform", "decimal_digit", "frac_part",
         "feature_hash",
         "groupby_mean", "groupby_median", "groupby_sd",
         "groupby_zscore", "groupby_ratio", "groupby_quantile",

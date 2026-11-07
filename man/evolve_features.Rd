@@ -62,6 +62,7 @@ evolve_features(
   bag_folds = FALSE,
   target_transform = "none",
   sd_penalty = 0,
+  confirm_top_k = 0L,
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )
@@ -259,6 +260,8 @@ the highest normalized headroom closed).}
 \item{target_transform}{Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.}
 
 \item{sd_penalty}{Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.}
+
+\item{confirm_top_k}{Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.}
 
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 

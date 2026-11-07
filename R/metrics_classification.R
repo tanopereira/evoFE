@@ -97,19 +97,120 @@ compute_balanced_accuracy <- function(y_true, y_pred, threshold = 0.5) {
   0.5 * (tpr + tnr)
 }
 
+#' @noRd
+compute_accuracy <- function(y_true, y_pred, threshold = 0.5) {
+  yt <- encode_binary_target(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- !is.na(yt) & is.finite(yp)
+  if (!any(keep)) return(0.0)
+  mean((yp[keep] >= threshold) == (yt[keep] == 1))
+}
+
+#' @noRd
+compute_aucpr <- function(y_true, y_pred) {
+  yt <- encode_binary_target(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- !is.na(yt) & is.finite(yp)
+  yt <- yt[keep]
+  yp <- yp[keep]
+  n <- length(yt)
+  if (n == 0L) return(0.0)
+  n_pos <- as.numeric(sum(yt == 1))
+  if (n_pos == 0) return(0.0)
+  if (n_pos == n) return(1.0)
+  ord <- order(yp, decreasing = TRUE)
+  yp_s <- yp[ord]
+  yt_s <- as.numeric(yt[ord] == 1)
+  grp_end <- c(which(abs(yp_s[-n] - yp_s[-1L]) > 1e-12), n)
+  cum_tp <- cumsum(yt_s)[grp_end]
+  delta_tp <- c(cum_tp[1L], diff(cum_tp))
+  prec_at_grp <- cum_tp / as.numeric(grp_end)
+  sum(delta_tp * prec_at_grp) / n_pos
+}
+
+#' @noRd
+compute_qwk_binary <- function(y_true, y_pred, threshold = 0.5) {
+  yt <- encode_binary_target(y_true)
+  yp <- as.numeric(y_pred)
+  keep <- !is.na(yt) & is.finite(yp)
+  if (!any(keep)) return(0.0)
+  compute_qwk_from_ints(as.integer(yt[keep] == 1), as.integer(yp[keep] >= threshold))
+}
+
+#' @noRd
+compute_multiclass_accuracy <- function(y_true, y_pred, num_class) {
+  if (!is.matrix(y_pred)) {
+    y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
+  }
+  yt <- .encode_multiclass_zero_index(y_true, num_class)
+  keep <- !is.na(yt) & rowSums(!is.finite(y_pred)) == 0L
+  if (!any(keep)) return(0.0)
+  pred_0 <- max.col(y_pred[keep, , drop = FALSE], ties.method = "first") - 1L
+  mean(pred_0 == yt[keep])
+}
+
+#' @noRd
+compute_macro_f1 <- function(y_true, y_pred, num_class) {
+  if (!is.matrix(y_pred)) {
+    y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
+  }
+  yt <- .encode_multiclass_zero_index(y_true, num_class)
+  keep <- !is.na(yt) & rowSums(!is.finite(y_pred)) == 0L
+  if (!any(keep)) return(0.0)
+  yt_k <- yt[keep]
+  pred_0 <- max.col(y_pred[keep, , drop = FALSE], ties.method = "first") - 1L
+  f1s <- numeric(num_class)
+  active <- logical(num_class)
+  for (k in seq_len(num_class)) {
+    c0 <- k - 1L
+    is_t <- (yt_k == c0)
+    is_p <- (pred_0 == c0)
+    tp <- as.numeric(sum(is_t & is_p))
+    fp <- as.numeric(sum(!is_t & is_p))
+    fn <- as.numeric(sum(is_t & !is_p))
+    denom <- 2.0 * tp + fp + fn
+    if (denom > 0) {
+      active[k] <- TRUE
+      f1s[k] <- (2.0 * tp) / denom
+    }
+  }
+  if (!any(active)) 1.0 else mean(f1s[active])
+}
+
+#' @noRd
+compute_qwk_multiclass <- function(y_true, y_pred, num_class) {
+  if (!is.matrix(y_pred)) {
+    y_pred <- matrix(y_pred, ncol = num_class, byrow = FALSE)
+  }
+  yt <- .encode_multiclass_zero_index(y_true, num_class)
+  keep <- !is.na(yt) & rowSums(!is.finite(y_pred)) == 0L
+  if (!any(keep)) return(0.0)
+  p_mat <- y_pred[keep, , drop = FALSE]
+  row_sums <- rowSums(p_mat)
+  nz <- row_sums > 1e-12
+  if (any(nz)) {
+    p_mat[nz, ] <- p_mat[nz, , drop = FALSE] / row_sums[nz]
+  }
+  exp_cls <- as.numeric(p_mat %*% seq(0, num_class - 1L))
+  pred_int <- pmin(pmax(round(exp_cls), 0), num_class - 1L)
+  compute_qwk_from_ints(yt[keep], pred_int)
+}
+
 #' Find Optimal Binary Decision Threshold on Out-Of-Fold Predictions
 #'
 #' Computes the exact global optimum decision threshold \eqn{\tau^* \in [0.02, 0.98]}
-#' maximizing \code{"f1"}, \code{"mcc"}, or \code{"balanced_accuracy"} in a single
-#' sorted cumulative-sum pass.
+#' maximizing \code{"f1"}, \code{"mcc"}, \code{"balanced_accuracy"}, \code{"accuracy"},
+#' or \code{"qwk"} in a single sorted cumulative-sum pass.
 #'
 #' @param y_true Binary ground-truth labels (0/1, factor, logical, or character).
 #' @param y_pred Predicted positive-class probabilities in \eqn{[0, 1]}.
-#' @param metric Character string: \code{"f1"}, \code{"mcc"}, or \code{"balanced_accuracy"}.
+#' @param metric Character string: \code{"f1"}, \code{"mcc"}, \code{"balanced_accuracy"},
+#'   \code{"accuracy"}, or \code{"qwk"}.
 #' @return A list with \code{threshold} (optimal \eqn{\tau^*}), \code{best_score},
 #'   and \code{default_score} (score at \eqn{\tau = 0.5}).
 #' @export
-optimize_threshold <- function(y_true, y_pred, metric = c("f1", "mcc", "balanced_accuracy")) {
+optimize_threshold <- function(y_true, y_pred,
+                               metric = c("f1", "mcc", "balanced_accuracy", "accuracy", "qwk")) {
   metric <- match.arg(metric)
   yt <- as.integer(encode_binary_target(y_true))
   yp <- as.numeric(y_pred)
@@ -120,7 +221,9 @@ optimize_threshold <- function(y_true, y_pred, metric = c("f1", "mcc", "balanced
   def_score <- switch(metric,
     f1 = compute_f1(yt, yp, threshold = 0.5),
     mcc = compute_mcc(yt, yp, threshold = 0.5),
-    balanced_accuracy = compute_balanced_accuracy(yt, yp, threshold = 0.5)
+    balanced_accuracy = compute_balanced_accuracy(yt, yp, threshold = 0.5),
+    accuracy = compute_accuracy(yt, yp, threshold = 0.5),
+    qwk = compute_qwk_binary(yt, yp, threshold = 0.5)
   )
   if (n < 4L) {
     return(list(threshold = 0.5, best_score = def_score, default_score = def_score))
@@ -151,6 +254,16 @@ optimize_threshold <- function(y_true, y_pred, metric = c("f1", "mcc", "balanced
     },
     balanced_accuracy = {
       0.5 * (tp_vec / total_pos + tn_vec / total_neg)
+    },
+    accuracy = {
+      (tp_vec + tn_vec) / as.numeric(n)
+    },
+    qwk = {
+      p_obs_err <- (fp_vec + fn_vec) / as.numeric(n)
+      p_y1 <- total_pos / as.numeric(n)
+      p_p1 <- (tp_vec + fp_vec) / as.numeric(n)
+      p_exp_err <- p_y1 * (1.0 - p_p1) + (1.0 - p_y1) * p_p1
+      ifelse(p_exp_err > 1e-15, 1.0 - p_obs_err / p_exp_err, 0.0)
     }
   )
 

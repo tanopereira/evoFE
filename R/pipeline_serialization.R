@@ -47,6 +47,10 @@ gene_to_formula <- function(gene, truncate = TRUE) {
     }
   } else if (gene$transformer_name == "smooth_clip") {
     sprintf("smooth_clip_l%.2g_h%.2g(%s)", gene$params[["low_pct"]], gene$params[["high_pct"]], cols_str)
+  } else if (gene$transformer_name == "ridge_oof_encode") {
+    deg <- if (!is.null(gene$params[["degree"]])) as.integer(gene$params[["degree"]]) else 1L
+    lam <- if (!is.null(gene$params[["lambda"]])) as.numeric(gene$params[["lambda"]]) else 1.0
+    sprintf("ridge_oof_d%d_l%.4g(%s)", deg, lam, cols_str)
   } else if (!is.null(gene$params[["Q"]])) {
     sprintf("%s%d(%s)", gene$transformer_name, gene$params[["Q"]], cols_str)
   } else if (!is.null(gene$params[["base"]])) {

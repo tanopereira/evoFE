@@ -69,7 +69,7 @@ is_supervised_transformer <- function(gene, t_def = NULL) {
   t_name %in% c(
     "target_encode", "pooled_target_encode", "target_encode_multiclass",
     "woe_encode", "target_quantile_encode", "cat_interaction_target_encode",
-    "target_sd_encode", "knn_target_encode",
+    "target_sd_encode", "knn_target_encode", "ridge_oof_encode",
     "supervised_bgpca", "supervised_mca", "supervised_famd"
   )
 }
@@ -147,6 +147,7 @@ is_supervised_transformer <- function(gene, t_def = NULL) {
 #'     quantiles (\code{q} sampled from \{0.25, 0.50, 0.75\}).}
 #'   \item{\code{target_sd_encode}}{Smoothed within-category target standard deviation encoding with Leave-One-Out training jackknife.}
 #'   \item{\code{knn_target_encode}}{Out-of-fold k-nearest-neighbors target encoding across 1--3 standardized numeric features (\code{k} sampled from \{3, 5, 10, 25\}).}
+#'   \item{\code{ridge_oof_encode}}{Exact closed-form hat-matrix leave-one-out Ridge target encoding across 2--5 standardized numeric features (\code{lambda} sampled from \{0.1, 1, 10, 100\}, polynomial \code{degree} sampled from \{1, 2\}).}
 #'   \item{\code{cat_interaction_target_encode}}{Smoothed mean-target encoding for joint
 #'     Cartesian interaction of two categorical columns.}
 #'   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
@@ -173,6 +174,7 @@ is_supervised_transformer <- function(gene, t_def = NULL) {
 #'   \item{\code{log_binning_cat}}{Same, with categorical output.}
 #'   \item{\code{round_transform}}{Rounds continuous numeric feature to \code{digits} decimal places (\code{digits} sampled from \{0, 1, 2, 3\}).}
 #'   \item{\code{decimal_digit}}{Extracts the \code{digits}-th decimal place digit (0--9) of a continuous numeric feature (\code{digits} sampled from \{1, 2, 3, 4\}).}
+#'   \item{\code{frac_part}}{Extracts continuous fractional remainder \code{|x| - floor(|x|)} in \eqn{[0, 1)}, preserving \code{NA}.}
 #'   \item{\code{datetime_extract}}{Extracts year, month, day, hour, day-of-week,
 #'     or weekend indicator from date/datetime columns.}
 #'   \item{\code{datetime_cyclic}}{Sine and cosine cyclic encoding for periodic date/time
@@ -423,6 +425,8 @@ is_verbose <- function() {
     phase = c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)),
     low_pct = c(0.01, 0.02, 0.05),
     high_pct = c(0.95, 0.98, 0.99),
+    lambda = c(0.1, 1.0, 10.0, 100.0),
+    degree = c(1L, 2L),
     NULL
   )
 }
@@ -493,6 +497,9 @@ sample_transformer_params <- function(transformer_name, input_cols = character(0
   } else if (transformer_name == "smooth_clip") {
     params$low_pct <- .sample_one(.transformer_discrete_param_space(transformer_name, "low_pct"))
     params$high_pct <- .sample_one(.transformer_discrete_param_space(transformer_name, "high_pct"))
+  } else if (transformer_name == "ridge_oof_encode") {
+    params$lambda <- .sample_one(.transformer_discrete_param_space(transformer_name, "lambda"))
+    params$degree <- .sample_one(.transformer_discrete_param_space(transformer_name, "degree"))
   }
   params
 }
@@ -538,7 +545,7 @@ mutate_transformer_param <- function(gene, param_name) {
 transformer_max_cols <- function(transformer_name, n_avail, is_multi = TRUE, current_len = 1L, mode = c("add", "modify")) {
   mode <- match.arg(mode)
   if (!is_multi) return(current_len)
-  if (transformer_name %in% c("add", "multiply", "row_min", "row_max", "row_sd", "row_na_count", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
+  if (transformer_name %in% c("add", "multiply", "row_min", "row_max", "row_sd", "row_na_count", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance", "ridge_oof_encode")) {
     min(5L, n_avail)
   } else if (transformer_name %in% c("concat", "knn_target_encode")) {
     min(3L, n_avail)
@@ -561,7 +568,7 @@ filter_transformers_for_task <- function(allowed_t, task = "classification") {
       c(
         "target_encode", "pooled_target_encode", "target_quantile_encode",
         "cat_interaction_target_encode", "target_sd_encode", "knn_target_encode",
-        "woe_encode"
+        "ridge_oof_encode", "woe_encode"
       )
     )
   } else if (task == "regression") {
