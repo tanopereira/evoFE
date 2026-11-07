@@ -9,9 +9,9 @@
 #' Preset hyperparameter and budget configurations for run_competition_pipeline
 #' @keywords internal
 #' @noRd
-.competition_preset_config <- function(preset = c("standard", "fast", "max")) {
+.competition_preset_config <- function(preset = c("standard", "fast", "max"), overrides = list()) {
   preset <- match.arg(preset)
-  switch(preset,
+  cfg <- switch(preset,
     fast = list(
       islands = 2L,
       s2_gen = 2L,
@@ -21,6 +21,7 @@
       s2_nrounds = 60L,
       s2_es = 10L,
       s2_mlp_epochs = 12L,
+      s2_mlp_es = 12L,
       s2_mf = FALSE,
       s2_holdout = 0.0,
       s2_sd_penalty = 0.10,
@@ -33,8 +34,8 @@
       s4_xgb_nrounds = 180L,
       s4_xgb_es = 25L,
       s4_mlp_epochs = 30L,
+      s4_mlp_es = 30L,
       s4_mlp_lr = 0.008,
-      s4_mlp_es = 8L,
       s4_mlp_hidden = 64L
     ),
     standard = list(
@@ -46,6 +47,7 @@
       s2_nrounds = 300L,
       s2_es = 25L,
       s2_mlp_epochs = 30L,
+      s2_mlp_es = 30L,
       s2_mf = TRUE,
       s2_holdout = 0.08,
       s2_sd_penalty = 0.15,
@@ -58,8 +60,8 @@
       s4_xgb_nrounds = 35000L,
       s4_xgb_es = 200L,
       s4_mlp_epochs = 250L,
+      s4_mlp_es = 250L,
       s4_mlp_lr = 0.005,
-      s4_mlp_es = 30L,
       s4_mlp_hidden = 256L
     ),
     max = list(
@@ -71,6 +73,7 @@
       s2_nrounds = 400L,
       s2_es = 30L,
       s2_mlp_epochs = 40L,
+      s2_mlp_es = 40L,
       s2_mf = TRUE,
       s2_holdout = 0.08,
       s2_sd_penalty = 0.20,
@@ -83,11 +86,36 @@
       s4_xgb_nrounds = 40000L,
       s4_xgb_es = 250L,
       s4_mlp_epochs = 400L,
+      s4_mlp_es = 400L,
       s4_mlp_lr = 0.004,
-      s4_mlp_es = 40L,
       s4_mlp_hidden = 384L
     )
   )
+
+  if (!is.null(overrides) && length(overrides) > 0L) {
+    if (!is.list(overrides) || is.null(names(overrides)) || any(!nzchar(names(overrides)))) {
+      stop("'preset_overrides' must be a named list of hyperparameter values.")
+    }
+    unknown <- setdiff(names(overrides), names(cfg))
+    if (length(unknown) > 0L) {
+      stop(sprintf(
+        "Unknown preset_overrides key(s): %s. Allowed keys: %s",
+        paste(unknown, collapse = ", "),
+        paste(names(cfg), collapse = ", ")
+      ))
+    }
+    for (nm in names(overrides)) {
+      cfg[[nm]] <- overrides[[nm]]
+    }
+    # Keep early stopping patience tracking epochs unless explicitly overridden
+    if ("s2_mlp_epochs" %in% names(overrides) && !"s2_mlp_es" %in% names(overrides)) {
+      cfg$s2_mlp_es <- cfg$s2_mlp_epochs
+    }
+    if ("s4_mlp_epochs" %in% names(overrides) && !"s4_mlp_es" %in% names(overrides)) {
+      cfg$s4_mlp_es <- cfg$s4_mlp_epochs
+    }
+  }
+  cfg
 }
 
 #' Filter requested evaluators to registered backends whose packages are installed
@@ -137,76 +165,121 @@
 #' Build evaluator-specific training arguments for Stage 2 or Stage 4
 #' @keywords internal
 #' @noRd
-.evaluator_stage_args <- function(ev, stage, cfg, n_rows) {
+.evaluator_stage_args <- function(ev, stage, cfg, n_rows, custom_evaluator_args = NULL) {
   base_ev <- get_base_evaluator(ev)
-  if (stage == 2L) {
+  args <- if (stage == 2L) {
     if (base_ev == "lightgbm") {
-      return(list(
+      list(
         learning_rate = 0.08,
         num_leaves = 63L,
         nrounds = cfg$s2_nrounds,
         early_stopping_rounds = cfg$s2_es
-      ))
-    }
-    if (base_ev == "xgboost") {
-      return(list(
+      )
+    } else if (base_ev == "xgboost") {
+      list(
         tree_method = "hist",
         learning_rate = 0.08,
         max_depth = 6L,
         nrounds = cfg$s2_nrounds,
         early_stopping_rounds = cfg$s2_es
-      ))
-    }
-    if (base_ev == "realmlp") {
+      )
+    } else if (base_ev == "realmlp") {
       bs <- if (n_rows >= 8192L) 2048L else -1L
-      return(list(
+      list(
         realmlp_epochs = cfg$s2_mlp_epochs,
         realmlp_lr = 0.01,
-        early_stopping_rounds = min(10L, cfg$s2_mlp_epochs),
+        # Patience == epochs: early stopping stays on (tracks best epoch) but never truncates cyclic schedule.
+        early_stopping_rounds = cfg$s2_mlp_es,
         hidden_dim = cfg$s4_mlp_hidden,
         batch_size = bs
-      ))
+      )
+    } else {
+      list(nrounds = cfg$s2_nrounds, early_stopping_rounds = cfg$s2_es)
     }
-    return(list(nrounds = cfg$s2_nrounds, early_stopping_rounds = cfg$s2_es))
+  } else {
+    # Stage 4 high-capacity retraining
+    if (base_ev == "lightgbm") {
+      list(
+        learning_rate = cfg$s4_lgb_lr,
+        num_leaves = 63L,
+        feature_fraction = 0.75,
+        bagging_fraction = 0.80,
+        bagging_freq = 1L,
+        lambda_l1 = 0.5,
+        lambda_l2 = 2.0,
+        nrounds = cfg$s4_lgb_nrounds,
+        early_stopping_rounds = cfg$s4_lgb_es
+      )
+    } else if (base_ev == "xgboost") {
+      list(
+        tree_method = "hist",
+        learning_rate = cfg$s4_xgb_lr,
+        max_depth = 6L,
+        subsample = 0.80,
+        colsample_bytree = 0.75,
+        lambda = 2.0,
+        nrounds = cfg$s4_xgb_nrounds,
+        early_stopping_rounds = cfg$s4_xgb_es
+      )
+    } else if (base_ev == "realmlp") {
+      bs <- if (n_rows >= 8192L) 2048L else -1L
+      list(
+        epochs = cfg$s4_mlp_epochs,
+        lr = cfg$s4_mlp_lr,
+        # Patience == epochs: early stopping stays on (tracks best epoch) but never truncates cyclic schedule.
+        early_stopping_rounds = cfg$s4_mlp_es,
+        hidden_dim = cfg$s4_mlp_hidden,
+        batch_size = bs
+      )
+    } else {
+      list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)
+    }
   }
 
-  # Stage 4 high-capacity retraining
-  if (base_ev == "lightgbm") {
-    return(list(
-      learning_rate = cfg$s4_lgb_lr,
-      num_leaves = 63L,
-      feature_fraction = 0.75,
-      bagging_fraction = 0.80,
-      bagging_freq = 1L,
-      lambda_l1 = 0.5,
-      lambda_l2 = 2.0,
-      nrounds = cfg$s4_lgb_nrounds,
-      early_stopping_rounds = cfg$s4_lgb_es
-    ))
+  if (!is.null(custom_evaluator_args) && is.list(custom_evaluator_args) && length(custom_evaluator_args) > 0L) {
+    stage_key <- paste0("stage", stage)
+
+    # 1. Model-keyed arguments: evaluator_args[[ev]] or evaluator_args[[base_ev]]
+    ev_custom <- if (ev %in% names(custom_evaluator_args)) {
+      custom_evaluator_args[[ev]]
+    } else if (base_ev %in% names(custom_evaluator_args)) {
+      custom_evaluator_args[[base_ev]]
+    } else {
+      NULL
+    }
+    if (is.list(ev_custom)) {
+      for (k in names(ev_custom)) {
+        if (k %in% c("stage2", "stage4", "stage3_5")) {
+          if (k == stage_key && is.list(ev_custom[[k]])) {
+            for (sub_k in names(ev_custom[[k]])) {
+              args[[sub_k]] <- ev_custom[[k]][[sub_k]]
+            }
+          }
+        } else {
+          args[[k]] <- ev_custom[[k]]
+        }
+      }
+    }
+
+    # 2. Stage-keyed arguments: evaluator_args[[stage_key]][[ev]] or evaluator_args[[stage_key]][[base_ev]]
+    if (stage_key %in% names(custom_evaluator_args) && is.list(custom_evaluator_args[[stage_key]])) {
+      st_custom <- custom_evaluator_args[[stage_key]]
+      st_ev_custom <- if (ev %in% names(st_custom)) {
+        st_custom[[ev]]
+      } else if (base_ev %in% names(st_custom)) {
+        st_custom[[base_ev]]
+      } else {
+        NULL
+      }
+      if (is.list(st_ev_custom)) {
+        for (k in names(st_ev_custom)) {
+          args[[k]] <- st_ev_custom[[k]]
+        }
+      }
+    }
   }
-  if (base_ev == "xgboost") {
-    return(list(
-      tree_method = "hist",
-      learning_rate = cfg$s4_xgb_lr,
-      max_depth = 6L,
-      subsample = 0.80,
-      colsample_bytree = 0.75,
-      lambda = 2.0,
-      nrounds = cfg$s4_xgb_nrounds,
-      early_stopping_rounds = cfg$s4_xgb_es
-    ))
-  }
-  if (base_ev == "realmlp") {
-    bs <- if (n_rows >= 8192L) 2048L else -1L
-    return(list(
-      epochs = cfg$s4_mlp_epochs,
-      lr = cfg$s4_mlp_lr,
-      early_stopping_rounds = cfg$s4_mlp_es,
-      hidden_dim = cfg$s4_mlp_hidden,
-      batch_size = bs
-    ))
-  }
-  list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)
+
+  args
 }
 
 #' Run the Two-Phase ML Competition Pipeline End-to-End
@@ -251,8 +324,17 @@
 #'   \code{"mae"}, \code{"smape"}) or custom metric function.
 #' @param preset Compute budget preset: \code{"standard"} (competition playbook defaults),
 #'   \code{"fast"} (quick smoke/baseline run), or \code{"max"} (deep schedule).
+#' @param preset_overrides Optional named list of hyperparameter values overriding preset
+#'   defaults (e.g. \code{list(s4_mlp_epochs = 500L, s4_lgb_lr = 0.01)}). When RealMLP epochs
+#'   are overridden and \code{s2_mlp_es} or \code{s4_mlp_es} is not explicitly specified,
+#'   early stopping patience automatically tracks total epochs to ensure all cyclic annealing
+#'   phases complete while retaining optimal validation checkpointing.
 #' @param evaluators Character vector of model families to run (default
 #'   \code{c("lightgbm", "xgboost", "realmlp")}). Unavailable packages are skipped with a warning.
+#' @param evaluator_args Optional nested list of model-specific or stage-specific training
+#'   arguments passed into \code{\link{evolve_features}} (e.g.
+#'   \code{list(realmlp = list(n_cycles = 6L), lightgbm = list(max_depth = 8L))} or
+#'   \code{list(realmlp = list(stage4 = list(early_stopping_rounds = 50L)))}).
 #' @param cv_folds Number of cross-validation folds for Stage 4 retraining and stacking (default \code{5L}).
 #' @param cv_strategy Cross-validation split strategy: \code{"random"},
 #'   \code{"stratified_group"}, \code{"group"}, or \code{"time"}.
@@ -291,7 +373,9 @@ run_competition_pipeline <- function(
   task = c("auto", "classification", "multiclass", "regression"),
   metric = "auto",
   preset = c("standard", "fast", "max"),
+  preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
+  evaluator_args = list(),
   cv_folds = 5L,
   cv_strategy = c("random", "stratified_group", "group", "time"),
   group_col = NULL,
@@ -329,7 +413,7 @@ run_competition_pipeline <- function(
   cv_strategy <- match.arg(cv_strategy)
   cv_folds <- as.integer(cv_folds)
   if (is.na(cv_folds) || cv_folds < 2L) stop("'cv_folds' must be an integer >= 2.")
-  cfg <- .competition_preset_config(preset)
+  cfg <- .competition_preset_config(preset, overrides = preset_overrides)
   active_evaluators <- .resolve_competition_evaluators(evaluators)
 
   env_state <- setup_core_env(threads = threads, max_clustering_size = cfg$clust_cap, seed = seed)
@@ -480,7 +564,7 @@ run_competition_pipeline <- function(
       seed = base_seed + 100L * idx,
       verbose = verbose
     )
-    ev_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = n_discovery)
+    ev_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
     stage2_recipes[[ev]] <- do.call(evolve_features, c(s2_common, ev_args))
   }
 
@@ -576,7 +660,7 @@ run_competition_pipeline <- function(
         seed = base_seed + 500L + idx,
         verbose = verbose
       )
-      ev_fast_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt))
+      ev_fast_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
       rec_sup <- do.call(evolve_features, c(s35_common, ev_fast_args))
       stage3_sup_recipes[[ev]] <- rec_sup
       sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, mega_feature_names)
@@ -613,7 +697,7 @@ run_competition_pipeline <- function(
       seed = s4_seed,
       verbose = verbose
     )
-    ev_args <- .evaluator_stage_args(ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega))
+    ev_args <- .evaluator_stage_args(ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega), custom_evaluator_args = evaluator_args)
     stage4_recipes[[ev]] <- do.call(evolve_features, c(s4_common, ev_args))
   }
 
@@ -702,6 +786,9 @@ run_competition_pipeline <- function(
       target_col = target_col,
       id_col = id_col,
       preset = preset,
+      preset_config = cfg,
+      preset_overrides = preset_overrides,
+      evaluator_args = evaluator_args,
       evaluators = active_evaluators,
       cv_folds = cv_folds,
       cv_strategy = cv_strategy,

@@ -12,7 +12,9 @@ run_competition_pipeline(
   task = c("auto", "classification", "multiclass", "regression"),
   metric = "auto",
   preset = c("standard", "fast", "max"),
+  preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
+  evaluator_args = list(),
   cv_folds = 5L,
   cv_strategy = c("random", "stratified_group", "group", "time"),
   group_col = NULL,
@@ -49,8 +51,19 @@ features and prepend to \code{$submission}.}
 \item{preset}{Compute budget preset: \code{"standard"} (competition playbook defaults),
 \code{"fast"} (quick smoke/baseline run), or \code{"max"} (deep schedule).}
 
+\item{preset_overrides}{Optional named list of hyperparameter values overriding preset
+defaults (e.g. \code{list(s4_mlp_epochs = 500L, s4_lgb_lr = 0.01)}). When RealMLP epochs
+are overridden and \code{s2_mlp_es} or \code{s4_mlp_es} is not explicitly specified,
+early stopping patience automatically tracks total epochs to ensure all cyclic annealing
+phases complete while retaining optimal validation checkpointing.}
+
 \item{evaluators}{Character vector of model families to run (default
 \code{c("lightgbm", "xgboost", "realmlp")}). Unavailable packages are skipped with a warning.}
+
+\item{evaluator_args}{Optional nested list of model-specific or stage-specific training
+arguments passed into \code{\link{evolve_features}} (e.g.
+\code{list(realmlp = list(n_cycles = 6L), lightgbm = list(max_depth = 8L))} or
+\code{list(realmlp = list(stage4 = list(early_stopping_rounds = 50L)))}).}
 
 \item{cv_folds}{Number of cross-validation folds for Stage 4 retraining and stacking (default \code{5L}).}
 

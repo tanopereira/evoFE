@@ -258,3 +258,100 @@ test_that("seed_genes and decoupled supervised_stage4 search fast and refit 1-ge
   expect_true(all(is.finite(res_sup$predictions)))
 })
 
+test_that("preset_overrides and evaluator_args customize pipeline and enforce RealMLP cyclic early stopping", {
+  # 1. Preset config defaults: RealMLP patience equals total epochs
+  cfg_fast <- .competition_preset_config("fast")
+  expect_equal(cfg_fast$s2_mlp_es, cfg_fast$s2_mlp_epochs)
+  expect_equal(cfg_fast$s4_mlp_es, cfg_fast$s4_mlp_epochs)
+
+  cfg_std <- .competition_preset_config("standard")
+  expect_equal(cfg_std$s2_mlp_es, cfg_std$s2_mlp_epochs)
+  expect_equal(cfg_std$s4_mlp_es, cfg_std$s4_mlp_epochs)
+
+  cfg_max <- .competition_preset_config("max")
+  expect_equal(cfg_max$s2_mlp_es, cfg_max$s2_mlp_epochs)
+  expect_equal(cfg_max$s4_mlp_es, cfg_max$s4_mlp_epochs)
+
+  # Overriding epochs automatically updates patience when patience is not explicitly provided
+  cfg_ovr <- .competition_preset_config("fast", overrides = list(s4_mlp_epochs = 120L))
+  expect_equal(cfg_ovr$s4_mlp_epochs, 120L)
+  expect_equal(cfg_ovr$s4_mlp_es, 120L)
+
+  # Overriding patience explicitly is respected
+  cfg_ovr2 <- .competition_preset_config("fast", overrides = list(s4_mlp_epochs = 120L, s4_mlp_es = 40L))
+  expect_equal(cfg_ovr2$s4_mlp_epochs, 120L)
+  expect_equal(cfg_ovr2$s4_mlp_es, 40L)
+
+  # Unknown keys raise informative error
+  expect_error(.competition_preset_config("fast", overrides = list(unknown_param = 1)), "Unknown preset_overrides key")
+  expect_error(.competition_preset_config("fast", overrides = "not_a_list"), "must be a named list")
+
+  # 2. .evaluator_stage_args resolves RealMLP cyclic patience and merges custom evaluator_args
+  # Stage 2 defaults
+  s2_args <- .evaluator_stage_args("realmlp", stage = 2L, cfg = cfg_fast, n_rows = 100L)
+  expect_equal(s2_args$realmlp_epochs, cfg_fast$s2_mlp_epochs)
+  expect_equal(s2_args$early_stopping_rounds, cfg_fast$s2_mlp_epochs)
+
+  # Stage 4 defaults
+  s4_args <- .evaluator_stage_args("realmlp", stage = 4L, cfg = cfg_fast, n_rows = 100L)
+  expect_equal(s4_args$epochs, cfg_fast$s4_mlp_epochs)
+  expect_equal(s4_args$early_stopping_rounds, cfg_fast$s4_mlp_epochs)
+
+  # Custom evaluator_args: top-level evaluator key
+  custom_ev <- list(
+    realmlp = list(n_cycles = 6L, stage4 = list(early_stopping_rounds = 45L))
+  )
+  s2_custom <- .evaluator_stage_args("realmlp", stage = 2L, cfg = cfg_fast, n_rows = 100L, custom_evaluator_args = custom_ev)
+  expect_equal(s2_custom$n_cycles, 6L)
+  expect_equal(s2_custom$early_stopping_rounds, cfg_fast$s2_mlp_epochs) # untouched in stage 2
+
+  s4_custom <- .evaluator_stage_args("realmlp", stage = 4L, cfg = cfg_fast, n_rows = 100L, custom_evaluator_args = custom_ev)
+  expect_equal(s4_custom$n_cycles, 6L)
+  expect_equal(s4_custom$early_stopping_rounds, 45L) # overridden in stage 4
+
+  # Custom evaluator_args: stage-level key
+  custom_stage <- list(
+    stage4 = list(lightgbm = list(num_leaves = 127L))
+  )
+  s4_lgb <- .evaluator_stage_args("lightgbm", stage = 4L, cfg = cfg_fast, n_rows = 100L, custom_evaluator_args = custom_stage)
+  expect_equal(s4_lgb$num_leaves, 127L)
+
+  # 3. End-to-end integration with run_competition_pipeline
+  set.seed(999)
+  n_tr <- 50L
+  n_te <- 10L
+  tr <- data.table::data.table(
+    x1 = stats::rnorm(n_tr),
+    x2 = stats::rnorm(n_tr),
+    y = stats::rbinom(n_tr, 1L, 0.5)
+  )
+  te <- data.table::data.table(
+    x1 = stats::rnorm(n_te),
+    x2 = stats::rnorm(n_te)
+  )
+
+  res_cust <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "y",
+    preset = "fast",
+    preset_overrides = list(s2_mlp_epochs = 4L, s4_mlp_epochs = 5L),
+    evaluators = "realmlp",
+    evaluator_args = list(realmlp = list(hidden_dim = 32L)),
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res_cust, "evo_competition_run")
+  expect_equal(res_cust$preset_config$s2_mlp_epochs, 4L)
+  expect_equal(res_cust$preset_config$s2_mlp_es, 4L)
+  expect_equal(res_cust$preset_config$s4_mlp_epochs, 5L)
+  expect_equal(res_cust$preset_config$s4_mlp_es, 5L)
+  expect_equal(res_cust$evaluator_args$realmlp$hidden_dim, 32L)
+  expect_length(res_cust$predictions, n_te)
+  expect_true(all(is.finite(res_cust$predictions)))
+})
+
+

@@ -50,13 +50,23 @@ At 10 minutes per model on 1M+ rows, evolution would take **100 hours**! Further
 > Every stage in this guide is packaged into [`run_competition_pipeline()`](R/competition_pipeline.R) and [`demo/competition_pipeline.R`](demo/competition_pipeline.R):
 > ```r
 > res <- run_competition_pipeline(
->   train           = train,
->   test            = test,
->   target_col      = "target",
->   id_col          = "id",
->   preset          = "standard",   # "fast", "standard", or "max"
->   max_search_rows = 200000L,      # Downsamples Phase-1 discovery ONLY; Stage 4 uses 100% of train
->   submission_file = "submission.csv"
+>   train            = train,
+>   test             = test,
+>   target_col       = "target",
+>   id_col           = "id",
+>   preset           = "standard",   # "fast", "standard", or "max"
+>   # Override any preset hyperparameter default:
+>   preset_overrides = list(
+>     s4_mlp_epochs = 400L,          # Deep RealMLP epochs (patience tracks epochs automatically)
+>     s4_lgb_lr     = 0.003          # Fine learning rate for LightGBM
+>   ),
+>   # Or pass custom backend-specific tuning arguments:
+>   evaluator_args   = list(
+>     realmlp  = list(n_cycles = 5L),
+>     lightgbm = list(extra_trees = TRUE)
+>   ),
+>   max_search_rows  = 200000L,      # Downsamples Phase-1 discovery ONLY; Stage 4 uses 100% of train
+>   submission_file  = "submission.csv"
 > )
 > ```
 > Or directly from the terminal:
@@ -296,6 +306,7 @@ evoFE's native C++ RealMLP (`src/realmlp_core.h`, `src/rcpp_realmlp.cpp`) provid
 * **Scale the Batch Size**: Pass `batch_size = 2048` or `batch_size = 4096`. Fewer, larger batches amortize per-batch OpenMP dispatch and improve cache reuse in the dense layers. Benchmark on your data — larger batches may also need a higher `lr`.
 * **Enforce evoFE Parsimony Pruning**: Never feed unpruned raw features into RealMLP. Set `complexity_penalty = 0.25 - 0.35` with `complexity_target = "all_features"`. This forces evolution to retain only the top 25–45 most predictive features, keeping the PBLD embedding layer lean.
 * **Decoupled Deployment**: Do not use RealMLP as the primary evaluator during early generations. Let fast LightGBM/XGBoost islands discover the feature transformations, then train RealMLP on the frozen feature matrix for full convergence ($200 - 300$ epochs with cosine annealing).
+* **Cosine Annealing & Early Stopping Mechanics (`early_stopping_rounds = epochs`)**: RealMLP relies on multi-cycle cosine annealing schedules (`n_cycles = 4`). Inside `rcpp_realmlp_train`, passing `early_stopping_rounds > 0` activates automatic checkpoint tracking (`best_snapshot.capture_from(model)`), restoring the best weights on the validation metric at the end of training. However, setting patience smaller than total epochs (e.g. 10 or 30) risks cutting off training during a temporary inter-cycle plateau and aborting subsequent annealing cycles. **Always set `early_stopping_rounds = epochs`**: early stopping remains active to continuously record and restore the optimal validation checkpoint, while guaranteeing that 100% of scheduled cycles run to completion.
 * **Synergy with UMAP**: RealMLP excels at processing continuous manifold coordinates (`umap_1`, `umap_2`, `mst_score`). While trees use them for rapid partitioning, RealMLP's periodic layers interpolate smoothly across these topological surfaces.
 
 ---
@@ -606,7 +617,7 @@ rec_mlp_search <- evolve_features(
   batch_size            = 2048,               # High OpenMP GEMM BLAS throughput
   realmlp_epochs        = 30,                 # Fast surrogate epochs during evolution
   realmlp_lr            = 0.01,
-  early_stopping_rounds = 10,
+  early_stopping_rounds = 30,                 # Patience == epochs: cyclic schedule completes & optimal checkpoint saved
   complexity_penalty    = 0.30,               # Aggressive parsimony keeps PBLD layer lean
   complexity_mode       = "bic_dynamic",
   complexity_target     = "all_features",
@@ -753,7 +764,7 @@ rec_final_mlp <- evolve_features(
   epochs                = 250,
   batch_size            = 2048,          # Fast OpenMP GEMM BLAS throughput
   lr                    = 0.005,         # Cosine annealing schedule
-  early_stopping_rounds = 30,
+  early_stopping_rounds = 250,           # Patience == epochs: all cosine cycles run & optimal checkpoint restored
   hidden_dim            = 256,
   threads               = n_threads,
   seed                  = cv_seed
@@ -1432,7 +1443,7 @@ mlp_models <- lapply(bag_seeds, function(sd) {
       data = train_mega, target_col = "target", task = "classification",
       evaluator = "realmlp", metric = search_metric, threads = n_threads,
       generations = 1, pop_size = 1, cv_folds = k_folds, bag_folds = TRUE,
-      epochs = 500, early_stopping_rounds = 40, seed = sd
+      epochs = 500, early_stopping_rounds = 500, seed = sd
     ),
     mlp_tuned$best_params
   ))
