@@ -1,3 +1,4 @@
-workflow          Interactive end-to-end evolutionary feature engineering workflow
-gibbs_migration   Demonstration of Gibbs-type and Dual-Gibbs Pull island migration topologies
-employee_salaries Regression demo on OpenML Employee Salaries using 10-island Ring topology
+workflow              Interactive end-to-end evolutionary feature engineering workflow
+gibbs_migration       Demonstration of Gibbs-type and Dual-Gibbs Pull island migration topologies
+employee_salaries     Regression demo on OpenML Employee Salaries using 10-island Ring topology
+competition_pipeline  Two-phase high-capacity ML competition pipeline (train, test, target_col)

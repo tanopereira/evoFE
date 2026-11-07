@@ -497,3 +497,147 @@ compute_adversarial_weights <- function(train_data, test_data, target_col = NULL
   )
 }
 
+#' Smart Structure-Preserving Subsampling for Phase-1 Feature Discovery
+#'
+#' Downsamples large training tables specifically for Phase-1 unsupervised feature
+#' discovery while enforcing four competition-critical invariants:
+#' \enumerate{
+#'   \item \strong{Temporal contiguity} (\code{cv_strategy = "time"}): retains the most
+#'     recent trailing \code{max_rows} observations ordered by \code{time_col}.
+#'   \item \strong{Group integrity} (\code{cv_strategy = "group"} or \code{"stratified_group"}):
+#'     samples whole groups without splitting cohorts across kept vs. dropped rows.
+#'   \item \strong{Rare-event preservation} (\code{classification} / \code{multiclass}):
+#'     protects minority classes up to \code{min_minority_count} rows before downsampling
+#'     majority strata so split gains on rare events do not vanish.
+#'   \item \strong{Covariate-shift propensity weighting}: when \code{test_data} exhibits
+#'     measurable covariate shift (\code{adversarial_auc >= 0.60}) or \code{adv_weights}
+#'     are supplied, biases within-stratum sampling toward test-like rows.
+#' }
+#'
+#' @param data Training \code{data.frame} or \code{data.table}.
+#' @param target_col Name of the target column in \code{data}.
+#' @param max_rows Maximum rows to retain (\code{NULL}, \code{<= 0}, or \code{Inf} disables subsampling).
+#' @param task Modeling task: \code{"auto"}, \code{"classification"}, \code{"multiclass"}, or \code{"regression"}.
+#' @param cv_strategy Validation split structure: \code{"random"}, \code{"stratified_group"},
+#'   \code{"group"}, or \code{"time"}.
+#' @param group_col Optional group column name for grouped data.
+#' @param time_col Optional timestamp/order column name when \code{cv_strategy = "time"}.
+#' @param test_data Optional unlabeled test table used to compute propensity weights when \code{adv_weights} is \code{NULL}.
+#' @param adv_weights Optional numeric vector of positive row weights of length \code{nrow(data)}.
+#' @param min_minority_count Minimum count floor for rare classes during classification subsampling (default \code{3000L}).
+#' @param seed Optional integer RNG seed (restores caller's \code{.Random.seed} on exit).
+#' @return A \code{data.table} subset with attributes \code{"subsampled"} (\code{TRUE}/\code{FALSE})
+#'   and \code{"selected_indices"} (integer row indices into \code{data}).
+#' @export
+subsample_for_discovery <- function(data, target_col, max_rows = 200000L,
+                                    task = c("auto", "classification", "multiclass", "regression"),
+                                    cv_strategy = c("random", "stratified_group", "group", "time"),
+                                    group_col = NULL, time_col = NULL,
+                                    test_data = NULL, adv_weights = NULL,
+                                    min_minority_count = 3000L,
+                                    seed = NULL) {
+  if (!is.data.frame(data)) stop("'data' must be a data.frame or data.table.")
+  if (!is.character(target_col) || length(target_col) != 1L || !target_col %in% names(data)) {
+    stop(sprintf("Target column '%s' not found in 'data'.", as.character(target_col)[1L]))
+  }
+
+  n <- nrow(data)
+  if (is.null(max_rows) || length(max_rows) != 1L || is.na(max_rows) ||
+      !is.finite(max_rows) || max_rows <= 0 || n <= as.integer(max_rows)) {
+    out <- shallow_copy_dt(data.table::as.data.table(data))
+    data.table::setattr(out, "subsampled", FALSE)
+    data.table::setattr(out, "selected_indices", seq_len(n))
+    return(out)
+  }
+
+  max_rows <- as.integer(max_rows)
+  cv_strategy <- match.arg(cv_strategy, c("random", "stratified_group", "group", "time"))
+  y <- data[[target_col]]
+  task <- .infer_task_type(y, task)
+
+  sel_idx <- with_seed(seed, function() {
+    # Rule 1: Temporal contiguity -> keep trailing chronological window
+    if (cv_strategy == "time") {
+      if (is.null(time_col) || length(time_col) != 1L || !time_col %in% names(data)) {
+        stop("'cv_strategy = \"time\"' requires 'time_col' to name an existing column in 'data'.")
+      }
+      ord <- order(data[[time_col]], method = "radix")
+      return(utils::tail(ord, max_rows))
+    }
+
+    # Rule 2: Group integrity -> sample whole cohorts without splitting groups
+    has_group <- (!is.null(group_col) && length(group_col) == 1L && group_col %in% names(data))
+    if (cv_strategy %in% c("group", "stratified_group") || has_group) {
+      if (!has_group) {
+        stop(sprintf("'cv_strategy = \"%s\"' requires 'group_col' to name an existing column in 'data'.", cv_strategy))
+      }
+      sp <- stratified_split(y, ratio = c(max_rows, n - max_rows), group = data[[group_col]])
+      return(sort(which(sp == "train")))
+    }
+
+    # Rule 3 & 4: Stratified / quantile sampling + rare-class floor + adversarial shift weights
+    strata <- if (task %in% c("classification", "multiclass")) {
+      fac <- as.character(y)
+      fac[is.na(fac)] <- ".NA_STRATUM"
+      as.factor(fac)
+    } else {
+      .target_strata(y, n_bins = 10L)
+    }
+
+    levels_y <- levels(strata)
+    lvl_indices <- lapply(levels_y, function(lvl) which(strata == lvl))
+    lvl_sizes <- vapply(lvl_indices, length, integer(1L))
+    quotas <- .hamilton_quota(lvl_sizes, max_rows)
+
+    if (task %in% c("classification", "multiclass") &&
+        is.numeric(min_minority_count) && length(min_minority_count) == 1L &&
+        !is.na(min_minority_count) && min_minority_count > 0) {
+      min_floor <- pmin(lvl_sizes, as.integer(min_minority_count))
+      is_rare <- quotas < min_floor
+      if (any(is_rare) && any(!is_rare)) {
+        rare_cap <- as.integer(floor(0.5 * max_rows))
+        rare_targets <- min_floor[is_rare]
+        if (sum(rare_targets) > rare_cap && rare_cap > 0L) {
+          rare_targets <- .hamilton_quota(rare_targets, rare_cap)
+        }
+        rem_budget <- max_rows - sum(rare_targets)
+        if (rem_budget > 0L && sum(lvl_sizes[!is_rare]) >= rem_budget) {
+          quotas[is_rare] <- rare_targets
+          quotas[!is_rare] <- .hamilton_quota(lvl_sizes[!is_rare], rem_budget)
+        }
+      }
+    }
+
+    eff_w <- adv_weights
+    if (is.null(eff_w) && !is.null(test_data) && is.data.frame(test_data)) {
+      adv <- compute_adversarial_weights(data, test_data, target_col = target_col)
+      if (is.finite(adv$adversarial_auc) && adv$adversarial_auc >= 0.60) {
+        eff_w <- adv$weights
+      }
+    }
+    use_w <- !is.null(eff_w) && is.numeric(eff_w) && length(eff_w) == n &&
+      all(is.finite(eff_w)) && any(eff_w > 0) && stats::sd(eff_w) > 1e-9
+
+    chosen <- vector("list", length(levels_y))
+    for (s_idx in seq_along(levels_y)) {
+      q <- quotas[s_idx]
+      if (q <= 0L) next
+      idx_s <- lvl_indices[[s_idx]]
+      if (q >= length(idx_s)) {
+        chosen[[s_idx]] <- idx_s
+      } else if (use_w) {
+        chosen[[s_idx]] <- sample(idx_s, size = q, replace = FALSE, prob = pmax(1e-9, eff_w[idx_s]))
+      } else {
+        chosen[[s_idx]] <- sample(idx_s, size = q, replace = FALSE)
+      }
+    }
+    sort(unlist(chosen, use.names = FALSE))
+  })
+
+  out <- data.table::as.data.table(data[sel_idx, , drop = FALSE])
+  data.table::setattr(out, "subsampled", TRUE)
+  data.table::setattr(out, "selected_indices", sel_idx)
+  out
+}
+
+

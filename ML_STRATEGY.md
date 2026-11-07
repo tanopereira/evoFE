@@ -45,6 +45,25 @@ At 10 minutes per model on 1M+ rows, evolution would take **100 hours**! Further
 > [!IMPORTANT]
 > **The Proxy Invariance Principle**: A feature transformation that improves validation loss at $\eta = 0.08$ with 300 trees almost invariably improves loss at $\eta = 0.005$ with 15,000–50,000 trees. The relative ranking of candidate recipes is invariant to learning rate, allowing you to search fast and bake deep.
 
+> [!TIP]
+> **One-Call Runner (`run_competition_pipeline()` & CLI Script)**:
+> Every stage in this guide is packaged into [`run_competition_pipeline()`](R/competition_pipeline.R) and [`demo/competition_pipeline.R`](demo/competition_pipeline.R):
+> ```r
+> res <- run_competition_pipeline(
+>   train           = train,
+>   test            = test,
+>   target_col      = "target",
+>   id_col          = "id",
+>   preset          = "standard",   # "fast", "standard", or "max"
+>   max_search_rows = 200000L,      # Downsamples Phase-1 discovery ONLY; Stage 4 uses 100% of train
+>   submission_file = "submission.csv"
+> )
+> ```
+> Or directly from the terminal:
+> ```bash
+> Rscript demo/competition_pipeline.R train.csv test.csv target submission.csv id auto standard 200000
+> ```
+
 ---
 
 ## 2. Evaluator Inductive Biases: Why Single-Model Exploration Fails
@@ -118,16 +137,20 @@ While LightGBM is blazingly fast, **models find and thrive on fundamentally diff
 | **`groupby_range_pos` / `groupby_rank`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐⭐ Highest | Normalizes values to $[0, 1]$ within each cohort (min-max position or empirical percentile rank), ideal for both trees and NNs |
 | **`groupby_nunique`** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Good | Captures behavioral breadth (e.g. distinct merchants or categories visited per user/entity) |
 | **`target_sd_encode` (LOO)** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐ Good | Encodes within-category target volatility ($\text{SD}(y \mid c)$) with Leave-One-Out jackknife protection |
+| **`ridge_oof_encode` (Hat-Matrix LOO)** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Moderate | Projects 2–5 numeric columns onto an exact Sherman-Morrison LOO linear/quadratic Ridge surface ($\lambda \in \{0.1, 1, 10, 100\}$, degree 1–2), giving axis-aligned trees oblique splits in 1 cut |
+| **`knn_target_encode` (LOO)** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐ Good | Captures local spatial target density in standardized feature space via exact LOO neighbor exclusion |
 | **`woe_encode`** | ⭐⭐⭐ Good | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐ Good | Linear in log-odds; matches XGBoost's Taylor expansion perfectly |
 | **`harmonic_mean` / `row_min` / `row_sd` / `row_na_count`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | Packs multi-column bottleneck, dispersion, and missingness patterns into single-split summary features |
+| **`frac_part` / `round_transform` / `decimal_digit`** | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐⭐ Highest | ⭐⭐⭐⭐ Strong | Exposes psychological pricing (`$9.99` vs `$10.00`), billing rounding tiers, and sensor/clock quantization artifacts |
 | **`numeric_freq`** | ⭐⭐⭐⭐ Strong | ⭐⭐⭐⭐ Strong | ⭐⭐⭐ Good | Turns repeated values (routes, price points) into a density signal without destroying numeric order |
 
-### Ordinal, Likert & "Spiky" Numerics
-Converting Likert scales or repeated-value numerics (flight distances, price points) to categoricals rarely helps: it destroys order, adds subset-split noise in trees, and is ~collinear with the raw column. Keep them numeric and let evolution combine them with the row-wise transformers:
+### Ordinal, Likert, Pricing & "Spiky" Numerics
+Converting Likert scales or repeated-value numerics (flight distances, price points) to categoricals rarely helps: it destroys order, adds subset-split noise in trees, and is ~collinear with the raw column. Keep them numeric and let evolution combine them with the row-wise and digit/artifact transformers:
 - `row_min` / `row_max` / `row_sd` — dealbreaker, best-aspect, and within-row dispersion across a rating or sensor battery.
 - `row_na_count` — non-random missingness count across numeric feature subsets (often a top predictor in credit, medical, and survey data).
 - `harmonic_mean` (smooth bottleneck), `geometric_mean` (multiplicative utility), `pythagorean_imbalance` ($\text{AM} - \text{HM}$, rating polarization).
 - `relative_rating` — one item minus the mean of the others (rater-bias removal).
+- `frac_part` ($|x| - \lfloor |x| \rfloor$), `round_transform`, `decimal_digit` — sub-integer fractional parts and specific decimal digits that separate human-entered round numbers from algorithmic/taxed figures or `.99` retail endings (100% unsupervised and leak-free in `unsup_t`).
 - `numeric_freq` — count of each exact value (traffic/popularity proxy for spiky numerics).
 
 All of these are included in the `"basic"` and `"robust"` presets.
@@ -212,7 +235,7 @@ evoFE provides a dedicated suite of **manifold and graph learning transformers**
 
 ### How evoFE Scales UMAP to Huge Datasets (Zero $O(N^2)$ Bottleneck & Fold-Invariant Basis)
 Fitting raw UMAP or hierarchical clustering directly on 1M+ rows would freeze a workstation, and fitting UMAP separately per fold causes coordinate rotation and cluster label permutation across folds. evoFE solves both with a 4-part architecture:
-1. **Global Unsupervised Basis (`global_unsupervised = TRUE`, default)**: Unsupervised stateful transformers (`umap`, `pca`, `genie`, `lumbermark`) are fit once globally on the training feature matrix $X$ (never touching $y$, so zero target leakage), ensuring that `umap_1` and cluster IDs have a single invariant coordinate system across all CV folds and MetaCV islands, while supervised transformers remain strictly per-fold.
+1. **Global Unsupervised Basis + DAG Taint Propagation (`global_unsupervised = TRUE`, default)**: Unsupervised stateful transformers (`umap`, `pca`, `genie`, `lumbermark`, `rank_transform`) are fit once globally on the training feature matrix $X$ (never touching $y$, so zero target leakage), ensuring that `umap_1` and cluster IDs have a single invariant coordinate system across all CV folds and MetaCV islands, while supervised transformers remain strictly per-fold. **DAG Taint Guarantee**: If any unsupervised gene is chained *downstream* of a supervised encoder in a hierarchical recipe (e.g. `umap(ridge_oof_encode(...), target_encode(...))`), evoFE's DAG dependency analyzer automatically marks that downstream gene *target-tainted* and fits it strictly inside each training fold rather than globally — guaranteeing zero indirect target leakage at any chain depth.
 2. **High-Throughput Landmark Subsampling (`.cluster_prep_x`)**: evoFE caps the fitting rows to the `max_clustering_size` argument of `evolve_features()` (default `5000`). Note that `evolve_features()` writes this argument into `options(evoFE.max_clustering_size)` for the duration of the run, so **setting the option globally has no effect — pass the argument**. Because `uwot` uses multi-threaded approximate nearest neighbors and SGD, and `quitefastmst` uses fast binary heaps, raising it to **25,000–50,000 landmark rows** remains fast on modern multicore CPUs.
 3. **Fast Out-of-Sample Projection (`uwot::umap_transform`)**: The remaining millions of rows (and all test set rows) are projected into the manifold space using `uwot`'s C++ multi-threaded approximate nearest-neighbor engine (`n_sgd_threads = "auto"`).
 4. **State & Matrix Caching (`state_cache` & `preds_cache`)**: Once a UMAP embedding or cluster assignment is computed for a set of columns, its projection model is cached across generations and folds, eliminating redundant fits.
@@ -277,6 +300,35 @@ evoFE's native C++ RealMLP (`src/realmlp_core.h`, `src/rcpp_realmlp.cpp`) provid
 
 ---
 
+## 7.5 Scaling to Massive Tables: Is It Worth Downsampling `train`?
+
+**Yes in Phase 1 (Feature Discovery), No in Phase 2 (Mega-Matrix Synthesis & High-Capacity Retraining).**
+
+### Why Phase-1 Discovery Should Be Capped at ~150k–250k Rows
+In Stage 1 and Stage 2, evoFE evaluates hundreds of candidate feature pipelines. While model training cost grows at least linearly (and super-linearly for exact spatial/graph ops) with $N$, the **relative ranking** of candidate feature transformations stabilizes rapidly once validation folds reach $N \approx 100\text{k}\text{--}250\text{k}$ rows ($\text{SE} \propto 1/\sqrt{N} \approx 0.002$). Evaluating 600 candidate models on 2M rows instead of 200k rows burns $10\times$ the compute to discover virtually the exact same top transformations.
+
+Because Stage 3 calls `predict(ens_scouts, newdata = train)` on the **full** training table, unsupervised transformation states discovered on a 200k subset project cleanly onto **100% of `train` and `test`** in seconds.
+
+### The 4 Mandatory Rules When Downsampling Phase 1 (`subsample_for_discovery()`)
+Naive uniform row sampling (`train[sample(.N, 200000)]`) silently breaks three common competition structures. Always use `subsample_for_discovery()` (built into `run_competition_pipeline(..., max_search_rows = 200000L)`), which enforces:
+1. **Temporal Contiguity (`cv_strategy = "time"`)**: Never scatter-sample across history. Retain the **most recent trailing `max_rows`** ordered by `time_col` so lag spacing and current regime dynamics remain intact.
+2. **Group Integrity (`cv_strategy = "group"` or `"stratified_group"`)**: Sample **whole groups/entities**, never individual rows within groups. Row-sampling a 50-transaction customer down to 5 rows corrupts within-group statistics (`groupby_sd`, `groupby_nunique`, `groupby_rank`).
+3. **Rare-Event Floor (`min_minority_count = 3000L`)**: On imbalanced classification ($< 5\%$ positives), proportional subsampling starves tree split gains on the minority class. Keeping up to 3,000+ minority examples while downsampling majority rows preserves class-conditional feature densities $p(x \mid y)$ for feature discovery, and Stage 4 subsequently retrains on 100% of `train` under the true unshifted prior.
+4. **Covariate-Shift Propensity Weighting**: When `compute_adversarial_weights(train, test)$adversarial_auc >= 0.60`, weight within-stratum subsampling toward test-like rows so evolution prioritizes features relevant to the test domain.
+
+### Why Phase-2 Retraining (Stage 4 & Stage 5) Should Keep 100% of `train`
+Stage 4 (`generations = 1, pop_size = 1`) only fits $3 \times K$ models total (15 models for 5-fold CV). Keeping every row of `train_mega`:
+- Slashes variance in deep GBDT leaves at low learning rates ($\eta = 0.005$).
+- Sharpens high-cardinality group aggregations and fold-local LOO encoders (`pooled_target_encode`, `ridge_oof_encode`, `knn_target_encode`).
+- Preserves exact probability calibration without prior-odds post-correction.
+
+**Only 3 exceptions justify downsampling Stage 4**:
+1. **Extreme class imbalance ($< 0.2\%$ positives on 5M+ rows)**: Retain 100% of positives + subsample negatives $10\text{--}20\times$, then apply exact Bayes prior-odds correction to predicted probabilities before calibration/stacking.
+2. **Non-stationary historical drift**: Drop pre-regime-shift eras if including them demonstrably degrades validation on the most recent time block.
+3. **Hard RAM ceiling**: Drop zero/low-importance columns from `train_mega` *first*; downsample rows only as a last resort.
+
+---
+
 ## 8. End-to-End Competition Strategy: The 6 Stages
 
 ```mermaid
@@ -332,19 +384,24 @@ if (length(adv_diag$drifting_features) > 0) {
           paste(adv_diag$drifting_features, collapse = ", "))
 }
 
-# 4. Choose the search metric & target transformation
-# - Leaderboard metric AUC / Log-Loss: search and ensemble on metric = "ts_refinement"
+# 4. Choose the search metric & target transformation (Full Competition Metric Suite)
+# - Leaderboard metric ROC-AUC / Log-Loss: search and ensemble on metric = "ts_refinement"
 #   (temperature-scaled log-loss = pure refinement; smooth, margin-sensitive, and
 #   usually yields higher test AUC/Log-Loss than optimizing AUC directly).
-# - Leaderboard metric F1 / MCC / Balanced Accuracy: set metric = "f1", "mcc", or
-#   "balanced_accuracy". evoFE automatically finds the exact global OOF threshold tau*
-#   via optimize_threshold() and shifts predicted probabilities in predict_model() so
-#   that tau* maps to 0.5 (you can also inspect recipe$calibrator$threshold directly).
+# - Leaderboard metric PR-AUC (rare-event classification): metric = "aucpr" (aliases "pr_auc",
+#   "average_precision"). Like "auc", ensemble_islands() automatically enables rank_average = TRUE!
+# - Hard-threshold Binary Metrics: metric = "f1", "mcc", "balanced_accuracy", "accuracy", or "qwk".
+#   evoFE automatically finds the exact global OOF threshold tau* via optimize_threshold() and
+#   shifts predicted probabilities in predict_model() so tau* maps to 0.5 (inspect recipe$calibrator$threshold).
+# - Multiclass Leaderboard Metrics: metric = "ts_refinement", "default" (Multi-LogLoss), "auc",
+#   "macro_f1", "accuracy", or ordinal expected-value "qwk" (sum_c c * p_c rounded to integer grades).
+# - Regression Leaderboard Metrics: "default" (RMSE), "cal_rmse", "r2" ("rsq"), "rmsle", "mae",
+#   "cal_mae", "mape", "smape", or ordinal "qwk" — all natively wired into LightGBM, XGBoost,
+#   and C++ RealMLP early stopping!
 # - Skewed Regression Targets (e.g. prices, claims, durations): pass
-#   target_transform = "log1p" (with automatic Duan's smearing correction for RMSE),
-#   "yeo_johnson", or "rank_gauss". You can even ensemble recipes trained with
-#   different target_transform modes because oof_preds and predict_model() are always
-#   evaluated on the original untransformed target scale!
+#   target_transform = "log1p", "yeo_johnson", or "rank_gauss". Duan's smearing correction is
+#   applied automatically ONLY for mean-optimal L2 metrics ("default"/RMSE, "cal_rmse", "r2") and
+#   disabled automatically for log/median/percentage/ordinal metrics ("rmsle", "mae", "mape", "smape", "qwk").
 search_metric <- "ts_refinement"
 
 # 5. Choose the parsimony & anti-overfitting defenses
@@ -355,6 +412,10 @@ search_metric <- "ts_refinement"
 #   sd_penalty * sd(fold_scores - baseline_fold_scores) / sqrt(K). Computing SD
 #   on paired fold gains cancels intrinsic fold difficulty and prevents features
 #   that spike on 1 fold and regress on another (inspect recipe$fold_sd).
+# - 2-Repeat Top-K Confirmation (confirm_top_k = 3 in evaluation_strategy = "cv"):
+#   re-evaluates the top K distinct recipes on a fresh independent CV fold split at the
+#   end of search, selects the winner by 2-repeat mean CV fitness (mean_cv_fitness),
+#   and blends row-aligned 2x-OOF predictions!
 ```
 
 ---
@@ -362,8 +423,10 @@ search_metric <- "ts_refinement"
 ### Stage 1: Ultra-Fast Feature Scouting (Hours 2–4)
 
 ```r
-# Quick scout on 100k subsample if dataset exceeds 500k rows
-scout_data <- if (nrow(train) > 500000) train[sample(.N, 100000)] else train
+# Structure-preserving Phase-1 subsample (keeps groups, time order, rare classes & test shift)
+scout_data <- subsample_for_discovery(
+  train, target_col = "target", max_rows = 100000L, test_data = test, seed = 42
+)
 
 scout_recipe <- evolve_features(
   data                  = scout_data,
@@ -386,6 +449,7 @@ scout_recipe <- evolve_features(
   complexity_penalty    = 0.1,
   complexity_target     = "all_features",
   sd_penalty            = 0.15,             # Mild paired fold-gain SE penalty for 3-fold scout
+  confirm_top_k         = 3,                # Re-score top 3 distinct recipes on fresh CV split
   holdout_frac          = 0,
   threads               = n_threads,
   seed                  = 42
@@ -617,7 +681,7 @@ By setting `generations = 1, pop_size = 1, bag_folds = TRUE`, evoFE acts as an a
 > **Always pass `metric = search_metric` and `threads = n_threads` in Stage 4**:
 > Not only does this ensure early stopping and model selection optimize the exact competition objective on all physical cores, but Stage 5 (`ensemble_islands`) also **inherits `metric` and `threads` from the first recipe in the list**. Omitting them in Stage 4 would silently drop Stage 4 & 5 back to `"default"` loss and `threads = 2`!
 >
-> **Optional Supervised Encoders on `train_mega`**: If your dataset has high-cardinality categoricals that benefit from target encoding (`pooled_target_encode`, `woe_encode`, `cat_interaction_target_encode`), you can unlock them safely in Stage 4 without leakage by setting `allowed_transformers = Filter(is_supervised_transformer, names(evo_transformers))`, `generations = 3`, and `pop_size = 6` — evoFE will fit the target encoders strictly inside each of the 5 CV folds.
+> **Optional Supervised Encoders on `train_mega`**: If your dataset has high-cardinality categoricals or oblique numeric boundaries that benefit from target encoding (`pooled_target_encode`, `woe_encode`, `cat_interaction_target_encode`, `ridge_oof_encode`, `knn_target_encode`), you can unlock them safely in Stage 4 without leakage by setting `allowed_transformers = Filter(is_supervised_transformer, names(evo_transformers))`, `generations = 3`, and `pop_size = 6` (or `supervised_stage4 = TRUE` in `run_competition_pipeline()`) — evoFE will fit the encoders strictly inside each of the 5 CV folds.
 
 ```r
 cv_seed <- 123
@@ -746,7 +810,7 @@ cat("Competition submission file generated successfully!\n")
 | Bottleneck | Problem Scenario | evoFE Solution | Key Setting |
 |:---|:---|:---|:---|
 | **Model Diversity** | Single evaluator misses neural/scale features | Tri-Evaluator MetaCV Exploration | 3 fast MetaCV passes with `allowed_transformers = unsup_t` |
-| **CV Runtime** | 1M+ rows, 5-fold CV takes hours | Switch to MetaCV (1 fold per island) | `evaluation_strategy = "metacv"` |
+| **CV Runtime** | 1M+ rows, 5-fold CV takes hours | Phase-1 subsample + MetaCV (100% rows in Stage 4) | `subsample_for_discovery(..., max_rows = 200000L)` + `evaluation_strategy = "metacv"` |
 | **Row Count** | 5M+ rows, RAM or CPU exhaustion | Split rows across islands | `row_split_islands = TRUE, islands = 6` |
 | **Early Generations**| Bad recipes waste full CV time | Subsample rows during warmup with live progress | `multi_fidelity = TRUE, mf_sample_frac = 0.3, mf_promote_frac = 0.5` |
 | **Manifold / UMAP** | UMAP & MST take $O(N^2)$ time | C++ multi-threaded landmark cap | `max_clustering_size = 25000` (or `50000`) |
@@ -754,14 +818,15 @@ cat("Competition submission file generated successfully!\n")
 | **RealMLP Memory**| 150+ features blow up PBLD embeddings | Aggressive feature parsimony | `complexity_penalty = 0.3, complexity_target = "all_features"` |
 | **XGBoost Speed** | Exact tree search is slow | Use fast histogram method | `tree_method = "hist"` |
 | **Redundant Genes**| Collinear transformations bloat trees | Correlation pruning filter | `options(evoFE.redundancy_cor_threshold = 0.99)` |
-| **Search Overfitting**| Evolution chases CV noise | Confirmation holdout + parsimony | `holdout_frac = 0.08, complexity_mode = "bic_dynamic"` |
+| **Search Overfitting**| Evolution chases single-CV-split noise | 2-repeat top-K CV confirmation + holdout | `confirm_top_k = 3, holdout_frac = 0.08, complexity_mode = "bic_dynamic"` |
 | **Fold Instability** | Recipe spikes on 1 fold, drops on others | Paired fold-gain LCB SE penalty | `sd_penalty = 0.15` (or `0.25` in full CV) |
 | **Noise Gene Bloat** | Uninformative genes survive tree splits | Dynamic BIC complexity penalty | `complexity_penalty = 0.25, complexity_target = "all_features"` |
 | **Grouped + Imbalanced** | Group leakage or unbalanced target folds | Stratified group CV + intact holdouts | `cv_strategy = "stratified_group", group_col = "id"` |
 | **Train/Test Shift** | Holdout doesn't reflect test distribution | Adversarial propensity-weighted holdout | `holdout_frac = 0.10, test_data = test` |
 | **Inference Variance** | Single refit model has higher test error | K-Fold Model Bagging across CV folds | `bag_folds = TRUE` |
-| **Skewed Regression** | Heavy-tailed target distorts squared loss | Forward/inverse target transform + Duan smearing | `target_transform = "log1p"` (or `"yeo_johnson"`, `"rank_gauss"`) |
-| **Hard-Threshold Metric** | Default 0.5 cutoff sub-optimal for F1/MCC | Exact $O(N \log N)$ OOF threshold calibration | `metric = "f1"`, `"mcc"`, or `"balanced_accuracy"` |
+| **Skewed Regression** | Heavy-tailed target distorts squared loss | Forward/inverse target transform + selective smearing | `target_transform = "log1p"` (or `"yeo_johnson"`, `"rank_gauss"`) |
+| **Hard-Threshold Metric** | Default 0.5 cutoff sub-optimal for F1/MCC/Acc/QWK | Exact $O(N \log N)$ OOF threshold calibration | `metric = "f1"`, `"mcc"`, `"balanced_accuracy"`, `"accuracy"`, or `"qwk"` |
+| **Oblique / Digit Signal** | Trees miss diagonal surfaces or `.99` pricing | Exact LOO Ridge surface + sub-integer artifacts | `ridge_oof_encode`, `frac_part`, `round_transform`, `decimal_digit` |
 | **Island Diversity** | Ring topology bottlenecks diffusion (D=K-1); push swamps islands | Complete topology + demand-driven Gibbs pull evaluated every gen | `migration = migration_config(topology = topology_complete(4), policy = policy_gibbs_pull(2)), migration_interval = 1` |
 | **MetaCV Stacking** | Single-fold island evaluations lack full OOFs | End-of-search K-fold tournament | `metacv_selection = "tournament"` |
 
@@ -1132,6 +1197,7 @@ rec_lgb_list <- lapply(seeds_lgb, function(s) {
     holdout_frac          = 0.08,             # 8% confirmation holdout
     test_data             = test,             # Adversarial test-weighted holdout sampling
     sd_penalty            = 0.25,             # Paired fold-gain LCB penalty across 5 folds
+    confirm_top_k         = 3,                # 2-repeat CV confirmation on top 3 distinct recipes
     migration             = mig_swarm,
     migration_interval    = 1,
     gene_migration_prob   = 0.25,
@@ -1452,9 +1518,9 @@ final_preds_prob <- pmin(pmax(calibrated_test, 1e-6), 1 - 1e-6)
 rank_test_mat <- apply(test_matrix, 2, function(col) frank(col) / length(col))
 final_preds_auc <- as.numeric(rank_test_mat %*% final_weights)
 
-# • REGIME C: Hard Classification Metrics (F1 / MCC / Balanced Accuracy)
+# • REGIME C: Hard Classification Metrics (F1 / MCC / Balanced Accuracy / Accuracy / Binary QWK)
 #   Exact O(N log N) decision threshold optimization on out-of-fold calibrated probabilities:
-opt_th <- optimize_threshold(train$target, calibrated_oof, metric = "f1") # or "mcc", "balanced_accuracy"
+opt_th <- optimize_threshold(train$target, calibrated_oof, metric = "f1") # or "mcc", "balanced_accuracy", "accuracy", "qwk"
 best_th <- opt_th$threshold
 cat(sprintf("Optimal Decision Threshold: %.4f (Out-of-Fold Score: %.5f vs Default 0.5: %.5f)\n",
             best_th, opt_th$best_score, opt_th$default_score))

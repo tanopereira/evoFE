@@ -164,6 +164,29 @@ encode_multiclass_target <- function(y, classes = NULL) {
   as.integer(factor(y, levels = classes)) - 1L
 }
 
+#' Infer or Validate Modeling Task Type from Target Vector
+#'
+#' @param y Target vector.
+#' @param task Requested task string ("auto", "classification", "multiclass", or "regression").
+#' @return Validated task string ("classification", "multiclass", or "regression").
+#' @keywords internal
+#' @noRd
+.infer_task_type <- function(y, task = "auto") {
+  task <- match.arg(task, c("auto", "classification", "multiclass", "regression"))
+  if (task != "auto") return(task)
+  u <- unique(y[!is.na(y)])
+  if (length(u) < 2L) {
+    stop("Target column must contain at least 2 distinct non-missing values.")
+  }
+  if (is.factor(y) || is.character(y) || is.logical(y)) {
+    return(if (length(u) == 2L) "classification" else "multiclass")
+  }
+  if (is.numeric(y) && length(u) == 2L && all(sort(as.numeric(u)) == c(0, 1))) {
+    return("classification")
+  }
+  "regression"
+}
+
 #' Format Multiclass Predictions into an N x K Probability Matrix
 #'
 #' Ensures multiclass predictions are shaped as an N-row by K-column probability

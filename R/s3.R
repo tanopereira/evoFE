@@ -496,3 +496,104 @@ print.summary_evo_ensemble <- function(x, ...) {
   print(x$weights_summary)
   invisible(x)
 }
+
+#' Print an evo_competition_run object
+#'
+#' @param x An \code{evo_competition_run} object produced by \code{\link{run_competition_pipeline}}.
+#' @param ... Additional arguments (currently unused).
+#' @return Invisible \code{x}.
+#' @export
+print.evo_competition_run <- function(x, ...) {
+  cat(sprintf("evoFE Competition Pipeline (%s preset)\n", x$preset))
+  cat(sprintf(
+    "Task: %s | Metric: %s | Folds: %d (%s)%s\n",
+    x$task,
+    .format_metric_label(x$metric),
+    x$cv_folds,
+    x$cv_strategy,
+    if (!identical(x$target_transform, "none")) sprintf(" | TargetTransform: %s", x$target_transform) else ""
+  ))
+  cat(sprintf(
+    "Rows: %d train (%d Phase-1 discovery) | %d test\n",
+    x$train_rows, x$discovery_rows, x$test_rows
+  ))
+  cat(sprintf(
+    "Features: %d raw --> %d Mega-Matrix | Evaluators: %s\n",
+    x$raw_feature_count, x$mega_feature_count, paste(x$evaluators, collapse = ", ")
+  ))
+  if (!is.null(x$final_cv_fitness) && is.finite(x$final_cv_fitness)) {
+    cat(sprintf("Final Stacked CV Fitness: %.5f\n", x$final_cv_fitness))
+  }
+  invisible(x)
+}
+
+#' Summarize an evo_competition_run object
+#'
+#' @param object An \code{evo_competition_run} object.
+#' @param ... Additional arguments (currently unused).
+#' @return A \code{summary_evo_competition_run} object.
+#' @export
+summary.evo_competition_run <- function(object, ...) {
+  s4_df <- data.frame(
+    Evaluator = names(object$stage4_fitness),
+    OOF_Fitness = as.numeric(object$stage4_fitness),
+    Stack_Weight = as.numeric(object$weights[names(object$stage4_fitness)]),
+    stringsAsFactors = FALSE
+  )
+  structure(
+    list(
+      preset = object$preset,
+      task = object$task,
+      metric = object$metric,
+      cv_folds = object$cv_folds,
+      cv_strategy = object$cv_strategy,
+      target_transform = object$target_transform,
+      bag_folds = object$bag_folds,
+      train_rows = object$train_rows,
+      discovery_rows = object$discovery_rows,
+      test_rows = object$test_rows,
+      raw_feature_count = object$raw_feature_count,
+      mega_feature_count = object$mega_feature_count,
+      adversarial_auc = if (!is.null(object$adversarial)) object$adversarial$adversarial_auc else NA_real_,
+      dropped_drifting_features = object$dropped_drifting_features,
+      stage4_table = s4_df,
+      final_cv_fitness = object$final_cv_fitness
+    ),
+    class = "summary_evo_competition_run"
+  )
+}
+
+#' Print summary of an evo_competition_run object
+#'
+#' @param x A \code{summary_evo_competition_run} object.
+#' @param ... Additional arguments (currently unused).
+#' @return Invisible \code{x}.
+#' @export
+print.summary_evo_competition_run <- function(x, ...) {
+  cat(sprintf("Summary of evoFE Competition Pipeline (%s preset)\n", x$preset))
+  cat(sprintf(
+    "Task: %s | Metric: %s | CV: %d-fold %s | BagFolds: %s\n",
+    x$task, .format_metric_label(x$metric), x$cv_folds, x$cv_strategy,
+    if (isTRUE(x$bag_folds)) "TRUE" else "FALSE"
+  ))
+  cat(sprintf(
+    "Data: %d train rows (%d discovery rows), %d test rows\n",
+    x$train_rows, x$discovery_rows, x$test_rows
+  ))
+  cat(sprintf(
+    "Mega-Matrix: %d raw features --> %d engineered features\n",
+    x$raw_feature_count, x$mega_feature_count
+  ))
+  if (is.finite(x$adversarial_auc)) {
+    cat(sprintf("Adversarial Train-vs-Test AUC: %.4f\n", x$adversarial_auc))
+  }
+  if (length(x$dropped_drifting_features) > 0L) {
+    cat(sprintf("Dropped Drifting Features: %s\n", paste(x$dropped_drifting_features, collapse = ", ")))
+  }
+  cat("\nStage 4 Model OOF Fitness & Stack Weights:\n")
+  print(x$stage4_table, row.names = FALSE)
+  if (!is.null(x$final_cv_fitness) && is.finite(x$final_cv_fitness)) {
+    cat(sprintf("\nFinal Stacked CV Fitness: %.5f\n", x$final_cv_fitness))
+  }
+  invisible(x)
+}
