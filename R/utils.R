@@ -564,3 +564,16 @@ rank_transform_predictions <- function(p) {
     (r - 0.5) / n
   }
 }
+
+#' Sample a Single Element Without R's Length-1 Numeric Trap
+#'
+#' @param x Atomic vector or list of candidate elements.
+#' @return A single sampled element with identical RNG consumption to `sample(x, 1)` when `length(x) > 1`.
+#' @keywords internal
+#' @noRd
+.sample_one <- function(x) {
+  n <- length(x)
+  if (n == 0L) return(x)
+  idx <- sample.int(n, 1L)
+  if (is.list(x)) x[[idx]] else x[idx]
+}

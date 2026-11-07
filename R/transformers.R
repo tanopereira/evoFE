@@ -401,3 +401,181 @@ is_verbose <- function() {
   assign(key, preds, envir = state$preds_cache)
   preds
 }
+
+#' Sample initial parameters for a transformer
+#' @keywords internal
+#' @noRd
+sample_transformer_params <- function(transformer_name, input_cols = character(0)) {
+  params <- list()
+  if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
+    C <- max(2L, as.integer(round(log2(length(input_cols)))))
+    params$comp_idx <- sample(1:C, 1)
+    if (transformer_name == "umap") {
+      params$n_neighbors <- max(2L, stats::rpois(1, 15))
+      params$dens_scale <- round(stats::runif(1, 0, 1), 2)
+    }
+  } else if (transformer_name %in% c("similarity_encode", "mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
+    params$comp_idx <- sample(1:5, 1)
+  } else if (transformer_name == "minhash_encode") {
+    params$comp_idx <- sample(1:8, 1)
+  } else if (transformer_name == "gap_encode") {
+    params$comp_idx <- sample(1:4, 1)
+  } else if (transformer_name == "datetime_cyclic") {
+    params$component <- sample(c("hour_sin", "hour_cos", "wday_sin", "wday_cos", "month_sin", "month_cos", "yday_sin", "yday_cos"), 1)
+  } else if (transformer_name == "target_quantile_encode") {
+    params$q <- sample(c(0.25, 0.5, 0.75), 1)
+  } else if (transformer_name == "feature_hash") {
+    params$num_bins <- sample(c(4, 8, 16, 32), 1)
+    params$comp_idx <- sample(1:params$num_bins, 1)
+  } else if (transformer_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
+    params$k <- sample(2:5, 1)
+    params$comp_idx <- sample(1:params$k, 1)
+    if (transformer_name == "genie_centroid_dist") {
+      params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
+    }
+  } else if (transformer_name == "one_hot_encode") {
+    params$comp_idx <- sample(1:6, 1)
+  } else if (transformer_name == "genie") {
+    params$k <- sample(2:5, 1)
+    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
+  } else if (transformer_name == "umap_genie") {
+    params$n_neighbors <- max(2L, stats::rpois(1, 15))
+    params$dens_scale <- round(stats::runif(1, 0, 1), 2)
+    params$k <- sample(2:5, 1)
+    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
+  } else if (transformer_name == "umap_lumbermark") {
+    params$n_neighbors <- max(2L, stats::rpois(1, 15))
+    params$dens_scale <- round(stats::runif(1, 0, 1), 2)
+    params$k <- sample(2:5, 1)
+  } else if (transformer_name == "lumbermark") {
+    params$k <- sample(2:5, 1)
+  } else if (transformer_name %in% c("quantile_binning", "quantile_binning_cat")) {
+    params$Q <- sample(3:10, 1)
+  } else if (transformer_name %in% c("log_binning", "log_binning_cat")) {
+    params$base <- sample(2:10, 1)
+  } else if (transformer_name == "knn_target_encode") {
+    params$k <- sample(c(3L, 5L, 10L, 25L), 1)
+  } else if (transformer_name == "round_transform") {
+    params$digits <- sample(c(0L, 1L, 2L, 3L), 1)
+  } else if (transformer_name == "decimal_digit") {
+    params$digits <- sample(c(1L, 2L, 3L, 4L), 1)
+  } else if (transformer_name == "target_encode_multiclass") {
+    params$comp_idx <- sample(1:5, 1)
+  } else if (transformer_name == "datetime_extract") {
+    params$component <- sample(c("year", "month", "day", "hour", "day_of_week", "weekend"), 1)
+  } else if (transformer_name == "power") {
+    params$p <- sample(c(0.5, 1 / 3, 2, 3), 1)
+  } else if (transformer_name == "displaced_log") {
+    params$displacement <- round(stats::runif(1, 10, 1000), 2)
+  } else if (transformer_name == "groupby_quantile") {
+    params$q <- sample(c(0.25, 0.75), 1)
+  } else if (transformer_name == "fourier_basis") {
+    params$comp_idx <- sample(1:8, 1)
+    params$scale <- sample(c(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0), 1)
+    params$phase <- sample(c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)), 1)
+  } else if (transformer_name == "smooth_clip") {
+    params$low_pct <- sample(c(0.01, 0.02, 0.05), 1)
+    params$high_pct <- sample(c(0.95, 0.98, 0.99), 1)
+  }
+  params
+}
+
+#' Mutate a single parameter value for a gene
+#' @keywords internal
+#' @noRd
+mutate_transformer_param <- function(gene, param_name) {
+  old_val <- gene$params[[param_name]]
+  if (param_name == "k") {
+    cand_k <- if (identical(gene$transformer_name, "knn_target_encode")) c(3L, 5L, 10L, 25L) else 2:5
+    candidates <- setdiff(cand_k, old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "digits") {
+    cand_digits <- if (identical(gene$transformer_name, "round_transform")) c(0L, 1L, 2L, 3L) else c(1L, 2L, 3L, 4L)
+    candidates <- setdiff(cand_digits, old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "gini_threshold") {
+    round(stats::runif(1, 0.1, 0.9), 2)
+  } else if (param_name == "Q") {
+    candidates <- setdiff(3:10, old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "base") {
+    candidates <- setdiff(2:10, old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "displacement") {
+    round(stats::runif(1, 10, 1000), 2)
+  } else if (param_name == "n_neighbors") {
+    new_val <- max(2L, stats::rpois(1, 15))
+    attempts <- 0
+    while (new_val == old_val && attempts < 5) {
+      new_val <- max(2L, stats::rpois(1, 15))
+      attempts <- attempts + 1
+    }
+    new_val
+  } else if (param_name == "dens_scale") {
+    round(stats::runif(1, 0, 1), 2)
+  } else if (param_name == "comp_idx") {
+    old_val
+  } else if (param_name == "component") {
+    op_name <- if (!is.null(gene$transformer_name)) gene$transformer_name else gene$op
+    if (!is.null(op_name) && op_name == "datetime_cyclic") {
+      components <- c("month_sin", "month_cos", "day_sin", "day_cos", "hour_sin", "hour_cos", "wday_sin", "wday_cos", "yday_sin", "yday_cos")
+    } else {
+      components <- c("year", "month", "day", "hour", "wday", "yday", "is_weekend")
+    }
+    candidates <- setdiff(components, old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "p") {
+    candidates <- setdiff(c(0.5, 1 / 3, 2, 3), old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "q") {
+    candidates <- setdiff(c(0.25, 0.75), old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "scale") {
+    candidates <- setdiff(c(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0), old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "phase") {
+    candidates <- setdiff(c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)), old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "low_pct") {
+    candidates <- setdiff(c(0.01, 0.02, 0.05), old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else if (param_name == "high_pct") {
+    candidates <- setdiff(c(0.95, 0.98, 0.99), old_val)
+    if (length(candidates) > 0) sample(candidates, 1) else old_val
+  } else {
+    old_val
+  }
+}
+
+#' Compute maximum input column count for a transformer
+#' @keywords internal
+#' @noRd
+transformer_max_cols <- function(transformer_name, n_avail, is_multi = TRUE, current_len = 1L, mode = c("add", "modify")) {
+  mode <- match.arg(mode)
+  if (!is_multi) return(current_len)
+  if (mode == "modify") {
+    if (transformer_name %in% c("add", "multiply")) {
+      return(min(5, n_avail))
+    }
+    return(max(2, floor((1 - exp(-1)) * n_avail)))
+  }
+  if (transformer_name %in% c("add", "multiply", "row_min", "row_max", "row_sd", "row_na_count", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
+    min(5, n_avail)
+  } else if (transformer_name %in% c("concat", "knn_target_encode")) {
+    min(3, n_avail)
+  } else {
+    max(2, floor((1 - exp(-1)) * n_avail))
+  }
+}
+
+#' Filter candidate transformer names for task compatibility
+#' @keywords internal
+#' @noRd
+filter_transformers_for_task <- function(allowed_t, task = "classification") {
+  if (task == "multiclass") {
+    allowed_t <- setdiff(allowed_t, c("target_encode", "pooled_target_encode", "target_sd_encode"))
+  } else {
+    allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
+  }
+  allowed_t
+}

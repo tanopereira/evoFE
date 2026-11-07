@@ -14,77 +14,7 @@ create_gene <- function(transformer_name, input_cols) {
     ))
   }
   transformer <- evo_transformers[[transformer_name]]
-  params <- list()
-  if (transformer_name %in% c("pca", "truncated_svd", "umap")) {
-    C <- max(2L, as.integer(round(log2(length(input_cols)))))
-    params$comp_idx <- sample(1:C, 1)
-    if (transformer_name == "umap") {
-      params$n_neighbors <- max(2L, stats::rpois(1, 15))
-      params$dens_scale <- round(stats::runif(1, 0, 1), 2)
-    }
-  } else if (transformer_name %in% c("similarity_encode", "mca", "famd", "between_group_pca", "supervised_bgpca", "supervised_mca", "supervised_famd")) {
-    params$comp_idx <- sample(1:5, 1)
-  } else if (transformer_name == "minhash_encode") {
-    params$comp_idx <- sample(1:8, 1)
-  } else if (transformer_name == "gap_encode") {
-    params$comp_idx <- sample(1:4, 1)
-  } else if (transformer_name == "datetime_cyclic") {
-    params$component <- sample(c("hour_sin", "hour_cos", "wday_sin", "wday_cos", "month_sin", "month_cos", "yday_sin", "yday_cos"), 1)
-  } else if (transformer_name == "target_quantile_encode") {
-    params$q <- sample(c(0.25, 0.5, 0.75), 1)
-  } else if (transformer_name == "feature_hash") {
-    params$num_bins <- sample(c(4, 8, 16, 32), 1)
-    params$comp_idx <- sample(1:params$num_bins, 1)
-  } else if (transformer_name %in% c("genie_centroid_dist", "lumbermark_centroid_dist")) {
-    params$k <- sample(2:5, 1)
-    params$comp_idx <- sample(1:params$k, 1)
-    if (transformer_name == "genie_centroid_dist") {
-      params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
-    }
-  } else if (transformer_name == "one_hot_encode") {
-    params$comp_idx <- sample(1:6, 1)
-  } else if (transformer_name == "genie") {
-    params$k <- sample(2:5, 1)
-    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
-  } else if (transformer_name == "umap_genie") {
-    params$n_neighbors <- max(2L, stats::rpois(1, 15))
-    params$dens_scale <- round(stats::runif(1, 0, 1), 2)
-    params$k <- sample(2:5, 1)
-    params$gini_threshold <- round(stats::runif(1, 0.1, 0.9), 2)
-  } else if (transformer_name == "umap_lumbermark") {
-    params$n_neighbors <- max(2L, stats::rpois(1, 15))
-    params$dens_scale <- round(stats::runif(1, 0, 1), 2)
-    params$k <- sample(2:5, 1)
-  } else if (transformer_name == "lumbermark") {
-    params$k <- sample(2:5, 1)
-  } else if (transformer_name %in% c("quantile_binning", "quantile_binning_cat")) {
-    params$Q <- sample(3:10, 1)
-  } else if (transformer_name %in% c("log_binning", "log_binning_cat")) {
-    params$base <- sample(2:10, 1)
-  } else if (transformer_name == "knn_target_encode") {
-    params$k <- sample(c(3L, 5L, 10L, 25L), 1)
-  } else if (transformer_name == "round_transform") {
-    params$digits <- sample(c(0L, 1L, 2L, 3L), 1)
-  } else if (transformer_name == "decimal_digit") {
-    params$digits <- sample(c(1L, 2L, 3L, 4L), 1)
-  } else if (transformer_name == "target_encode_multiclass") {
-    params$comp_idx <- sample(1:5, 1)
-  } else if (transformer_name == "datetime_extract") {
-    params$component <- sample(c("year", "month", "day", "hour", "day_of_week", "weekend"), 1)
-  } else if (transformer_name == "power") {
-    params$p <- sample(c(0.5, 1/3, 2, 3), 1)
-  } else if (transformer_name == "displaced_log") {
-    params$displacement <- round(stats::runif(1, 10, 1000), 2)
-  } else if (transformer_name == "groupby_quantile") {
-    params$q <- sample(c(0.25, 0.75), 1)
-  } else if (transformer_name == "fourier_basis") {
-    params$comp_idx <- sample(1:8, 1)
-    params$scale <- sample(c(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0), 1)
-    params$phase <- sample(c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)), 1)
-  } else if (transformer_name == "smooth_clip") {
-    params$low_pct <- sample(c(0.01, 0.02, 0.05), 1)
-    params$high_pct <- sample(c(0.95, 0.98, 0.99), 1)
-  }
+  params <- sample_transformer_params(transformer_name, input_cols)
   gene <- list(
     transformer_name = transformer_name,
     input_cols = input_cols,

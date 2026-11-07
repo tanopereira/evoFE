@@ -168,13 +168,12 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     }
     unused <- setdiff(avail_for_type, gene_to_mod$input_cols)
     
-    max_cols <- if (t_name %in% c("add", "multiply")) {
-      min(5, length(avail_for_type))
-    } else if (is_multi) {
-      max(2, floor((1 - exp(-1)) * length(avail_for_type)))
-    } else {
-      length(gene_to_mod$input_cols) # non-multivariate genes have fixed arity
-    }
+    max_cols <- transformer_max_cols(
+      t_name, length(avail_for_type),
+      is_multi = is_multi,
+      current_len = length(gene_to_mod$input_cols),
+      mode = "modify"
+    )
     
     # Determine which sub-operations are applicable
     can_add_col <- is_multi && length(unused) > 0 && length(gene_to_mod$input_cols) < max_cols
@@ -240,69 +239,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         # Mutate one parameter of the gene
         param_name <- sample(names(gene_to_mod$params), 1)
         old_val <- gene_to_mod$params[[param_name]]
-        
-        new_val <- if (param_name == "k") {
-          cand_k <- if (identical(gene_to_mod$transformer_name, "knn_target_encode")) c(3L, 5L, 10L, 25L) else 2:5
-          candidates <- setdiff(cand_k, old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "digits") {
-          cand_digits <- if (identical(gene_to_mod$transformer_name, "round_transform")) c(0L, 1L, 2L, 3L) else c(1L, 2L, 3L, 4L)
-          candidates <- setdiff(cand_digits, old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "gini_threshold") {
-          round(stats::runif(1, 0.1, 0.9), 2)
-        } else if (param_name == "Q") {
-          candidates <- setdiff(3:10, old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "base") {
-          candidates <- setdiff(2:10, old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "displacement") {
-          round(stats::runif(1, 10, 1000), 2)
-        } else if (param_name == "n_neighbors") {
-          new_val <- max(2L, stats::rpois(1, 15))
-          attempts <- 0
-          while (new_val == old_val && attempts < 5) {
-            new_val <- max(2L, stats::rpois(1, 15))
-            attempts <- attempts + 1
-          }
-          new_val
-        } else if (param_name == "dens_scale") {
-          round(stats::runif(1, 0, 1), 2)
-        } else if (param_name == "comp_idx") {
-          # For multi-component transformers, don't mutate comp_idx in isolation
-          # as components are managed together during Add mutation
-          old_val # no-op
-        } else if (param_name == "component") {
-          op_name <- if (!is.null(gene_to_mod$transformer_name)) gene_to_mod$transformer_name else gene_to_mod$op
-          if (!is.null(op_name) && op_name == "datetime_cyclic") {
-            components <- c("month_sin", "month_cos", "day_sin", "day_cos", "hour_sin", "hour_cos", "wday_sin", "wday_cos", "yday_sin", "yday_cos")
-          } else {
-            components <- c("year", "month", "day", "hour", "wday", "yday", "is_weekend")
-          }
-          candidates <- setdiff(components, old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "p") {
-          candidates <- setdiff(c(0.5, 1/3, 2, 3), old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "q") {
-          candidates <- setdiff(c(0.25, 0.75), old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "scale") {
-          candidates <- setdiff(c(0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0), old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "phase") {
-          candidates <- setdiff(c(0, round(pi / 6, 4), round(pi / 4, 4), round(pi / 3, 4)), old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "low_pct") {
-          candidates <- setdiff(c(0.01, 0.02, 0.05), old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else if (param_name == "high_pct") {
-          candidates <- setdiff(c(0.95, 0.98, 0.99), old_val)
-          if (length(candidates) > 0) sample(candidates, 1) else old_val
-        } else {
-          old_val
-        }
+        new_val <- mutate_transformer_param(gene_to_mod, param_name)
         
         if (!identical(new_val, old_val)) {
           gene_to_mod$params[[param_name]] <- new_val
@@ -368,11 +305,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       } else {
         allowed_t <- allowed_transformers
       }
-      if (task == "multiclass") {
-        allowed_t <- setdiff(allowed_t, c("target_encode", "pooled_target_encode", "target_sd_encode"))
-      } else {
-        allowed_t <- setdiff(allowed_t, c("target_encode_multiclass"))
-      }
+      allowed_t <- filter_transformers_for_task(allowed_t, task)
       if (length(allowed_t) == 0) allowed_t <- names(evo_transformers)
       avail_num <- c(ind$all_numeric_cols, gene_num)
       avail_cat <- c(ind$all_categorical_cols, gene_cat)
@@ -426,13 +359,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           cols <- weighted_sample(available_cols, 2, replace = allow_rep)
         } else if (t_def$type %in% c("multivariate", "supervised_multivariate")) {
           if (length(available_cols) < 2) next
-          max_cols <- if (t_name %in% c("add", "multiply", "row_min", "row_max", "row_sd", "row_na_count", "relative_rating", "geometric_mean", "harmonic_mean", "pythagorean_imbalance")) {
-            min(5, length(available_cols))
-          } else if (t_name %in% c("concat", "knn_target_encode")) {
-            min(3, length(available_cols))
-          } else {
-            max(2, floor((1 - exp(-1)) * length(available_cols)))
-          }
+          max_cols <- transformer_max_cols(t_name, length(available_cols), is_multi = TRUE, mode = "add")
           num_cols <- if (max_cols == 2) 2 else sample(2:max_cols, 1)
           allow_rep <- if (!is.null(t_def$allow_replace)) t_def$allow_replace else FALSE
           if (!allow_rep) {
