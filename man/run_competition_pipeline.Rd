@@ -73,8 +73,11 @@ single-feature train-vs-test AUC exceeds \code{drift_auc_threshold}.}
 
 \item{drift_auc_threshold}{Single-feature adversarial AUC cutoff (default \code{0.85}).}
 
-\item{supervised_stage4}{Logical (default \code{FALSE}). If \code{TRUE}, runs a short
-fold-local supervised encoding search (\code{generations = 3, pop_size = 5}) in Stage 4.}
+\item{supervised_stage4}{Logical (default \code{FALSE}). If \code{TRUE}, runs a fast
+surrogate search over supervised encoders on \code{train_mega} (subsampled to
+\code{max_search_rows} if huge) and passes only the \strong{unfitted} winning gene
+formulas via \code{seed_genes} into Stage 4's \code{generations = 1, pop_size = 1}
+deep fold-bagged refit (zero target leakage and zero deep-schedule search overhead).}
 
 \item{bag_folds}{Logical (default \code{TRUE}). Retains and averages all \code{cv_folds}
 fold models during test prediction.}

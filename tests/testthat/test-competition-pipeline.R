@@ -145,3 +145,91 @@ test_that("run_competition_pipeline executes full 2-phase strategy on classifica
   expect_equal(names(sub_disk), c("id", "price"))
   expect_true(all(is.finite(sub_disk$price) & sub_disk$price > 0))
 })
+
+test_that("seed_genes and decoupled supervised_stage4 search fast and refit 1-gen per fold leak-free", {
+  skip_if_not_installed("lightgbm")
+
+  set.seed(303)
+  n_tr <- 140L
+  n_te <- 30L
+  cats <- paste0("lvl_", seq_len(8L))
+  cat_eff <- stats::setNames(seq(-2.0, 2.0, length.out = 8L), cats)
+
+  tr_cat <- sample(cats, n_tr, replace = TRUE)
+  te_cat <- sample(cats, n_te, replace = TRUE)
+  tr_x1 <- stats::rnorm(n_tr)
+  te_x1 <- stats::rnorm(n_te)
+  tr_x2 <- stats::rnorm(n_tr)
+  te_x2 <- stats::rnorm(n_te)
+
+  train_sup <- data.table::data.table(
+    id = seq_len(n_tr),
+    x1 = tr_x1,
+    x2 = tr_x2,
+    cohort = tr_cat,
+    target = as.integer(stats::rbinom(n_tr, 1L, stats::plogis(cat_eff[tr_cat] + 0.7 * tr_x1 - 0.5 * tr_x2)))
+  )
+  test_sup <- data.table::data.table(
+    id = 1000L + seq_len(n_te),
+    x1 = te_x1,
+    x2 = te_x2,
+    cohort = te_cat
+  )
+
+  # Direct seed_genes test: strip state and refit per-fold in 1-gen mode
+  g_sup <- create_gene("pooled_target_encode", "cohort")
+  g_sup$state <- list(fake_leaked_state = 999)
+  cleaned <- normalize_seed_genes(list(g_sup), c("x1", "x2", "cohort"))
+  expect_length(cleaned, 1L)
+  expect_null(cleaned[[1L]]$state)
+
+  rec_seeded <- evolve_features(
+    data = train_sup[, .(x1, x2, cohort, target)],
+    target_col = "target",
+    task = "classification",
+    evaluator = "lightgbm",
+    generations = 1L,
+    pop_size = 1L,
+    cv_folds = 3L,
+    bag_folds = TRUE,
+    seed_genes = list(g_sup),
+    nrounds = 40L,
+    early_stopping_rounds = 10L,
+    threads = 1L,
+    seed = 11L,
+    verbose = FALSE
+  )
+  expect_length(rec_seeded$best_individual$genes, 1L)
+  expect_null(rec_seeded$best_individual$genes[[1L]]$state$fake_leaked_state)
+  expect_length(rec_seeded$fold_models, 3L)
+  p_seeded <- predict_model(rec_seeded, test_sup[, .(x1, x2, cohort)], threads = 1L)
+  expect_length(p_seeded, n_te)
+  expect_true(all(is.finite(p_seeded)))
+
+  # End-to-end decoupled supervised_stage4 in run_competition_pipeline
+  res_sup <- run_competition_pipeline(
+    train = train_sup,
+    test = test_sup,
+    target_col = "target",
+    id_col = "id",
+    preset = "fast",
+    evaluators = "lightgbm",
+    cv_folds = 3L,
+    max_search_rows = 80L,
+    supervised_stage4 = TRUE,
+    bag_folds = TRUE,
+    threads = 1L,
+    seed = 55L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res_sup, "evo_competition_run")
+  expect_true(!is.null(res_sup$stage3_supervised_recipes))
+  expect_equal(res_sup$discovery_rows, 80L)
+  # Stage 4 itself ran strictly as a 1-gen, pop_size = 1 deep refit on all 140 rows
+  expect_length(res_sup$stage4_recipes$lightgbm$history, 1L)
+  expect_length(res_sup$stage4_recipes$lightgbm$oof_preds, n_tr)
+  expect_length(res_sup$predictions, n_te)
+  expect_true(all(is.finite(res_sup$predictions)))
+})
+

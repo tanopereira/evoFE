@@ -137,6 +137,7 @@
 #' @param target_transform Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.
 #' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.
 #' @param confirm_top_k Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.
+#' @param seed_genes Optional list of gene definitions, an \code{evo_individual}, or an \code{evo_recipe} whose symbolic gene formulas (with all fitted \code{$state} entries stripped) seed Individual 1 and initial island populations. Ideal for searching supervised encoders fast and refitting the winning formulas per fold in 1-gen (\code{generations = 1, pop_size = 1}) deep training without target leakage.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
@@ -214,6 +215,7 @@ evolve_features <- function(data, target_col, task = "classification",
                             target_transform = "none",
                             sd_penalty = 0,
                             confirm_top_k = 0L,
+                            seed_genes = NULL,
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
@@ -851,10 +853,11 @@ evolve_features <- function(data, target_col, task = "classification",
   island_fitness_caches <- NULL
   island_state_caches <- NULL
   island_baseline_inds <- list()
+  seed_genes_clean <- normalize_seed_genes(seed_genes, c(numeric_cols, categorical_cols, datetime_cols))
 
   # Generation 0: Baseline individual
   baseline_ind <- create_individual(
-    genes = list(),
+    genes = seed_genes_clean,
     numeric_cols = numeric_cols,
     categorical_cols = categorical_cols,
     datetime_cols = datetime_cols,
@@ -918,7 +921,7 @@ evolve_features <- function(data, target_col, task = "classification",
         local_baseline$evaluator <- eval_j
       } else {
         local_baseline <- create_individual(
-          genes = list(),
+          genes = seed_genes_clean,
           numeric_cols = numeric_cols,
           categorical_cols = categorical_cols,
           datetime_cols = datetime_cols,
@@ -1027,7 +1030,8 @@ evolve_features <- function(data, target_col, task = "classification",
       task = task, importances = baseline_ind$importances,
       allowed_transformers = allowed_transformers,
       mask_temp_factor = mask_temp_factor,
-      mask_raw_at_init = mask_raw_at_init
+      mask_raw_at_init = mask_raw_at_init,
+      seed_genes = seed_genes_clean
     )
     pop[[1]] <- baseline_ind
     pop_init <- pop
@@ -1044,7 +1048,8 @@ evolve_features <- function(data, target_col, task = "classification",
       allowed_transformers = allowed_transformers,
       mask_temp_factor = mask_temp_factor,
       mask_raw_at_init = mask_raw_at_init,
-      seed = seed
+      seed = seed,
+      seed_genes = seed_genes_clean
     )
     pop_init <- NULL
     pop_list_init <- pop_list

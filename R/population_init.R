@@ -115,6 +115,69 @@ strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.glo
   ind
 }
 
+#' Normalize and Strip State from Seed Genes for Warm-Started or 1-Gen Refits
+#'
+#' Extracts symbolic gene formulas from a gene list, \code{evo_individual},
+#' \code{evo_recipe}, or list of recipes/individuals, clearing all fitted
+#' \code{$state} entries so supervised encoders are always refit strictly
+#' inside cross-validation folds without target leakage.
+#'
+#' @param seed_genes \code{NULL}, a gene list, an \code{evo_individual}, an
+#'   \code{evo_recipe}, or a list thereof.
+#' @param available_cols Optional character vector of columns present in \code{data}.
+#'   When provided, skips genes whose \code{output_col} is already materialized in
+#'   \code{available_cols} and topologically sorts reachable genes.
+#' @return A list of unfitted gene objects (\code{state = NULL}).
+#' @export
+normalize_seed_genes <- function(seed_genes, available_cols = NULL) {
+  if (is.null(seed_genes) || length(seed_genes) == 0L) return(list())
+
+  extract_raw <- function(x) {
+    if (is.null(x)) return(list())
+    if (inherits(x, "evo_recipe")) {
+      return(if (!is.null(x$best_individual)) x$best_individual$genes else list())
+    }
+    if (inherits(x, "evo_individual")) {
+      return(if (!is.null(x$genes)) x$genes else list())
+    }
+    if (is.list(x) && !is.null(x$transformer_name)) {
+      return(list(x))
+    }
+    if (is.list(x)) {
+      out <- list()
+      for (el in x) {
+        out <- c(out, extract_raw(el))
+      }
+      return(out)
+    }
+    list()
+  }
+
+  raw_genes <- extract_raw(seed_genes)
+  if (length(raw_genes) == 0L) return(list())
+
+  seen_out <- character(0)
+  cleaned <- list()
+  for (g in raw_genes) {
+    if (!is.list(g) || is.null(g$transformer_name) || !g$transformer_name %in% names(evo_transformers)) {
+      next
+    }
+    g$state <- NULL
+    if (is.null(g$output_col) || !nzchar(g$output_col)) {
+      g$output_col <- evo_transformers[[g$transformer_name]]$name_generator(g)
+    }
+    if (g$output_col %in% seen_out) next
+    if (!is.null(available_cols) && g$output_col %in% available_cols) next
+    seen_out <- c(seen_out, g$output_col)
+    cleaned <- c(cleaned, list(g))
+  }
+
+  if (!is.null(available_cols) && length(cleaned) > 0L) {
+    cleaned <- topological_sort_genes(cleaned, available_cols)
+  }
+  cleaned
+}
+
 #' Strip training-only leave-one-out vectors from fitted gene states
 #' @keywords internal
 #' @noRd
@@ -150,6 +213,7 @@ strip_loo_state <- function(ind) {
 #' @param mask_raw_at_init Logical. If TRUE, samples active raw feature masks during population
 #'   initialization based on baseline importances. Default \code{FALSE} (every individual starts with
 #'   100\% of raw features active so candidate genes are tested fairly on the full feature set).
+#' @param seed_genes Optional list of unfitted gene objects with which to seed initial individuals.
 #' @return A list of \code{evo_individual} objects of length \code{pop_size}.
 #'   The first individual is a baseline with no genes; the remaining
 #'   individuals each carry \code{initial_genes} randomly generated genes.
@@ -157,12 +221,13 @@ strip_loo_state <- function(ind) {
 initialize_population <- function(pop_size, numeric_cols, categorical_cols, datetime_cols = character(0),
                                   initial_genes = 2, task = "classification", importances = NULL,
                                   allowed_transformers = NULL, mask_temp_factor = 0.5,
-                                  mask_raw_at_init = FALSE) {
+                                  mask_raw_at_init = FALSE, seed_genes = list()) {
   pop <- list()
+  base_gene_count <- length(seed_genes)
   for (i in 1:pop_size) {
     if (i == 1 || !isTRUE(mask_raw_at_init)) {
       ind <- create_individual(
-        genes = list(),
+        genes = seed_genes,
         numeric_cols = numeric_cols,
         categorical_cols = categorical_cols,
         datetime_cols = datetime_cols,
@@ -198,7 +263,7 @@ initialize_population <- function(pop_size, numeric_cols, categorical_cols, date
       }
       
       ind <- create_individual(
-        genes = list(),
+        genes = seed_genes,
         numeric_cols = init_num,
         categorical_cols = init_cat,
         datetime_cols = init_date,
@@ -207,10 +272,11 @@ initialize_population <- function(pop_size, numeric_cols, categorical_cols, date
         all_datetime_cols = datetime_cols
       )
     }
-    # Reserve the first individual as a baseline (original features only)
+    # Reserve the first individual as a baseline (original features + seed_genes only)
     if (i > 1) {
       attempts <- 0
-      while (length(ind$genes) < initial_genes && attempts < initial_genes * 10) {
+      target_len <- base_gene_count + initial_genes
+      while (length(ind$genes) < target_len && attempts < initial_genes * 10) {
         ind <- mutate(ind, force_add = TRUE, importances = importances, task = task, tested_gene_outputs = character(0), allowed_transformers = allowed_transformers)
         attempts <- attempts + 1
       }

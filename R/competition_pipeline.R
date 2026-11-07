@@ -266,8 +266,11 @@
 #' @param drop_drifting Logical (default \code{FALSE}). If \code{TRUE}, drops raw columns whose
 #'   single-feature train-vs-test AUC exceeds \code{drift_auc_threshold}.
 #' @param drift_auc_threshold Single-feature adversarial AUC cutoff (default \code{0.85}).
-#' @param supervised_stage4 Logical (default \code{FALSE}). If \code{TRUE}, runs a short
-#'   fold-local supervised encoding search (\code{generations = 3, pop_size = 5}) in Stage 4.
+#' @param supervised_stage4 Logical (default \code{FALSE}). If \code{TRUE}, runs a fast
+#'   surrogate search over supervised encoders on \code{train_mega} (subsampled to
+#'   \code{max_search_rows} if huge) and passes only the \strong{unfitted} winning gene
+#'   formulas via \code{seed_genes} into Stage 4's \code{generations = 1, pop_size = 1}
+#'   deep fold-bagged refit (zero target leakage and zero deep-schedule search overhead).
 #' @param bag_folds Logical (default \code{TRUE}). Retains and averages all \code{cv_folds}
 #'   fold models during test prediction.
 #' @param submission_file Optional file path to write \code{$submission} via \code{data.table::fwrite()}.
@@ -517,7 +520,70 @@ run_competition_pipeline <- function(
     ))
   }
 
-  # Stage 4: High-capacity retraining on 100% of train_mega
+  # Optional Stage 3.5: Fast decoupled supervised discovery on train_mega
+  # Searches at fast Stage-2 surrogate speeds (subsampled if > max_search_rows),
+  # then extracts ONLY unfitted symbolic gene formulas (state = NULL) for Stage 4!
+  stage3_sup_recipes <- NULL
+  sup_seed_genes <- stats::setNames(vector("list", length(active_evaluators)), active_evaluators)
+  mega_feature_names <- setdiff(names(train_mega), target_col)
+
+  if (isTRUE(supervised_stage4) && length(sup_t) > 0L) {
+    sup_search_dt <- subsample_for_discovery(
+      data = train_mega,
+      target_col = target_col,
+      max_rows = max_search_rows,
+      task = resolved_task,
+      cv_strategy = cv_strategy,
+      group_col = group_col,
+      time_col = time_col,
+      adv_weights = eff_adv_w,
+      seed = base_seed + 500L
+    )
+    stage3_sup_recipes <- vector("list", length(active_evaluators))
+    names(stage3_sup_recipes) <- active_evaluators
+    sup_gens <- if (preset == "fast") 2L else 3L
+    sup_pop <- if (preset == "fast") 4L else 6L
+
+    for (idx in seq_along(active_evaluators)) {
+      ev <- active_evaluators[idx]
+      if (show_msg) {
+        message(sprintf(
+          "[Stage 3.5] Fast supervised encoder search on %d rows for '%s'...",
+          nrow(sup_search_dt), ev
+        ))
+      }
+      s35_common <- list(
+        data = sup_search_dt,
+        target_col = target_col,
+        task = resolved_task,
+        evaluator = ev,
+        metric = resolved_metric,
+        generations = sup_gens,
+        pop_size = sup_pop,
+        islands = 1L,
+        allowed_transformers = sup_t,
+        evaluation_strategy = "cv",
+        cv_folds = min(cv_folds, 5L),
+        cv_strategy = cv_strategy,
+        group_col = group_col,
+        time_col = time_col,
+        sd_penalty = cfg$s2_sd_penalty,
+        confirm_top_k = if (preset != "fast" && cv_strategy != "time") 2L else 0L,
+        raw_toggle_prob = 0.0,
+        bag_folds = FALSE,
+        target_transform = resolved_tt,
+        threads = threads,
+        seed = base_seed + 500L + idx,
+        verbose = verbose
+      )
+      ev_fast_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt))
+      rec_sup <- do.call(evolve_features, c(s35_common, ev_fast_args))
+      stage3_sup_recipes[[ev]] <- rec_sup
+      sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, mega_feature_names)
+    }
+  }
+
+  # Stage 4: High-capacity 1-Gen retraining on 100% of train_mega
   stage4_recipes <- vector("list", length(active_evaluators))
   names(stage4_recipes) <- active_evaluators
   s4_seed <- base_seed + 1000L
@@ -533,9 +599,9 @@ run_competition_pipeline <- function(
       task = resolved_task,
       evaluator = ev,
       metric = resolved_metric,
-      generations = if (isTRUE(supervised_stage4) && length(sup_t) > 0L) 3L else 1L,
-      pop_size = if (isTRUE(supervised_stage4) && length(sup_t) > 0L) 5L else 1L,
-      allowed_transformers = if (isTRUE(supervised_stage4) && length(sup_t) > 0L) sup_t else "basic",
+      generations = 1L,
+      pop_size = 1L,
+      seed_genes = sup_seed_genes[[ev]],
       evaluation_strategy = "cv",
       cv_folds = cv_folds,
       cv_strategy = cv_strategy,
@@ -624,6 +690,7 @@ run_competition_pipeline <- function(
       submission = sub_dt,
       final_model = final_model,
       stage2_recipes = stage2_recipes,
+      stage3_supervised_recipes = stage3_sup_recipes,
       stage4_recipes = stage4_recipes,
       scout_ensemble = scout_ens,
       train_mega = train_mega,

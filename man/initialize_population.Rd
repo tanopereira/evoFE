@@ -14,7 +14,8 @@ initialize_population(
   importances = NULL,
   allowed_transformers = NULL,
   mask_temp_factor = 0.5,
-  mask_raw_at_init = FALSE
+  mask_raw_at_init = FALSE,
+  seed_genes = list()
 )
 }
 \arguments{
@@ -43,6 +44,8 @@ concentrate sampling on the highest-importance features. Default \code{0.5}.}
 \item{mask_raw_at_init}{Logical. If TRUE, samples active raw feature masks during population
 initialization based on baseline importances. Default \code{FALSE} (every individual starts with
 100\% of raw features active so candidate genes are tested fairly on the full feature set).}
+
+\item{seed_genes}{Optional list of unfitted gene objects with which to seed initial individuals.}
 }
 \value{
 A list of \code{evo_individual} objects of length \code{pop_size}.

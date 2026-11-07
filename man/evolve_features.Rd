@@ -63,6 +63,7 @@ evolve_features(
   target_transform = "none",
   sd_penalty = 0,
   confirm_top_k = 0L,
+  seed_genes = NULL,
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   ...
 )
@@ -262,6 +263,8 @@ the highest normalized headroom closed).}
 \item{sd_penalty}{Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.}
 
 \item{confirm_top_k}{Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.}
+
+\item{seed_genes}{Optional list of gene definitions, an \code{evo_individual}, or an \code{evo_recipe} whose symbolic gene formulas (with all fitted \code{$state} entries stripped) seed Individual 1 and initial island populations. Ideal for searching supervised encoders fast and refitting the winning formulas per fold in 1-gen (\code{generations = 1, pop_size = 1}) deep training without target leakage.}
 
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 

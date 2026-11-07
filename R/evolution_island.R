@@ -21,7 +21,7 @@ initialize_island_populations <- function(islands, pop_size, numeric_cols, categ
                                           baseline_ind = NULL, island_baseline_inds = list(),
                                           allowed_transformers = "all", mask_temp_factor = 0.5,
                                           mask_raw_at_init = FALSE,
-                                          seed = NULL) {
+                                          seed = NULL, seed_genes = list()) {
   pop_list <- list()
   for (j in seq_len(islands)) {
     # Per-island sub-stream: island j's initial population depends only on
@@ -35,7 +35,8 @@ initialize_island_populations <- function(islands, pop_size, numeric_cols, categ
       initial_genes = 2, task = task, importances = baseline_ind$importances,
       allowed_transformers = trans_j,
       mask_temp_factor = mask_temp_factor,
-      mask_raw_at_init = mask_raw_at_init
+      mask_raw_at_init = mask_raw_at_init,
+      seed_genes = seed_genes
     )
     if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]])) {
       pop_list[[j]][[1]] <- island_baseline_inds[[j]]
