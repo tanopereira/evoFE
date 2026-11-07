@@ -127,12 +127,9 @@ evo_transformers$round_transform <- create_transformer(
   input_type = "numeric",
   output_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    x <- as.numeric(data[[input_cols[1]]])
+    x <- as.numeric(data[[gene$input_cols[1]]])
     d <- if (!is.null(gene$params$digits)) as.integer(gene$params$digits) else 1L
-    res <- round(x, digits = d)
-    res[!is.finite(res)] <- 0.0
-    res
+    round(x, digits = d)
   },
   name_generator = function(gene) .gene_col_name(gene, "rnd")
 )
@@ -144,13 +141,18 @@ evo_transformers$decimal_digit <- create_transformer(
   input_type = "numeric",
   output_type = "numeric",
   apply_func = function(data, gene, state = NULL) {
-    input_cols <- gene$input_cols
-    x <- as.numeric(data[[input_cols[1]]])
+    ax <- abs(as.numeric(data[[gene$input_cols[1]]]))
     d <- if (!is.null(gene$params$digits)) as.integer(gene$params$digits) else 1L
     mult <- 10^d
-    res <- as.integer(floor(abs(x) * mult) %% 10L)
-    res[!is.finite(res)] <- 0L
-    as.numeric(res)
+    fin <- is.finite(ax)
+    res <- rep(NA_real_, length(ax))
+    if (any(fin)) {
+      af <- ax[fin]
+      frac <- af - floor(af)
+      tol <- pmin(1e-4, pmax(1e-12, af * 1e-14) * mult)
+      res[fin] <- floor(frac * mult + tol) %% 10
+    }
+    res
   },
   name_generator = function(gene) .gene_col_name(gene, "ddig")
 )

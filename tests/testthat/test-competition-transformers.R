@@ -37,9 +37,35 @@ testthat::test_that("knn_target_encode works on 1D, 2D, and 3D numeric columns w
   res3 <- apply_gene(g3, train_data = data.table::as.data.table(df), val_data = data.table::as.data.table(df), target_col = "y")
   expect_true(g3$output_col %in% names(res3$train))
   expect_true(all(is.finite(res3$train[[g3$output_col]])))
+
+  # Constant input must be rejected (never leak row-order y[1:(k+1)])
+  df_const <- data.frame(x1 = rep(5.0, 20), y = c(rep(1.0, 10), rep(0.0, 10)))
+  g_const <- create_gene("knn_target_encode", "x1")
+  expect_error(
+    apply_gene(g_const, train_data = data.table::as.data.table(df_const), target_col = "y", validate_genes = TRUE),
+    "Constant column"
+  )
+
+  # Exact coordinate ties must be invariant to row order (no timestamp/index bias)
+  df_ties <- data.frame(
+    x1 = c(rep(1.0, 12), rep(2.0, 12)),
+    y = c(rep(1.0, 6), rep(0.0, 6), rep(0.0, 6), rep(1.0, 6))
+  )
+  perm <- c(12:1, 24:13)
+  g_tie <- create_gene("knn_target_encode", "x1")
+  g_tie$params$k <- 3L
+  r_orig <- apply_gene(g_tie, train_data = data.table::as.data.table(df_ties), target_col = "y", validate_genes = FALSE)
+  r_perm <- apply_gene(g_tie, train_data = data.table::as.data.table(df_ties[perm, ]), target_col = "y", validate_genes = FALSE)
+  expect_equal(r_orig$train[[g_tie$output_col]][perm], r_perm$train[[g_tie$output_col]], tolerance = 1e-12)
+
+  # Landmark reference set respects evoFE.max_clustering_size
+  old_opt <- options(evoFE.max_clustering_size = 10L)
+  on.exit(options(old_opt), add = TRUE)
+  res_cap <- apply_gene(g1, train_data = data.table::as.data.table(df), target_col = "y", validate_genes = FALSE)
+  expect_lte(nrow(res_cap$gene$state$u_ref), 10L)
 })
 
-testthat::test_that("round_transform correctly discretizes continuous features with robust edge cases", {
+testthat::test_that("round_transform correctly discretizes continuous features with NA preservation", {
   x_test <- c(3.14159, -2.71828, 42.0, 0.055, NA, Inf, -Inf)
   df <- data.frame(num = x_test)
 
@@ -49,7 +75,7 @@ testthat::test_that("round_transform correctly discretizes continuous features w
   res0 <- apply_gene(g0, train_data = data.table::as.data.table(df), target_col = NULL)
   out0 <- res0$train[[g0$output_col]]
   expect_equal(out0[1:4], c(3, -3, 42, 0))
-  expect_true(all(is.finite(out0)))
+  expect_true(all(is.na(out0[5:7])))
 
   # Digits = 2
   g2 <- create_gene("round_transform", "num")
@@ -57,13 +83,13 @@ testthat::test_that("round_transform correctly discretizes continuous features w
   res2 <- apply_gene(g2, train_data = data.table::as.data.table(df), target_col = NULL)
   out2 <- res2$train[[g2$output_col]]
   expect_equal(out2[1:4], c(3.14, -2.72, 42.0, 0.06))
-  expect_true(all(is.finite(out2)))
+  expect_true(all(is.na(out2[5:7])))
 
   # Formula formatting
   expect_match(gene_to_formula(g2), "^round_transform_d2\\(num\\)$")
 })
 
-testthat::test_that("decimal_digit correctly extracts decimal positions with robust edge cases", {
+testthat::test_that("decimal_digit handles IEEE-754 floats accurately and preserves NA", {
   x_test <- c(3.14159, -3.14159, 42.0, 0.05, NA, Inf)
   df <- data.frame(num = x_test)
 
@@ -73,7 +99,7 @@ testthat::test_that("decimal_digit correctly extracts decimal positions with rob
   res1 <- apply_gene(g1, train_data = data.table::as.data.table(df), target_col = NULL)
   out1 <- res1$train[[g1$output_col]]
   expect_equal(out1[1:4], c(1, 1, 0, 0))
-  expect_true(all(is.finite(out1)))
+  expect_true(all(is.na(out1[5:6])))
 
   # Position 2
   g2 <- create_gene("decimal_digit", "num")
@@ -81,7 +107,12 @@ testthat::test_that("decimal_digit correctly extracts decimal positions with rob
   res2 <- apply_gene(g2, train_data = data.table::as.data.table(df), target_col = NULL)
   out2 <- res2$train[[g2$output_col]]
   expect_equal(out2[1:4], c(4, 4, 0, 5))
-  expect_true(all(is.finite(out2)))
+  expect_true(all(is.na(out2[5:6])))
+
+  # IEEE-754 binary float edge cases that fail naive floor(abs(x) * 10^d) %% 10
+  df_ieee <- data.frame(num = c(0.29, 0.58, 1.13, 2.3, 0.07, 4.1, 9.95, 123456.29))
+  res_ieee <- apply_gene(g2, train_data = data.table::as.data.table(df_ieee), target_col = NULL)
+  expect_equal(res_ieee$train[[g2$output_col]], c(9, 8, 3, 0, 7, 0, 5, 9))
 
   # Position 4
   g4 <- create_gene("decimal_digit", "num")
@@ -150,4 +181,37 @@ testthat::test_that("evolve_features executes seamlessly with competition transf
   preds <- predict_model(res, newdata = train_df)
   expect_equal(length(preds), n)
   expect_true(all(is.finite(preds)))
+
+  # Final recipe genes must not retain training-length loo_train vectors
+  for (g in res$best_individual$genes) {
+    if (!is.null(g$state)) {
+      expect_null(g$state$loo_train)
+      expect_null(g$state$loo_train_list)
+    }
+  }
+})
+
+testthat::test_that("pooled_target_encode, target_quantile_encode LOO and strict metric dispatch work", {
+  # Singleton category ("rare") with extreme y = 100 must map to global prior on train (LOO), not memorize 100
+  dt <- data.table::data.table(
+    cat = c("rare", rep("A", 5), rep("B", 5)),
+    y = c(100.0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14)
+  )
+
+  g_pte <- create_gene("pooled_target_encode", "cat")
+  r_pte <- apply_gene(g_pte, data.table::copy(dt), data.table::copy(dt), target_col = "y", validate_genes = FALSE)
+  expect_equal(r_pte$train[[g_pte$output_col]][1], mean(dt$y), tolerance = 1e-10)
+  expect_gt(r_pte$val[[g_pte$output_col]][1], r_pte$train[[g_pte$output_col]][1])
+
+  g_tqe <- create_gene("target_quantile_encode", "cat")
+  g_tqe$params$q <- 0.5
+  r_tqe <- apply_gene(g_tqe, data.table::copy(dt), data.table::copy(dt), target_col = "y", validate_genes = FALSE)
+  expect_equal(r_tqe$train[[g_tqe$output_col]][1], stats::median(dt$y), tolerance = 1e-10)
+  expect_gt(r_tqe$val[[g_tqe$output_col]][1], r_tqe$train[[g_tqe$output_col]][1])
+
+  # Strict metric validation rejects unknown metrics instead of silently falling back
+  expect_error(evoFE:::compute_metric(c(1, 2), c(1.1, 1.9), "regression", "rmsle"), "not supported")
+  expect_error(evoFE:::validate_metric("unknown_xyz", "classification"), "not supported")
+  expect_silent(evoFE:::validate_metric("rmse", "regression"))
+  expect_silent(evoFE:::validate_metric("logloss", "classification"))
 })

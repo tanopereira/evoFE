@@ -1952,8 +1952,8 @@ test_that("pooled_target_encode transformer works correctly", {
   gene <- create_gene("pooled_target_encode", "cat")
   expect_equal(gene$transformer_name, "pooled_target_encode")
 
-  # apply_func
-  res <- apply_gene(gene, df, target_col = "target")
+  # apply_func (with validation split to verify both out-of-sample EB smoothing and in-sample LOO)
+  res <- apply_gene(gene, data.table::copy(df), data.table::copy(df), target_col = "target")
   expect_true(gene$output_col %in% names(res$train))
   expect_type(res$train[[gene$output_col]], "double")
 
@@ -1964,12 +1964,16 @@ test_that("pooled_target_encode transformer works correctly", {
   # pooled within variance (var_within) = (9 * var_A + 9 * var_B) / 18 = 0.2055556
   # between variance (var_between) = var(c(0.8, 0.3)) = 0.125
   # k = 0.2055556 / 0.125 = 1.644444
-  # A smoothed: (10 * 0.8 + 1.644444 * 0.55) / (10 + 1.644444) = 0.7646946
-  # B smoothed: (10 * 0.3 + 1.644444 * 0.55) / (10 + 1.644444) = 0.3353054
-  val_a <- res$train[[gene$output_col]][1]
-  val_b <- res$train[[gene$output_col]][11]
+  # Out-of-sample (val): A smoothed = (10 * 0.8 + k * 0.55) / (10 + k) = 0.7646946
+  #                      B smoothed = (10 * 0.3 + k * 0.55) / (10 + k) = 0.3353054
+  # In-sample LOO (train): row 1 (A, y=1) = (7 + k * 0.55) / (9 + k) = 0.7425818
+  #                        row 11 (B, y=0) = (3 + k * 0.55) / (9 + k) = 0.3668045
+  val_a <- res$val[[gene$output_col]][1]
+  val_b <- res$val[[gene$output_col]][11]
   expect_equal(val_a, 0.7646946, tolerance = 1e-5)
   expect_equal(val_b, 0.3353054, tolerance = 1e-5)
+  expect_equal(res$train[[gene$output_col]][1], 0.7425818, tolerance = 1e-5)
+  expect_equal(res$train[[gene$output_col]][11], 0.3668045, tolerance = 1e-5)
 
   # Check that the formula works
   formula_str <- gene_to_formula(gene)

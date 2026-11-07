@@ -78,9 +78,14 @@ evo_transformers$pooled_target_encode <- create_transformer(
     var_y <- stats::var(y, na.rm = TRUE)
     if (is.na(var_y)) var_y <- 0
     
-    # Calculate category means, within-category variances, and counts
+    # Calculate category means, sums, within-category variances, and counts
     dt <- data.table::data.table(x = x, y = y)
-    stats <- dt[, .(mean = mean(y, na.rm = TRUE), var = stats::var(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
+    stats <- dt[, .(
+      mean = mean(y, na.rm = TRUE),
+      sum_y = sum(y, na.rm = TRUE),
+      var = stats::var(y, na.rm = TRUE),
+      n = sum(!is.na(y))
+    ), by = x]
     
     # Estimate pooled within-category variance (sigma^2)
     df_sum <- sum(stats$n - 1, na.rm = TRUE)
@@ -105,8 +110,18 @@ evo_transformers$pooled_target_encode <- create_transformer(
     
     mapping <- stats[, .(x, smoothed)]
     data.table::setkey(mapping, x)
+
+    loo_train <- NULL
+    if (is.finite(k)) {
+      mapped <- stats[dt, on = "x"]
+      n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
+      sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
+      loo_vals <- ifelse(n_loo > 0, (sum_loo + k * global_mean) / (n_loo + k), global_mean)
+      loo_vals[!is.finite(loo_vals)] <- global_mean
+      if (length(unique(loo_vals)) > 1L) loo_train <- loo_vals
+    }
     
-    list(mapping = mapping, global_mean = global_mean)
+    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -305,7 +320,7 @@ evo_transformers$target_quantile_encode <- create_transformer(
     global_q <- as.numeric(stats::quantile(y, probs = q, na.rm = TRUE))
 
     dt <- data.table::data.table(x = x, y = y)
-    stats_dt <- dt[, .(cat_q = as.numeric(stats::quantile(y, probs = q, na.rm = TRUE)), n = .N), by = x]
+    stats_dt <- dt[, .(cat_q = as.numeric(stats::quantile(y, probs = q, na.rm = TRUE)), n = sum(!is.na(y))), by = x]
 
     smoothing <- 10
     stats_dt[, smoothed := (n * cat_q + smoothing * global_q) / (n + smoothing)]
@@ -313,7 +328,45 @@ evo_transformers$target_quantile_encode <- create_transformer(
     mapping <- stats_dt[, .(x, smoothed)]
     data.table::setkey(mapping, x)
 
-    list(mapping = mapping, global_q = global_q)
+    # Exact O(N log N) Type-7 leave-one-out quantiles per category
+    N_rows <- length(y)
+    loo_vals <- rep(global_q, N_rows)
+    grp_idx <- split(seq_len(N_rows), addNA(factor(x)))
+    for (idx in grp_idx) {
+      y_g <- y[idx]
+      fin <- !is.na(y_g)
+      nc <- sum(fin)
+      if (nc == 0L) next
+      if (nc == 1L) {
+        if (any(!fin)) {
+          cat_q1 <- y_g[fin][1L]
+          loo_vals[idx[!fin]] <- (1.0 * cat_q1 + smoothing * global_q) / (1.0 + smoothing)
+        }
+        next
+      }
+      fin_idx <- idx[fin]
+      y_sub <- y_g[fin]
+      ord <- order(y_sub)
+      v <- y_sub[ord]
+      m <- nc - 1L
+      h <- 1.0 + (m - 1.0) * q
+      j0 <- as.integer(floor(h))
+      j1 <- min(m, j0 + 1L)
+      gam <- h - j0
+      r_seq <- seq_len(nc)
+      q_sorted <- (1.0 - gam) * v[j0 + (j0 >= r_seq)] + gam * v[j1 + (j1 >= r_seq)]
+      q_loo <- numeric(nc)
+      q_loo[ord] <- q_sorted
+      loo_vals[fin_idx] <- (m * q_loo + smoothing * global_q) / (m + smoothing)
+      if (any(!fin)) {
+        cat_qf <- as.numeric(stats::quantile(y_sub, probs = q, names = FALSE))
+        loo_vals[idx[!fin]] <- (nc * cat_qf + smoothing * global_q) / (nc + smoothing)
+      }
+    }
+    loo_vals[!is.finite(loo_vals)] <- global_q
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+    list(mapping = mapping, global_q = global_q, loo_train = loo_train)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -472,8 +525,12 @@ evo_transformers$knn_target_encode <- create_transformer(
     if (!is.numeric(X)) storage.mode(X) <- "double"
     mu <- colMeans(X, na.rm = TRUE)
     sigma <- apply(X, 2, stats::sd, na.rm = TRUE)
-    sigma[is.na(sigma) | sigma < 1e-8] <- 1.0
-    mu[is.na(mu)] <- 0.0
+    valid_cols <- !is.na(sigma) & is.finite(sigma) & sigma >= 1e-8
+    if (!any(valid_cols)) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
+    }
+    sigma[!valid_cols] <- 1.0
+    mu[is.na(mu) | !is.finite(mu)] <- 0.0
 
     for (j in seq_len(ncol(X))) {
       nas <- is.na(X[, j]) | !is.finite(X[, j])
@@ -485,26 +542,80 @@ evo_transformers$knn_target_encode <- create_transformer(
 
     N <- nrow(X_query)
     if (N < 2L) {
-      return(list(valid = FALSE, global_mean = global_mean, loo_train = rep(global_mean, N)))
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
     }
+
+    y_clean <- y
+    y_clean[is.na(y_clean) | !is.finite(y_clean)] <- global_mean
+
+    # Collapse exact duplicate coordinates so ties are 100% invariant to row order
+    dt_u <- data.table::as.data.table(X_query)
+    coord_cols <- names(dt_u)
+    dt_u[, `:=`(.y = y_clean, .orig_row = seq_len(N))]
+    u_stats <- dt_u[, .(.cnt = .N, .sum_y = sum(.y)), by = coord_cols]
+    M <- nrow(u_stats)
+    if (M < 2L) {
+      return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
+    }
+    u_stats[, .gid := seq_len(M)]
+    grp_id <- u_stats[dt_u, on = coord_cols]$.gid
+
+    U_all <- as.matrix(u_stats[, coord_cols, with = FALSE])
+    storage.mode(U_all) <- "double"
+    u_cnt <- u_stats$.cnt
+    u_sum <- u_stats$.sum_y
 
     k_req <- if (!is.null(gene$params$k)) as.integer(gene$params$k) else 5L
     k_eff <- min(k_req, N - 1L)
     if (k_eff < 1L) k_eff <- 1L
 
-    nn_res <- tryCatch({
-      quitefastmst::knn_euclid(X_query, k = k_eff, Y = NULL)
-    }, error = function(e) NULL)
+    max_ref <- max(2L, as.integer(getOption("evoFE.max_clustering_size", 20000L)))
+    ref_idx <- NULL
+    if (M > max_ref) {
+      ref_idx <- unique(as.integer(round(seq(1L, M, length.out = max_ref))))
+      u_ref <- U_all[ref_idx, , drop = FALSE]
+      ref_cnt <- u_cnt[ref_idx]
+      ref_mean <- u_sum[ref_idx] / ref_cnt
+      k_u <- min(k_eff + 1L, nrow(u_ref))
+      nn_res <- tryCatch(quitefastmst::knn_euclid(u_ref, k = k_u, Y = U_all), error = function(e) NULL)
+    } else {
+      u_ref <- U_all
+      ref_cnt <- u_cnt
+      ref_mean <- u_sum / ref_cnt
+      k_u <- min(k_eff, M - 1L)
+      nn_res <- tryCatch(quitefastmst::knn_euclid(u_ref, k = k_u, Y = NULL), error = function(e) NULL)
+    }
 
     if (is.null(nn_res) || is.null(nn_res$nn.index)) {
       return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
     }
 
-    nn_idx <- nn_res$nn.index
-    y_clean <- y
-    y_clean[is.na(y_clean)] <- global_mean
-    y_neighbors <- matrix(y_clean[nn_idx], nrow = N, ncol = k_eff)
-    mean_nn <- rowMeans(y_neighbors)
+    nn_idx <- matrix(nn_res$nn.index, nrow = M, ncol = k_u)
+    rem_g <- pmax(0.0, as.numeric(k_eff - (u_cnt - 1L)))
+    other_sum <- numeric(M)
+    other_cnt <- numeric(M)
+    if (any(rem_g > 0)) {
+      m_seq <- seq_len(M)
+      for (j in seq_len(k_u)) {
+        rj <- nn_idx[, j]
+        is_self <- if (!is.null(ref_idx)) (ref_idx[rj] == m_seq) else rep(FALSE, M)
+        avail <- ifelse(is_self, 0.0, as.numeric(ref_cnt[rj]))
+        w <- pmin(rem_g, avail)
+        other_sum <- other_sum + w * ref_mean[rj]
+        other_cnt <- other_cnt + w
+        rem_g <- rem_g - w
+        if (all(rem_g <= 0)) break
+      }
+    }
+
+    c_self <- u_cnt[grp_id] - 1L
+    s_self <- u_sum[grp_id] - y_clean
+    tot_cnt <- c_self + other_cnt[grp_id]
+    mean_nn <- ifelse(
+      c_self >= k_eff,
+      s_self / pmax(1L, c_self),
+      ifelse(tot_cnt > 0, (s_self + other_sum[grp_id]) / tot_cnt, global_mean)
+    )
 
     s <- 2.0
     loo_vals <- (k_eff * mean_nn + s * global_mean) / (k_eff + s)
@@ -513,8 +624,9 @@ evo_transformers$knn_target_encode <- create_transformer(
 
     list(
       valid = TRUE,
-      x_train_scaled = X_query,
-      y_train = y_clean,
+      u_ref = u_ref,
+      ref_cnt = ref_cnt,
+      ref_mean = ref_mean,
       mu = mu,
       sigma = sigma,
       k = k_eff,
@@ -523,8 +635,11 @@ evo_transformers$knn_target_encode <- create_transformer(
     )
   },
   apply_func = function(data, gene, state) {
-    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$x_train_scaled)) {
-      return(rep(0.0, nrow(data)))
+    n_out <- nrow(data)
+    if (n_out == 0L) return(numeric(0))
+    g_mean <- if (!is.null(state) && !is.null(state$global_mean) && is.finite(state$global_mean)) state$global_mean else 0.0
+    if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$u_ref)) {
+      return(rep(g_mean, n_out))
     }
     input_cols <- gene$input_cols
     X <- as.matrix(data[, input_cols, with = FALSE])
@@ -538,23 +653,37 @@ evo_transformers$knn_target_encode <- create_transformer(
     X_scaled <- sweep(sweep(X, 2, state$mu, "-"), 2, state$sigma, "/")
     X_query <- if (ncol(X_scaled) == 1L) cbind(X_scaled, 0.0) else X_scaled
 
-    if (nrow(X_query) == 0L) return(numeric(0))
-
+    k_q <- min(state$k, nrow(state$u_ref))
     nn_res <- tryCatch({
-      quitefastmst::knn_euclid(state$x_train_scaled, k = state$k, Y = X_query)
+      quitefastmst::knn_euclid(state$u_ref, k = k_q, Y = X_query)
     }, error = function(e) NULL)
 
     if (is.null(nn_res) || is.null(nn_res$nn.index)) {
-      return(rep(state$global_mean, nrow(data)))
+      return(rep(g_mean, n_out))
     }
 
-    nn_idx <- nn_res$nn.index
-    y_neighbors <- matrix(state$y_train[nn_idx], nrow = nrow(X_query), ncol = state$k)
-    mean_nn <- rowMeans(y_neighbors)
+    nn_idx <- matrix(nn_res$nn.index, nrow = n_out, ncol = k_q)
+    if (all(state$ref_cnt == 1L)) {
+      y_neighbors <- matrix(state$ref_mean[nn_idx], nrow = n_out, ncol = k_q)
+      mean_nn <- rowMeans(y_neighbors)
+    } else {
+      rem_vec <- rep(as.numeric(state$k), n_out)
+      acc_sum <- numeric(n_out)
+      acc_cnt <- numeric(n_out)
+      for (j in seq_len(k_q)) {
+        idx_j <- nn_idx[, j]
+        w <- pmin(rem_vec, state$ref_cnt[idx_j])
+        acc_sum <- acc_sum + w * state$ref_mean[idx_j]
+        acc_cnt <- acc_cnt + w
+        rem_vec <- rem_vec - w
+        if (all(rem_vec <= 0)) break
+      }
+      mean_nn <- ifelse(acc_cnt > 0, acc_sum / acc_cnt, g_mean)
+    }
 
     s <- 2.0
-    res <- (state$k * mean_nn + s * state$global_mean) / (state$k + s)
-    res[!is.finite(res)] <- state$global_mean
+    res <- (state$k * mean_nn + s * g_mean) / (state$k + s)
+    res[!is.finite(res)] <- g_mean
     as.numeric(res)
   },
   name_generator = function(gene) .gene_col_name(gene, "knnte")

@@ -178,7 +178,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   task <- first_recipe$task
-  metric <- first_recipe$metric
+  metric <- if (!is.null(first_recipe$metric)) first_recipe$metric else "default"
+  validate_metric(metric, task)
   classes <- first_recipe$classes
   num_class <- if (!is.null(classes)) length(classes) else NULL
 
@@ -586,7 +587,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       res_full <- apply_individual(ind_i, dt_i, NULL, target_col, state_cache = state_cache,
                                    allow_prune = TRUE, full_data = dt_full, validate_genes = FALSE)
       if (!is.null(res_full$full)) dt_full <- res_full$full
-      applied_ind <- res_full$ind
+      applied_ind <- strip_loo_state(res_full$ind)
       active_recipes[[name]] <- applied_ind
 
       gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)

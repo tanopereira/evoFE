@@ -184,6 +184,23 @@ strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.glo
   ind
 }
 
+#' Strip training-only leave-one-out vectors from fitted gene states
+#' @keywords internal
+#' @noRd
+strip_loo_state <- function(ind) {
+  if (length(ind$genes) > 0) {
+    for (i in seq_along(ind$genes)) {
+      st <- ind$genes[[i]]$state
+      if (is.list(st)) {
+        st$loo_train <- NULL
+        st$loo_train_list <- NULL
+        ind$genes[[i]]$state <- st
+      }
+    }
+  }
+  ind
+}
+
 #' Initialize a population
 #'
 #' @param pop_size Population size.

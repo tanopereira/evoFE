@@ -1369,7 +1369,7 @@ evolve_features <- function(data, target_col, task = "classification",
   res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col,
                                state_cache = state_cache, full_data = shared_full,
                                validate_genes = FALSE)
-  best_ind <- res_full$ind
+  best_ind <- strip_loo_state(res_full$ind)
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration
   }

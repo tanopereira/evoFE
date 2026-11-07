@@ -90,7 +90,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       full_data = shared_full, validate_genes = FALSE
     )
     if (!is.null(res_f$full)) shared_full <- res_f$full
-    ind_f <- res_f$ind
+    ind_f <- strip_loo_state(res_f$ind)
     features <- extract_individual_features(ind_f, target_col = target_col)
 
     x_tr <- .sanitize_feature_matrix(res_f$train[, features, with = FALSE], threads = threads)
