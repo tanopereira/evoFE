@@ -590,14 +590,7 @@ evolve_features <- function(data, target_col, task = "classification",
         }
       }
     } else {
-      shared_folds <- list()
-      for (f in seq_len(cv_folds)) {
-        tr_dt <- data.table::as.data.table(data[fold_ids != f, ])
-        va_dt <- data.table::as.data.table(data[fold_ids == f, ])
-        data.table::setattr(tr_dt, ".row_id", which(fold_ids != f))
-        data.table::setattr(va_dt, ".row_id", which(fold_ids == f))
-        shared_folds[[f]] <- list(train = tr_dt, val = va_dt)
-      }
+      shared_folds <- .build_shared_folds(data, fold_ids)
     }
   } else if (evaluation_strategy == "metacv") {
     metacv_parts <- build_metacv_partitions(data, islands, cv_strategy, time_col, group_col, verbose,
@@ -1429,7 +1422,7 @@ evolve_features <- function(data, target_col, task = "classification",
   final_model_args <- resolved_final$extra_args
 
   use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
-  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
+  use_smear <- metric_uses_smearing(metric, task)
   target_transform_state <- NULL
   y_full_raw <- y_full
   if (use_tt) {
@@ -1587,7 +1580,7 @@ evolve_features <- function(data, target_col, task = "classification",
       serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
     }
 
-    final_hr <- calculate_headroom(effective_fitness, baseline_ind$fitness, task)
+    final_hr <- calculate_headroom(effective_fitness, baseline_ind$fitness, task, metric = metric)
     final_data <- list(
       raw_fitness = if (!is.null(best_ind$raw_fitness)) best_ind$raw_fitness else effective_fitness,
       penalty = if (!is.null(best_ind$penalty)) best_ind$penalty else 0.0,
@@ -1608,10 +1601,10 @@ evolve_features <- function(data, target_col, task = "classification",
     viewer$send(list(type = "complete", data = final_data))
   }
 
-  recipe_hr <- calculate_headroom(best_ind$fitness, baseline_ind$fitness, task)
+  recipe_hr <- calculate_headroom(best_ind$fitness, baseline_ind$fitness, task, metric = metric)
 
   metacv_hr <- if (evaluation_strategy == "metacv" && !is.null(ensemble_oof_fitness)) {
-    calculate_headroom(ensemble_oof_fitness, baseline_ind$fitness, task)
+    calculate_headroom(ensemble_oof_fitness, baseline_ind$fitness, task, metric = metric)
   } else NULL
 
   has_islands <- (islands > 1 && length(island_baseline_inds) == islands)
@@ -1624,7 +1617,7 @@ evolve_features <- function(data, target_col, task = "classification",
   } else NULL
 
   island_hr <- if (has_islands && !is.null(island_best_fit)) {
-    calculate_headroom(island_best_fit, island_baselines_vec, task)
+    calculate_headroom(island_best_fit, island_baselines_vec, task, metric = metric)
   } else NULL
 
   island_bests_list <- if (exists("island_best_individual") && !is.null(island_best_individual)) island_best_individual else list(best_ind)

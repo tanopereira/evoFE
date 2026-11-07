@@ -73,6 +73,28 @@ validate_metric <- function(metric, task) {
   invisible(TRUE)
 }
 
+#' Whether a regression metric expects mean-unbiased Duan smearing on log1p inversion
+#' @keywords internal
+#' @noRd
+metric_uses_smearing <- function(metric, task = "regression") {
+  !identical(canonical_metric_name(metric, task), "mae")
+}
+
+#' Ideal ceiling value on the fitness scale (higher-is-better) for headroom and BIC scaling
+#' @keywords internal
+#' @noRd
+metric_ideal_ceiling <- function(metric = "default", task = "classification") {
+  if (identical(task, "regression")) 0.0 else 1.0
+}
+
+#' Whether a metric depends purely on monotonic prediction ranks
+#' @keywords internal
+#' @noRd
+metric_is_rank_invariant <- function(metric, task = "classification") {
+  is.character(metric) && length(metric) == 1L &&
+    identical(canonical_metric_name(metric, task), "auc")
+}
+
 #' Dispatch evaluation metric computation
 #'
 #' @param y_true True labels/values

@@ -63,7 +63,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
   if (length(u_folds) < 2L) return(NULL)
 
   use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
-  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
+  use_smear <- metric_uses_smearing(metric, task)
 
   resolved <- resolve_tuned_evaluator(evaluator, best_params, extra_args, always_unwrap = TRUE)
   final_eval <- resolved$evaluator

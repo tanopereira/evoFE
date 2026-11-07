@@ -209,7 +209,7 @@ format_multiclass_predictions <- function(preds, classes) {
 #'   \item{gain}{Alias to `improvement` for caller convenience.}
 #' @keywords internal
 #' @noRd
-calculate_headroom <- function(fitness, baseline, task = "classification") {
+calculate_headroom <- function(fitness, baseline, task = "classification", metric = "default") {
   if (is.null(fitness) || is.null(baseline)) {
     return(list(improvement = NULL, headroom_closed = NULL, gain = NULL))
   }
@@ -220,7 +220,7 @@ calculate_headroom <- function(fitness, baseline, task = "classification") {
     return(list(improvement = NULL, headroom_closed = NULL, gain = NULL))
   }
 
-  ideal <- if (identical(task, "regression")) 0.0 else 1.0
+  ideal <- metric_ideal_ceiling(metric, task)
   gain <- fitness - baseline
   denom <- ideal - baseline
 

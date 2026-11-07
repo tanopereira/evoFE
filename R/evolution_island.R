@@ -52,12 +52,12 @@ initialize_island_populations <- function(islands, pop_size, numeric_cols, categ
 #' @param use_rel_fits Logical indicating whether relative fitness is used
 #' @return Numeric vector of effective island fitness values
 #' @noRd
-compute_effective_island_fitness <- function(island_best_fitness, island_baseline_inds, task, use_rel_fits = FALSE) {
+compute_effective_island_fitness <- function(island_best_fitness, island_baseline_inds, task, use_rel_fits = FALSE, metric = "default") {
   if (use_rel_fits) {
     island_baselines <- vapply(island_baseline_inds, function(x) {
       if (!is.null(x$fitness) && is.finite(x$fitness)) x$fitness else 0
     }, numeric(1))
-    calculate_headroom(island_best_fitness, island_baselines, task = task)$headroom_closed
+    calculate_headroom(island_best_fitness, island_baselines, task = task, metric = metric)$headroom_closed
   } else {
     island_best_fitness
   }

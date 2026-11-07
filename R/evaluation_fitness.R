@@ -61,7 +61,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
   }
 
   use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
-  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
+  use_smear <- metric_uses_smearing(metric, task)
 
   num_class <- NULL
   classes <- NULL

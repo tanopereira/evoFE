@@ -300,6 +300,25 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
   sample(f)
 }
 
+#' Materialize pre-sliced train/val data.tables with .row_id tags from fold_ids
+#' @keywords internal
+#' @noRd
+.build_shared_folds <- function(data, fold_ids) {
+  u_folds <- sort(unique(fold_ids[!is.na(fold_ids)]))
+  shared_folds <- vector("list", length(u_folds))
+  for (idx in seq_along(u_folds)) {
+    f <- u_folds[idx]
+    tr_idx <- which(fold_ids != f)
+    va_idx <- which(fold_ids == f)
+    tr_dt <- data.table::as.data.table(data[tr_idx, ])
+    va_dt <- data.table::as.data.table(data[va_idx, ])
+    data.table::setattr(tr_dt, ".row_id", tr_idx)
+    data.table::setattr(va_dt, ".row_id", va_idx)
+    shared_folds[[idx]] <- list(train = tr_dt, val = va_dt)
+  }
+  shared_folds
+}
+
 #' Build stratified K-fold indices for classification, multiclass, and regression
 #'
 #' Stratifies fold assignments by class level for classification/multiclass tasks,

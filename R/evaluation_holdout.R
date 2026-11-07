@@ -22,7 +22,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
                                      target_transform = getOption("evoFE.target_transform", "none"),
                                      verbose = FALSE, ...) {
   use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
-  use_smear <- !identical(canonical_metric_name(metric, task), "mae")
+  use_smear <- metric_uses_smearing(metric, task)
   if (!is.null(shared_splits)) {
     train_fold <- shared_splits$train
     val_fold <- shared_splits$val

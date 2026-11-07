@@ -555,7 +555,7 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
     )
 
     use_rel_fits <- per_island_validation || evaluation_strategy == "metacv"
-    effective_island_fits <- compute_effective_island_fitness(island_best_fitness, island_baseline_inds, task, use_rel_fits = use_rel_fits)
+    effective_island_fits <- compute_effective_island_fitness(island_best_fitness, island_baseline_inds, task, use_rel_fits = use_rel_fits, metric = metric)
 
     if (verbose && use_rel_fits) {
       headroom_pcts <- paste(sprintf("Island %d: %+.1f%%", seq_len(islands), effective_island_fits * 100), collapse = ", ")

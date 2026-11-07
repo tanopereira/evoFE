@@ -63,7 +63,7 @@ compute_complexity_penalty <- function(n_genes,
 
   p <- if (is_dynamic) {
     # Dynamic penalty mode: scale by normalized gap to ideal
-    ideal <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
+    ideal <- metric_ideal_ceiling(metric, task)
 
     if (is.null(baseline_fitness) || is.null(running_best_fitness) ||
       is.na(baseline_fitness) || is.na(running_best_fitness) ||

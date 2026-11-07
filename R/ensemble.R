@@ -185,9 +185,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   classes <- first_recipe$classes
   num_class <- if (!is.null(classes)) length(classes) else NULL
 
-  # Determine rank_average: default to TRUE if metric is 'auc', otherwise FALSE
+  # Determine rank_average: default to TRUE if metric is rank-invariant, otherwise FALSE
   if (is.null(rank_average)) {
-    rank_average <- !is.null(metric) && is.character(metric) && tolower(metric) == "auc"
+    rank_average <- metric_is_rank_invariant(metric, task)
   } else if (!is.logical(rank_average) || length(rank_average) != 1L) {
     stop("'rank_average' must be a logical scalar (TRUE or FALSE) or NULL.")
   }
@@ -607,7 +607,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       rec_i <- cand_info$recipe
       tt_mode_i <- if (!is.null(rec_i$target_transform)) rec_i$target_transform else "none"
       use_tt_i <- identical(task, "regression") && !identical(tt_mode_i, "none")
-      use_smear_i <- !identical(canonical_metric_name(metric, task), "mae")
+      use_smear_i <- metric_uses_smearing(metric, task)
       y_full_raw_i <- y_full
       tt_state_i <- NULL
       if (use_tt_i) {
@@ -715,7 +715,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   ens_hr <- if (!is.null(base_fit)) {
-    calculate_headroom(selection_res$final_fitness, base_fit, task)
+    calculate_headroom(selection_res$final_fitness, base_fit, task, metric = metric)
   } else {
     NULL
   }
@@ -728,7 +728,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   if (!is.null(isl_baselines) && (is.null(isl_improvements) || is.null(isl_headroom_closed))) {
     if (!is.null(first_recipe$island_bests) && length(first_recipe$island_bests) == length(isl_baselines)) {
       isl_fits <- vapply(first_recipe$island_bests, function(ind) ind$fitness, numeric(1))
-      isl_hr <- calculate_headroom(isl_fits, isl_baselines, task)
+      isl_hr <- calculate_headroom(isl_fits, isl_baselines, task, metric = metric)
       if (is.null(isl_improvements)) isl_improvements <- isl_hr$improvement
       if (is.null(isl_headroom_closed)) isl_headroom_closed <- isl_hr$headroom_closed
     }
