@@ -97,6 +97,7 @@ strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.glo
   ind$raw_fitness <- NA_real_
   ind$penalty <- 0.0
   ind$val_preds <- NULL
+  ind$val_preds_trans <- NULL
   ind$y_val <- NULL
   if (length(ind$genes) > 0) {
     tainted_cols <- character(0)

@@ -964,21 +964,40 @@ List rcpp_realmlp_train(NumericMatrix x_train,
   // Use validation set if provided with labels, else training set (capped at 1,000 rows for lightning speed)
   bool use_val_for_imp = (has_val && N_val > 0 && y_v_ptr != nullptr);
   const Eigen::MatrixXf& X_imp_source = use_val_for_imp ? X_v : X_tr;
+  const double* y_imp_ptr = use_val_for_imp ? y_v_ptr : y_train.begin();
   int N_avail = static_cast<int>(X_imp_source.rows());
   int N_eval = std::min(N_avail, 1000);
-
-  auto X_eval = X_imp_source.topRows(N_eval);
-  std::vector<double> y_eval(N_eval);
-  if (use_val_for_imp) {
-    std::memcpy(y_eval.data(), y_v_ptr, N_eval * sizeof(double));
-  } else {
-    std::memcpy(y_eval.data(), y_train.begin(), N_eval * sizeof(double));
-  }
 
   auto t_imp0 = std::chrono::high_resolution_clock::now();
   FeatureImportanceWorkspace fi_ws;
   fi_ws.allocate(N_eval, D, out_dim, hidden_dim, embed_dim, model.embedder.d_proj, model.embedder.k_freq, max_threads);
-  std::vector<double> importances = model.compute_importances(X_eval, y_eval, fi_ws);
+  std::vector<double> y_eval(N_eval);
+  std::vector<double> importances;
+  if (N_eval == N_avail) {
+    std::memcpy(y_eval.data(), y_imp_ptr, static_cast<size_t>(N_eval) * sizeof(double));
+    importances = model.compute_importances(X_imp_source.topRows(N_eval), y_eval, fi_ws);
+  } else {
+    std::vector<int> imp_idx(N_avail);
+    for (int i = 0; i < N_avail; ++i) imp_idx[i] = i;
+    std::mt19937 imp_rng(static_cast<unsigned int>(seed + 777));
+    for (int i = 0; i < N_eval; ++i) {
+      std::uniform_int_distribution<int> dist(i, N_avail - 1);
+      std::swap(imp_idx[i], imp_idx[dist(imp_rng)]);
+    }
+    std::sort(imp_idx.begin(), imp_idx.begin() + N_eval);
+    Eigen::MatrixXf X_sub(N_eval, D);
+    for (int c = 0; c < D; ++c) {
+      const float* src_col = X_imp_source.col(c).data();
+      float* dst_col = X_sub.col(c).data();
+      for (int i = 0; i < N_eval; ++i) {
+        dst_col[i] = src_col[imp_idx[i]];
+      }
+    }
+    for (int i = 0; i < N_eval; ++i) {
+      y_eval[i] = y_imp_ptr[imp_idx[i]];
+    }
+    importances = model.compute_importances(X_sub, y_eval, fi_ws);
+  }
   auto t_imp1 = std::chrono::high_resolution_clock::now();
   if (verbose >= 2) t_imp_s += std::chrono::duration<double>(t_imp1 - t_imp0).count();
 

@@ -41,6 +41,9 @@ canonical_metric_name <- function(metric, task = NULL) {
 #' @keywords internal
 #' @noRd
 supported_canonical_metrics <- function(task) {
+  if (!is.character(task) || length(task) != 1L || is.na(task)) {
+    return(character(0))
+  }
   switch(task,
     classification = c("logloss", "auc", "f1", "mcc", "balanced_accuracy", "ts_refinement"),
     multiclass = c("logloss", "auc", "ts_refinement"),

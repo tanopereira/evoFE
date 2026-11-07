@@ -166,10 +166,14 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       num_class = num_class, metric = metric,
       verbose = verbose, ...
     )
-    preds <- res_model$predictions
+    preds_trans <- res_model$predictions
+    preds <- preds_trans
     if (use_tt && !is.null(tt_state_split)) {
-      tt_state_split <- .update_target_transform_smearing(tt_state_split, val_fold_feat[[target_col]], preds)
-      preds <- .invert_target_transform(preds, tt_state_split, use_smearing = use_smear)
+      tt_state_split <- .estimate_model_train_smearing(
+        tt_state_split, evaluator, res_model$model, x_train,
+        train_fold_feat[[target_col]], task = task, threads = threads
+      )
+      preds <- .invert_target_transform(preds_trans, tt_state_split, use_smearing = use_smear)
     }
 
     # Propagate the updated genes (with state) and compute complexity penalty on the exact
@@ -206,6 +210,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       compute_metric(y_val_encoded, preds, task, metric, num_class, threads = threads)
     }
     ind$val_preds <- preds
+    ind$val_preds_trans <- if (use_tt) preds_trans else NULL
     ind$y_val <- y_val_encoded
 
     ind <- apply_complexity_penalty(
@@ -258,6 +263,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       oof_preds <- rep(NA_real_, n_total)
       oof_y <- vector(mode = typeof(dt[[target_col]]), length = n_total)
     }
+    oof_preds_trans <- if (use_tt) rep(NA_real_, n_total) else NULL
 
     fold_best_iters <- integer(0)
     fold_train_sizes <- integer(0)
@@ -351,6 +357,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         fold_data[[fi]] <- list(
           x_train = x_train,
           y_train = y_train,
+          y_train_raw = train_fold_feat[[target_col]],
           x_val = x_val,
           y_val = y_val,
           val_idx = val_idx,
@@ -365,10 +372,17 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           num_class = num_class, metric = metric,
           verbose = verbose, ...
         )
-        preds <- res_model$predictions
+        preds_trans <- res_model$predictions
+        preds <- preds_trans
         if (use_tt && !is.null(tt_state_fi)) {
-          tt_state_fi <- .update_target_transform_smearing(tt_state_fi, val_fold_feat[[target_col]], preds)
-          preds <- .invert_target_transform(preds, tt_state_fi, use_smearing = use_smear)
+          if (length(val_idx) == length(preds_trans)) {
+            oof_preds_trans[val_idx] <- preds_trans
+          }
+          tt_state_fi <- .estimate_model_train_smearing(
+            tt_state_fi, evaluator, res_model$model, x_train,
+            train_fold_feat[[target_col]], task = task, threads = threads
+          )
+          preds <- .invert_target_transform(preds_trans, tt_state_fi, use_smearing = use_smear)
         }
         if (!is.null(res_model$importances)) {
           fold_importances[[fi]] <- res_model$importances
@@ -435,10 +449,17 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           fd <- valid_fold_data[[i]]
           orig_fi <- fd$fold_idx
           res_m <- res_model$fold_res[[i]]
-          preds <- res_m$predictions
+          preds_trans <- res_m$predictions
+          preds <- preds_trans
           if (use_tt && !is.null(fd$tt_state)) {
-            tt_st <- .update_target_transform_smearing(fd$tt_state, fd$val_fold_feat[[target_col]], preds)
-            preds <- .invert_target_transform(preds, tt_st, use_smearing = use_smear)
+            if (length(fd$val_idx) == length(preds_trans)) {
+              oof_preds_trans[fd$val_idx] <- preds_trans
+            }
+            tt_st <- .estimate_model_train_smearing(
+              fd$tt_state, evaluator, res_m$model, fd$x_train,
+              fd$y_train_raw, task = task, threads = threads
+            )
+            preds <- .invert_target_transform(preds_trans, tt_st, use_smearing = use_smear)
           }
           val_idx <- fd$val_idx
 
@@ -501,6 +522,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     ind$raw_fitness <- raw_score
     ind$penalty <- 0.0
     ind$val_preds <- oof_preds
+    ind$val_preds_trans <- oof_preds_trans
     ind$y_val <- oof_y
     if (length(fold_best_iters) > 0) {
       ind$best_iteration <- as.integer(round(mean(fold_best_iters)))

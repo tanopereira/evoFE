@@ -157,28 +157,45 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     avail_num <- c(ind$all_numeric_cols, gene_num_ex)
     avail_cat <- c(ind$all_categorical_cols, gene_cat)
     avail_date <- c(ind$all_datetime_cols, gene_date)
+    is_bgpca <- identical(t_name, "between_group_pca")
+    is_mixed_pair <- identical(t_def$input_type, "mixed") && t_def$type %in% c("binary", "supervised_binary")
     avail_for_type <- if (t_def$input_type == "numeric") {
       avail_num
     } else if (t_def$input_type == "categorical") {
       avail_cat
     } else if (t_def$input_type == "datetime") {
       avail_date
+    } else if (is_bgpca) {
+      avail_num
     } else {
       c(avail_cat, avail_num)
     }
-    unused <- setdiff(avail_for_type, gene_to_mod$input_cols)
+    unused <- if (is_bgpca) {
+      setdiff(avail_num, gene_to_mod$input_cols[-1L])
+    } else {
+      setdiff(avail_for_type, gene_to_mod$input_cols)
+    }
     
+    n_avail_max <- if (is_bgpca) 1L + length(avail_num) else length(avail_for_type)
     max_cols <- transformer_max_cols(
-      t_name, length(avail_for_type),
+      t_name, n_avail_max,
       is_multi = is_multi,
       current_len = length(gene_to_mod$input_cols),
       mode = "modify"
     )
+    min_cols <- if (is_bgpca) 3L else 2L
     
     # Determine which sub-operations are applicable
     can_add_col <- is_multi && length(unused) > 0 && length(gene_to_mod$input_cols) < max_cols
-    can_remove_col <- is_multi && length(gene_to_mod$input_cols) > 2
-    can_swap_col <- length(gene_to_mod$input_cols) > 0 && length(unused) > 0
+    can_remove_col <- is_multi && length(gene_to_mod$input_cols) > min_cols
+    can_swap_col <- if (is_mixed_pair) {
+      length(setdiff(avail_cat, gene_to_mod$input_cols[1L])) > 0 ||
+        length(setdiff(avail_num, gene_to_mod$input_cols[2L])) > 0
+    } else if (is_bgpca) {
+      length(setdiff(avail_cat, gene_to_mod$input_cols[1L])) > 0 || length(unused) > 0
+    } else {
+      length(gene_to_mod$input_cols) > 0 && length(unused) > 0
+    }
     can_mutate_params <- length(gene_to_mod$params) > 0
     
     applicable_ops <- c()
@@ -189,7 +206,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     mod_success <- FALSE
     if (length(applicable_ops) > 0) {
-      sub_op <- sample(applicable_ops, 1)
+      sub_op <- .sample_one(applicable_ops)
       
       if (sub_op == "add_col") {
         # Add an unused column to a multivariate gene
@@ -205,12 +222,13 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         
       } else if (sub_op == "remove_col") {
         # Remove one column from a multivariate gene (importance-guided)
-        col_imps <- sapply(gene_to_mod$input_cols, function(c) {
+        cand_indices <- if (is_bgpca) seq.int(2L, length(gene_to_mod$input_cols)) else seq_along(gene_to_mod$input_cols)
+        col_imps <- sapply(gene_to_mod$input_cols[cand_indices], function(c) {
           if (c %in% names(importances)) importances[[c]] else 0
         })
         removal_weights <- 1 / (col_imps + 1e-8)
         removal_weights[!is.finite(removal_weights)] <- 1
-        drop_idx <- sample(seq_along(gene_to_mod$input_cols), 1, prob = removal_weights)
+        drop_idx <- cand_indices[sample.int(length(cand_indices), 1L, prob = removal_weights)]
         dropped_col <- gene_to_mod$input_cols[drop_idx]
         gene_to_mod$input_cols <- gene_to_mod$input_cols[-drop_idx]
         gene_to_mod$state <- NULL
@@ -222,10 +240,21 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         }
         
       } else if (sub_op == "swap_col") {
-        # Swap one input column for a different unused column
-        swap_idx <- sample(seq_along(gene_to_mod$input_cols), 1)
-        old_col <- gene_to_mod$input_cols[swap_idx]
-        new_col <- weighted_sample(unused, 1)
+        # Swap one input column for a different unused column of matching slot type
+        if (is_mixed_pair || is_bgpca) {
+          unused_cat <- setdiff(avail_cat, gene_to_mod$input_cols[1L])
+          unused_num <- setdiff(avail_num, gene_to_mod$input_cols[-1L])
+          valid_slots <- integer(0)
+          if (length(unused_cat) > 0) valid_slots <- c(valid_slots, 1L)
+          if (length(unused_num) > 0) valid_slots <- c(valid_slots, seq.int(2L, length(gene_to_mod$input_cols)))
+          swap_idx <- .sample_one(valid_slots)
+          old_col <- gene_to_mod$input_cols[swap_idx]
+          new_col <- if (swap_idx == 1L) weighted_sample(unused_cat, 1) else weighted_sample(unused_num, 1)
+        } else {
+          swap_idx <- sample.int(length(gene_to_mod$input_cols), 1L)
+          old_col <- gene_to_mod$input_cols[swap_idx]
+          new_col <- weighted_sample(unused, 1)
+        }
         gene_to_mod$input_cols[swap_idx] <- new_col
         gene_to_mod$state <- NULL
         gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
@@ -237,7 +266,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         
       } else if (sub_op == "mutate_params") {
         # Mutate one parameter of the gene
-        param_name <- sample(names(gene_to_mod$params), 1)
+        param_name <- .sample_one(names(gene_to_mod$params))
         old_val <- gene_to_mod$params[[param_name]]
         new_val <- mutate_transformer_param(gene_to_mod, param_name)
         
@@ -245,6 +274,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           gene_to_mod$params[[param_name]] <- new_val
           if (param_name == "k" && !is.null(gene_to_mod$params$comp_idx) && gene_to_mod$params$comp_idx > gene_to_mod$params$k) {
             gene_to_mod$params$comp_idx <- gene_to_mod$params$k
+          }
+          if (param_name == "num_bins" && !is.null(gene_to_mod$params$comp_idx) && gene_to_mod$params$comp_idx > gene_to_mod$params$num_bins) {
+            gene_to_mod$params$comp_idx <- gene_to_mod$params$num_bins
           }
           gene_to_mod$state <- NULL
           gene_to_mod$output_col <- t_def$name_generator(gene_to_mod)
@@ -300,20 +332,20 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     
     if (!injected) {
       # Add a random gene
-      if (is.null(allowed_transformers)) {
+      if (is.null(allowed_transformers) || identical(allowed_transformers, "all")) {
         allowed_t <- names(evo_transformers)
       } else {
         allowed_t <- allowed_transformers
       }
       allowed_t <- filter_transformers_for_task(allowed_t, task)
-      if (length(allowed_t) == 0) allowed_t <- names(evo_transformers)
+      if (length(allowed_t) == 0L) return(ind)
       avail_num <- c(ind$all_numeric_cols, gene_num)
       avail_cat <- c(ind$all_categorical_cols, gene_cat)
       avail_date <- c(ind$all_datetime_cols, gene_date)
       
       max_add_attempts <- if (force_add) 25L else 5L
       for (add_attempt in seq_len(max_add_attempts)) {
-        t_name <- sample(allowed_t, 1)
+        t_name <- .sample_one(allowed_t)
         t_def <- evo_transformers[[t_name]]
         
         # Select available columns based on input_type

@@ -317,7 +317,7 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   "realmlp_epochs", "realmlp_seed", "hidden_dim", "stop_epoch",
   "nthread", "nthreads", "num_threads", "n_jobs", "threads",
   "nrounds", "num_rounds", "n_rounds", "num_round", "nround", "epochs",
-  "n_epochs", "iterations", "n_iterations"
+  "n_epochs", "iterations", "n_iterations", "seed"
 )
 
 # 1. LightGBM Evaluator
@@ -355,6 +355,11 @@ register_evaluator(
     reg_metric <- if (is_mae_metric) "mae" else "rmse"
 
     learner_verbose <- is_learner_verbose(extra_params$verbose)
+    seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
+      as.integer(extra_params$seed)
+    } else {
+      42L
+    }
 
     params <- list(
       objective = switch(task,
@@ -371,7 +376,7 @@ register_evaluator(
       learning_rate = 0.1,
       verbose = if (learner_verbose) 1L else -1L,
       num_threads = threads,
-      seed = 42
+      seed = seed_val
     )
     if (task == "multiclass") params$num_class <- num_class
 
@@ -464,7 +469,7 @@ register_evaluator(
       {
         n_tr <- nrow(x_train)
         if (n_tr > 2000L) {
-          sub_idx <- with_seed(if (!is.null(extra_params$seed)) extra_params$seed else 42L, sample.int(n_tr, 2000L))
+          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
           x_sub <- as.matrix(x_train[sub_idx, , drop = FALSE])
           sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
         } else {
@@ -548,6 +553,11 @@ register_evaluator(
     reg_eval_metric <- if (is_mae_metric) "mae" else "rmse"
 
     learner_verbose <- is_learner_verbose(extra_params$verbose)
+    seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
+      as.integer(extra_params$seed)
+    } else {
+      42L
+    }
 
     params <- list(
       objective = switch(task,
@@ -564,7 +574,7 @@ register_evaluator(
       max_depth = 6,
       eta = 0.1,
       min_child_weight = 1,
-      seed = 42,
+      seed = seed_val,
       verbosity = if (learner_verbose) 1L else 0L,
       silent = if (learner_verbose) 0L else 1L
     )
@@ -670,7 +680,7 @@ register_evaluator(
         best_it_range <- if (!is.null(best_iter) && best_iter >= 1) c(1, best_iter + 1) else NULL
         n_tr <- nrow(x_train)
         if (n_tr > 2000L) {
-          sub_idx <- with_seed(if (!is.null(extra_params$seed)) extra_params$seed else 42L, sample.int(n_tr, 2000L))
+          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
           dsub <- xgboost::xgb.DMatrix(data = x_train[sub_idx, , drop = FALSE], missing = NA, nthread = threads)
           sh <- stats::predict(model, dsub, predcontrib = TRUE, iterationrange = best_it_range)
           rm(dsub)
@@ -783,8 +793,15 @@ register_evaluator(
       logging_level = if (learner_verbose) "Verbose" else "Silent",
       allow_writing_files = FALSE,
       train_dir = tempdir(),
-      random_seed = 42
+      random_seed = if (!is.null(extra_params$random_seed) && is.numeric(extra_params$random_seed) && is.finite(extra_params$random_seed)) {
+        as.integer(extra_params$random_seed)
+      } else if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
+        as.integer(extra_params$seed)
+      } else {
+        42L
+      }
     )
+    seed_val <- params$random_seed
 
     control_params <- c(.evaluator_control_params, "device")
     extra_params <- extra_params[!names(extra_params) %in% control_params]
@@ -836,7 +853,7 @@ register_evaluator(
       {
         n_tr <- nrow(x_train)
         pool_imp <- if (n_tr > 2000L) {
-          sub_idx <- with_seed(if (!is.null(extra_params$seed)) extra_params$seed else 42L, sample.int(n_tr, 2000L))
+          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
           catboost::catboost.load_pool(data = x_train[sub_idx, , drop = FALSE], label = y_train[sub_idx])
         } else {
           dtrain
@@ -1036,18 +1053,23 @@ register_evaluator(
       stop("The 'keras3' package is required for the keras3 evaluator.")
     }
     
+    # Extract tunable parameters from ... with defaults
+    extra_params <- list(...)
+    seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
+      as.integer(extra_params$seed)
+    } else {
+      42L
+    }
+
     # Ensure deterministic weight initialization for stable fitness evaluations,
     # but restore the R global random state so we don't freeze the genetic algorithm!
     old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) get(".Random.seed", envir = .GlobalEnv) else NULL
-    keras3::set_random_seed(42)
+    keras3::set_random_seed(seed_val)
     if (!is.null(old_seed)) {
       assign(".Random.seed", old_seed, envir = .GlobalEnv)
     } else {
       rm(".Random.seed", envir = .GlobalEnv)
     }
-    
-    # Extract tunable parameters from ... with defaults
-    extra_params <- list(...)
     if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
     if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
     if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)

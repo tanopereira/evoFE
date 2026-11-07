@@ -179,7 +179,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   task <- first_recipe$task
   metric <- if (!is.null(first_recipe$metric)) first_recipe$metric else "default"
-  validate_metric(metric, task)
+  if (!is.null(task)) {
+    validate_metric(metric, task)
+  }
   classes <- first_recipe$classes
   num_class <- if (!is.null(classes)) length(classes) else NULL
 
@@ -671,12 +673,18 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       active_models[[name]] <- res_m$model
       if (use_tt_i && !is.null(tt_state_i)) {
         if (identical(tt_state_i$method, "log1p")) {
-          in_p_i <- tryCatch(
-            get_evaluator(final_eval_i)$predict_func(res_m$model, x_full, task = task, threads = cand_threads),
-            error = function(e) NULL
-          )
-          if (!is.null(in_p_i)) {
-            tt_state_i <- .update_target_transform_smearing(tt_state_i, y_full_raw_i, in_p_i)
+          oof_y_i <- if (!is.null(ind_i$y_val)) ind_i$y_val else rec_i$best_individual$y_val
+          oof_pt_i <- if (!is.null(ind_i$val_preds_trans)) ind_i$val_preds_trans else rec_i$best_individual$val_preds_trans
+          if (!is.null(oof_pt_i) && !is.null(oof_y_i) && length(oof_pt_i) == length(oof_y_i)) {
+            tt_state_i <- .update_target_transform_smearing(tt_state_i, oof_y_i, oof_pt_i)
+          } else {
+            in_p_i <- tryCatch(
+              get_evaluator(final_eval_i)$predict_func(res_m$model, x_full, task = task, threads = cand_threads),
+              error = function(e) NULL
+            )
+            if (!is.null(in_p_i)) {
+              tt_state_i <- .update_target_transform_smearing(tt_state_i, y_full_raw_i, in_p_i)
+            }
           }
         }
         active_target_transforms[[name]] <- list(state = tt_state_i, use_smearing = use_smear_i)

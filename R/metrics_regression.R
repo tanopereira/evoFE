@@ -96,6 +96,37 @@ compute_rmse <- function(y_true, y_pred) {
   state
 }
 
+#' Estimate Duan's Smearing from Training-Fold Residuals Without Validation Peeking
+#'
+#' @keywords internal
+#' @noRd
+.estimate_model_train_smearing <- function(state, evaluator, model, x_train, y_train_raw,
+                                           task = "regression", threads = 1L, seed = 42L) {
+  if (is.null(state) || !identical(state$method, "log1p") || is.null(model) || is.null(x_train)) {
+    return(state)
+  }
+  n_tr <- nrow(x_train)
+  if (n_tr < 5L) return(state)
+  base_eval <- unwrap_evaluator(evaluator)
+  eval_entry <- tryCatch(get_evaluator(base_eval), error = function(e) NULL)
+  if (is.null(eval_entry) || is.null(eval_entry$predict_func)) return(state)
+  if (n_tr > 2000L) {
+    s_val <- if (!is.null(seed) && is.numeric(seed) && is.finite(seed)) as.integer(seed) else 42L
+    idx <- with_seed(s_val, sample.int(n_tr, 2000L))
+    x_sub <- x_train[idx, , drop = FALSE]
+    y_sub <- y_train_raw[idx]
+  } else {
+    x_sub <- x_train
+    y_sub <- y_train_raw
+  }
+  preds_tr <- tryCatch(
+    eval_entry$predict_func(model, x_sub, task = task, threads = threads),
+    error = function(e) NULL
+  )
+  if (is.null(preds_tr)) return(state)
+  .update_target_transform_smearing(state, y_sub, preds_tr)
+}
+
 #' Invert a Target Transformation Back to Original Target Scale
 #'
 #' @keywords internal

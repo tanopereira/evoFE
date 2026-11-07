@@ -215,3 +215,96 @@ testthat::test_that("pooled_target_encode, target_quantile_encode LOO and strict
   expect_silent(evoFE:::validate_metric("rmse", "regression"))
   expect_silent(evoFE:::validate_metric("logloss", "classification"))
 })
+
+testthat::test_that("MEDIUM fixes: schema sync, leak-free smearing, multiclass rank_average sum, and CV seed propagation", {
+  withr::local_seed(42)
+
+  # 1. Datetime & target_quantile_encode parameter mutation schemas match implementations
+  g_dt <- create_gene("datetime_extract", "d")
+  g_dt$params$component <- "year"
+  dt_muts <- replicate(30, evoFE:::mutate_transformer_param(g_dt, "component"))
+  expect_true(all(dt_muts %in% c("year", "month", "day", "hour", "day_of_week", "weekend")))
+
+  g_cyc <- create_gene("datetime_cyclic", "d")
+  g_cyc$params$component <- "hour_sin"
+  cyc_muts <- replicate(30, evoFE:::mutate_transformer_param(g_cyc, "component"))
+  expect_true(all(cyc_muts %in% c("hour_sin", "hour_cos", "wday_sin", "wday_cos", "month_sin", "month_cos", "yday_sin", "yday_cos")))
+
+  g_tqe <- create_gene("target_quantile_encode", "c")
+  g_tqe$params$q <- 0.25
+  tqe_muts <- replicate(30, evoFE:::mutate_transformer_param(g_tqe, "q"))
+  expect_true(0.5 %in% tqe_muts)
+
+  expect_equal(evoFE:::transformer_max_cols("knn_target_encode", 10, mode = "modify"), 3)
+  expect_equal(evoFE:::transformer_max_cols("row_min", 10, mode = "modify"), 5)
+
+  # Restrictive allowed_transformers incompatible with task must not silently fall back to all transformers
+  ind_mc <- create_individual(numeric_cols = c("x1", "x2"), categorical_cols = c("c1", "c2"))
+  mut_empty1 <- mutate(ind_mc, force_add = TRUE, task = "multiclass", allowed_transformers = "target_encode")
+  expect_length(mut_empty1$genes, 0L)
+  mut_empty2 <- mutate(ind_mc, force_add = TRUE, task = "multiclass", allowed_transformers = c("knn_target_encode", "woe_encode"))
+  expect_length(mut_empty2$genes, 0L)
+
+  # 2. Leak-free Duan smearing does not peek at validation targets during evaluate_fitness
+  register_evaluator(
+    "_test_const_zero",
+    train_func = function(x_train, y_train, x_val = NULL, ...) {
+      list(
+        model = list(c = 0.0),
+        predictions = if (!is.null(x_val)) rep(0.0, nrow(x_val)) else NULL,
+        importances = setNames(rep(1 / ncol(x_train), ncol(x_train)), colnames(x_train))
+      )
+    },
+    predict_func = function(model, x_new, ...) rep(0.0, nrow(x_new))
+  )
+  on.exit(if (exists("_test_const_zero", envir = evo_evaluators)) rm("_test_const_zero", envir = evo_evaluators), add = TRUE)
+
+  df_sm <- data.table::data.table(x1 = rnorm(20), x2 = rnorm(20), y = c(rep(0.0, 10), rep(100.0, 10)))
+  ind_sm <- create_individual(numeric_cols = c("x1", "x2"))
+  ev_sm <- evoFE:::evaluate_fitness(
+    ind_sm, df_sm, target_col = "y", task = "regression",
+    evaluation_strategy = "split", split_ids = c(rep("train", 10), rep("val", 10)),
+    evaluator = "_test_const_zero", metric = "rmse", target_transform = "log1p", threads = 1L
+  )
+  expect_equal(as.numeric(ev_sm$val_preds), rep(0.0, 10), tolerance = 1e-12)
+
+  # 3. Multiclass rank_average normalizes row probabilities to sum to 1
+  mc_df <- data.table::data.table(x1 = rnorm(30), x2 = rnorm(30), y = factor(rep(c("a", "b", "c"), 10)))
+  register_evaluator(
+    "_test_seed_mc",
+    train_func = function(x_train, y_train, x_val = NULL, task = "multiclass", num_class = 3L, ...) {
+      dots <- list(...)
+      seen_seeds <<- c(seen_seeds, if (is.null(dots$seed)) NA_integer_ else as.integer(dots$seed))
+      n_va <- if (!is.null(x_val)) nrow(x_val) else 0L
+      p_va <- if (n_va > 0L) matrix(c(0.6, 0.3, 0.1), nrow = n_va, ncol = 3L, byrow = TRUE) else NULL
+      list(model = list(ok = TRUE), predictions = p_va, importances = setNames(rep(0.5, ncol(x_train)), colnames(x_train)))
+    },
+    predict_func = function(model, x_new, ...) {
+      matrix(seq_len(nrow(x_new) * 3L) / (nrow(x_new) * 3L + 1L), nrow = nrow(x_new), ncol = 3L)
+    }
+  )
+  on.exit(if (exists("_test_seed_mc", envir = evo_evaluators)) rm("_test_seed_mc", envir = evo_evaluators), add = TRUE)
+
+  seen_seeds <- integer(0)
+  rec_mc <- evolve_features(
+    mc_df, target_col = "y", task = "multiclass", evaluator = "_test_seed_mc",
+    generations = 1, pop_size = 2, cv_folds = 2, islands = 2,
+    seed = 777L, threads = 1L, verbose = FALSE
+  )
+  # First CV call (Generation 0 baseline) must receive seed = 777L
+  expect_equal(seen_seeds[1L], 777L)
+
+  ens_mc <- ensemble_islands(rec_mc, mc_df, method = "equal", rank_average = TRUE, threads = 1L, verbose = FALSE)
+  preds_mc <- predict_model(ens_mc, mc_df[1:6, ])
+  expect_equal(as.numeric(rowSums(preds_mc)), rep(1.0, 6), tolerance = 1e-12)
+
+  # 4. RealMLP occlusion importance subsampling (>1000 rows) is immune to class/time sorting
+  y_sort <- c(rep(0.0, 1050), rep(1.0, 150))
+  x_sort <- cbind(sig = y_sort * 4.0 + rnorm(1200, sd = 0.05), noise = rnorm(1200))
+  rmlp_fit <- evoFE:::rcpp_realmlp_train(
+    x_train = x_sort, y_train = y_sort,
+    task = "classification", n_epochs = 8L, batch_size = 128L,
+    lr = 0.04, seed = 42L, threads = 1L, verbose = 0L
+  )
+  expect_gt(rmlp_fit$importances[1L], rmlp_fit$importances[2L] * 2.0)
+})

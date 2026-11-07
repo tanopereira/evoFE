@@ -881,7 +881,7 @@ evolve_features <- function(data, target_col, task = "classification",
       complexity_floor = complexity_floor,
       complexity_target = complexity_target,
       baseline_fitness = NULL, running_best_fitness = NULL,
-      n_samples = nrow(data), sd_penalty = 0, ...
+      n_samples = nrow(data), sd_penalty = 0, seed = seed, ...
     )
     baseline_ind$fold_sd <- 0.0
     if (!is.null(baseline_ind$fold_metrics)) {
@@ -944,7 +944,7 @@ evolve_features <- function(data, target_col, task = "classification",
           complexity_floor = complexity_floor,
           complexity_target = complexity_target,
           baseline_fitness = NULL, running_best_fitness = NULL,
-          n_samples = nrow(data), ...
+          n_samples = nrow(data), seed = seed, ...
         )
         local_baseline$evaluator <- eval_j
         if (!row_split_islands && evaluation_strategy != "metacv") {
@@ -1101,7 +1101,7 @@ evolve_features <- function(data, target_col, task = "classification",
     get_island_transformers = get_island_transformers,
     global_best_fitness_init = global_best_fitness_init,
     global_best_individual_init = global_best_individual_init,
-    best_ind_source_init = best_ind_source_init, ...
+    best_ind_source_init = best_ind_source_init, seed = seed, ...
   )
 
   pop <- evo_res$pop
@@ -1358,6 +1358,7 @@ evolve_features <- function(data, target_col, task = "classification",
   train_size <- best_ind$train_size
   cal_y_val <- best_ind$y_val
   cal_val_preds <- best_ind$val_preds
+  cal_val_preds_trans <- best_ind$val_preds_trans
   train_full_dt <- if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
     tr_ho_idx <- which(split_ids_val != "holdout")
     tr_ho_dt <- data.table::as.data.table(data[tr_ho_idx, ])
@@ -1448,12 +1449,16 @@ evolve_features <- function(data, target_col, task = "classification",
   ))
   best_model <- res_model$model
   if (use_tt && !is.null(target_transform_state) && identical(target_transform_state$method, "log1p")) {
-    in_preds_tr <- tryCatch(
-      get_evaluator(final_evaluator)$predict_func(best_model, x_full, task = task, threads = threads),
-      error = function(e) NULL
-    )
-    if (!is.null(in_preds_tr)) {
-      target_transform_state <- .update_target_transform_smearing(target_transform_state, y_full_raw, in_preds_tr)
+    if (!is.null(cal_val_preds_trans) && !is.null(cal_y_val) && length(cal_val_preds_trans) == length(cal_y_val)) {
+      target_transform_state <- .update_target_transform_smearing(target_transform_state, cal_y_val, cal_val_preds_trans)
+    } else {
+      in_preds_tr <- tryCatch(
+        get_evaluator(final_evaluator)$predict_func(best_model, x_full, task = task, threads = threads),
+        error = function(e) NULL
+      )
+      if (!is.null(in_preds_tr)) {
+        target_transform_state <- .update_target_transform_smearing(target_transform_state, y_full_raw, in_preds_tr)
+      }
     }
   }
   fold_models <- NULL

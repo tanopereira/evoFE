@@ -289,6 +289,14 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
     }
   }
 
+  if (isTRUE(object$rank_average) && is.matrix(weighted_preds) && ncol(weighted_preds) > 1L) {
+    rs <- rowSums(weighted_preds)
+    pos <- is.finite(rs) & rs > 0
+    if (any(pos)) {
+      weighted_preds[pos, ] <- weighted_preds[pos, , drop = FALSE] / rs[pos]
+    }
+  }
+
   if (!is.null(object$calibrator) && !isTRUE(object$rank_average)) {
     weighted_preds <- apply_post_calibrator(weighted_preds, object$calibrator)
   }
