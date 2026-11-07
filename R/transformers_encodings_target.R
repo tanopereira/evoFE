@@ -7,7 +7,8 @@ evo_transformers$target_encode <- create_transformer(
   input_type = "categorical",
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     y <- .normalize_target_for_encoding(data[[target_col]])
     if (is.null(y)) {
       return(list(mapping = NULL, global_mean = 0, valid = FALSE))
@@ -46,14 +47,16 @@ evo_transformers$target_encode <- create_transformer(
       return(rep(0, nrow(data)))
     }
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     
     # Join with mapping
     dt <- data.table::data.table(x = x)
     mapping <- state$mapping
     
     # Map, filling missing categories with global mean
-    res <- mapping[dt, on = "x"]$smoothed
+    res <- tryCatch(mapping[dt, on = "x"]$smoothed, error = function(e) NULL)
+    if (is.null(res)) return(rep(state$global_mean, nrow(data)))
     res[is.na(res)] <- state$global_mean
     res
   },
@@ -67,7 +70,8 @@ evo_transformers$pooled_target_encode <- create_transformer(
   input_type = "categorical",
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     y <- .normalize_target_for_encoding(data[[target_col]])
     if (is.null(y)) {
       return(list(mapping = NULL, global_mean = 0, valid = FALSE))
@@ -128,14 +132,16 @@ evo_transformers$pooled_target_encode <- create_transformer(
       return(rep(0, nrow(data)))
     }
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     
     # Join with mapping
     dt <- data.table::data.table(x = x)
     mapping <- state$mapping
     
     # Map, filling missing categories with global mean
-    res <- mapping[dt, on = "x"]$smoothed
+    res <- tryCatch(mapping[dt, on = "x"]$smoothed, error = function(e) NULL)
+    if (is.null(res)) return(rep(state$global_mean, nrow(data)))
     res[is.na(res)] <- state$global_mean
     res
   },
@@ -150,7 +156,8 @@ evo_transformers$target_encode_multiclass <- create_transformer(
   output_type = "numeric",
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     y <- data[[target_col]]
     
     classes <- sort(unique(y))
@@ -184,7 +191,8 @@ evo_transformers$target_encode_multiclass <- create_transformer(
   },
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     comp_idx <- if (!is.null(gene$params$comp_idx)) gene$params$comp_idx else 1
     
     if (is.null(state) || is.null(state$mappings) || comp_idx > length(state$mappings)) {
@@ -195,7 +203,8 @@ evo_transformers$target_encode_multiclass <- create_transformer(
     mapping <- state$mappings[[comp_idx]]
     global_mean <- state$global_means[[comp_idx]]
     
-    res <- mapping[dt, on = "x"]$smoothed
+    res <- tryCatch(mapping[dt, on = "x"]$smoothed, error = function(e) NULL)
+    if (is.null(res)) return(rep(global_mean, length(x)))
     res[is.na(res)] <- global_mean
     res
   },
@@ -210,7 +219,8 @@ evo_transformers$woe_encode <- create_transformer(
   input_type = "categorical",
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     y <- data[[target_col]]
 
     # WOE is only defined for binary targets
@@ -257,12 +267,14 @@ evo_transformers$woe_encode <- create_transformer(
   },
   apply_func = function(data, gene, state) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     if (is.null(state) || is.null(state$mapping)) {
       return(rep(0, length(x)))
     }
     dt  <- data.table::data.table(x = x)
-    res <- state$mapping[dt, on = "x"]$woe
+    res <- tryCatch(state$mapping[dt, on = "x"]$woe, error = function(e) NULL)
+    if (is.null(res)) return(rep(state$global_woe, length(x)))
     res[is.na(res)] <- state$global_woe
     res
   },
@@ -446,7 +458,8 @@ evo_transformers$target_sd_encode <- create_transformer(
   output_type = "numeric",
   fit_func = function(data, gene, target_col) {
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     y <- .normalize_target_for_encoding(data[[target_col]])
     if (is.null(y)) {
       return(list(mapping = NULL, global_sd = 0, valid = FALSE))
@@ -497,9 +510,11 @@ evo_transformers$target_sd_encode <- create_transformer(
       return(rep(0, nrow(data)))
     }
     input_cols <- gene$input_cols
-    x <- data[[input_cols[1]]]
+    x <- as.character(data[[input_cols[1]]])
+    x[is.na(x)] <- ".__NA__"
     dt <- data.table::data.table(x = x)
-    res <- state$mapping[dt, on = "x"]$smoothed
+    res <- tryCatch(state$mapping[dt, on = "x"]$smoothed, error = function(e) NULL)
+    if (is.null(res)) return(rep(state$global_sd, nrow(data)))
     res[is.na(res)] <- state$global_sd
     res
   },

@@ -305,6 +305,28 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
     )
 
     if (is.null(res) || !is.null(res$skip)) {
+      if (is.null(target_col)) {
+        # At inference/prediction time, an already trained feature schema must NEVER be pruned.
+        # Fallback to a neutral numeric vector so matrix dimensions and column schemas remain intact.
+        def_val <- 0.0
+        if (!is.null(gene$state) && !is.null(gene$state$default_val) && is.numeric(gene$state$default_val)) {
+          def_val <- gene$state$default_val
+        }
+        if (data.table::is.data.table(dt_train)) {
+          dt_train[, (gene$output_col) := def_val]
+        } else {
+          dt_train[[gene$output_col]] <- def_val
+        }
+        if (!is.null(dt_val)) {
+          if (data.table::is.data.table(dt_val)) {
+            dt_val[, (gene$output_col) := def_val]
+          } else {
+            dt_val[[gene$output_col]] <- def_val
+          }
+        }
+        new_genes[[length(new_genes) + 1L]] <- gene
+        next
+      }
       if (allow_prune) {
         next
       } else {

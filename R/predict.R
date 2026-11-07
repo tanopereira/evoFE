@@ -38,7 +38,12 @@ predict.evo_recipe <- function(object, newdata, ...) {
   
   gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
   features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
-  
+  missing_feats <- setdiff(features, names(res$train))
+  if (length(missing_feats) > 0L) {
+    for (mf in missing_feats) {
+      res$train[, (mf) := 0.0]
+    }
+  }
   res$train[, features, with = FALSE]
 }
 
@@ -75,7 +80,13 @@ predict.evo_ensemble <- function(object, newdata, ...) {
     all_features <- union(all_features, feats_i)
   }
 
-  out_dt[, intersect(all_features, names(out_dt)), with = FALSE]
+  missing_features <- setdiff(all_features, names(out_dt))
+  if (length(missing_features) > 0L) {
+    for (mf in missing_features) {
+      out_dt[, (mf) := 0.0]
+    }
+  }
+  out_dt[, all_features, with = FALSE]
 }
 
 #' Predict target values using the fully evolved model or ensemble
@@ -237,7 +248,12 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
       applied_ind <- res_i$ind
 
       features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
-
+      missing_feats <- setdiff(features, names(res_i$train))
+      if (length(missing_feats) > 0L) {
+        for (mf in missing_feats) {
+          res_i$train[, (mf) := 0.0]
+        }
+      }
       feat_dt <- res_i$train[, features, with = FALSE]
       x_new <- .sanitize_feature_matrix(feat_dt)
 

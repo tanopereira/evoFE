@@ -587,6 +587,9 @@ run_competition_pipeline <- function(
   }
 
   # Preserve group_col / time_col if Stage 2 active masks pruned them
+  if (!data.table::is.data.table(train_mega)) train_mega <- data.table::as.data.table(train_mega)
+  if (!data.table::is.data.table(test_mega)) test_mega <- data.table::as.data.table(test_mega)
+
   for (aux_col in unique(c(group_col, time_col))) {
     if (!is.null(aux_col) && nzchar(aux_col) && aux_col %in% names(train_dt) && !aux_col %in% names(train_mega)) {
       train_mega[[aux_col]] <- train_dt[[aux_col]]
@@ -595,6 +598,30 @@ run_competition_pipeline <- function(
       }
     }
   }
+
+  # Ensure train_mega and test_mega have strictly identical feature schemas and column ordering
+  mega_feat_cols <- setdiff(names(train_mega), target_col)
+  missing_in_test <- setdiff(mega_feat_cols, names(test_mega))
+  if (length(missing_in_test) > 0L) {
+    for (mfc in missing_in_test) {
+      train_v <- train_mega[[mfc]]
+      def_val <- if (is.numeric(train_v)) {
+        m_val <- stats::median(train_v, na.rm = TRUE)
+        if (is.na(m_val) || !is.finite(m_val)) 0.0 else m_val
+      } else if (is.factor(train_v)) {
+        levels(train_v)[1L]
+      } else {
+        "__missing__"
+      }
+      test_mega[, (mfc) := def_val]
+    }
+  }
+  extra_in_test <- setdiff(names(test_mega), mega_feat_cols)
+  if (length(extra_in_test) > 0L) {
+    test_mega[, (extra_in_test) := NULL]
+  }
+  data.table::setcolorder(test_mega, mega_feat_cols)
+
   train_mega[[target_col]] <- train_dt[[target_col]]
 
   if (show_msg) {

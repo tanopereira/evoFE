@@ -2,6 +2,10 @@
 # Split out of transformers.R; loaded after it (alphabetical file order).
 
 .fit_frequency_mapping <- function(x) {
+  if (is.factor(x) || is.character(x)) {
+    x <- as.character(x)
+    x[is.na(x)] <- ".__NA__"
+  }
   dt <- data.table::data.table(x = x)
   mapping <- dt[, .N, by = x]
   data.table::setkey(mapping, x)
@@ -14,13 +18,19 @@
     def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
     return(rep(as.numeric(def_val), if (!is.null(x)) length(x) else 0L))
   }
+  if (is.character(state$mapping$x)) {
+    x <- as.character(x)
+    x[is.na(x)] <- ".__NA__"
+  } else if (is.numeric(state$mapping$x) && !is.numeric(x)) {
+    x <- suppressWarnings(as.numeric(x))
+  }
   dt <- data.table::data.table(x = x)
-  res <- state$mapping[dt, on = "x"]$N
+  res <- tryCatch(state$mapping[dt, on = "x"]$N, error = function(e) NULL)
+  def_val <- if (!is.null(state$default_val)) state$default_val else 0
   if (is.null(res)) {
-    def_val <- if (!is.null(state$default_val)) state$default_val else 0
     return(rep(as.numeric(def_val), length(x)))
   }
-  res[is.na(res)] <- state$default_val
+  res[is.na(res)] <- def_val
   as.numeric(res)
 }
 

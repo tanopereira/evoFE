@@ -354,4 +354,49 @@ test_that("preset_overrides and evaluator_args customize pipeline and enforce Re
   expect_true(all(is.finite(res_cust$predictions)))
 })
 
+test_that("run_competition_pipeline handles train/test categorical type mismatch and supervised stage 4 without schema drift", {
+  skip_if_not_installed("lightgbm")
+
+  set.seed(4242)
+  n_tr <- 60L
+  n_te <- 15L
+
+  # cat_col is integer in train, but character in test
+  tr <- data.table::data.table(
+    id = seq_len(n_tr),
+    num1 = stats::rnorm(n_tr),
+    num2 = stats::runif(n_tr, 1, 10),
+    cat_code = rep(1:3, length.out = n_tr), # integer
+    y = stats::rbinom(n_tr, 1L, 0.5)
+  )
+
+  te <- data.table::data.table(
+    id = seq.int(101L, length.out = n_te),
+    num1 = stats::rnorm(n_te),
+    num2 = stats::runif(n_te, 1, 10),
+    cat_code = as.character(rep(1:4, length.out = n_te)) # character, including novel category "4"
+  )
+
+  res <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "y",
+    id_col = "id",
+    preset = "fast",
+    evaluators = "lightgbm",
+    supervised_stage4 = TRUE,
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_competition_run")
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions)))
+  expect_true(all(setdiff(names(res$train_mega), "y") %in% names(res$test_mega)))
+  expect_equal(setdiff(names(res$train_mega), "y"), names(res$test_mega))
+})
+
+
 

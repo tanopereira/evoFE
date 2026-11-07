@@ -163,6 +163,12 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       allow_prune = TRUE, state_cache = NULL, full_data = NULL
     )
     feats <- extract_individual_features(res_f$ind, target_col = target_col, unique = TRUE)
+    missing_feats <- setdiff(feats, names(res_f$train))
+    if (length(missing_feats) > 0L) {
+      for (mf in missing_feats) {
+        res_f$train[, (mf) := 0.0]
+      }
+    }
     x_new <- .sanitize_feature_matrix(res_f$train[, feats, with = FALSE], threads = threads)
     preds_f <- do.call(eval_entry$predict_func, c(
       list(model = fm$model, x_new = x_new, task = task, threads = threads),

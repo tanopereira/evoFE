@@ -5,7 +5,9 @@
   input_cols <- gene$input_cols
   cat_col <- input_cols[1]
   num_col <- input_cols[2]
-  dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+  c_val <- as.character(data[[cat_col]])
+  c_val[is.na(c_val)] <- ".__NA__"
+  dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
   mapping <- dt[, .(val = mean(n, na.rm = TRUE)), by = c]
   data.table::setkey(mapping, c)
   global_mean <- mean(dt$n, na.rm = TRUE)
@@ -17,7 +19,9 @@
   input_cols <- gene$input_cols
   cat_col <- input_cols[1]
   num_col <- input_cols[2]
-  dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+  c_val <- as.character(data[[cat_col]])
+  c_val[is.na(c_val)] <- ".__NA__"
+  dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
   mapping <- dt[, .(val = stats::median(n, na.rm = TRUE)), by = c]
   data.table::setkey(mapping, c)
   global_med <- stats::median(dt$n, na.rm = TRUE)
@@ -32,13 +36,15 @@
     def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
     return(rep(def_val, nrow(data)))
   }
-  dt <- data.table::data.table(c = x)
-  res <- state$mapping[dt, on = "c"]$val
+  x_char <- as.character(x)
+  x_char[is.na(x_char)] <- ".__NA__"
+  dt <- data.table::data.table(c = x_char)
+  res <- tryCatch(state$mapping[dt, on = "c"]$val, error = function(e) NULL)
+  def_val <- if (!is.null(state) && !is.null(state$default_val)) state$default_val else 0
   if (is.null(res)) {
-    def_val <- if (!is.null(state$default_val)) state$default_val else 0
     return(rep(def_val, nrow(data)))
   }
-  res[is.na(res)] <- state$default_val
+  res[is.na(res)] <- def_val
   res
 }
 
@@ -59,7 +65,9 @@ evo_transformers$groupby_sd <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    c_val <- as.character(data[[cat_col]])
+    c_val[is.na(c_val)] <- ".__NA__"
+    dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = .safe_sd(n)), by = c]
     mapping[is.na(val), val := 0]
     data.table::setkey(mapping, c)
@@ -79,7 +87,9 @@ evo_transformers$groupby_max <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    c_val <- as.character(data[[cat_col]])
+    c_val[is.na(c_val)] <- ".__NA__"
+    dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
     valid_n <- dt$n[!is.na(dt$n)]
     global_max <- if (length(valid_n) > 0) max(valid_n) else 0
     mapping <- dt[, .(val = if (all(is.na(n))) NA_real_ else max(n, na.rm = TRUE)), by = c]
@@ -99,7 +109,9 @@ evo_transformers$groupby_min <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    c_val <- as.character(data[[cat_col]])
+    c_val[is.na(c_val)] <- ".__NA__"
+    dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
     valid_n <- dt$n[!is.na(dt$n)]
     global_min <- if (length(valid_n) > 0) min(valid_n) else 0
     mapping <- dt[, .(val = if (all(is.na(n))) NA_real_ else min(n, na.rm = TRUE)), by = c]
@@ -140,7 +152,9 @@ evo_transformers$groupby_zscore <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    c_val <- as.character(data[[cat_col]])
+    c_val[is.na(c_val)] <- ".__NA__"
+    dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(mean_val = mean(n, na.rm = TRUE), sd_val = .safe_sd(n)), by = c]
     mapping[is.na(sd_val), sd_val := 0]
     data.table::setkey(mapping, c)
@@ -151,10 +165,12 @@ evo_transformers$groupby_zscore <- create_transformer(
   apply_func = function(data, gene, state) {
     if (is.null(state) || is.null(state$mapping)) return(rep(0, nrow(data)))
     input_cols <- gene$input_cols
-    x_cat <- data[[input_cols[1]]]
+    x_cat <- as.character(data[[input_cols[1]]])
+    x_cat[is.na(x_cat)] <- ".__NA__"
     x_num <- .to_numeric(data[[input_cols[2]]])
     dt <- data.table::data.table(c = x_cat)
-    mapped <- state$mapping[dt, on = "c"]
+    mapped <- tryCatch(state$mapping[dt, on = "c"], error = function(e) NULL)
+    if (is.null(mapped)) return(rep(0, nrow(data)))
     means <- mapped$mean_val
     sds <- mapped$sd_val
     means[is.na(means)] <- state$default_mean
@@ -187,7 +203,9 @@ evo_transformers$groupby_quantile <- create_transformer(
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
     q <- if (!is.null(gene$params$q)) gene$params$q else 0.25
-    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    c_val <- as.character(data[[cat_col]])
+    c_val[is.na(c_val)] <- ".__NA__"
+    dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
     mapping <- dt[, .(val = stats::quantile(n, probs = q, na.rm = TRUE, names = FALSE)), by = c]
     data.table::setkey(mapping, c)
     global_q <- stats::quantile(dt$n, probs = q, na.rm = TRUE, names = FALSE)
@@ -263,7 +281,9 @@ evo_transformers$groupby_range_pos <- create_transformer(
     input_cols <- gene$input_cols
     cat_col <- input_cols[1]
     num_col <- input_cols[2]
-    dt <- data.table::data.table(c = data[[cat_col]], n = .to_numeric(data[[num_col]]))
+    c_val <- as.character(data[[cat_col]])
+    c_val[is.na(c_val)] <- ".__NA__"
+    dt <- data.table::data.table(c = c_val, n = .to_numeric(data[[num_col]]))
     valid_n <- dt$n[!is.na(dt$n) & is.finite(dt$n)]
     global_min <- if (length(valid_n) > 0L) min(valid_n) else 0.0
     global_max <- if (length(valid_n) > 0L) max(valid_n) else 0.0
@@ -279,10 +299,12 @@ evo_transformers$groupby_range_pos <- create_transformer(
   apply_func = function(data, gene, state) {
     if (is.null(state) || is.null(state$mapping)) return(rep(0.5, nrow(data)))
     input_cols <- gene$input_cols
-    x_cat <- data[[input_cols[1]]]
+    x_cat <- as.character(data[[input_cols[1]]])
+    x_cat[is.na(x_cat)] <- ".__NA__"
     x_num <- .to_numeric(data[[input_cols[2]]])
     dt <- data.table::data.table(c = x_cat)
-    mapped <- state$mapping[dt, on = "c"]
+    mapped <- tryCatch(state$mapping[dt, on = "c"], error = function(e) NULL)
+    if (is.null(mapped)) return(rep(0.5, nrow(data)))
     mins <- mapped$min_val
     maxs <- mapped$max_val
     mins[is.na(mins)] <- state$default_min
@@ -365,7 +387,8 @@ evo_transformers$groupby_nunique <- create_transformer(
   output_type = "numeric",
   fit_func = function(data, gene, target_col = NULL) {
     input_cols <- gene$input_cols
-    c1 <- data[[input_cols[1]]]
+    c1 <- as.character(data[[input_cols[1]]])
+    c1[is.na(c1)] <- ".__NA__"
     c2 <- data[[input_cols[2]]]
     dt <- data.table::data.table(c = c1, c2 = c2)
     mapping <- dt[, .(val = as.numeric(data.table::uniqueN(c2, na.rm = TRUE))), by = c]
