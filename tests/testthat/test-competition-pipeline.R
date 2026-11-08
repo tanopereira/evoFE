@@ -435,5 +435,46 @@ test_that("run_competition_pipeline correctly resolves and applies rank_average 
   expect_true(all(res_rank$predictions >= 0 & res_rank$predictions <= 1))
 })
 
+test_that("run_competition_pipeline harmonizes logical vs string representations across train and test", {
+  skip_if_not_installed("lightgbm")
+
+  set.seed(123)
+  n_tr <- 50L
+  n_te <- 10L
+
+  # Train read with fread (boolean parsed as logical)
+  tr <- data.table::data.table(
+    x_num = stats::rnorm(n_tr),
+    flag_active = sample(c(TRUE, FALSE), n_tr, replace = TRUE), # logical
+    y = stats::rbinom(n_tr, 1L, 0.5)
+  )
+
+  # Test read with read.csv (boolean parsed as strings: "True", "False")
+  te <- data.frame(
+    x_num = stats::rnorm(n_te),
+    flag_active = sample(c("True", "False"), n_te, replace = TRUE), # character strings
+    stringsAsFactors = FALSE
+  )
+
+  res <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "y",
+    preset = "fast",
+    evaluators = "lightgbm",
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_competition_run")
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions)))
+  # Confirm harmonized type is logical
+  expect_type(res$train_mega$flag_active, "logical")
+  expect_type(res$test_mega$flag_active, "logical")
+})
+
 
 

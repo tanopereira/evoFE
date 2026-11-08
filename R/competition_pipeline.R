@@ -282,6 +282,51 @@
   args
 }
 
+#' Harmonize column data types and categorical levels between train and test
+#' @keywords internal
+#' @noRd
+.harmonize_train_test_types <- function(train_dt, test_dt, shared_features) {
+  for (col in shared_features) {
+    tr_col <- train_dt[[col]]
+    te_col <- test_dt[[col]]
+
+    # 1. Logical vs Character / Factor (e.g. fread vs read.csv boolean parsing differences)
+    if (is.logical(tr_col) && (is.character(te_col) || is.factor(te_col))) {
+      te_str <- trimws(tolower(as.character(te_col)))
+      te_log <- ifelse(te_str %in% c("true", "t", "1"), TRUE,
+                ifelse(te_str %in% c("false", "f", "0"), FALSE, NA))
+      if (sum(is.na(te_log)) == sum(is.na(te_col))) {
+        test_dt[, (col) := te_log]
+      }
+    } else if (is.logical(te_col) && (is.character(tr_col) || is.factor(tr_col))) {
+      tr_str <- trimws(tolower(as.character(tr_col)))
+      tr_log <- ifelse(tr_str %in% c("true", "t", "1"), TRUE,
+                ifelse(tr_str %in% c("false", "f", "0"), FALSE, NA))
+      if (sum(is.na(tr_log)) == sum(is.na(tr_col))) {
+        train_dt[, (col) := tr_log]
+      }
+    } else if (is.numeric(tr_col) && (is.character(te_col) || is.factor(te_col))) {
+      num_conv <- suppressWarnings(as.numeric(as.character(te_col)))
+      if (sum(is.na(num_conv)) == sum(is.na(te_col))) {
+        test_dt[, (col) := num_conv]
+      }
+    } else if (is.numeric(te_col) && (is.character(tr_col) || is.factor(tr_col))) {
+      num_conv <- suppressWarnings(as.numeric(as.character(tr_col)))
+      if (sum(is.na(num_conv)) == sum(is.na(tr_col))) {
+        train_dt[, (col) := num_conv]
+      }
+    } else if (is.factor(tr_col) && !is.factor(te_col)) {
+      test_dt[, (col) := factor(as.character(te_col), levels = levels(tr_col))]
+    } else if (is.factor(te_col) && !is.factor(tr_col)) {
+      train_dt[, (col) := factor(as.character(tr_col), levels = levels(te_col))]
+    } else if (is.integer(tr_col) && is.double(te_col)) {
+      train_dt[, (col) := as.numeric(tr_col)]
+    } else if (is.double(tr_col) && is.integer(te_col)) {
+      test_dt[, (col) := as.numeric(te_col)]
+    }
+  }
+}
+
 #' Run the Two-Phase ML Competition Pipeline End-to-End
 #'
 #' Executes the complete high-capacity tabular competition workflow from
@@ -458,6 +503,7 @@ run_competition_pipeline <- function(
 
   train_dt <- shallow_copy_dt(data.table::as.data.table(train)[, c(shared_features, target_col), with = FALSE])
   test_dt <- shallow_copy_dt(data.table::as.data.table(test)[, shared_features, with = FALSE])
+  .harmonize_train_test_types(train_dt, test_dt, shared_features)
 
   # Stage 0: Adversarial covariate-shift check
   adv_info <- compute_adversarial_weights(
