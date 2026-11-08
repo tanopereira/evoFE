@@ -355,6 +355,12 @@
 #'   deep fold-bagged refit (zero target leakage and zero deep-schedule search overhead).
 #' @param bag_folds Logical (default \code{TRUE}). Retains and averages all \code{cv_folds}
 #'   fold models during test prediction.
+#' @param rank_average Logical or NULL. If \code{TRUE}, ranks predictions to uniform
+#'   percentiles prior to stacking and inference. If \code{NULL} (default), automatically
+#'   defaults to \code{TRUE} if \code{metric} is rank-invariant (e.g. \code{"auc"},
+#'   \code{"aucpr"}), and \code{FALSE} otherwise. Set to \code{TRUE} when optimizing
+#'   calibration metrics like \code{"ts_refinement"} during feature evolution while
+#'   submitting to a rank-based competition evaluation metric like AUC.
 #' @param submission_file Optional file path to write \code{$submission} via \code{data.table::fwrite()}.
 #' @param threads Integer thread count (default \code{\link{default_threads}()}).
 #' @param seed Integer RNG seed for reproducibility (caller's \code{.Random.seed} is preserved).
@@ -386,6 +392,7 @@ run_competition_pipeline <- function(
   drift_auc_threshold = 0.85,
   supervised_stage4 = FALSE,
   bag_folds = TRUE,
+  rank_average = NULL,
   submission_file = NULL,
   threads = default_threads(),
   seed = 42L,
@@ -432,6 +439,14 @@ run_competition_pipeline <- function(
     metric
   }
   validate_metric(resolved_metric, resolved_task)
+  resolved_rank_avg <- if (!is.null(rank_average)) {
+    if (!is.logical(rank_average) || length(rank_average) != 1L) {
+      stop("'rank_average' must be a logical scalar (TRUE or FALSE) or NULL.")
+    }
+    rank_average
+  } else {
+    metric_is_rank_invariant(resolved_metric, resolved_task)
+  }
   resolved_tt <- .resolve_target_transform(y_vec, resolved_task, target_transform)
 
   test_ids <- if (!is.null(id_col)) test[[id_col]] else NULL
@@ -735,7 +750,10 @@ run_competition_pipeline <- function(
 
   # Stage 5: Stacked Ensembling & Test Inference
   if (length(stage4_recipes) >= 2L) {
-    if (show_msg) message("[Stage 5] Stacking Stage 4 models via nested OOF elastic-net...")
+    if (show_msg) {
+      rank_lbl <- if (isTRUE(resolved_rank_avg)) " (rank-averaged)" else ""
+      message(sprintf("[Stage 5] Stacking Stage 4 models via nested OOF elastic-net%s...", rank_lbl))
+    }
     final_model <- ensemble_islands(
       recipe = stage4_recipes,
       data = train_mega,
@@ -743,6 +761,7 @@ run_competition_pipeline <- function(
       method = "stack",
       stack_folds = cv_folds,
       stack_alpha = 0.5,
+      rank_average = resolved_rank_avg,
       bag_folds = isTRUE(bag_folds),
       threads = threads,
       seed = s4_seed,
@@ -821,6 +840,7 @@ run_competition_pipeline <- function(
       cv_strategy = cv_strategy,
       target_transform = resolved_tt,
       bag_folds = isTRUE(bag_folds),
+      rank_average = resolved_rank_avg,
       raw_feature_count = length(shared_features),
       mega_feature_count = ncol(train_mega) - 1L,
       train_rows = nrow(train_dt),

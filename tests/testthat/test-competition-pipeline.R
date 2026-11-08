@@ -398,5 +398,42 @@ test_that("run_competition_pipeline handles train/test categorical type mismatch
   expect_equal(setdiff(names(res$train_mega), "y"), names(res$test_mega))
 })
 
+test_that("run_competition_pipeline correctly resolves and applies rank_average for ts_refinement vs auc", {
+  skip_if_not_installed("lightgbm")
+
+  set.seed(88)
+  n_tr <- 60L
+  n_te <- 12L
+  tr <- data.table::data.table(
+    x1 = stats::rnorm(n_tr),
+    x2 = stats::rnorm(n_tr),
+    y = rep(c(0L, 1L), length.out = n_tr)
+  )
+  te <- data.table::data.table(
+    x1 = stats::rnorm(n_te),
+    x2 = stats::rnorm(n_te)
+  )
+
+  # 1. Default ts_refinement (rank_average = NULL) resolves to FALSE
+  res_def <- run_competition_pipeline(
+    train = tr, test = te, target_col = "y",
+    preset = "fast", evaluators = c("lightgbm", "realmlp"),
+    cv_folds = 2L, threads = 1L, seed = 1L, verbose = FALSE
+  )
+  expect_false(res_def$rank_average)
+  expect_false(res_def$final_model$rank_average)
+
+  # 2. ts_refinement with explicit rank_average = TRUE overrides to TRUE
+  res_rank <- run_competition_pipeline(
+    train = tr, test = te, target_col = "y",
+    metric = "ts_refinement", rank_average = TRUE,
+    preset = "fast", evaluators = c("lightgbm", "realmlp"),
+    cv_folds = 2L, threads = 1L, seed = 1L, verbose = FALSE
+  )
+  expect_true(res_rank$rank_average)
+  expect_true(res_rank$final_model$rank_average)
+  expect_true(all(res_rank$predictions >= 0 & res_rank$predictions <= 1))
+})
+
 
 
