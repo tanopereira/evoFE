@@ -18,10 +18,6 @@ evolve_features(
   cv_strategy = "random",
   time_col = NULL,
   group_col = NULL,
-  multi_fidelity = FALSE,
-  mf_sample_frac = 0.5,
-  mf_warmup_frac = 0.5,
-  mf_promote_frac = 0.5,
   early_stopping_generations = 3,
   evaluator = "lightgbm",
   seed = NULL,
@@ -115,21 +111,6 @@ temporal data and \code{"group"} for clustered data to avoid leakage.}
 datetime or numeric.}
 
 \item{group_col}{Column name used when \code{cv_strategy = "group"}.}
-
-\item{multi_fidelity}{Logical (default FALSE). If TRUE, individuals during
-warm-up generations are first screened on row-subsampled folds
-(\code{mf_sample_frac}); the most promising half is then re-evaluated at
-full fidelity before any selection decision, so all fitness comparisons
-remain apples-to-apples. Reduces compute cost with minimal search-quality loss.}
-
-\item{mf_sample_frac}{Row fraction kept per fold during multi-fidelity
-screening, in \code{(0, 1)}.}
-
-\item{mf_warmup_frac}{Fraction of generations (of \code{generations}) run in
-low-fidelity screening mode before full-fidelity-only evaluation begins.}
-
-\item{mf_promote_frac}{Fraction of top-performing individuals on the subsample
-promoted to full-fidelity evaluation during multi-fidelity warmup (in \code{(0, 1]}, default 0.5).}
 
 \item{early_stopping_generations}{Stop if fitness doesn't improve for this
 many generations}

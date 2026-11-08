@@ -55,7 +55,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              target_transform = getOption("evoFE.target_transform", "none"),
                              sd_penalty = getOption("evoFE.sd_penalty", 0),
                              global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
-                             fitness_cache = NULL, fidelity_tag = "", ...) {
+                             fitness_cache = NULL, ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
   }
@@ -113,7 +113,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
     if (!is.null(fitness_cache) && length(res$ind$genes) < length(ind$genes)) {
       post_key <- individual_to_cache_key(res$ind)
-      post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
+      post_cache_key <- digest::digest(paste0(evaluator, "::", post_key), algo = "md5", serialize = FALSE)
       if (exists(post_cache_key, envir = fitness_cache, inherits = FALSE)) {
         cached_ind <- get(post_cache_key, envir = fitness_cache)
         attr(cached_ind, "collapsed_to_cached") <- TRUE
@@ -305,7 +305,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
 
       if (fi == 1L && !is.null(fitness_cache) && length(res$ind$genes) < length(ind$genes)) {
         post_key <- individual_to_cache_key(res$ind)
-        post_cache_key <- digest::digest(paste0(evaluator, "::", post_key, fidelity_tag), algo = "md5", serialize = FALSE)
+        post_cache_key <- digest::digest(paste0(evaluator, "::", post_key), algo = "md5", serialize = FALSE)
         if (exists(post_cache_key, envir = fitness_cache, inherits = FALSE)) {
           cached_ind <- get(post_cache_key, envir = fitness_cache)
           attr(cached_ind, "collapsed_to_cached") <- TRUE

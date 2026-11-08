@@ -11,6 +11,7 @@ run_competition_pipeline(
   id_col = NULL,
   task = c("auto", "classification", "multiclass", "regression"),
   metric = "auto",
+  ensemble_metric = NULL,
   preset = c("standard", "fast", "max"),
   preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
@@ -25,6 +26,7 @@ run_competition_pipeline(
   drift_auc_threshold = 0.85,
   supervised_stage4 = FALSE,
   bag_folds = TRUE,
+  rank_average = NULL,
   submission_file = NULL,
   threads = default_threads(),
   seed = 42L,
@@ -47,6 +49,12 @@ features and prepend to \code{$submission}.}
 \item{metric}{Optimization metric name (e.g. \code{"auto"}, \code{"ts_refinement"},
 \code{"auc"}, \code{"aucpr"}, \code{"f1"}, \code{"mcc"}, \code{"qwk"}, \code{"rmsle"},
 \code{"mae"}, \code{"smape"}) or custom metric function.}
+
+\item{ensemble_metric}{Optional evaluation metric used for Stage 5 ensembling
+and final stacked CV fitness reporting (default \code{NULL}, inheriting
+\code{metric}). Set to \code{"auc"} when optimizing calibration metrics like
+\code{"ts_refinement"} during Stage 2 & 4 feature evolution/training, so that
+Stage 5 ensembling automatically uses rank averaging and reports an honest CV AUC.}
 
 \item{preset}{Compute budget preset: \code{"standard"} (competition playbook defaults),
 \code{"fast"} (quick smoke/baseline run), or \code{"max"} (deep schedule).}
@@ -94,6 +102,13 @@ deep fold-bagged refit (zero target leakage and zero deep-schedule search overhe
 
 \item{bag_folds}{Logical (default \code{TRUE}). Retains and averages all \code{cv_folds}
 fold models during test prediction.}
+
+\item{rank_average}{Logical or NULL. If \code{TRUE}, ranks predictions to uniform
+percentiles prior to stacking and inference. If \code{NULL} (default), automatically
+defaults to \code{TRUE} if \code{metric} is rank-invariant (e.g. \code{"auc"},
+\code{"aucpr"}), and \code{FALSE} otherwise. Set to \code{TRUE} when optimizing
+calibration metrics like \code{"ts_refinement"} during feature evolution while
+submitting to a rank-based competition evaluation metric like AUC.}
 
 \item{submission_file}{Optional file path to write \code{$submission} via \code{data.table::fwrite()}.}
 

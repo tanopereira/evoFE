@@ -36,7 +36,6 @@ evaluate_fitness(
   sd_penalty = getOption("evoFE.sd_penalty", 0),
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   fitness_cache = NULL,
-  fidelity_tag = "",
   ...
 )
 }

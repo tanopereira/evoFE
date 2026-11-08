@@ -94,66 +94,6 @@ test_that("holdout_frac carves an untouched set and reports search gap", {
   expect_equal(round(nrow(d) * 0.8), 96)
 })
 
-test_that("multi_fidelity runs and promotes at full fidelity", {
-  skip_on_cran()
-  set.seed(42)
-  n <- 150
-  d <- data.table::data.table(
-    x1 = rnorm(n),
-    x2 = runif(n),
-    y = rnorm(n)
-  )
-
-  recipe <- evolve_features(
-    data = d, target_col = "y", task = "regression",
-    generations = 2, pop_size = 4, cv_folds = 2,
-    evaluation_strategy = "cv", multi_fidelity = TRUE,
-    mf_sample_frac = 0.6, mf_warmup_frac = 0.5,
-    evaluator = "lightgbm", verbose = FALSE
-  )
-
-  expect_s3_class(recipe, "evo_recipe")
-  best <- recipe$best_individual
-  expect_true(is.finite(best$fitness))
-  # Final best was evaluated at full fidelity (all rows available to folds)
-  expect_lte(best$fitness, Inf)
-})
-
-test_that("multi_fidelity displays verbose progress when verbose = TRUE", {
-  skip_on_cran()
-  set.seed(42)
-  n <- 100
-  d <- data.table::data.table(
-    x1 = rnorm(n),
-    x2 = runif(n),
-    y = rnorm(n)
-  )
-
-  msgs <- character(0)
-  recipe <- withCallingHandlers({
-    evolve_features(
-      data = d, target_col = "y", task = "regression",
-      generations = 2, pop_size = 4, cv_folds = 2,
-      evaluation_strategy = "cv", multi_fidelity = TRUE,
-      mf_sample_frac = 0.5, mf_warmup_frac = 0.5, mf_promote_frac = 0.5,
-      evaluator = "lightgbm", verbose = TRUE
-    )
-  }, message = function(m) {
-    msgs <<- c(msgs, conditionMessage(m))
-    invokeRestart("muffleMessage")
-  })
-
-  expect_s3_class(recipe, "evo_recipe")
-  all_text <- paste(msgs, collapse = "\n")
-  expect_match(all_text, "Multi-Fidelity: screening on")
-  expect_match(all_text, "Multi-Fidelity Screening")
-  expect_match(all_text, "\\[MF Screen\\]")
-  expect_match(all_text, "\\[MF Promotion\\] Top 2/4 candidates promoted")
-  expect_match(all_text, "\\[MF Filtered\\] 2 candidates filtered out")
-  expect_match(all_text, "Full-Fidelity Evaluation \\(2 promoted candidates")
-  expect_match(all_text, "Warmup screening complete")
-})
-
 test_that("invalid new arguments produce clear errors", {
   d <- data.frame(x = 1:50, y = rnorm(50))
   expect_error(
@@ -171,14 +111,9 @@ test_that("invalid new arguments produce clear errors", {
       evaluation_strategy = "cv", holdout_frac = 0.6),
     regexp = "holdout_frac"
   )
-  expect_error(
-    evolve_features(d, "y", task = "regression", generations = 1, pop_size = 2,
-      multi_fidelity = TRUE, mf_sample_frac = 0),
-    regexp = "mf_sample_frac"
-  )
 })
 
-test_that("multi-fidelity and evaluate_pop correctly index tested individuals", {
+test_that("evaluate_pop correctly indexes tested individuals", {
   skip_on_cran()
   set.seed(42)
   n <- 100

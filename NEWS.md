@@ -9,8 +9,13 @@
 * **Native C++ RealMLP evaluator (`evaluator = "realmlp"`)**: Replaced slow external `torch` / `frankiethull/realmlp` dependency with a standalone, high-performance C++ implementation via `Rcpp` and `RcppEigen`. Features Periodic Bias Linear DenseNet (PBLD) numerical embeddings ($k=16$ periodic frequencies, phase shift, $d=4$ linear projection, DenseNet skip connections), NTP parameter initialization, Mish/SELU activations, vectorized Adam optimizer with log-cosine annealing schedule, validation loss tracking, early stopping, and gradient-norm feature importance extraction.
 * **Multi-threaded UMAP SGD optimization**: `umap`, `umap_genie`, and `umap_lumbermark` now configure `n_sgd_threads = "auto"` in `uwot::umap()` and `uwot::umap_transform()` for parallelized SGD layout optimization.
 
+## Breaking Changes
+
+* Removed Multi-Fidelity screening (`multi_fidelity`, `mf_sample_frac`, `mf_warmup_frac`, `mf_promote_frac`) and associated cache tagging. All generational evaluations are executed directly at full fidelity with standard cross-validation or train/val splits, removing cache collision hazards and simplifying search paths.
+
 ## Bug Fixes
 
+* Fixed gene collapse pruning in `evaluate_pop`: individuals whose genes collapse to duplicates or empty recipes retain finite fitness from their evaluated raw feature subset instead of receiving `-Inf` fitness.
 * `ensemble_islands()`: Explicitly initialized `y_val <- NULL` and replaced fragile `exists("y_val", inherits = FALSE)` check with `is.null(y_val)` to protect against scoping bugs during prediction harmonization.
 * `evolve_features()`: Fixed `metacv_mode` deprecation mapping to explicitly support `metacv_mode = "headroom"`.
 * Removed dead variable assignments in `R/evolve.R` and cleaned up duplicate roxygen documentation in `R/ensemble.R`.

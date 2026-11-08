@@ -2856,7 +2856,7 @@ test_that("sd_penalty works correctly in evaluate_fitness and evolve_features", 
   expect_length(preds, 10)
   expect_true(all(is.finite(preds)))
 
-  # 3. Stage 2 combination: metacv + multi_fidelity + holdout_frac + sd_penalty
+  # 3. Stage 2 combination: metacv + holdout_frac + sd_penalty
   rec_mcv <- evolve_features(
     data = df[, c("x1", "x2", "n1", "n2", "target")],
     target_col = "target",
@@ -2867,9 +2867,6 @@ test_that("sd_penalty works correctly in evaluate_fitness and evolve_features", 
     islands = 2,
     generations = 2,
     pop_size = 2,
-    multi_fidelity = TRUE,
-    mf_sample_frac = 0.5,
-    mf_warmup_frac = 0.5,
     holdout_frac = 0.1,
     sd_penalty = 0.5,
     threads = 1,

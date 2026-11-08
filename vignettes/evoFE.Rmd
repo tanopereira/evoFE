@@ -757,25 +757,6 @@ recipe_group <- evolve_features(
 )
 ```
 
-### Multi-Fidelity Evolutionary Screening
-
-For large datasets, evaluating every candidate generation at full dataset size can be compute-intensive. Enabling `multi_fidelity = TRUE` uses a warm-up screening schedule:
-
-```r
-recipe_fast <- evolve_features(
-  data = big_df,
-  target_col = "target",
-  task = "classification",
-  multi_fidelity = TRUE,
-  mf_warmup_frac = 0.40,  # first 40% of generations screen on subsamples
-  mf_sample_frac = 0.50,  # screen on 50% row subsamples
-  generations = 10,
-  pop_size = 12
-)
-```
-
-During warm-up, candidates are screened rapidly on subsampled folds. Crucially, the top-performing half of candidates is **re-evaluated at full fidelity** before selection, ensuring that all fitness comparisons remain 100% apples-to-apples.
-
 ## Alternative and Custom Metrics
 
 By default, evoFE optimises LogLoss (classification) and RMSE (regression).
@@ -854,9 +835,6 @@ cat("TS-Refinement log-loss:", score, "\n")
 | `cv_strategy` | `"random"` | CV fold construction: `"random"`, `"time"`, or `"group"` |
 | `time_col` | `NULL` | Timestamp column used when `cv_strategy = "time"` |
 | `group_col` | `NULL` | Group entity column used when `cv_strategy = "group"` |
-| `multi_fidelity` | `FALSE` | Enable two-stage row-subsampling evaluation during warm-up |
-| `mf_sample_frac` | 0.5 | Row fraction kept per fold during multi-fidelity screening |
-| `mf_warmup_frac` | 0.5 | Fraction of total generations run in multi-fidelity screening mode |
 | `early_stopping_generations` | 3 | Stop after N generations without improvement |
 | `evaluator` | `"lightgbm"` | ML backend: `"lightgbm"`, `"xgboost"`, `"catboost"`, `"lm"`, `"keras3"`, or vector of backends per island |
 | `seed` | `NULL` | Integer RNG seed for fully reproducible evolutionary search (CRAN-safe) |

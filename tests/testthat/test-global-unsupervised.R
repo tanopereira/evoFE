@@ -133,7 +133,7 @@ test_that("global_unsupervised = FALSE falls back to fold-local unsupervised fit
   expect_false(identical(res_local_1$ind$genes[[1]]$state$model$rotation, res_local_2$ind$genes[[1]]$state$model$rotation))
 })
 
-test_that("multi-fidelity screening fits unsupervised transformers on full dataset", {
+test_that("evaluate_pop fits unsupervised transformers on full dataset when shared_full provided", {
   set.seed(42)
   n <- 100
   dt <- data.table::data.table(
@@ -158,13 +158,8 @@ test_that("multi-fidelity screening fits unsupervised transformers on full datas
     train = dt[1:50, ],
     val = dt[51:100, ]
   )
-  # Low-fidelity train has only 20 rows
-  lf_splits <- list(
-    train = dt[1:20, ],
-    val = dt[51:100, ]
-  )
 
-  res_mf <- evaluate_pop_mf(
+  res <- evaluate_pop(
     pop = list(ind),
     data = dt,
     target_col = "y",
@@ -181,12 +176,10 @@ test_that("multi-fidelity screening fits unsupervised transformers on full datas
     fitness_cache = fitness_cache,
     threads = 1,
     verbose = FALSE,
-    running_best_fitness = -Inf,
-    mf_on = TRUE,
-    lf_shared_splits = lf_splits
+    running_best_fitness = -Inf
   )
 
-  # Check that state was fit globally on dt (100 rows, not 20 rows)
+  # Check that state was fit globally on dt (100 rows)
   full_pca <- stats::prcomp(as.matrix(dt[, .(x1, x2)]), center = TRUE, scale. = TRUE)
   cached_key <- digest::digest(paste0(gene_to_state_formula(g_pca), "_global"), algo = "md5", serialize = FALSE)
   expect_true(cached_key %in% ls(state_cache))

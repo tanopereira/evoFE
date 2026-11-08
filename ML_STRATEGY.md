@@ -453,9 +453,6 @@ scout_recipe <- evolve_features(
   pop_size              = 6,
   islands               = 1,
   cv_folds              = 3,
-  multi_fidelity        = TRUE,
-  mf_sample_frac        = 0.3,
-  mf_warmup_frac        = 0.5,
   allowed_transformers  = "basic",
   complexity_penalty    = 0.1,
   complexity_target     = "all_features",
@@ -545,9 +542,6 @@ rec_lgb_search <- evolve_features(
   num_leaves            = 63,
   nrounds               = 300,
   early_stopping_rounds = 25,
-  multi_fidelity        = TRUE,
-  mf_sample_frac        = 0.4,
-  mf_warmup_frac        = 0.4,
   complexity_penalty    = 0.25,
   complexity_mode       = "bic_dynamic",
   complexity_target     = "all_features",      # Parsimonious feature selection
@@ -582,9 +576,6 @@ rec_xgb_search <- evolve_features(
   max_depth             = 6,
   nrounds               = 300,
   early_stopping_rounds = 25,
-  multi_fidelity        = TRUE,
-  mf_sample_frac        = 0.4,
-  mf_warmup_frac        = 0.4,
   complexity_penalty    = 0.25,
   complexity_mode       = "bic_dynamic",
   complexity_target     = "all_features",
@@ -823,7 +814,6 @@ cat("Competition submission file generated successfully!\n")
 | **Model Diversity** | Single evaluator misses neural/scale features | Tri-Evaluator MetaCV Exploration | 3 fast MetaCV passes with `allowed_transformers = unsup_t` |
 | **CV Runtime** | 1M+ rows, 5-fold CV takes hours | Phase-1 subsample + MetaCV (100% rows in Stage 4) | `subsample_for_discovery(..., max_rows = 200000L)` + `evaluation_strategy = "metacv"` |
 | **Row Count** | 5M+ rows, RAM or CPU exhaustion | Split rows across islands | `row_split_islands = TRUE, islands = 6` |
-| **Early Generations**| Bad recipes waste full CV time | Subsample rows during warmup with live progress | `multi_fidelity = TRUE, mf_sample_frac = 0.3, mf_promote_frac = 0.5` |
 | **Manifold / UMAP** | UMAP & MST take $O(N^2)$ time | C++ multi-threaded landmark cap | `max_clustering_size = 25000` (or `50000`) |
 | **RealMLP Speed** | Small batch size stalls OpenMP threads | Scale mini-batch size | `batch_size = 2048` or `4096` |
 | **RealMLP Memory**| 150+ features blow up PBLD embeddings | Aggressive feature parsimony | `complexity_penalty = 0.3, complexity_target = "all_features"` |

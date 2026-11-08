@@ -14,6 +14,7 @@ ensemble_islands(
   sample_ratio = 0.8,
   stack_folds = NULL,
   stack_alpha = 0.5,
+  metric = NULL,
   rank_average = NULL,
   bag_folds = NULL,
   seed = NULL,
@@ -52,6 +53,10 @@ assignments are available, otherwise 5). Only used when \code{method = "stack"}.
 
 \item{stack_alpha}{Numeric in \code{[0, 1]}. Elastic-net mixing parameter of the
 stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.}
+
+\item{metric}{Optional evaluation metric name or function to override the metric
+inherited from the recipes (e.g. \code{"auc"} when ensembling models trained on
+calibration metrics like \code{"ts_refinement"}).}
 
 \item{rank_average}{Logical or NULL. If \code{TRUE}, ranks predictions to uniform
 quantiles in [0, 1] before computing ensemble weights and predictions.

@@ -31,7 +31,6 @@ evaluate_pop(
   baseline_fitness = NULL,
   n_samples = NULL,
   island = NULL,
-  fidelity_tag = "",
   cv_strategy = "random",
   time_col = NULL,
   group_col = NULL,

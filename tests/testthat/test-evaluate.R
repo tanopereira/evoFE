@@ -653,3 +653,40 @@ test_that("realmlp is numerically robust against near-zero variance features, In
   expect_lt(max(abs(preds_test)), 1e7)
 })
 
+test_that("evaluate_pop retains finite fitness and does not assign -Inf when gene collapses to cached individual", {
+  set.seed(42)
+  df <- data.frame(x1 = stats::rnorm(50), x2 = stats::rnorm(50), target = stats::rnorm(50))
+  ind1 <- create_individual(genes = list(), numeric_cols = c("x1", "x2"))
+  g_red <- create_gene("add", c("x1", "x1"))
+  ind2 <- create_individual(genes = list(g_red), numeric_cols = c("x1", "x2"))
+  pop <- list(ind1, ind2)
+  cache <- new.env(hash = TRUE, parent = emptyenv())
+  state <- new.env(hash = TRUE, parent = emptyenv())
+  s_ids <- c(rep("train", 35), rep("val", 15))
+
+  msgs <- testthat::capture_messages({
+    res <- evaluate_pop(
+      pop = pop, data = df, target_col = "target", task = "regression",
+      cv_folds = 2, evaluation_strategy = "split", split_ids = s_ids,
+      shared_splits = NULL, evaluator = "lightgbm", fold_ids = NULL,
+      shared_folds = NULL, shared_full = NULL, state_cache = state,
+      fitness_cache = cache, threads = 1, verbose = TRUE, running_best_fitness = -Inf
+    )
+  })
+
+  expect_true(is.finite(res$pop[[1]]$fitness))
+  expect_true(is.finite(res$pop[[2]]$fitness))
+  expect_equal(res$pop[[1]]$fitness, res$pop[[2]]$fitness)
+  expect_false(res$pop[[2]]$fitness == -Inf)
+
+  # Check that output message does not contain -Inf or pruned: constant/collinear gene
+  expect_false(any(grepl("Fitness: -Inf", msgs)))
+  expect_true(any(grepl("Tested Individual 2 -> Fitness: [^ ]+ \\(pruned: cached\\)", msgs)))
+
+  # Check cache holds valid finite fitness
+  k2 <- individual_to_cache_key(ind2)
+  expect_true(exists(k2, envir = cache))
+  expect_true(is.finite(cache[[k2]]$fitness))
+})
+
+

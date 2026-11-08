@@ -34,17 +34,6 @@
 #' @param time_col Column name used when \code{cv_strategy = "time"}. Must be
 #'   datetime or numeric.
 #' @param group_col Column name used when \code{cv_strategy = "group"}.
-#' @param multi_fidelity Logical (default FALSE). If TRUE, individuals during
-#'   warm-up generations are first screened on row-subsampled folds
-#'   (\code{mf_sample_frac}); the most promising half is then re-evaluated at
-#'   full fidelity before any selection decision, so all fitness comparisons
-#'   remain apples-to-apples. Reduces compute cost with minimal search-quality loss.
-#' @param mf_sample_frac Row fraction kept per fold during multi-fidelity
-#'   screening, in \code{(0, 1)}.
-#' @param mf_warmup_frac Fraction of generations (of \code{generations}) run in
-#'   low-fidelity screening mode before full-fidelity-only evaluation begins.
-#' @param mf_promote_frac Fraction of top-performing individuals on the subsample
-#'   promoted to full-fidelity evaluation during multi-fidelity warmup (in \code{(0, 1]}, default 0.5).
 #' @param early_stopping_generations Stop if fitness doesn't improve for this
 #'   many generations
 #' @param evaluator The ML model to use ("lightgbm", "xgboost", "catboost", or a
@@ -174,8 +163,6 @@ evolve_features <- function(data, target_col, task = "classification",
                             split_ids = NULL,
                             holdout_frac = 0,
                             cv_strategy = "random", time_col = NULL, group_col = NULL,
-                            multi_fidelity = FALSE, mf_sample_frac = 0.5,
-                            mf_warmup_frac = 0.5, mf_promote_frac = 0.5,
                             early_stopping_generations = 3, evaluator = "lightgbm",
                             seed = NULL,
                             dynamic_population = TRUE,
@@ -467,23 +454,6 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  # Validate multi-fidelity evaluation
-  if (!is.logical(multi_fidelity) || length(multi_fidelity) != 1 || is.na(multi_fidelity)) {
-    stop("'multi_fidelity' must be TRUE or FALSE.")
-  }
-  if (!is.numeric(mf_sample_frac) || length(mf_sample_frac) != 1 ||
-      is.na(mf_sample_frac) || mf_sample_frac <= 0 || mf_sample_frac >= 1) {
-    stop("'mf_sample_frac' must be a single number in (0, 1).")
-  }
-  if (!is.numeric(mf_warmup_frac) || length(mf_warmup_frac) != 1 ||
-      is.na(mf_warmup_frac) || mf_warmup_frac < 0 || mf_warmup_frac > 1) {
-    stop("'mf_warmup_frac' must be a single number in [0, 1].")
-  }
-  if (!is.numeric(mf_promote_frac) || length(mf_promote_frac) != 1 ||
-      is.na(mf_promote_frac) || mf_promote_frac <= 0 || mf_promote_frac > 1) {
-    stop("'mf_promote_frac' must be a single number in (0, 1].")
-  }
-
   # Validate island parameters
   if (islands > 1) {
     if (!is.numeric(migration_interval) || migration_interval < 1) {
@@ -665,101 +635,6 @@ evolve_features <- function(data, target_col, task = "classification",
         val = global_val_dt,
         holdout = global_holdout_dt
       )
-    }
-  }
-
-  # Multi-fidelity screening setup
-  mf_warmup_gens <- ceiling(generations * mf_warmup_frac)
-  mf_shared_splits <- NULL
-  mf_island_shared_splits <- NULL
-  mf_shared_folds <- NULL
-  mf_island_shared_folds <- NULL
-  mf_shared_full <- NULL
-
-  if (multi_fidelity) {
-    if (!is.numeric(mf_sample_frac) || length(mf_sample_frac) != 1 ||
-        mf_sample_frac <= 0 || mf_sample_frac >= 1) {
-      stop("'mf_sample_frac' must be a numeric value strictly between 0 and 1.")
-    }
-    if (!is.numeric(mf_warmup_frac) || length(mf_warmup_frac) != 1 ||
-        mf_warmup_frac <= 0 || mf_warmup_frac > 1) {
-      stop("'mf_warmup_frac' must be a numeric value in (0, 1].")
-    }
-
-    .mf_subsample <- function(part) {
-      if (is.null(part) || nrow(part) == 0L) return(part)
-      n_take <- max(30L, ceiling(nrow(part) * mf_sample_frac))
-      n_take <- min(n_take, nrow(part))
-      take_idx <- if (n_take < nrow(part) && !identical(cv_strategy, "time") && target_col %in% names(part)) {
-        sort(which(stratified_split(part[[target_col]], c(n_take, nrow(part) - n_take)) == "train"))
-      } else {
-        seq_len(n_take)
-      }
-      res <- part[take_idx, ]
-      row_id <- attr(part, ".row_id")
-      if (!is.null(row_id)) {
-        data.table::setattr(res, ".row_id", row_id[take_idx])
-      }
-      res
-    }
-    .mf_subsample_fold <- function(fl) {
-      if (is.null(fl)) return(fl)
-      list(train = .mf_subsample(fl$train), val = fl$val)
-    }
-
-    if (!is.null(shared_splits)) {
-      mf_shared_splits <- list(
-        train = .mf_subsample(shared_splits$train),
-        val = shared_splits$val,
-        holdout = shared_splits$holdout
-      )
-    }
-    if (!is.null(island_shared_splits)) {
-      mf_island_shared_splits <- lapply(island_shared_splits, .mf_subsample_fold)
-    }
-    if (!is.null(shared_folds)) {
-      mf_shared_folds <- lapply(shared_folds, .mf_subsample_fold)
-    }
-    if (!is.null(island_shared_folds)) {
-      mf_island_shared_folds <- lapply(island_shared_folds, function(isl) lapply(isl, .mf_subsample_fold))
-    }
-    # Multi-fidelity downsamples evaluator training folds only; shared_full remains intact
-    # so global unsupervised transformers learn and cache the full data manifold.
-    mf_shared_full <- shared_full
-    if (verbose) {
-      n_tr_full <- if (!is.null(shared_splits$train)) {
-        nrow(shared_splits$train)
-      } else if (!is.null(shared_folds) && length(shared_folds) > 0 && !is.null(shared_folds[[1]]$train)) {
-        nrow(shared_folds[[1]]$train)
-      } else if (!is.null(island_shared_splits) && length(island_shared_splits) > 0 && !is.null(island_shared_splits[[1]]$train)) {
-        nrow(island_shared_splits[[1]]$train)
-      } else if (!is.null(island_shared_folds) && length(island_shared_folds) > 0 &&
-                 length(island_shared_folds[[1]]) > 0 && !is.null(island_shared_folds[[1]][[1]]$train)) {
-        nrow(island_shared_folds[[1]][[1]]$train)
-      } else {
-        NA_integer_
-      }
-      n_tr_sub <- if (!is.null(mf_shared_splits$train)) {
-        nrow(mf_shared_splits$train)
-      } else if (!is.null(mf_shared_folds) && length(mf_shared_folds) > 0 && !is.null(mf_shared_folds[[1]]$train)) {
-        nrow(mf_shared_folds[[1]]$train)
-      } else if (!is.null(mf_island_shared_splits) && length(mf_island_shared_splits) > 0 && !is.null(mf_island_shared_splits[[1]]$train)) {
-        nrow(mf_island_shared_splits[[1]]$train)
-      } else if (!is.null(mf_island_shared_folds) && length(mf_island_shared_folds) > 0 &&
-                 length(mf_island_shared_folds[[1]]) > 0 && !is.null(mf_island_shared_folds[[1]][[1]]$train)) {
-        nrow(mf_island_shared_folds[[1]][[1]]$train)
-      } else {
-        NA_integer_
-      }
-      rows_info <- if (!is.na(n_tr_full) && !is.na(n_tr_sub)) {
-        sprintf(" (%s -> %s rows/fold)", format(n_tr_full, big.mark = ","), format(n_tr_sub, big.mark = ","))
-      } else {
-        ""
-      }
-      message(sprintf(
-        "  Multi-Fidelity: screening on %.0f%% subsample%s for warmup generations 1..%d, top %.0f%% promoted to full fidelity.",
-        100 * mf_sample_frac, rows_info, mf_warmup_gens, 100 * mf_promote_frac
-      ))
     }
   }
 
@@ -1082,13 +957,7 @@ evolve_features <- function(data, target_col, task = "classification",
     complexity_floor = complexity_floor, complexity_target = complexity_target,
     island_baseline_inds = island_baseline_inds, baseline_ind = baseline_ind,
     cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
-    multi_fidelity = multi_fidelity, mf_warmup_frac = mf_warmup_frac,
-    mf_promote_frac = mf_promote_frac,
-    mf_shared_splits = mf_shared_splits,
-    mf_island_shared_splits = mf_island_shared_splits,
-    mf_shared_folds = mf_shared_folds,
-    mf_island_shared_folds = mf_island_shared_folds,
-    mf_shared_full = mf_shared_full, record = record, viewer = viewer,
+    record = record, viewer = viewer,
     evolution_log = evolution_log,
     early_stopping_generations = early_stopping_generations,
     dynamic_population = dynamic_population,
