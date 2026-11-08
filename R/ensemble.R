@@ -27,6 +27,9 @@
 #'   assignments are available, otherwise 5). Only used when \code{method = "stack"}.
 #' @param stack_alpha Numeric in \code{[0, 1]}. Elastic-net mixing parameter of the
 #'   stacking meta-learner (\code{1} = lasso, \code{0} = ridge). Default: \code{0.5}.
+#' @param metric Optional evaluation metric name or function to override the metric
+#'   inherited from the recipes (e.g. \code{"auc"} when ensembling models trained on
+#'   calibration metrics like \code{"ts_refinement"}).
 #' @param rank_average Logical or NULL. If \code{TRUE}, ranks predictions to uniform
 #'   quantiles in [0, 1] before computing ensemble weights and predictions.
 #'   Recommended for ranking-based metrics like AUC. If \code{NULL} (default),
@@ -85,6 +88,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              sample_ratio = 0.8,
                              stack_folds = NULL,
                              stack_alpha = 0.5,
+                             metric = NULL,
                              rank_average = NULL,
                              bag_folds = NULL,
                              seed = NULL,
@@ -178,9 +182,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   task <- first_recipe$task
-  metric <- if (!is.null(first_recipe$metric)) first_recipe$metric else "default"
+  metric <- if (!is.null(metric)) metric else if (!is.null(first_recipe$metric)) first_recipe$metric else "default"
   if (!is.null(task)) {
     validate_metric(metric, task)
+    metric <- canonical_metric_name(metric, task)
   }
   classes <- first_recipe$classes
   num_class <- if (!is.null(classes)) length(classes) else NULL
@@ -190,6 +195,14 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     rank_average <- metric_is_rank_invariant(metric, task)
   } else if (!is.logical(rank_average) || length(rank_average) != 1L) {
     stop("'rank_average' must be a logical scalar (TRUE or FALSE) or NULL.")
+  }
+
+  # If rank averaging is active with a probability metric (e.g. ts_refinement or logloss),
+  # evaluating that metric on uniform percentile ranks is mathematically meaningless.
+  # Automatically switch the ensembling evaluation metric to AUC for classification so that
+  # the reported ensemble fitness reflects the true rank-concordance (AUC).
+  if (isTRUE(rank_average) && !metric_is_rank_invariant(metric, task) && task == "classification") {
+    metric <- "auc"
   }
 
   # Collect validation prediction vectors, targets, and evaluators across all recipes
@@ -495,18 +508,32 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
   # Apples-to-apples comparison: ensemble fitness is an unpenalized validation
   # metric, so compare against the island's raw (unpenalized) validation score
-  # rather than the complexity-penalized selection fitness.
-  single_best_fitness <- max(vapply(cand_metadata, function(m) {
-    ind_i <- m$ind
-    if (is.null(ind_i)) return(-Inf)
-    if (!is.null(ind_i$raw_fitness) && is.finite(ind_i$raw_fitness)) {
-      ind_i$raw_fitness
-    } else if (!is.null(ind_i$fitness) && !is.na(ind_i$fitness)) {
-      ind_i$fitness
-    } else {
-      -Inf
-    }
-  }, double(1)))
+  # evaluated under the same ensembling metric.
+  single_best_fitness <- if (!is.null(y_val) && length(val_preds_list) > 0L) {
+    max(vapply(val_preds_list, function(vp) {
+      if (is.null(vp) || length(vp) == 0L) return(-Inf)
+      mask <- if (is.matrix(vp)) !is.na(vp[, 1]) & !is.na(y_val) else !is.na(vp) & !is.na(y_val)
+      if (!any(mask)) return(-Inf)
+      res <- tryCatch(
+        if (is.matrix(vp)) compute_metric(y_val[mask], vp[mask, , drop = FALSE], task = task, metric = metric, num_class = num_class)
+        else compute_metric(y_val[mask], vp[mask], task = task, metric = metric),
+        error = function(e) -Inf
+      )
+      if (is.na(res) || is.nan(res)) -Inf else res
+    }, double(1)))
+  } else {
+    max(vapply(cand_metadata, function(m) {
+      ind_i <- m$ind
+      if (is.null(ind_i)) return(-Inf)
+      if (!is.null(ind_i$raw_fitness) && is.finite(ind_i$raw_fitness)) {
+        ind_i$raw_fitness
+      } else if (!is.null(ind_i$fitness) && !is.na(ind_i$fitness)) {
+        ind_i$fitness
+      } else {
+        -Inf
+      }
+    }, double(1)))
+  }
 
   if (verbose) {
     message(sprintf("\nEnsemble Selection Complete: %d / %d island models active.", length(active_names), length(val_preds_list)))

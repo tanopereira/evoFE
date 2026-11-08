@@ -423,7 +423,7 @@ test_that("run_competition_pipeline correctly resolves and applies rank_average 
   expect_false(res_def$rank_average)
   expect_false(res_def$final_model$rank_average)
 
-  # 2. ts_refinement with explicit rank_average = TRUE overrides to TRUE
+  # 2. ts_refinement with explicit rank_average = TRUE overrides to TRUE and switches ensemble_metric to auc
   res_rank <- run_competition_pipeline(
     train = tr, test = te, target_col = "y",
     metric = "ts_refinement", rank_average = TRUE,
@@ -432,7 +432,22 @@ test_that("run_competition_pipeline correctly resolves and applies rank_average 
   )
   expect_true(res_rank$rank_average)
   expect_true(res_rank$final_model$rank_average)
+  expect_equal(res_rank$ensemble_metric, "auc")
+  expect_equal(res_rank$final_model$metric, "auc")
   expect_true(all(res_rank$predictions >= 0 & res_rank$predictions <= 1))
+  expect_gte(res_rank$final_cv_fitness, 0.0)
+
+  # 3. Explicit ensemble_metric = "auc" with metric = "ts_refinement"
+  res_ens_auc <- run_competition_pipeline(
+    train = tr, test = te, target_col = "y",
+    metric = "ts_refinement", ensemble_metric = "auc",
+    preset = "fast", evaluators = c("lightgbm", "realmlp"),
+    cv_folds = 2L, threads = 1L, seed = 1L, verbose = FALSE
+  )
+  expect_true(res_ens_auc$rank_average)
+  expect_equal(res_ens_auc$ensemble_metric, "auc")
+  expect_equal(res_ens_auc$metric, "ts_refinement")
+  expect_gte(res_ens_auc$final_cv_fitness, 0.0)
 })
 
 test_that("run_competition_pipeline harmonizes logical vs string representations across train and test", {

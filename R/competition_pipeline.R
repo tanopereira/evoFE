@@ -367,6 +367,11 @@
 #' @param metric Optimization metric name (e.g. \code{"auto"}, \code{"ts_refinement"},
 #'   \code{"auc"}, \code{"aucpr"}, \code{"f1"}, \code{"mcc"}, \code{"qwk"}, \code{"rmsle"},
 #'   \code{"mae"}, \code{"smape"}) or custom metric function.
+#' @param ensemble_metric Optional evaluation metric used for Stage 5 ensembling
+#'   and final stacked CV fitness reporting (default \code{NULL}, inheriting
+#'   \code{metric}). Set to \code{"auc"} when optimizing calibration metrics like
+#'   \code{"ts_refinement"} during Stage 2 & 4 feature evolution/training, so that
+#'   Stage 5 ensembling automatically uses rank averaging and reports an honest CV AUC.
 #' @param preset Compute budget preset: \code{"standard"} (competition playbook defaults),
 #'   \code{"fast"} (quick smoke/baseline run), or \code{"max"} (deep schedule).
 #' @param preset_overrides Optional named list of hyperparameter values overriding preset
@@ -423,6 +428,7 @@ run_competition_pipeline <- function(
   id_col = NULL,
   task = c("auto", "classification", "multiclass", "regression"),
   metric = "auto",
+  ensemble_metric = NULL,
   preset = c("standard", "fast", "max"),
   preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
@@ -484,13 +490,24 @@ run_competition_pipeline <- function(
     metric
   }
   validate_metric(resolved_metric, resolved_task)
+  resolved_metric <- canonical_metric_name(resolved_metric, resolved_task)
+
+  resolved_ens_metric <- if (!is.null(ensemble_metric)) {
+    validate_metric(ensemble_metric, resolved_task)
+    canonical_metric_name(ensemble_metric, resolved_task)
+  } else if (isTRUE(rank_average) && !metric_is_rank_invariant(resolved_metric, resolved_task) && resolved_task == "classification") {
+    "auc"
+  } else {
+    resolved_metric
+  }
+
   resolved_rank_avg <- if (!is.null(rank_average)) {
     if (!is.logical(rank_average) || length(rank_average) != 1L) {
       stop("'rank_average' must be a logical scalar (TRUE or FALSE) or NULL.")
     }
     rank_average
   } else {
-    metric_is_rank_invariant(resolved_metric, resolved_task)
+    metric_is_rank_invariant(resolved_ens_metric, resolved_task)
   }
   resolved_tt <- .resolve_target_transform(y_vec, resolved_task, target_transform)
 
@@ -805,6 +822,7 @@ run_competition_pipeline <- function(
       data = train_mega,
       target_col = target_col,
       method = "stack",
+      metric = resolved_ens_metric,
       stack_folds = cv_folds,
       stack_alpha = 0.5,
       rank_average = resolved_rank_avg,
@@ -875,6 +893,7 @@ run_competition_pipeline <- function(
       dropped_drifting_features = dropped_drift_cols,
       task = resolved_task,
       metric = resolved_metric,
+      ensemble_metric = resolved_ens_metric,
       target_col = target_col,
       id_col = id_col,
       preset = preset,

@@ -522,7 +522,8 @@ print.evo_competition_run <- function(x, ...) {
     x$raw_feature_count, x$mega_feature_count, paste(x$evaluators, collapse = ", ")
   ))
   if (!is.null(x$final_cv_fitness) && is.finite(x$final_cv_fitness)) {
-    cat(sprintf("Final Stacked CV Fitness: %.5f\n", x$final_cv_fitness))
+    ens_met_lbl <- if (!is.null(x$ensemble_metric)) .format_metric_label(x$ensemble_metric) else .format_metric_label(x$metric)
+    cat(sprintf("Final Stacked CV Fitness (%s): %.5f\n", ens_met_lbl, x$final_cv_fitness))
   }
   invisible(x)
 }
@@ -545,6 +546,7 @@ summary.evo_competition_run <- function(object, ...) {
       preset = object$preset,
       task = object$task,
       metric = object$metric,
+      ensemble_metric = object$ensemble_metric,
       cv_folds = object$cv_folds,
       cv_strategy = object$cv_strategy,
       target_transform = object$target_transform,
@@ -593,7 +595,8 @@ print.summary_evo_competition_run <- function(x, ...) {
   cat("\nStage 4 Model OOF Fitness & Stack Weights:\n")
   print(x$stage4_table, row.names = FALSE)
   if (!is.null(x$final_cv_fitness) && is.finite(x$final_cv_fitness)) {
-    cat(sprintf("\nFinal Stacked CV Fitness: %.5f\n", x$final_cv_fitness))
+    ens_met_lbl <- if (!is.null(x$ensemble_metric)) .format_metric_label(x$ensemble_metric) else .format_metric_label(x$metric)
+    cat(sprintf("\nFinal Stacked CV Fitness (%s): %.5f\n", ens_met_lbl, x$final_cv_fitness))
   }
   invisible(x)
 }
