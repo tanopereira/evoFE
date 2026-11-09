@@ -15,6 +15,7 @@ run_competition_pipeline(
   preset = c("standard", "fast", "max"),
   preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
+  tune_stage4 = c("none", "tabarena", "mbo"),
   evaluator_args = list(),
   cv_folds = 5L,
   cv_strategy = c("random", "stratified_group", "group", "time"),
@@ -67,6 +68,12 @@ phases complete while retaining optimal validation checkpointing.}
 
 \item{evaluators}{Character vector of model families to run (default
 \code{c("lightgbm", "xgboost", "realmlp")}). Unavailable packages are skipped with a warning.}
+
+\item{tune_stage4}{Optional Stage 4 hyperparameter optimization strategy:
+\code{"none"} (default, uses high-capacity fixed schedules), \code{"tabarena"} (tunes
+each model family using its TabArena parameter space via \pkg{mlr3mbo} Bayesian
+Optimization), or \code{"mbo"} (uses standard MBO tuning spaces). Stage 2 feature
+discovery always uses fast base surrogates so genetic search runs at peak throughput.}
 
 \item{evaluator_args}{Optional nested list of model-specific or stage-specific training
 arguments passed into \code{\link{evolve_features}} (e.g.

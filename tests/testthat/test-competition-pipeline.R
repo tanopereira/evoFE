@@ -491,5 +491,67 @@ test_that("run_competition_pipeline harmonizes logical vs string representations
   expect_type(res$test_mega$flag_active, "logical")
 })
 
+test_that("run_competition_pipeline supports Stage 4 TabArena Bayesian Optimization tuning", {
+  testthat::skip_if_not_installed("lightgbm")
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  set.seed(42)
+  n_tr <- 40L
+  n_te <- 10L
+  tr <- data.frame(
+    x1 = stats::rnorm(n_tr),
+    x2 = stats::rnorm(n_tr),
+    x3 = stats::rnorm(n_tr),
+    target = sample(c(0L, 1L), n_tr, replace = TRUE)
+  )
+  te <- data.frame(
+    x1 = stats::rnorm(n_te),
+    x2 = stats::rnorm(n_te),
+    x3 = stats::rnorm(n_te)
+  )
+
+  res <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "target",
+    evaluators = "lightgbm",
+    tune_stage4 = "tabarena",
+    preset = "fast",
+    preset_overrides = list(
+      mbo_iters = 1L,
+      mbo_init_design = 2L,
+      s4_lgb_nrounds = 5L,
+      s4_lgb_es = 5L
+    ),
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 123L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_competition_run")
+  expect_equal(res$tune_stage4, "tabarena")
+  expect_equal(res$stage4_evaluators[["lightgbm"]], "lightgbm_tabarena")
+  expect_true(!is.null(res$stage4_recipes[["lightgbm"]]$best_individual$best_params))
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions)))
+
+  # S3 presentation checks
+  summ <- summary(res)
+  expect_s3_class(summ, "summary_evo_competition_run")
+  expect_equal(summ$tune_stage4, "tabarena")
+  expect_equal(summ$stage4_table$Evaluator, "lightgbm_tabarena")
+
+  out_p <- utils::capture.output(print(res))
+  expect_true(any(grepl("Stage4 Tuning: tabarena", out_p)))
+
+  out_s <- utils::capture.output(print(summ))
+  expect_true(any(grepl("Tuning: tabarena", out_s)))
+  expect_true(any(grepl("lightgbm_tabarena", out_s)))
+})
+
+
 
 

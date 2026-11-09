@@ -517,9 +517,10 @@ print.evo_competition_run <- function(x, ...) {
     "Rows: %d train (%d Phase-1 discovery) | %d test\n",
     x$train_rows, x$discovery_rows, x$test_rows
   ))
+  tuning_str <- if (!is.null(x$tune_stage4) && x$tune_stage4 != "none") sprintf(" | Stage4 Tuning: %s", x$tune_stage4) else ""
   cat(sprintf(
-    "Features: %d raw --> %d Mega-Matrix | Evaluators: %s\n",
-    x$raw_feature_count, x$mega_feature_count, paste(x$evaluators, collapse = ", ")
+    "Features: %d raw --> %d Mega-Matrix | Evaluators: %s%s\n",
+    x$raw_feature_count, x$mega_feature_count, paste(x$evaluators, collapse = ", "), tuning_str
   ))
   if (!is.null(x$final_cv_fitness) && is.finite(x$final_cv_fitness)) {
     ens_met_lbl <- if (!is.null(x$ensemble_metric)) .format_metric_label(x$ensemble_metric) else .format_metric_label(x$metric)
@@ -535,8 +536,13 @@ print.evo_competition_run <- function(x, ...) {
 #' @return A \code{summary_evo_competition_run} object.
 #' @export
 summary.evo_competition_run <- function(object, ...) {
+  eval_labels <- if (!is.null(object$stage4_evaluators)) {
+    unname(object$stage4_evaluators[names(object$stage4_fitness)])
+  } else {
+    names(object$stage4_fitness)
+  }
   s4_df <- data.frame(
-    Evaluator = names(object$stage4_fitness),
+    Evaluator = eval_labels,
     OOF_Fitness = as.numeric(object$stage4_fitness),
     Stack_Weight = as.numeric(object$weights[names(object$stage4_fitness)]),
     stringsAsFactors = FALSE
@@ -544,6 +550,7 @@ summary.evo_competition_run <- function(object, ...) {
   structure(
     list(
       preset = object$preset,
+      tune_stage4 = object$tune_stage4,
       task = object$task,
       metric = object$metric,
       ensemble_metric = object$ensemble_metric,
@@ -573,10 +580,12 @@ summary.evo_competition_run <- function(object, ...) {
 #' @export
 print.summary_evo_competition_run <- function(x, ...) {
   cat(sprintf("Summary of evoFE Competition Pipeline (%s preset)\n", x$preset))
+  tuning_str <- if (!is.null(x$tune_stage4) && x$tune_stage4 != "none") sprintf(" | Tuning: %s", x$tune_stage4) else ""
   cat(sprintf(
-    "Task: %s | Metric: %s | CV: %d-fold %s | BagFolds: %s\n",
+    "Task: %s | Metric: %s | CV: %d-fold %s | BagFolds: %s%s\n",
     x$task, .format_metric_label(x$metric), x$cv_folds, x$cv_strategy,
-    if (isTRUE(x$bag_folds)) "TRUE" else "FALSE"
+    if (isTRUE(x$bag_folds)) "TRUE" else "FALSE",
+    tuning_str
   ))
   cat(sprintf(
     "Data: %d train rows (%d discovery rows), %d test rows\n",

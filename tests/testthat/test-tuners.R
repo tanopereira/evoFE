@@ -343,7 +343,8 @@ test_that("metacv tournament and ensemble_islands OOF harmonization unwrap pre-t
 })
 
 test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are registered in model_registry", {
-  for (ev in c("lightgbm_mbo", "xgboost_mbo", "catboost_mbo", "realmlp_mbo")) {
+  for (ev in c("lightgbm_mbo", "xgboost_mbo", "catboost_mbo", "realmlp_mbo",
+               "lightgbm_tabarena", "xgboost_tabarena", "catboost_tabarena", "realmlp_tabarena")) {
     entry <- get_evaluator(ev)
     expect_true(isTRUE(entry$is_tuned), info = ev)
     expect_true(is.character(entry$base_evaluator) && nzchar(entry$base_evaluator), info = ev)
@@ -351,5 +352,9 @@ test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are r
   expect_equal(unwrap_evaluator("xgboost_mbo"), "xgboost")
   expect_equal(unwrap_evaluator("catboost_mbo"), "catboost")
   expect_equal(unwrap_evaluator("realmlp_mbo"), "realmlp")
+  expect_equal(unwrap_evaluator("lightgbm_tabarena"), "lightgbm")
+  expect_equal(unwrap_evaluator("xgboost_tabarena"), "xgboost")
+  expect_equal(unwrap_evaluator("catboost_tabarena"), "catboost")
+  expect_equal(unwrap_evaluator("realmlp_tabarena"), "realmlp")
 })
 

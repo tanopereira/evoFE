@@ -26,6 +26,8 @@
       s2_sd_penalty = 0.10,
       s2_confirm_k = 0L,
       clust_cap = 2000L,
+      mbo_iters = 3L,
+      mbo_init_design = 4L,
       s4_lgb_lr = 0.05,
       s4_lgb_nrounds = 200L,
       s4_lgb_es = 25L,
@@ -51,6 +53,8 @@
       s2_sd_penalty = 0.15,
       s2_confirm_k = 3L,
       clust_cap = 25000L,
+      mbo_iters = 10L,
+      mbo_init_design = 8L,
       s4_lgb_lr = 0.005,
       s4_lgb_nrounds = 50000L,
       s4_lgb_es = 250L,
@@ -76,6 +80,8 @@
       s2_sd_penalty = 0.20,
       s2_confirm_k = 3L,
       clust_cap = 50000L,
+      mbo_iters = 25L,
+      mbo_init_design = 12L,
       s4_lgb_lr = 0.003,
       s4_lgb_nrounds = 50000L,
       s4_lgb_es = 300L,
@@ -164,6 +170,7 @@
 #' @noRd
 .evaluator_stage_args <- function(ev, stage, cfg, n_rows, custom_evaluator_args = NULL) {
   base_ev <- get_base_evaluator(ev)
+  is_tuned <- is_tuned_evaluator(ev)
   args <- if (stage == 2L) {
     if (base_ev == "lightgbm") {
       list(
@@ -195,48 +202,96 @@
     }
   } else {
     # Stage 4 high-capacity retraining
-    if (base_ev == "lightgbm") {
-      list(
-        learning_rate = cfg$s4_lgb_lr,
-        num_leaves = 63L,
-        feature_fraction = 0.75,
-        bagging_fraction = 0.80,
-        bagging_freq = 1L,
-        lambda_l1 = 0.5,
-        lambda_l2 = 2.0,
-        nrounds = cfg$s4_lgb_nrounds,
-        early_stopping_rounds = cfg$s4_lgb_es
-      )
-    } else if (base_ev == "xgboost") {
-      list(
-        tree_method = "hist",
-        learning_rate = cfg$s4_xgb_lr,
-        max_depth = 6L,
-        subsample = 0.80,
-        colsample_bytree = 0.75,
-        lambda = 2.0,
-        nrounds = cfg$s4_xgb_nrounds,
-        early_stopping_rounds = cfg$s4_xgb_es
-      )
-    } else if (base_ev == "realmlp") {
-      bs <- if (n_rows >= 8192L) 2048L else -1L
-      list(
-        epochs = cfg$s4_mlp_epochs,
-        lr = cfg$s4_mlp_lr,
-        # Patience == epochs: early stopping stays on (tracks best epoch) but never truncates cyclic schedule.
-        early_stopping_rounds = cfg$s4_mlp_es,
-        hidden_dim = cfg$s4_mlp_hidden,
-        batch_size = bs
-      )
+    if (is_tuned) {
+      mbo_it <- if (!is.null(cfg$mbo_iters)) as.integer(cfg$mbo_iters) else 10L
+      mbo_id <- if (!is.null(cfg$mbo_init_design)) as.integer(cfg$mbo_init_design) else 8L
+      if (base_ev == "lightgbm") {
+        list(
+          learning_rate = cfg$s4_lgb_lr,
+          nrounds = cfg$s4_lgb_nrounds,
+          early_stopping_rounds = cfg$s4_lgb_es,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "xgboost") {
+        list(
+          tree_method = "hist",
+          learning_rate = cfg$s4_xgb_lr,
+          nrounds = cfg$s4_xgb_nrounds,
+          early_stopping_rounds = cfg$s4_xgb_es,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "realmlp") {
+        bs <- if (n_rows >= 8192L) 2048L else -1L
+        list(
+          epochs = cfg$s4_mlp_epochs,
+          early_stopping_rounds = cfg$s4_mlp_es,
+          batch_size = bs,
+          mbo_iters = max(2L, as.integer(ceiling(mbo_it * 0.7))),
+          mbo_init_design = max(3L, as.integer(ceiling(mbo_id * 0.75)))
+        )
+      } else {
+        list(
+          learning_rate = cfg$s4_lgb_lr,
+          nrounds = cfg$s4_lgb_nrounds,
+          early_stopping_rounds = cfg$s4_lgb_es,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      }
     } else {
-      list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)
+      if (base_ev == "lightgbm") {
+        list(
+          learning_rate = cfg$s4_lgb_lr,
+          num_leaves = 63L,
+          feature_fraction = 0.75,
+          bagging_fraction = 0.80,
+          bagging_freq = 1L,
+          lambda_l1 = 0.5,
+          lambda_l2 = 2.0,
+          nrounds = cfg$s4_lgb_nrounds,
+          early_stopping_rounds = cfg$s4_lgb_es
+        )
+      } else if (base_ev == "xgboost") {
+        list(
+          tree_method = "hist",
+          learning_rate = cfg$s4_xgb_lr,
+          max_depth = 6L,
+          subsample = 0.80,
+          colsample_bytree = 0.75,
+          lambda = 2.0,
+          nrounds = cfg$s4_xgb_nrounds,
+          early_stopping_rounds = cfg$s4_xgb_es
+        )
+      } else if (base_ev == "realmlp") {
+        bs <- if (n_rows >= 8192L) 2048L else -1L
+        list(
+          epochs = cfg$s4_mlp_epochs,
+          lr = cfg$s4_mlp_lr,
+          # Patience == epochs: early stopping stays on (tracks best epoch) but never truncates cyclic schedule.
+          early_stopping_rounds = cfg$s4_mlp_es,
+          hidden_dim = cfg$s4_mlp_hidden,
+          batch_size = bs
+        )
+      } else {
+        list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)
+      }
     }
   }
 
   if (!is.null(custom_evaluator_args) && is.list(custom_evaluator_args) && length(custom_evaluator_args) > 0L) {
     stage_key <- paste0("stage", stage)
 
-    # 1. Model-keyed arguments: evaluator_args[[ev]] or evaluator_args[[base_ev]]
+    # 1. Global / top-level arguments (not keyed by evaluator or stage)
+    section_keys <- c("stage2", "stage4", "stage3_5", "lightgbm", "xgboost", "realmlp", "catboost")
+    for (k in names(custom_evaluator_args)) {
+      if (!k %in% section_keys && !has_evaluator(k)) {
+        args[[k]] <- custom_evaluator_args[[k]]
+      }
+    }
+
+    # 2. Model-keyed arguments: evaluator_args[[ev]] or evaluator_args[[base_ev]]
     ev_custom <- if (ev %in% names(custom_evaluator_args)) {
       custom_evaluator_args[[ev]]
     } else if (base_ev %in% names(custom_evaluator_args)) {
@@ -378,6 +433,11 @@
 #'   phases complete while retaining optimal validation checkpointing.
 #' @param evaluators Character vector of model families to run (default
 #'   \code{c("lightgbm", "xgboost", "realmlp")}). Unavailable packages are skipped with a warning.
+#' @param tune_stage4 Optional Stage 4 hyperparameter optimization strategy:
+#'   \code{"none"} (default, uses high-capacity fixed schedules), \code{"tabarena"} (tunes
+#'   each model family using its TabArena parameter space via \pkg{mlr3mbo} Bayesian
+#'   Optimization), or \code{"mbo"} (uses standard MBO tuning spaces). Stage 2 feature
+#'   discovery always uses fast base surrogates so genetic search runs at peak throughput.
 #' @param evaluator_args Optional nested list of model-specific or stage-specific training
 #'   arguments passed into \code{\link{evolve_features}} (e.g.
 #'   \code{list(realmlp = list(n_cycles = 6L), lightgbm = list(max_depth = 8L))} or
@@ -429,6 +489,7 @@ run_competition_pipeline <- function(
   preset = c("standard", "fast", "max"),
   preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
+  tune_stage4 = c("none", "tabarena", "mbo"),
   evaluator_args = list(),
   cv_folds = 5L,
   cv_strategy = c("random", "stratified_group", "group", "time"),
@@ -465,6 +526,7 @@ run_competition_pipeline <- function(
   }
 
   preset <- match.arg(preset)
+  tune_stage4 <- match.arg(tune_stage4)
   cv_strategy <- match.arg(cv_strategy)
   cv_folds <- as.integer(cv_folds)
   if (is.na(cv_folds) || cv_folds < 2L) stop("'cv_folds' must be an integer >= 2.")
@@ -600,14 +662,14 @@ run_competition_pipeline <- function(
     base_ev <- get_base_evaluator(ev)
     is_mlp <- identical(base_ev, "realmlp")
     if (show_msg) {
-      message(sprintf("[Stage 2] Discovering features with '%s' (%d/%d)...", ev, idx, length(active_evaluators)))
+      message(sprintf("[Stage 2] Discovering features with '%s' (%d/%d)...", base_ev, idx, length(active_evaluators)))
     }
 
     s2_common <- list(
       data = search_dt,
       target_col = target_col,
       task = resolved_task,
-      evaluator = ev,
+      evaluator = base_ev,
       metric = resolved_metric,
       allowed_transformers = unsup_t,
       evaluation_strategy = if (use_metacv) "metacv" else "cv",
@@ -636,7 +698,7 @@ run_competition_pipeline <- function(
       seed = base_seed + 100L * idx,
       verbose = verbose
     )
-    ev_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
+    ev_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
     stage2_recipes[[ev]] <- do.call(evolve_features, c(s2_common, ev_args))
   }
 
@@ -729,17 +791,18 @@ run_competition_pipeline <- function(
 
     for (idx in seq_along(active_evaluators)) {
       ev <- active_evaluators[idx]
+      base_ev <- get_base_evaluator(ev)
       if (show_msg) {
         message(sprintf(
           "[Stage 3.5] Fast supervised encoder search on %d rows for '%s'...",
-          nrow(sup_search_dt), ev
+          nrow(sup_search_dt), base_ev
         ))
       }
       s35_common <- list(
         data = sup_search_dt,
         target_col = target_col,
         task = resolved_task,
-        evaluator = ev,
+        evaluator = base_ev,
         metric = resolved_metric,
         generations = sup_gens,
         pop_size = sup_pop,
@@ -759,7 +822,7 @@ run_competition_pipeline <- function(
         seed = base_seed + 500L + idx,
         verbose = verbose
       )
-      ev_fast_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
+      ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
       rec_sup <- do.call(evolve_features, c(s35_common, ev_fast_args))
       stage3_sup_recipes[[ev]] <- rec_sup
       sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, mega_feature_names)
@@ -773,14 +836,40 @@ run_competition_pipeline <- function(
 
   for (idx in seq_along(active_evaluators)) {
     ev <- active_evaluators[idx]
+    base_ev <- get_base_evaluator(ev)
+    s4_ev <- if (tune_stage4 == "tabarena") {
+      cand <- paste0(base_ev, "_tabarena")
+      if (has_evaluator(cand)) cand else {
+        warning(sprintf("TabArena tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
+        base_ev
+      }
+    } else if (tune_stage4 == "mbo") {
+      cand <- paste0(base_ev, "_mbo")
+      if (has_evaluator(cand)) cand else {
+        warning(sprintf("MBO tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
+        base_ev
+      }
+    } else {
+      ev
+    }
+
+    ev_args <- .evaluator_stage_args(s4_ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega), custom_evaluator_args = evaluator_args)
+
     if (show_msg) {
-      message(sprintf("[Stage 4] High-capacity %d-fold retraining for '%s'...", cv_folds, ev))
+      if (is_tuned_evaluator(s4_ev)) {
+        mbo_trials <- if (!is.null(ev_args$mbo_iters)) ev_args$mbo_iters else cfg$mbo_iters
+        tune_tag <- if (grepl("tabarena", s4_ev)) "TabArena" else "MBO"
+        message(sprintf("[Stage 4] High-capacity %d-fold %s Bayesian optimization retraining for '%s' (iters: %d)...",
+                        cv_folds, tune_tag, s4_ev, mbo_trials))
+      } else {
+        message(sprintf("[Stage 4] High-capacity %d-fold retraining for '%s'...", cv_folds, s4_ev))
+      }
     }
     s4_common <- list(
       data = train_mega,
       target_col = target_col,
       task = resolved_task,
-      evaluator = ev,
+      evaluator = s4_ev,
       metric = resolved_metric,
       generations = 1L,
       pop_size = 1L,
@@ -796,7 +885,6 @@ run_competition_pipeline <- function(
       seed = s4_seed,
       verbose = verbose
     )
-    ev_args <- .evaluator_stage_args(ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega), custom_evaluator_args = evaluator_args)
     stage4_recipes[[ev]] <- do.call(evolve_features, c(s4_common, ev_args))
   }
 
@@ -905,6 +993,11 @@ run_competition_pipeline <- function(
       train_rows = nrow(train_dt),
       discovery_rows = n_discovery,
       test_rows = nrow(test_dt),
+      tune_stage4 = tune_stage4,
+      stage4_evaluators = stats::setNames(vapply(stage4_recipes, function(r) r$evaluator, character(1L)), active_evaluators),
+      stage4_best_params = stats::setNames(lapply(stage4_recipes, function(r) {
+        if (!is.null(r$best_individual$best_params)) r$best_individual$best_params else NULL
+      }), active_evaluators),
       stage4_fitness = stage4_fitness,
       final_cv_fitness = ens_fitness,
       weights = resolved_weights
