@@ -91,9 +91,10 @@ make_tunable(
 make_tunable(
   base_model_name = "realmlp",
   param_ranges = list(
-    hidden_dim = list(type = "integer", lower = 128, upper = 512),
-    realmlp_lr = list(type = "numeric", lower = 0.01, upper = 0.35),
-    batch_size = list(type = "discrete", values = c(1024, 2048, 4096))
+    hidden_dim       = list(type = "integer", lower = 128, upper = 512),
+    realmlp_lr       = list(type = "numeric", lower = 0.01, upper = 0.35),
+    realmlp_n_cycles = list(type = "integer", lower = 1, upper = 6),
+    batch_size       = list(type = "discrete", values = c(1024, 2048, 4096))
   ),
   tuner_name = "realmlp_tabarena"
 )
