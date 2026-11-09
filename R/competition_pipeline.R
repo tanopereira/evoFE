@@ -36,7 +36,7 @@
       s4_xgb_es = 25L,
       s4_mlp_epochs = 30L,
       s4_mlp_es = 30L,
-      s4_mlp_lr = 0.008,
+      s4_mlp_lr = -1.0,
       s4_mlp_hidden = 64L
     ),
     standard = list(
@@ -63,7 +63,7 @@
       s4_xgb_es = 200L,
       s4_mlp_epochs = 250L,
       s4_mlp_es = 250L,
-      s4_mlp_lr = 0.005,
+      s4_mlp_lr = -1.0,
       s4_mlp_hidden = 256L
     ),
     max = list(
@@ -90,7 +90,7 @@
       s4_xgb_es = 250L,
       s4_mlp_epochs = 400L,
       s4_mlp_es = 400L,
-      s4_mlp_lr = 0.004,
+      s4_mlp_lr = -1.0,
       s4_mlp_hidden = 384L
     )
   )
@@ -191,7 +191,7 @@
       bs <- if (n_rows >= 8192L) 2048L else -1L
       list(
         realmlp_epochs = cfg$s2_mlp_epochs,
-        realmlp_lr = 0.01,
+        realmlp_lr = -1.0,
         # Patience == epochs: early stopping stays on (tracks best epoch) but never truncates cyclic schedule.
         early_stopping_rounds = cfg$s2_mlp_es,
         hidden_dim = cfg$s4_mlp_hidden,

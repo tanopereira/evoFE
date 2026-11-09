@@ -705,10 +705,10 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     out_dim = num_classes;
   }
 
-  // Tuned defaults for learning rate (matches PyTabKit NTP defaults: 0.04 for classification, 0.07 for regression)
+  // Tuned defaults for learning rate (matches PyTabKit TD defaults: 0.04 for classification, 0.20 for regression)
   double base_lr = lr;
   if (base_lr <= 0.0) {
-    base_lr = (is_cls || is_multi) ? 0.04 : 0.07;
+    base_lr = (is_cls || is_multi) ? 0.04 : 0.20;
   }
 
   // RAII thread state management across OpenMP, Eigen, and OpenBLAS
