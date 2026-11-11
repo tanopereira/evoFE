@@ -45,6 +45,14 @@ make_tunable(
   tuner_name = "realmlp_mbo"
 )
 
+make_tunable(
+  base_model_name = "lm",
+  param_ranges = list(
+    alpha = list(type = "numeric", lower = 0.0, upper = 1.0)
+  ),
+  tuner_name = "lm_mbo"
+)
+
 # ─────────────────────────────────────────────────────────────
 # TabArena Hyperparameter Spaces (ML_STRATEGY.md Section 10)
 # ─────────────────────────────────────────────────────────────
@@ -97,5 +105,14 @@ make_tunable(
     batch_size       = list(type = "discrete", values = c(256L, 512L, 1024L, 2048L))
   ),
   tuner_name = "realmlp_tabarena"
+)
+
+make_tunable(
+  base_model_name = "lm",
+  param_ranges = list(
+    alpha = list(type = "numeric", lower = 0.0, upper = 1.0),
+    s = list(type = "discrete", values = c("lambda.min", "lambda.1se"))
+  ),
+  tuner_name = "lm_tabarena"
 )
 

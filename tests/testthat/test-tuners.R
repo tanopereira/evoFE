@@ -342,9 +342,9 @@ test_that("metacv tournament and ensemble_islands OOF harmonization unwrap pre-t
   }
 })
 
-test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are registered in model_registry", {
-  for (ev in c("lightgbm_mbo", "xgboost_mbo", "catboost_mbo", "realmlp_mbo",
-               "lightgbm_tabarena", "xgboost_tabarena", "catboost_tabarena", "realmlp_tabarena")) {
+test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo, lm_mbo) are registered in model_registry", {
+  for (ev in c("lightgbm_mbo", "xgboost_mbo", "catboost_mbo", "realmlp_mbo", "lm_mbo",
+               "lightgbm_tabarena", "xgboost_tabarena", "catboost_tabarena", "realmlp_tabarena", "lm_tabarena")) {
     entry <- get_evaluator(ev)
     expect_true(isTRUE(entry$is_tuned), info = ev)
     expect_true(is.character(entry$base_evaluator) && nzchar(entry$base_evaluator), info = ev)
@@ -352,10 +352,12 @@ test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are r
   expect_equal(unwrap_evaluator("xgboost_mbo"), "xgboost")
   expect_equal(unwrap_evaluator("catboost_mbo"), "catboost")
   expect_equal(unwrap_evaluator("realmlp_mbo"), "realmlp")
+  expect_equal(unwrap_evaluator("lm_mbo"), "lm")
   expect_equal(unwrap_evaluator("lightgbm_tabarena"), "lightgbm")
   expect_equal(unwrap_evaluator("xgboost_tabarena"), "xgboost")
   expect_equal(unwrap_evaluator("catboost_tabarena"), "catboost")
   expect_equal(unwrap_evaluator("realmlp_tabarena"), "realmlp")
+  expect_equal(unwrap_evaluator("lm_tabarena"), "lm")
 
   # Verify parameter space invariants for TabArena tuners
   rmlp_env <- environment(get_evaluator("realmlp_tabarena")$train_func)
@@ -368,6 +370,18 @@ test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are r
   expect_equal(defs$realmlp_n_cycles$upper, 4L)
   expect_equal(defs$batch_size$values, c(256L, 512L, 1024L, 2048L))
   expect_true(isTRUE(defs$realmlp_lr$log))
+
+  # Verify parameter space invariants for LM tuners
+  lm_mbo_env <- environment(get_evaluator("lm_mbo")$train_func)
+  lm_mbo_defs <- lm_mbo_env$tunable_defs
+  expect_equal(lm_mbo_defs$alpha$lower, 0.0)
+  expect_equal(lm_mbo_defs$alpha$upper, 1.0)
+
+  lm_tab_env <- environment(get_evaluator("lm_tabarena")$train_func)
+  lm_tab_defs <- lm_tab_env$tunable_defs
+  expect_equal(lm_tab_defs$alpha$lower, 0.0)
+  expect_equal(lm_tab_defs$alpha$upper, 1.0)
+  expect_equal(lm_tab_defs$s$values, c("lambda.min", "lambda.1se"))
 })
 
 test_that("make_tunable supports logarithmic scale sampling and fails fast on non-positive bounds", {
@@ -432,4 +446,42 @@ test_that("make_tunable supports logarithmic scale sampling and fails fast on no
   expect_true(fit_log$best_params$lr >= 0.001 && fit_log$best_params$lr <= 0.1)
   expect_true(is.numeric(fit_log$best_params$lr))
 })
+
+test_that("lm_mbo tunes alpha over a toy dataset with MBO", {
+  testthat::skip_if_not_installed("glmnet")
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  set.seed(42)
+  n <- 50
+  x <- matrix(rnorm(n * 4), nrow = n, ncol = 4)
+  colnames(x) <- paste0("x", 1:4)
+  y <- 2 * x[, 1] - 1.5 * x[, 2] + rnorm(n, sd = 0.2)
+
+  fit <- train_model(
+    x_train = x[1:40, ],
+    y_train = y[1:40],
+    x_val = x[41:50, ],
+    y_val = y[41:50],
+    evaluator = "lm_mbo",
+    task = "regression",
+    mbo_iters = 2,
+    mbo_init_design = 3,
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit$best_params))
+  expect_true("alpha" %in% names(fit$best_params))
+  expect_true(fit$best_params$alpha >= 0.0 && fit$best_params$alpha <= 1.0)
+  expect_true(!is.null(fit$model))
+  expect_length(fit$predictions, 10)
+  expect_true(all(is.finite(fit$predictions)))
+
+  ev <- get_evaluator("lm_mbo")
+  preds <- ev$predict_func(fit$model, x_new = x[41:50, ], task = "regression")
+  expect_length(preds, 10)
+  expect_true(all(is.finite(preds)))
+})
+
 

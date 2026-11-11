@@ -129,7 +129,7 @@
     stop("'evaluators' must be a non-empty character vector.")
   }
   evaluators <- unique(evaluators)
-  pkg_map <- c(lightgbm = "lightgbm", xgboost = "xgboost", catboost = "catboost", keras3 = "keras3")
+  pkg_map <- c(lightgbm = "lightgbm", xgboost = "xgboost", catboost = "catboost", keras3 = "keras3", lm = "glmnet")
   kept <- character(0)
   for (ev in evaluators) {
     if (!has_evaluator(ev)) {
@@ -227,6 +227,8 @@
         hidden_dim = cfg$s4_mlp_hidden,
         batch_size = bs
       )
+    } else if (base_ev == "lm") {
+      list(alpha = 0.5, s = "lambda.min")
     } else {
       list(nrounds = cfg$s2_nrounds, early_stopping_rounds = cfg$s2_es)
     }
@@ -269,6 +271,13 @@
           batch_size = bs,
           mbo_iters = max(2L, as.integer(ceiling(mbo_it * 0.7))),
           mbo_init_design = max(3L, as.integer(ceiling(mbo_id * 0.75)))
+        )
+      } else if (base_ev == "lm") {
+        list(
+          alpha = 0.5,
+          s = "lambda.min",
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
         )
       } else {
         list(
@@ -323,6 +332,11 @@
           hidden_dim = cfg$s4_mlp_hidden,
           batch_size = bs
         )
+      } else if (base_ev == "lm") {
+        list(
+          alpha = 0.5,
+          s = "lambda.min"
+        )
       } else {
         list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)
       }
@@ -333,7 +347,7 @@
     stage_key <- paste0("stage", stage)
 
     # 1. Global / top-level arguments (not keyed by evaluator or stage)
-    section_keys <- c("stage2", "stage4", "stage3_5", "lightgbm", "xgboost", "realmlp", "catboost")
+    section_keys <- c("stage2", "stage4", "stage3_5", "lightgbm", "xgboost", "realmlp", "catboost", "lm")
     for (k in names(custom_evaluator_args)) {
       if (!k %in% section_keys && !has_evaluator(k)) {
         args[[k]] <- custom_evaluator_args[[k]]
@@ -742,10 +756,13 @@ run_competition_pipeline <- function(
       cv_strategy = cv_strategy,
       group_col = group_col,
       time_col = time_col,
+      split_ratio = NULL,
+      split_ids = NULL,
       holdout_frac = if (n_discovery >= 500L) cfg$s2_holdout else 0.0,
       test_data = if (n_discovery >= 500L && cfg$s2_holdout > 0) test_dt else NULL,
       sd_penalty = cfg$s2_sd_penalty,
       confirm_top_k = if (!use_metacv && cv_strategy != "time") cfg$s2_confirm_k else 0L,
+      seed_genes = NULL,
       migration = mig_cfg,
       islands = cfg$islands,
       migration_interval = 1L,
@@ -763,7 +780,8 @@ run_competition_pipeline <- function(
       verbose = verbose
     )
     ev_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
-    stage2_recipes[[ev]] <- do.call(evolve_features, c(s2_common, ev_args))
+    ev_evolve_args <- ev_args[!names(ev_args) %in% c("s")]
+    stage2_recipes[[ev]] <- do.call(evolve_features, c(s2_common, ev_evolve_args))
   }
 
   # Stage 3: Mega-Matrix Synthesis onto 100% of train_dt and test_dt
@@ -877,8 +895,11 @@ run_competition_pipeline <- function(
         cv_strategy = cv_strategy,
         group_col = group_col,
         time_col = time_col,
+        split_ratio = NULL,
+        split_ids = NULL,
         sd_penalty = cfg$s2_sd_penalty,
         confirm_top_k = if (preset != "fast" && cv_strategy != "time") 2L else 0L,
+        seed_genes = NULL,
         raw_toggle_prob = 0.0,
         bag_folds = FALSE,
         target_transform = resolved_tt,
@@ -887,7 +908,8 @@ run_competition_pipeline <- function(
         verbose = verbose
       )
       ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
-      rec_sup <- do.call(evolve_features, c(s35_common, ev_fast_args))
+      ev_fast_evolve_args <- ev_fast_args[!names(ev_fast_args) %in% c("s")]
+      rec_sup <- do.call(evolve_features, c(s35_common, ev_fast_evolve_args))
       stage3_sup_recipes[[ev]] <- rec_sup
       sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, mega_feature_names)
     }
@@ -929,13 +951,17 @@ run_competition_pipeline <- function(
       cv_strategy = cv_strategy,
       group_col = group_col,
       time_col = time_col,
+      split_ratio = NULL,
+      split_ids = NULL,
+      sd_penalty = 0,
       bag_folds = isTRUE(bag_folds),
       target_transform = resolved_tt,
       threads = threads,
       seed = s4_seed,
       verbose = verbose
     )
-    stage4_recipes[[ev]] <- do.call(evolve_features, c(s4_common, ev_args))
+    ev_evolve_args <- ev_args[!names(ev_args) %in% c("s")]
+    stage4_recipes[[ev]] <- do.call(evolve_features, c(s4_common, ev_evolve_args))
   }
 
   stage4_fitness <- vapply(stage4_recipes, function(r) {

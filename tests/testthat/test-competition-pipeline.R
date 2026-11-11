@@ -316,6 +316,21 @@ test_that("preset_overrides and evaluator_args customize pipeline and enforce Re
   s4_lgb <- .evaluator_stage_args("lightgbm", stage = 4L, cfg = cfg_fast, n_rows = 100L, custom_evaluator_args = custom_stage)
   expect_equal(s4_lgb$num_leaves, 127L)
 
+  # LM stage arguments
+  s2_lm <- .evaluator_stage_args("lm", stage = 2L, cfg = cfg_fast, n_rows = 100L)
+  expect_equal(s2_lm$alpha, 0.5)
+  expect_equal(s2_lm$s, "lambda.min")
+
+  s4_lm_untuned <- .evaluator_stage_args("lm", stage = 4L, cfg = cfg_fast, n_rows = 100L)
+  expect_equal(s4_lm_untuned$alpha, 0.5)
+  expect_equal(s4_lm_untuned$s, "lambda.min")
+
+  s4_lm_tab <- .evaluator_stage_args("lm_tabarena", stage = 4L, cfg = cfg_fast, n_rows = 100L)
+  expect_equal(s4_lm_tab$alpha, 0.5)
+  expect_equal(s4_lm_tab$s, "lambda.min")
+  expect_equal(s4_lm_tab$mbo_iters, cfg_fast$mbo_iters)
+  expect_equal(s4_lm_tab$mbo_init_design, cfg_fast$mbo_init_design)
+
   # 3. End-to-end integration with run_competition_pipeline
   set.seed(999)
   n_tr <- 50L
@@ -642,6 +657,64 @@ test_that("run_competition_pipeline runs end-to-end with catboost evaluator", {
   expect_true(inherits(res$submission, "data.table"))
   expect_equal(nrow(res$submission), nrow(test))
 })
+
+test_that("run_competition_pipeline runs end-to-end with lm evaluator and tune_stage4 = 'tabarena'", {
+  testthat::skip_if_not_installed("glmnet")
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  set.seed(42)
+  n_tr <- 40L
+  n_te <- 10L
+  tr <- data.frame(
+    x1 = stats::rnorm(n_tr),
+    x2 = stats::rnorm(n_tr),
+    target = stats::rnorm(n_tr)
+  )
+  te <- data.frame(
+    x1 = stats::rnorm(n_te),
+    x2 = stats::rnorm(n_te)
+  )
+
+  res <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "target",
+    evaluators = "lm",
+    tune_stage4 = "tabarena",
+    preset = "fast",
+    preset_overrides = list(
+      mbo_iters = 1L,
+      mbo_init_design = 2L
+    ),
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 123L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_competition_run")
+  expect_equal(res$tune_stage4, "tabarena")
+  expect_equal(res$stage4_evaluators[["lm"]], "lm_tabarena")
+  expect_true(!is.null(res$stage4_recipes[["lm"]]$best_individual$best_params))
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions)))
+
+  # S3 presentation checks
+  summ <- summary(res)
+  expect_s3_class(summ, "summary_evo_competition_run")
+  expect_equal(summ$tune_stage4, "tabarena")
+  expect_equal(summ$stage4_table$Evaluator, "lm_tabarena")
+
+  out_p <- utils::capture.output(print(res))
+  expect_true(any(grepl("Stage4 Tuning: tabarena", out_p)))
+
+  out_s <- utils::capture.output(print(summ))
+  expect_true(any(grepl("Tuning: tabarena", out_s)))
+  expect_true(any(grepl("lm_tabarena", out_s)))
+})
+
 
 
 

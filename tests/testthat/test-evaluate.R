@@ -775,5 +775,87 @@ test_that("catboost handles zero and negative early_stopping_rounds without C++ 
   })
 })
 
+test_that("lm evaluator supports configurable alpha, s = 'lambda.1se', metric-aligned type.measure, and single-row multiclass predict", {
+  testthat::skip_if_not_installed("glmnet")
+
+  set.seed(42)
+  n <- 60
+  x <- data.frame(
+    x1 = rnorm(n),
+    x2 = rnorm(n),
+    x3 = rnorm(n)
+  )
+  y_reg <- 2 * x$x1 - 1.5 * x$x2 + rnorm(n, sd = 0.1)
+
+  ev <- evoFE::get_evaluator("lm")
+
+  # 1. Custom alpha = 1.0 (Lasso) and alpha = 0.0 (Ridge)
+  fit_lasso <- ev$train_func(x_train = x, y_train = y_reg, task = "regression", alpha = 1.0)
+  expect_equal(fit_lasso$model$s, "lambda.min")
+  expect_equal(fit_lasso$model$call$alpha, 1.0)
+  pred_lasso <- ev$predict_func(fit_lasso$model, x_new = x[1:5, ], task = "regression")
+  expect_length(pred_lasso, 5)
+  expect_true(all(is.finite(pred_lasso)))
+
+  fit_ridge <- ev$train_func(x_train = x, y_train = y_reg, task = "regression", alpha = 0.0)
+  expect_equal(fit_ridge$model$call$alpha, 0.0)
+  pred_ridge <- ev$predict_func(fit_ridge$model, x_new = x[1:5, ], task = "regression")
+  expect_length(pred_ridge, 5)
+  expect_true(all(is.finite(pred_ridge)))
+
+  # 2. Configurable s = "lambda.1se"
+  fit_1se <- ev$train_func(x_train = x, y_train = y_reg, task = "regression", s = "lambda.1se")
+  expect_equal(fit_1se$model$s, "lambda.1se")
+  pred_1se <- ev$predict_func(fit_1se$model, x_new = x[1:5, ], task = "regression")
+  expect_length(pred_1se, 5)
+  expect_true(all(is.finite(pred_1se)))
+
+  # Override s in predict_func
+  pred_min <- ev$predict_func(fit_1se$model, x_new = x[1:5, ], task = "regression", s = "lambda.min")
+  expect_length(pred_min, 5)
+  expect_true(all(is.finite(pred_min)))
+
+  # 3. Metric-aligned type.measure in cv.glmnet
+  # Classification with metric = "auc" -> type.measure = "auc"
+  y_bin <- as.integer(x$x1 + x$x2 > 0)
+  fit_auc <- ev$train_func(x_train = x, y_train = y_bin, task = "classification", metric = "auc", nfolds = 3)
+  expect_equal(names(fit_auc$model$name), "auc")
+
+  # Regression with metric = "mae" -> type.measure = "mae"
+  fit_mae <- ev$train_func(x_train = x, y_train = y_reg, task = "regression", metric = "mae", nfolds = 3)
+  expect_equal(names(fit_mae$model$name), "mae")
+
+  # Regression with default metric (rmse) -> type.measure = "mse"
+  fit_mse <- ev$train_func(x_train = x, y_train = y_reg, task = "regression", metric = "rmse", nfolds = 3)
+  expect_equal(names(fit_mse$model$name), "mse")
+
+  # 4. Multiclass and single-row predict matrix shape
+  y_multi <- as.factor(rep(c("A", "B", "C"), length.out = n))
+  fit_multi <- ev$train_func(x_train = x, y_train = y_multi, task = "multiclass", num_class = 3, nfolds = 3)
+  expect_equal(fit_multi$model$s, "lambda.min")
+
+  # Single-row input to predict_func
+  single_row <- x[1, , drop = FALSE]
+  pred_single <- ev$predict_func(fit_multi$model, x_new = single_row, task = "multiclass")
+  expect_true(is.matrix(pred_single))
+  expect_equal(nrow(pred_single), 1L)
+  expect_equal(ncol(pred_single), 3L)
+
+  # Multi-row input to predict_func
+  multi_rows <- x[1:4, , drop = FALSE]
+  pred_multi <- ev$predict_func(fit_multi$model, x_new = multi_rows, task = "multiclass")
+  expect_true(is.matrix(pred_multi))
+  expect_equal(nrow(pred_multi), 4L)
+  expect_equal(ncol(pred_multi), 3L)
+
+  # 5. Degeneracy handling (single-class edge case)
+  y_degen <- rep(1L, n)
+  fit_degen <- ev$train_func(x_train = x, y_train = y_degen, task = "classification")
+  expect_true(isTRUE(fit_degen$model$is_degenerate))
+  pred_degen <- ev$predict_func(fit_degen$model, x_new = single_row, task = "classification")
+  expect_equal(pred_degen, 1.0)
+})
+
+
 
 

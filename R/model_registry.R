@@ -1099,12 +1099,22 @@ register_evaluator(
     if (!requireNamespace("glmnet", quietly = TRUE)) {
       stop("The 'glmnet' package is required for the penalized lm evaluator.")
     }
+
+    extra_params <- list(...)
+    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
     
     x_mat <- as.matrix(x_train)
     col_means <- colMeans(x_mat, na.rm = TRUE)
     col_means[is.na(col_means) | !is.finite(col_means)] <- 0
     for (j in seq_len(ncol(x_mat))) {
-      na_idx <- is.na(x_mat[, j]) | !is.finite(x_mat[, j])
+      na_idx <- is.na(x_mat[, j])
       if (any(na_idx)) {
         x_mat[na_idx, j] <- col_means[j]
       }
@@ -1112,7 +1122,7 @@ register_evaluator(
 
     impute_mat <- function(x_data) {
       if (is.null(x_data)) return(NULL)
-      xm <- as.matrix(x_data)
+      xm <- if (is.matrix(x_data)) x_data else as.matrix(x_data)
       for (j in seq_len(ncol(xm))) {
         col_name <- if (!is.null(colnames(xm))) colnames(xm)[j] else NULL
         c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) {
@@ -1122,7 +1132,7 @@ register_evaluator(
         } else {
           0
         }
-        na_idx <- is.na(xm[, j]) | !is.finite(xm[, j])
+        na_idx <- is.na(xm[, j])
         if (any(na_idx)) {
           xm[na_idx, j] <- c_mean
         }
@@ -1131,7 +1141,88 @@ register_evaluator(
     }
 
     all_feats <- colnames(x_train)
+
+    alpha <- if (!is.null(extra_params$alpha) && is.numeric(extra_params$alpha) && is.finite(extra_params$alpha)) {
+      min(max(as.numeric(extra_params$alpha), 0.0), 1.0)
+    } else {
+      0.5
+    }
+
+    s_choice <- if (!is.null(extra_params$lm_s) && (is.character(extra_params$lm_s) || (is.numeric(extra_params$lm_s) && is.finite(extra_params$lm_s)))) {
+      extra_params$lm_s
+    } else if (!is.null(extra_params$s) && (is.character(extra_params$s) || (is.numeric(extra_params$s) && is.finite(extra_params$s)))) {
+      extra_params$s
+    } else {
+      "lambda.min"
+    }
+
+    standardize <- if (!is.null(extra_params$standardize) && is.logical(extra_params$standardize)) {
+      isTRUE(extra_params$standardize)
+    } else {
+      TRUE
+    }
+
+    relax <- isTRUE(extra_params$relax)
+
+    metric_arg <- extra_params$metric
+    cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
+      canonical_metric_name(metric_arg, task)
+    } else {
+      NULL
+    }
+
+    type_measure <- if (!is.null(extra_params$type.measure) && is.character(extra_params$type.measure)) {
+      extra_params$type.measure
+    } else if (!is.null(extra_params$type_measure) && is.character(extra_params$type_measure)) {
+      extra_params$type_measure
+    } else if (task == "classification") {
+      if (!is.null(cm_arg) && cm_arg == "auc") "auc" else "deviance"
+    } else if (task == "regression") {
+      if (!is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")) "mae" else "mse"
+    } else if (task == "multiclass") {
+      if (!is.null(cm_arg) && cm_arg %in% c("accuracy", "class")) "class" else "deviance"
+    } else {
+      "default"
+    }
+
+    # Single-class degeneracy check in classification/multiclass
+    u_train <- unique(y_train[!is.na(y_train)])
+    if (task %in% c("classification", "multiclass") && length(u_train) < 2L) {
+      single_class <- if (length(u_train) == 1L) u_train[1] else 0
+      model <- list(
+        is_degenerate = TRUE,
+        degenerate_class = single_class,
+        task = task,
+        col_means = col_means,
+        s = s_choice,
+        num_class = num_class
+      )
+      preds <- NULL
+      if (!is.null(x_val)) {
+        val_mat <- impute_mat(x_val)
+        if (task == "classification") {
+          pred_val <- if (as.character(single_class) %in% c("1", "true", "TRUE")) 1.0 else 0.0
+          preds <- rep(pred_val, nrow(val_mat))
+        } else {
+          k <- if (!is.null(num_class)) as.integer(num_class) else 2L
+          preds <- matrix(0.0, nrow = nrow(val_mat), ncol = k)
+          cls_idx <- suppressWarnings(as.integer(as.character(single_class)))
+          if (!is.na(cls_idx)) {
+            col_idx <- if (cls_idx >= 1L && cls_idx <= k) cls_idx else if (cls_idx == 0L) 1L else 1L
+            preds[, col_idx] <- 1.0
+          } else {
+            preds[, 1L] <- 1.0
+          }
+        }
+      }
+      importances <- stats::setNames(rep(0, length(all_feats)), all_feats)
+      return(list(model = model, predictions = preds, importances = importances, col_means = col_means))
+    }
+
     nfolds <- min(5, nrow(x_mat))
+    if (!is.null(extra_params$nfolds)) {
+      nfolds <- min(as.integer(extra_params$nfolds), nrow(x_mat))
+    }
     
     # Precompute standard deviations to make importances scale-invariant
     sd_x <- apply(x_mat, 2, stats::sd, na.rm = TRUE)
@@ -1140,17 +1231,30 @@ register_evaluator(
     is_single_col <- (ncol(x_mat) == 1L)
     fit_mat <- if (is_single_col) cbind(x_mat, .__dummy__ = 0.0) else x_mat
 
+    cv_args <- list(
+      x = fit_mat,
+      alpha = alpha,
+      nfolds = nfolds,
+      type.measure = type_measure,
+      standardize = standardize
+    )
+    if (isTRUE(relax)) {
+      cv_args$relax <- TRUE
+    }
+
     if (task == "regression") {
-      model <- glmnet::cv.glmnet(fit_mat, y_train, family = "gaussian", alpha = 0.5, nfolds = nfolds)
+      cv_args$y <- y_train
+      cv_args$family <- "gaussian"
+      model <- do.call(glmnet::cv.glmnet, cv_args)
       
       preds <- NULL
       if (!is.null(x_val)) {
         val_mat <- impute_mat(x_val)
         if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
-        preds <- as.numeric(stats::predict(model, newx = val_mat, s = "lambda.min"))
+        preds <- as.numeric(stats::predict(model, newx = val_mat, s = s_choice))
       }
       
-      coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
+      coefs <- as.matrix(stats::coef(model, s = s_choice))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
       imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
       if (is_single_col) {
@@ -1160,16 +1264,18 @@ register_evaluator(
       if (!is.null(all_feats)) names(importances) <- all_feats
       
     } else if (task == "classification") {
-      model <- glmnet::cv.glmnet(fit_mat, as.factor(y_train), family = "binomial", alpha = 0.5, nfolds = nfolds)
+      cv_args$y <- as.factor(y_train)
+      cv_args$family <- "binomial"
+      model <- do.call(glmnet::cv.glmnet, cv_args)
       
       preds <- NULL
       if (!is.null(x_val)) {
         val_mat <- impute_mat(x_val)
         if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
-        preds <- as.numeric(stats::predict(model, newx = val_mat, s = "lambda.min", type = "response"))
+        preds <- as.numeric(stats::predict(model, newx = val_mat, s = s_choice, type = "response"))
       }
       
-      coefs <- as.matrix(stats::coef(model, s = "lambda.min"))
+      coefs <- as.matrix(stats::coef(model, s = s_choice))
       coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
       imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
       if (is_single_col) {
@@ -1179,17 +1285,22 @@ register_evaluator(
       if (!is.null(all_feats)) names(importances) <- all_feats
       
     } else if (task == "multiclass") {
-      model <- glmnet::cv.glmnet(fit_mat, as.factor(y_train), family = "multinomial", alpha = 0.5, nfolds = nfolds)
+      cv_args$y <- as.factor(y_train)
+      cv_args$family <- "multinomial"
+      model <- do.call(glmnet::cv.glmnet, cv_args)
       
       preds <- NULL
       if (!is.null(x_val)) {
         val_mat <- impute_mat(x_val)
         if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
-        p_array <- stats::predict(model, newx = val_mat, s = "lambda.min", type = "response")
-        preds <- p_array[, , 1]
+        p_array <- stats::predict(model, newx = val_mat, s = s_choice, type = "response")
+        preds <- matrix(p_array[, , 1], nrow = nrow(val_mat))
+        if (!is.null(dimnames(p_array)[[2]])) {
+          colnames(preds) <- dimnames(p_array)[[2]]
+        }
       }
       
-      coefs_list <- stats::coef(model, s = "lambda.min")
+      coefs_list <- stats::coef(model, s = s_choice)
       imp_matrix <- do.call(cbind, lapply(coefs_list, function(c_mat) abs(as.numeric(c_mat)[-1])))
       imp <- rowMeans(imp_matrix)
       feat_names <- rownames(coefs_list[[1]])[-1]
@@ -1209,14 +1320,35 @@ register_evaluator(
       }
     }
     
-    # Attach training-time imputation means to the model so predict-time
-    # imputation is consistent with training (prevents train/serve skew).
+    # Attach training-time imputation means and s to the model so predict-time
+    # imputation and evaluation is consistent with training (prevents train/serve skew).
     model$col_means <- col_means
+    model$s <- s_choice
     
     list(model = model, predictions = preds, importances = importances, col_means = col_means)
   },
   predict_func = function(model, x_new, task, ...) {
-    x_mat <- as.matrix(x_new)
+    x_mat <- .sanitize_feature_matrix(x_new)
+    if (is.null(x_mat) || length(x_mat) == 0L) return(numeric(0))
+
+    if (isTRUE(model$is_degenerate)) {
+      if (task == "classification") {
+        pred_val <- if (as.character(model$degenerate_class) %in% c("1", "true", "TRUE")) 1.0 else 0.0
+        return(rep(pred_val, nrow(x_mat)))
+      } else if (task == "multiclass") {
+        k <- if (!is.null(model$num_class)) as.integer(model$num_class) else 2L
+        out_mat <- matrix(0.0, nrow = nrow(x_mat), ncol = k)
+        cls_idx <- suppressWarnings(as.integer(as.character(model$degenerate_class)))
+        if (!is.na(cls_idx)) {
+          col_idx <- if (cls_idx >= 1L && cls_idx <= k) cls_idx else if (cls_idx == 0L) 1L else 1L
+          out_mat[, col_idx] <- 1.0
+        } else {
+          out_mat[, 1L] <- 1.0
+        }
+        return(out_mat)
+      }
+    }
+
     col_means <- if (!is.null(model$col_means)) model$col_means else colMeans(x_mat, na.rm = TRUE)
     col_means[is.na(col_means) | !is.finite(col_means)] <- 0
     for (j in seq_len(ncol(x_mat))) {
@@ -1233,14 +1365,30 @@ register_evaluator(
         x_mat[na_idx, j] <- c_mean
       }
     }
+
+    extra_args <- list(...)
+    s_choice <- if (!is.null(extra_args$lm_s) && (is.character(extra_args$lm_s) || (is.numeric(extra_args$lm_s) && is.finite(extra_args$lm_s)))) {
+      extra_args$lm_s
+    } else if (!is.null(extra_args$s) && (is.character(extra_args$s) || (is.numeric(extra_args$s) && is.finite(extra_args$s)))) {
+      extra_args$s
+    } else if (!is.null(model$s)) {
+      model$s
+    } else {
+      "lambda.min"
+    }
+
     pred_mat <- if (ncol(x_mat) == 1L) cbind(x_mat, .__dummy__ = 0.0) else x_mat
     if (task == "regression") {
-      as.numeric(stats::predict(model, newx = pred_mat, s = "lambda.min"))
+      as.numeric(stats::predict(model, newx = pred_mat, s = s_choice))
     } else if (task == "classification") {
-      as.numeric(stats::predict(model, newx = pred_mat, s = "lambda.min", type = "response"))
+      as.numeric(stats::predict(model, newx = pred_mat, s = s_choice, type = "response"))
     } else if (task == "multiclass") {
-      p_array <- stats::predict(model, newx = pred_mat, s = "lambda.min", type = "response")
-      p_array[, , 1]
+      p_array <- stats::predict(model, newx = pred_mat, s = s_choice, type = "response")
+      preds <- matrix(p_array[, , 1], nrow = nrow(x_mat))
+      if (!is.null(dimnames(p_array)[[2]])) {
+        colnames(preds) <- dimnames(p_array)[[2]]
+      }
+      preds
     }
   },
   traits = list(is_tree = FALSE, iteration_param = NULL, scale_iterations_with_data = FALSE)
