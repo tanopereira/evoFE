@@ -720,5 +720,60 @@ test_that("realmlp defaults learning rate to 0.20 for regression and 0.04 for cl
   expect_equal(fit_cls$model$base_lr, 0.04)
 })
 
+test_that("catboost handles zero and negative early_stopping_rounds without C++ abort", {
+  skip_if(system.file(package = "catboost") == "", "catboost package is not installed")
+  set.seed(42)
+  x_tr <- matrix(rnorm(40), nrow = 20, ncol = 2)
+  colnames(x_tr) <- c("x1", "x2")
+  y_tr <- rbinom(20, 1, 0.5)
+  x_va <- matrix(rnorm(20), nrow = 10, ncol = 2)
+  colnames(x_va) <- c("x1", "x2")
+  y_va <- rbinom(10, 1, 0.5)
+
+  # 1. early_stopping_rounds = 0 (both with and without validation data)
+  expect_no_error({
+    fit0 <- train_model(x_tr, y_tr, x_val = x_va, y_val = y_va,
+                        evaluator = "catboost", nrounds = 5,
+                        early_stopping_rounds = 0L)
+  })
+
+  expect_no_error({
+    fit_noval <- train_model(x_tr, y_tr, x_val = NULL, y_val = NULL,
+                             evaluator = "catboost", nrounds = 5,
+                             early_stopping_rounds = 10L)
+  })
+
+  # 2. early_stopping_round (singular alias) = 0
+  expect_no_error({
+    fit_sing <- train_model(x_tr, y_tr, x_val = x_va, y_val = y_va,
+                            evaluator = "catboost", nrounds = 5,
+                            early_stopping_round = 0L)
+  })
+
+  # 3. Parameter aliases and out-of-range depths
+  expect_no_error({
+    fit_aliases <- train_model(
+      x_tr, y_tr, x_val = x_va, y_val = y_va,
+      evaluator = "catboost", nrounds = 5,
+      max_depth = 20L,
+      colsample_bytree = 0.75,
+      tree_method = "hist",
+      subsample = 0.8,
+      bagging_temperature = 0.5
+    )
+  })
+  expect_true(!is.null(fit_aliases$model))
+  expect_equal(fit_aliases$model$feature_count, 2L)
+
+  # 4. Incompatible or custom metrics passed as eval_metric do not crash CatBoost
+  expect_no_error({
+    fit_metric <- train_model(
+      x_tr, y_tr, x_val = x_va, y_val = y_va,
+      evaluator = "catboost", nrounds = 5,
+      eval_metric = "ts_refinement"
+    )
+  })
+})
+
 
 

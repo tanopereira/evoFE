@@ -312,7 +312,9 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
 
 .evaluator_control_params <- c(
   "verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design",
-  "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "fold_data",
+  "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "early_stopping_round",
+  "early_stop_round", "early_stopping", "od_wait", "od_type", "fold_data",
+  "bag_folds", "supervised_stage4",
   "realmlp_device", "n_cycles", "realmlp_n_cycles", "realmlp_lr",
   "realmlp_epochs", "realmlp_seed", "hidden_dim", "stop_epoch",
   "nthread", "nthreads", "num_threads", "n_jobs", "threads",
@@ -780,75 +782,236 @@ register_evaluator(
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
 
+    extra_params <- list(...)
+
+    # 1. Thread count
+    threads_val <- threads
+    for (th_key in c("threads", "nthreads", "nthread", "num_threads", "n_jobs")) {
+      if (!is.null(extra_params[[th_key]])) {
+        threads_val <- as.integer(extra_params[[th_key]])
+        break
+      }
+    }
+    threads <- max(1L, threads_val)
+
     x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
 
-    dtrain <- catboost::catboost.load_pool(data = x_train, label = y_train)
+    dtrain <- catboost::catboost.load_pool(data = x_train, label = y_train, thread_count = threads)
 
-    extra_params <- list(...)
-    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
-    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
-    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
-    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
-    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
-    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
-    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
-    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
-    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
-    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
-    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
-    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
-    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
-    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
-    y_val            <- extra_params$y_val
-    metric_arg       <- extra_params$metric
-    early_stopping_rounds <- extra_params$early_stopping_rounds
+    # 2. Iterations / nrounds
+    iters_val <- nrounds
+    for (it_key in c("iterations", "n_iterations", "nrounds", "num_rounds", "n_rounds",
+                     "num_round", "nround", "epochs", "n_epochs")) {
+      if (!is.null(extra_params[[it_key]])) {
+        iters_val <- as.integer(extra_params[[it_key]])
+        break
+      }
+    }
+    iters <- max(1L, as.integer(iters_val))
+
+    # 3. Learning rate / eta
+    lr_val <- if (!is.null(extra_params$learning_rate)) {
+      extra_params$learning_rate
+    } else if (!is.null(extra_params$eta)) {
+      extra_params$eta
+    } else if (!is.null(extra_params$lr)) {
+      extra_params$lr
+    } else {
+      0.1
+    }
+    lr <- if (is.numeric(lr_val) && is.finite(lr_val) && lr_val > 0) as.numeric(lr_val) else 0.1
+
+    # 4. Depth / max_depth (strictly clamped to [1, 16] for CatBoost C++ constraints)
+    depth_val <- if (!is.null(extra_params$depth)) {
+      extra_params$depth
+    } else if (!is.null(extra_params$max_depth)) {
+      extra_params$max_depth
+    } else {
+      NULL
+    }
+    depth <- if (!is.null(depth_val) && is.numeric(depth_val) && is.finite(depth_val)) {
+      min(16L, max(1L, as.integer(round(depth_val))))
+    } else {
+      NULL
+    }
+
+    # 5. Regularization l2_leaf_reg / lambda
+    l2_val <- if (!is.null(extra_params$l2_leaf_reg)) {
+      extra_params$l2_leaf_reg
+    } else if (!is.null(extra_params$lambda)) {
+      extra_params$lambda
+    } else if (!is.null(extra_params$reg_lambda)) {
+      extra_params$reg_lambda
+    } else {
+      NULL
+    }
+    l2_reg <- if (!is.null(l2_val) && is.numeric(l2_val) && is.finite(l2_val) && l2_val >= 0) {
+      as.numeric(l2_val)
+    } else {
+      NULL
+    }
+
+    # 6. Column subsampling: rsm / colsample_bytree / feature_fraction (must be in (0, 1])
+    rsm_val <- if (!is.null(extra_params$rsm)) {
+      extra_params$rsm
+    } else if (!is.null(extra_params$colsample_bytree)) {
+      extra_params$colsample_bytree
+    } else if (!is.null(extra_params$feature_fraction)) {
+      extra_params$feature_fraction
+    } else {
+      NULL
+    }
+    rsm <- if (!is.null(rsm_val) && is.numeric(rsm_val) && is.finite(rsm_val) && rsm_val > 0 && rsm_val <= 1.0) {
+      as.numeric(rsm_val)
+    } else {
+      NULL
+    }
+
+    # 7. Row subsampling / bagging: subsample vs bagging_temperature
+    # CatBoost rule: Bayesian bootstrap does NOT support 'subsample'.
+    # If bagging_temperature is given, use Bayesian bootstrap and drop subsample.
+    # If subsample < 1.0 is given without bagging_temperature, use Bernoulli bootstrap.
+    bag_temp <- if (!is.null(extra_params$bagging_temperature) && is.numeric(extra_params$bagging_temperature) && is.finite(extra_params$bagging_temperature)) {
+      max(0.0, as.numeric(extra_params$bagging_temperature))
+    } else {
+      NULL
+    }
+
+    sub_val <- if (!is.null(extra_params$subsample)) {
+      extra_params$subsample
+    } else if (!is.null(extra_params$bagging_fraction)) {
+      extra_params$bagging_fraction
+    } else if (!is.null(extra_params$subsample_ratio)) {
+      extra_params$subsample_ratio
+    } else {
+      NULL
+    }
+    subsample <- if (is.null(bag_temp) && !is.null(sub_val) && is.numeric(sub_val) && is.finite(sub_val) && sub_val > 0 && sub_val <= 1.0) {
+      as.numeric(sub_val)
+    } else {
+      NULL
+    }
+
+    bootstrap_type <- if (!is.null(extra_params$bootstrap_type)) {
+      as.character(extra_params$bootstrap_type)
+    } else if (!is.null(bag_temp)) {
+      "Bayesian"
+    } else if (!is.null(subsample) && subsample < 1.0) {
+      "Bernoulli"
+    } else {
+      NULL
+    }
+
+    # 8. Random seed
+    seed_val <- if (!is.null(extra_params$random_seed) && is.numeric(extra_params$random_seed) && is.finite(extra_params$random_seed)) {
+      as.integer(extra_params$random_seed)
+    } else if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
+      as.integer(extra_params$seed)
+    } else {
+      42L
+    }
+
+    # 9. Loss function
+    metric_arg <- extra_params$metric
+    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
+    reg_loss <- if (is_mae_metric) "MAE" else "RMSE"
+    loss_fn <- switch(task,
+      classification = "Logloss",
+      multiclass     = "MultiClass",
+      reg_loss
+    )
+
+    # 10. Evaluation metric (validate against task and loss function)
+    eval_metric <- NULL
+    if (!is.null(extra_params$eval_metric) && is.character(extra_params$eval_metric) && length(extra_params$eval_metric) == 1L) {
+      em_cand <- extra_params$eval_metric
+      valid_em <- switch(task,
+        classification = c("Logloss", "CrossEntropy", "AUC", "Accuracy", "Precision", "Recall", "F1", "TotalF1", "MCC", "BrierScore"),
+        multiclass     = c("MultiClass", "MultiClassOneVsAll", "Accuracy", "TotalF1", "Kappa", "WKappa"),
+        c("RMSE", "MAE", "Quantile", "MAPE", "MSLE", "MedianAbsoluteError", "SMAPE", "Huber", "R2")
+      )
+      if (em_cand %in% valid_em) {
+        eval_metric <- em_cand
+      }
+    }
+
+    # 11. Early stopping patience (from any alias)
+    es_val <- NULL
+    for (es_key in c("early_stopping_rounds", "early_stopping_round", "early_stop_round", "early_stopping", "od_wait")) {
+      if (!is.null(extra_params[[es_key]]) && is.numeric(extra_params[[es_key]]) && is.finite(extra_params[[es_key]])) {
+        es_val <- as.integer(extra_params[[es_key]])
+        break
+      }
+    }
+
+    y_val <- extra_params$y_val
+    has_val_data <- !is.null(x_val) && !is.null(y_val) && (if (is.matrix(x_val) || is.data.frame(x_val)) nrow(x_val) > 0L else length(x_val) > 0L)
+    use_early_stopping <- has_val_data && !is.null(es_val) && (es_val > 0L)
 
     opt_verbose <- getOption("evoFE.verbose", 0)
     verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
     learner_verbose <- is_learner_verbose(verbose_arg)
 
-    is_mae_metric <- !is.null(metric_arg) && is.character(metric_arg) && tolower(metric_arg) %in% c("mae", "cal_mae", "cal-mae")
-    reg_loss <- if (is_mae_metric) "MAE" else "RMSE"
-
     params <- list(
-      loss_function = switch(task,
-        classification = "Logloss",
-        multiclass     = "MultiClass",
-        reg_loss
-      ),
-      thread_count = threads,
-      iterations = nrounds,
-      learning_rate = 0.1,
-      logging_level = if (learner_verbose) "Verbose" else "Silent",
+      loss_function       = loss_fn,
+      iterations          = iters,
+      learning_rate       = lr,
+      thread_count        = threads,
+      logging_level       = if (learner_verbose) "Verbose" else "Silent",
       allow_writing_files = FALSE,
-      train_dir = tempdir(),
-      random_seed = if (!is.null(extra_params$random_seed) && is.numeric(extra_params$random_seed) && is.finite(extra_params$random_seed)) {
-        as.integer(extra_params$random_seed)
-      } else if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
-        as.integer(extra_params$seed)
-      } else {
-        42L
-      }
+      train_dir           = tempdir(),
+      random_seed         = seed_val
     )
-    seed_val <- params$random_seed
 
-    control_params <- c(.evaluator_control_params, "device")
-    extra_params <- extra_params[!names(extra_params) %in% control_params]
-    for (name in names(extra_params)) {
-      params[[name]] <- extra_params[[name]]
+    if (!is.null(depth)) params$depth <- depth
+    if (!is.null(l2_reg)) params$l2_leaf_reg <- l2_reg
+    if (!is.null(rsm)) params$rsm <- rsm
+    if (!is.null(bootstrap_type)) params$bootstrap_type <- bootstrap_type
+    if (!is.null(subsample)) params$subsample <- subsample
+    if (!is.null(bag_temp)) params$bagging_temperature <- bag_temp
+    if (!is.null(eval_metric)) params$eval_metric <- eval_metric
+
+    if (!is.null(extra_params$random_strength) && is.numeric(extra_params$random_strength) && is.finite(extra_params$random_strength)) {
+      params$random_strength <- as.numeric(extra_params$random_strength)
+    }
+    if (!is.null(extra_params$border_count) && is.numeric(extra_params$border_count) && is.finite(extra_params$border_count)) {
+      params$border_count <- min(254L, max(1L, as.integer(extra_params$border_count)))
+    }
+    if (!is.null(extra_params$min_data_in_leaf) && is.numeric(extra_params$min_data_in_leaf) && is.finite(extra_params$min_data_in_leaf)) {
+      params$min_data_in_leaf <- max(1L, as.integer(extra_params$min_data_in_leaf))
     }
 
-    # Force no file writing to working directory (required for CRAN compliance)
+    # Add other safe, allowed CatBoost parameters from extra_params
+    catboost_allowed_extra <- c(
+      "nan_mode", "counter_calc_method", "leaf_estimation_iterations", "leaf_estimation_method",
+      "metric_period", "ctr_leaf_count_limit", "store_all_simple_ctr", "max_ctr_complexity",
+      "has_time", "classes_count", "class_weights", "auto_class_weights",
+      "sampling_unit", "sampling_frequency", "score_function", "fold_len_multiplier",
+      "approx_on_full_history", "task_type"
+    )
+    for (nm in intersect(names(extra_params), catboost_allowed_extra)) {
+      params[[nm]] <- extra_params[[nm]]
+    }
+
+    # Force CRAN-compliant file safety
     params$allow_writing_files <- FALSE
     params$train_dir <- tempdir()
 
     # Build validation pool for early stopping when possible
     dval_es <- NULL
-    if (!is.null(x_val) && !is.null(y_val) && !is.null(early_stopping_rounds) && early_stopping_rounds > 0) {
-      dval_es <- catboost::catboost.load_pool(data = x_val, label = y_val)
-      params$od_type <- "Iter"
-      params$od_wait <- early_stopping_rounds
+    if (use_early_stopping) {
+      dval_es <- catboost::catboost.load_pool(data = x_val, label = y_val, thread_count = threads)
+      params$od_type <- if (!is.null(extra_params$od_type)) as.character(extra_params$od_type) else "Iter"
+      params$od_wait <- es_val
+    } else {
+      params$od_wait <- NULL
+      params$od_type <- NULL
+      params$od_pval <- NULL
+      params$early_stopping_rounds <- NULL
+      params$early_stopping_round <- NULL
+      params$early_stop_round <- NULL
+      params$early_stopping <- NULL
     }
 
     cb_train_call <- function() {
@@ -866,9 +1029,9 @@ register_evaluator(
 
     preds <- NULL
     if (!is.null(x_val)) {
-      dval <- if (!is.null(dval_es)) dval_es else catboost::catboost.load_pool(data = x_val)
+      dval <- if (!is.null(dval_es)) dval_es else catboost::catboost.load_pool(data = x_val, thread_count = threads)
       pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
-      preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
+      preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type, thread_count = threads))
 
       # For multiclass, format shape as probability matrix
       if (task == "multiclass") {
@@ -884,11 +1047,11 @@ register_evaluator(
         n_tr <- nrow(x_train)
         pool_imp <- if (n_tr > 2000L) {
           sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-          catboost::catboost.load_pool(data = x_train[sub_idx, , drop = FALSE], label = y_train[sub_idx])
+          catboost::catboost.load_pool(data = x_train[sub_idx, , drop = FALSE], label = y_train[sub_idx], thread_count = threads)
         } else {
           dtrain
         }
-        sh <- catboost::catboost.get_feature_importance(model, pool = pool_imp, type = "ShapValues")
+        sh <- catboost::catboost.get_feature_importance(model, pool = pool_imp, type = "ShapValues", thread_count = threads)
         .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
       },
       error = function(e) NULL
@@ -904,15 +1067,24 @@ register_evaluator(
     if (system.file(package = "catboost") == "") {
       stop("The 'catboost' package is required to use the 'catboost' evaluator. Please install it.")
     }
-    x_new <- .sanitize_feature_matrix(x_new)
-    dval <- catboost::catboost.load_pool(data = x_new)
+    user_args <- list(...)
+    th <- if (!is.null(user_args$threads)) {
+      as.integer(user_args$threads)
+    } else if (!is.null(user_args$thread_count)) {
+      as.integer(user_args$thread_count)
+    } else {
+      default_threads()
+    }
+    x_new <- .sanitize_feature_matrix(x_new, threads = th)
+    dval <- catboost::catboost.load_pool(data = x_new, thread_count = th)
     pred_type <- if (task == "regression") "RawFormulaVal" else "Probability"
-    preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type))
+    preds <- suppressWarnings(catboost::catboost.predict(model, dval, prediction_type = pred_type, thread_count = th))
 
-    if (task == "multiclass") {
-      # In R predict_model, multiclass format checks are handled at the caller or class level,
-      # but returning a matrix with the correct dimensions is standard.
-      # The predict_model function checks and reshapes as well.
+    if (task == "multiclass" && !is.matrix(preds)) {
+      num_class <- if (!is.null(user_args$num_class)) user_args$num_class else NULL
+      if (!is.null(num_class) && num_class > 0) {
+        preds <- matrix(preds, ncol = num_class, byrow = TRUE)
+      }
     }
     preds
   },

@@ -210,7 +210,7 @@ testthat::test_that("pooled_target_encode, target_quantile_encode LOO and strict
   expect_gt(r_tqe$val[[g_tqe$output_col]][1], r_tqe$train[[g_tqe$output_col]][1])
 
   # Strict metric validation rejects unknown metrics instead of silently falling back
-  expect_error(evoFE:::compute_metric(c(1, 2), c(1.1, 1.9), "regression", "rmsle"), "not supported")
+  expect_error(evoFE:::compute_metric(c(1, 2), c(1.1, 1.9), "regression", "unknown_metric_xyz"), "not supported")
   expect_error(evoFE:::validate_metric("unknown_xyz", "classification"), "not supported")
   expect_silent(evoFE:::validate_metric("rmse", "regression"))
   expect_silent(evoFE:::validate_metric("logloss", "classification"))

@@ -210,6 +210,13 @@
         nrounds = cfg$s2_nrounds,
         early_stopping_rounds = cfg$s2_es
       )
+    } else if (base_ev == "catboost") {
+      list(
+        learning_rate = 0.08,
+        depth = 6L,
+        nrounds = cfg$s2_nrounds,
+        early_stopping_rounds = cfg$s2_es
+      )
     } else if (base_ev == "realmlp") {
       bs <- if (n_rows >= 8192L) 2048L else -1L
       list(
@@ -240,6 +247,14 @@
       } else if (base_ev == "xgboost") {
         list(
           tree_method = "hist",
+          learning_rate = cfg$s4_xgb_lr,
+          nrounds = cfg$s4_xgb_nrounds,
+          early_stopping_rounds = cfg$s4_xgb_es,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "catboost") {
+        list(
           learning_rate = cfg$s4_xgb_lr,
           nrounds = cfg$s4_xgb_nrounds,
           early_stopping_rounds = cfg$s4_xgb_es,
@@ -285,6 +300,16 @@
           subsample = 0.80,
           colsample_bytree = 0.75,
           lambda = 2.0,
+          nrounds = cfg$s4_xgb_nrounds,
+          early_stopping_rounds = cfg$s4_xgb_es
+        )
+      } else if (base_ev == "catboost") {
+        list(
+          learning_rate = cfg$s4_xgb_lr,
+          depth = 6L,
+          subsample = 0.80,
+          rsm = 0.75,
+          l2_leaf_reg = 3.0,
           nrounds = cfg$s4_xgb_nrounds,
           early_stopping_rounds = cfg$s4_xgb_es
         )

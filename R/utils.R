@@ -527,7 +527,7 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
   unwrapped <- unwrap_evaluator(evaluator)
   if (identical(unwrapped, "realmlp")) {
     args$early_stopping_rounds <- 0L
-    args$early_stopping_round <- 0L
+    args$early_stopping_round <- NULL
     if (!is.null(target_iters) && is.numeric(target_iters) && !is.na(target_iters) && target_iters > 0) {
       args$stop_epoch <- as.integer(target_iters)
     }
@@ -548,7 +548,13 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
     args$nrounds <- target_iters
   }
   args$early_stopping_rounds <- 0L
-  args$early_stopping_round <- 0L
+  args$early_stopping_round <- NULL
+  if (identical(unwrapped, "catboost")) {
+    args$od_wait <- NULL
+    args$od_type <- NULL
+    args$early_stop_round <- NULL
+    args$early_stopping <- NULL
+  }
   args
 }
 

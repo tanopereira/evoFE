@@ -618,6 +618,31 @@ test_that("run_competition_pipeline supports tune_stage4 = 'mbo' and warns on mi
   )
 })
 
+test_that("run_competition_pipeline runs end-to-end with catboost evaluator", {
+  skip_if(system.file(package = "catboost") == "", "catboost package is not installed")
+  set.seed(42)
+  df <- iris
+  df$Species <- as.integer(df$Species == "setosa")
+  train <- df[1:60, ]
+  test <- df[61:80, ]
+
+  res <- run_competition_pipeline(
+    train = train,
+    test = test,
+    target_col = "Species",
+    evaluators = "catboost",
+    preset = "fast",
+    cv_folds = 2L,
+    verbose = FALSE
+  )
+
+  expect_type(res, "list")
+  expect_true(!is.null(res$predictions))
+  expect_equal(length(res$predictions), nrow(test))
+  expect_true(inherits(res$submission, "data.table"))
+  expect_equal(nrow(res$submission), nrow(test))
+})
+
 
 
 
