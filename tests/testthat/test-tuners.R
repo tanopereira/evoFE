@@ -356,5 +356,16 @@ test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are r
   expect_equal(unwrap_evaluator("xgboost_tabarena"), "xgboost")
   expect_equal(unwrap_evaluator("catboost_tabarena"), "catboost")
   expect_equal(unwrap_evaluator("realmlp_tabarena"), "realmlp")
+
+  # Verify parameter space invariants for TabArena tuners
+  rmlp_env <- environment(get_evaluator("realmlp_tabarena")$train_func)
+  defs <- rmlp_env$tunable_defs
+  expect_equal(defs$hidden_dim$lower, 128L)
+  expect_equal(defs$hidden_dim$upper, 512L)
+  expect_equal(defs$realmlp_lr$lower, 0.01)
+  expect_equal(defs$realmlp_lr$upper, 0.35)
+  expect_equal(defs$realmlp_n_cycles$lower, 1L)
+  expect_equal(defs$realmlp_n_cycles$upper, 4L)
+  expect_equal(defs$batch_size$values, c(256L, 512L, 1024L, 2048L))
 })
 

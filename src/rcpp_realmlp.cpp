@@ -1238,7 +1238,8 @@ List rcpp_realmlp_train(NumericMatrix x_train,
     Named("best_epoch") = best_epoch,
     Named("best_iteration") = best_epoch,
     Named("best_val_score") = best_val_score,
-    Named("n_cycles") = actual_cycles
+    Named("n_cycles") = actual_cycles,
+    Named("base_lr") = base_lr
   );
 
   return res;

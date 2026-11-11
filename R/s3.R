@@ -537,7 +537,9 @@ print.evo_competition_run <- function(x, ...) {
 #' @export
 summary.evo_competition_run <- function(object, ...) {
   eval_labels <- if (!is.null(object$stage4_evaluators)) {
-    unname(object$stage4_evaluators[names(object$stage4_fitness)])
+    lbls <- unname(object$stage4_evaluators[names(object$stage4_fitness)])
+    fallback <- names(object$stage4_fitness)
+    ifelse(is.na(lbls) | !nzchar(lbls), fallback, lbls)
   } else {
     names(object$stage4_fitness)
   }

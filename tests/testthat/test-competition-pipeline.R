@@ -552,6 +552,73 @@ test_that("run_competition_pipeline supports Stage 4 TabArena Bayesian Optimizat
   expect_true(any(grepl("lightgbm_tabarena", out_s)))
 })
 
+test_that("run_competition_pipeline passes bagging_freq = 1L to LightGBM under Stage 4 tuning", {
+  args <- evoFE:::.evaluator_stage_args(
+    ev = "lightgbm_tabarena",
+    stage = 4L,
+    cfg = list(
+      s4_lgb_lr = 0.05,
+      s4_lgb_nrounds = 200L,
+      s4_lgb_es = 25L,
+      mbo_iters = 5L,
+      mbo_init_design = 4L
+    ),
+    n_rows = 100L
+  )
+  expect_equal(args$bagging_freq, 1L)
+  expect_equal(args$learning_rate, 0.05)
+})
+
+test_that("run_competition_pipeline supports tune_stage4 = 'mbo' and warns on missing tuner counterpart", {
+  testthat::skip_if_not_installed("lightgbm")
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  set.seed(42)
+  tr <- data.frame(
+    x1 = stats::rnorm(30L),
+    x2 = stats::rnorm(30L),
+    target = sample(c(0L, 1L), 30L, replace = TRUE)
+  )
+  te <- data.frame(x1 = stats::rnorm(10L), x2 = stats::rnorm(10L))
+
+  res_mbo <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "target",
+    evaluators = "lightgbm",
+    tune_stage4 = "mbo",
+    preset = "fast",
+    preset_overrides = list(
+      mbo_iters = 1L,
+      mbo_init_design = 2L,
+      s4_lgb_nrounds = 5L,
+      s4_lgb_es = 5L
+    ),
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  )
+  expect_equal(res_mbo$tune_stage4, "mbo")
+  expect_equal(res_mbo$stage4_evaluators[["lightgbm"]], "lightgbm_mbo")
+
+  # Test fallback warning for an evaluator without a registered _tabarena tuner
+  register_evaluator(
+    "dummy_untuned_model",
+    train_func = function(x_train, y_train, ...) list(model = list()),
+    predict_func = function(model, newdata, ...) rep(0.5, nrow(newdata))
+  )
+  on.exit(rm("dummy_untuned_model", envir = evo_evaluators), add = TRUE)
+
+  expect_warning(
+    evoFE:::.resolve_stage4_evaluator("dummy_untuned_model", tune_stage4 = "tabarena"),
+    "TabArena tuner 'dummy_untuned_model_tabarena' not registered; falling back to 'dummy_untuned_model'"
+  )
+})
+
+
 
 
 

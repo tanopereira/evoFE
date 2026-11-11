@@ -872,8 +872,9 @@ Below are TabArena-inspired hyperparameter search spaces adapted for the Golden 
 
 #### 3. RealMLP TabArena Space
 * `hidden_dim`: `[128, 512]` (integer) — Width of periodic DenseNet layers (TabArena benchmarks 256, 384, 512).
-* `realmlp_lr`: `[0.001, 0.03]` (numeric) — Initial learning rate with cosine annealing.
-* `batch_size`: Choice of `[1024, 2048, 4096]` (discrete) — Larger batch sizes accelerate OpenMP GEMM BLAS operations and regularize updates on large datasets.
+* `realmlp_lr`: `[0.01, 0.35]` (numeric) — Initial learning rate with cosine annealing (brackets 0.04 classification and 0.20 regression defaults).
+* `realmlp_n_cycles`: `[1, 4]` (integer) — Exponentially doubling cosine annealing cycles.
+* `batch_size`: Choice of `[256, 512, 1024, 2048]` (discrete) — Batch sizes scaled to tabular datasets to accelerate OpenMP GEMM BLAS operations.
 
 ---
 
@@ -925,8 +926,8 @@ make_tunable(
   param_ranges    = list(
     hidden_dim       = list(type = "integer", lower = 128, upper = 512),
     realmlp_lr       = list(type = "numeric", lower = 0.01, upper = 0.35), # Brackets 0.04 (class) and 0.20 (regr) defaults
-    realmlp_n_cycles = list(type = "integer", lower = 1,   upper = 6),
-    batch_size       = list(type = "discrete", values = c(1024, 2048, 4096))
+    realmlp_n_cycles = list(type = "integer", lower = 1,   upper = 4),
+    batch_size       = list(type = "discrete", values = c(256, 512, 1024, 2048))
   ),
   tuner_name      = "realmlp_tabarena"
 )
@@ -1354,8 +1355,8 @@ make_tunable(
   list(
     hidden_dim       = list(type = "integer", lower = 128, upper = 512),
     realmlp_lr       = list(type = "numeric", lower = 0.01, upper = 0.35),
-    realmlp_n_cycles = list(type = "integer", lower = 1,   upper = 6),
-    batch_size       = list(type = "discrete", values = c(1024, 2048, 4096))
+    realmlp_n_cycles = list(type = "integer", lower = 1,   upper = 4),
+    batch_size       = list(type = "discrete", values = c(256, 512, 1024, 2048))
   ),
   tuner_name = "mlp_tabarena_deep"
 )

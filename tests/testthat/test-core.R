@@ -528,10 +528,11 @@ test_that("predict handles genes that get pruned during apply_individual", {
     class = "evo_recipe"
   )
 
-  # predict should NOT crash; gene_bad should be pruned
+  # predict should NOT crash; missing/failed genes are zero-filled to preserve schema parity
   res <- predict(recipe, iris[, 1:4])
   expect_true(gene_ok$output_col %in% names(res))
-  expect_false(gene_bad$output_col %in% names(res))
+  expect_true(gene_bad$output_col %in% names(res))
+  expect_true(all(res[[gene_bad$output_col]] == 0.0))
 })
 
 test_that("max_clustering_size downsampling works in genie and mst_score", {

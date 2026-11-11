@@ -150,6 +150,29 @@
   kept
 }
 
+#' Resolve Stage 4 tuned evaluator or fallback to untuned base
+#' @keywords internal
+#' @noRd
+.resolve_stage4_evaluator <- function(ev, tune_stage4 = c("none", "tabarena", "mbo")) {
+  tune_stage4 <- match.arg(tune_stage4)
+  base_ev <- get_base_evaluator(ev)
+  if (tune_stage4 == "tabarena") {
+    cand <- paste0(base_ev, "_tabarena")
+    if (has_evaluator(cand)) cand else {
+      warning(sprintf("TabArena tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
+      base_ev
+    }
+  } else if (tune_stage4 == "mbo") {
+    cand <- paste0(base_ev, "_mbo")
+    if (has_evaluator(cand)) cand else {
+      warning(sprintf("MBO tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
+      base_ev
+    }
+  } else {
+    ev
+  }
+}
+
 #' Auto-select regression target transformation based on skewness and positivity
 #' @keywords internal
 #' @noRd
@@ -210,6 +233,7 @@
           learning_rate = cfg$s4_lgb_lr,
           nrounds = cfg$s4_lgb_nrounds,
           early_stopping_rounds = cfg$s4_lgb_es,
+          bagging_freq = 1L,
           mbo_iters = mbo_it,
           mbo_init_design = mbo_id
         )
@@ -527,6 +551,21 @@ run_competition_pipeline <- function(
 
   preset <- match.arg(preset)
   tune_stage4 <- match.arg(tune_stage4)
+  if (tune_stage4 %in% c("tabarena", "mbo")) {
+    missing_pkgs <- character(0)
+    for (pkg in c("mlr3mbo", "paradox", "bbotk")) {
+      if (!requireNamespace(pkg, quietly = TRUE)) {
+        missing_pkgs <- c(missing_pkgs, pkg)
+      }
+    }
+    if (length(missing_pkgs) > 0L) {
+      stop(sprintf(
+        "tune_stage4 = '%s' requires packages: %s. Please install them.",
+        tune_stage4,
+        paste(missing_pkgs, collapse = ", ")
+      ))
+    }
+  }
   cv_strategy <- match.arg(cv_strategy)
   cv_folds <- as.integer(cv_folds)
   if (is.na(cv_folds) || cv_folds < 2L) stop("'cv_folds' must be an integer >= 2.")
@@ -836,22 +875,8 @@ run_competition_pipeline <- function(
 
   for (idx in seq_along(active_evaluators)) {
     ev <- active_evaluators[idx]
+    s4_ev <- .resolve_stage4_evaluator(ev, tune_stage4)
     base_ev <- get_base_evaluator(ev)
-    s4_ev <- if (tune_stage4 == "tabarena") {
-      cand <- paste0(base_ev, "_tabarena")
-      if (has_evaluator(cand)) cand else {
-        warning(sprintf("TabArena tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
-        base_ev
-      }
-    } else if (tune_stage4 == "mbo") {
-      cand <- paste0(base_ev, "_mbo")
-      if (has_evaluator(cand)) cand else {
-        warning(sprintf("MBO tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
-        base_ev
-      }
-    } else {
-      ev
-    }
 
     ev_args <- .evaluator_stage_args(s4_ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega), custom_evaluator_args = evaluator_args)
 

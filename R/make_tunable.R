@@ -373,9 +373,20 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     
     # Extract best hyperparams (including fixed_params so unwrapping preserves them)
     best_hyperparams <- as.list(instance$result[, ps$ids(), with = FALSE])
-    best_hyperparams <- lapply(best_hyperparams, function(val) {
-      if (is.factor(val)) as.character(val) else val
+    best_hyperparams <- lapply(names(best_hyperparams), function(pname) {
+      val <- best_hyperparams[[pname]]
+      if (is.factor(val)) val <- as.character(val)
+      def <- tunable_defs[[pname]]
+      if (!is.null(def) && identical(def$type, "discrete") && is.numeric(def$values)) {
+        if (is.integer(def$values) || all(def$values == as.integer(def$values))) {
+          val <- as.integer(val)
+        } else {
+          val <- as.numeric(val)
+        }
+      }
+      val
     })
+    names(best_hyperparams) <- ps$ids()
     if (length(fixed_params) > 0) {
       best_hyperparams <- utils::modifyList(fixed_params, best_hyperparams)
     }

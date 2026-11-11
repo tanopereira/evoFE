@@ -689,4 +689,36 @@ test_that("evaluate_pop retains finite fitness and does not assign -Inf when gen
   expect_true(is.finite(cache[[k2]]$fitness))
 })
 
+test_that("realmlp defaults learning rate to 0.20 for regression and 0.04 for classification when lr <= 0", {
+  set.seed(42)
+  d_reg <- data.frame(x1 = rnorm(50), x2 = rnorm(50), y = rnorm(50))
+  ev <- evoFE::evo_evaluators[["realmlp"]]
+
+  fit_reg <- ev$train_func(
+    x_train = d_reg[1:40, c("x1", "x2")],
+    y_train = d_reg$y[1:40],
+    x_val = d_reg[41:50, c("x1", "x2")],
+    task = "regression",
+    seed = 42,
+    nrounds = 2,
+    realmlp_lr = -1.0,
+    verbose = FALSE
+  )
+  expect_equal(fit_reg$model$base_lr, 0.20)
+
+  d_cls <- data.frame(x1 = rnorm(50), x2 = rnorm(50), y = sample(c(0, 1), 50, replace = TRUE))
+  fit_cls <- ev$train_func(
+    x_train = d_cls[1:40, c("x1", "x2")],
+    y_train = d_cls$y[1:40],
+    x_val = d_cls[41:50, c("x1", "x2")],
+    task = "classification",
+    seed = 42,
+    nrounds = 2,
+    realmlp_lr = -1.0,
+    verbose = FALSE
+  )
+  expect_equal(fit_cls$model$base_lr, 0.04)
+})
+
+
 

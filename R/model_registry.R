@@ -1434,6 +1434,7 @@ register_evaluator(
       best_epoch = best_it,
       n_epochs = as.integer(n_epochs),
       n_cycles = as.integer(fit_res$n_cycles),
+      base_lr = as.numeric(fit_res$base_lr),
       threads = as.integer(threads)
     )
 
