@@ -367,5 +367,69 @@ test_that("first-class MBO tuners (xgboost_mbo, catboost_mbo, realmlp_mbo) are r
   expect_equal(defs$realmlp_n_cycles$lower, 1L)
   expect_equal(defs$realmlp_n_cycles$upper, 4L)
   expect_equal(defs$batch_size$values, c(256L, 512L, 1024L, 2048L))
+  expect_true(isTRUE(defs$realmlp_lr$log))
+})
+
+test_that("make_tunable supports logarithmic scale sampling and fails fast on non-positive bounds", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  # 1. Fail fast when log = TRUE with lower <= 0
+  expect_error(
+    make_tunable(
+      base_model_name = "xgboost",
+      param_ranges = list(
+        bad_lr = list(type = "numeric", lower = 0.0, upper = 1.0, log = TRUE)
+      ),
+      tuner_name = "mock_bad_log"
+    ),
+    "lower bound must be positive"
+  )
+
+  # 2. Check that realmlp_tabarena has log = TRUE on realmlp_lr
+  rmlp_env <- environment(get_evaluator("realmlp_tabarena")$train_func)
+  expect_true(isTRUE(rmlp_env$tunable_defs$realmlp_lr$log))
+  expect_true(isTRUE(rmlp_env$search_ps$is_logscale[["realmlp_lr"]]))
+  expect_true(isTRUE(rmlp_env$search_ps$has_trafo))
+
+  # 3. Register a mock model with log-scale tuning and verify end-to-end execution
+  register_evaluator(
+    "mock_log_base",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL, lr = 0.05, ...) {
+      preds <- rep(lr, if (!is.null(x_val)) nrow(x_val) else nrow(x_train))
+      list(model = list(lr = lr), predictions = preds)
+    },
+    predict_func = function(model, newdata, ...) rep(model$lr, nrow(newdata))
+  )
+  on.exit(rm("mock_log_base", envir = evo_evaluators), add = TRUE)
+
+  make_tunable(
+    base_model_name = "mock_log_base",
+    param_ranges = list(
+      lr = list(type = "numeric", lower = 0.001, upper = 0.1, log = TRUE)
+    ),
+    tuner_name = "mock_log_tuner"
+  )
+  on.exit(rm("mock_log_tuner", envir = evo_evaluators), add = TRUE)
+
+  x_dummy <- matrix(rnorm(20), ncol = 2)
+  y_dummy <- rep(0.04, 10)
+
+  fit_log <- train_model(
+    x_train = x_dummy[1:8, ],
+    y_train = y_dummy[1:8],
+    x_val = x_dummy[9:10, ],
+    y_val = y_dummy[9:10],
+    evaluator = "mock_log_tuner",
+    mbo_iters = 1,
+    mbo_init_design = 3,
+    best_params = list(lr = 0.04),
+    verbose = FALSE
+  )
+
+  expect_true(!is.null(fit_log$best_params))
+  expect_true(fit_log$best_params$lr >= 0.001 && fit_log$best_params$lr <= 0.1)
+  expect_true(is.numeric(fit_log$best_params$lr))
 })
 

@@ -29,6 +29,8 @@
 #'       (required for \code{"numeric"} and \code{"integer"}).}
 #'     \item{\code{upper}}{Numeric/Integer: Upper bound of the search space
 #'       (required for \code{"numeric"} and \code{"integer"}).}
+#'     \item{\code{log}}{Logical: Whether to sample on a logarithmic scale
+#'       (optional for \code{"numeric"}, requires \code{lower > 0}).}
 #'     \item{\code{values}}{Vector: Set of valid values (required for \code{"discrete"}).}
 #'   }
 #' @param tuner_name Character. The name under which to register the tuned evaluator. Defaults to
@@ -104,10 +106,22 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
   }
 
-  # 3. Convert tunable parameter ranges list into a paradox ParamSet
-  make_param <- function(name, def) {
+  # 3. Convert tunable parameter ranges list into paradox ParamSets (domain and search space)
+  make_param <- function(name, def, is_search = FALSE) {
     if (def$type == "numeric") {
-      paradox::p_dbl(lower = def$lower, upper = def$upper)
+      is_log <- isTRUE(def$log) || isTRUE(def$logscale)
+      if (is_log) {
+        if (!is.numeric(def$lower) || def$lower <= 0) {
+          stop(sprintf("Parameter '%s' has log = TRUE, but lower bound must be positive (got %s).", name, as.character(def$lower)))
+        }
+        if (is_search) {
+          paradox::p_dbl(lower = def$lower, upper = def$upper, logscale = TRUE)
+        } else {
+          paradox::p_dbl(lower = def$lower, upper = def$upper)
+        }
+      } else {
+        paradox::p_dbl(lower = def$lower, upper = def$upper)
+      }
     } else if (def$type == "integer") {
       paradox::p_int(lower = def$lower, upper = def$upper)
     } else if (def$type == "discrete") {
@@ -116,10 +130,17 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       stop(sprintf("Unsupported parameter type: %s", def$type))
     }
   }
-  
-  param_list <- lapply(names(tunable_defs), function(n) make_param(n, tunable_defs[[n]]))
-  names(param_list) <- names(tunable_defs)
-  ps <- do.call(paradox::ps, param_list)
+
+  domain_list <- lapply(names(tunable_defs), function(n) make_param(n, tunable_defs[[n]], is_search = FALSE))
+  names(domain_list) <- names(tunable_defs)
+  domain_ps <- do.call(paradox::ps, domain_list)
+
+  search_list <- lapply(names(tunable_defs), function(n) make_param(n, tunable_defs[[n]], is_search = TRUE))
+  names(search_list) <- names(tunable_defs)
+  search_ps <- do.call(paradox::ps, search_list)
+
+  # Maintain backwards-compatible 'ps' reference in closure environment
+  ps <- domain_ps
   
   # 4. Create a dynamic training function wrapper
   tuned_train_func <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NULL,
@@ -307,7 +328,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     
     objective <- bbotk::ObjectiveRFun$new(
       fun = obj_fun_bbotk,
-      domain = ps,
+      domain = domain_ps,
       codomain = codomain
     )
     
@@ -320,22 +341,34 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
     
     # Ensure initial design size is at least D + 2 for Kriging surrogate stability
-    D <- length(ps$ids())
+    D <- length(domain_ps$ids())
     mbo_init_design <- max(mbo_init_design, D + 2)
 
     instance <- bbotk::OptimInstanceBatchSingleCrit$new(
       objective = objective,
+      search_space = search_ps,
       terminator = bbotk::trm("evals", n_evals = mbo_init_design + mbo_iters)
     )
     
-    # Generate initial design
-    design <- paradox::generate_design_lhs(ps, n = mbo_init_design)$data
+    # Generate initial design in search space
+    design <- paradox::generate_design_lhs(search_ps, n = mbo_init_design)$data
     
     # Seed with previous best_params if provided
     if (!is.null(best_params)) {
       req_params <- names(tunable_defs)
       if (all(req_params %in% names(best_params))) {
-        best_df <- data.table::as.data.table(best_params[req_params])
+        seed_list <- best_params[req_params]
+        # Map parameters with logscale back to search space coordinates
+        for (pname in req_params) {
+          def <- tunable_defs[[pname]]
+          if (!is.null(def) && def$type == "numeric" && (isTRUE(def$log) || isTRUE(def$logscale))) {
+            val <- as.numeric(seed_list[[pname]])
+            if (is.finite(val) && val > 0) {
+              seed_list[[pname]] <- log(val)
+            }
+          }
+        }
+        best_df <- data.table::as.data.table(seed_list)
         for (col in names(best_df)) {
           if (is.factor(design[[col]])) {
             best_df[[col]] <- factor(as.character(best_df[[col]]), levels = levels(design[[col]]))
@@ -371,8 +404,12 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     optimizer$surrogate <- surrogate
     optimizer$optimize(instance)
     
-    # Extract best hyperparams (including fixed_params so unwrapping preserves them)
-    best_hyperparams <- as.list(instance$result[, ps$ids(), with = FALSE])
+    # Extract best hyperparams in real domain coordinates (including fixed_params so unwrapping preserves them)
+    best_hyperparams <- if (!is.null(instance$result$x_domain) && length(instance$result$x_domain) > 0L) {
+      as.list(instance$result$x_domain[[1]])
+    } else {
+      as.list(instance$result[, domain_ps$ids(), with = FALSE])
+    }
     best_hyperparams <- lapply(names(best_hyperparams), function(pname) {
       val <- best_hyperparams[[pname]]
       if (is.factor(val)) val <- as.character(val)
@@ -386,7 +423,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       }
       val
     })
-    names(best_hyperparams) <- ps$ids()
+    names(best_hyperparams) <- domain_ps$ids()
     if (length(fixed_params) > 0) {
       best_hyperparams <- utils::modifyList(fixed_params, best_hyperparams)
     }

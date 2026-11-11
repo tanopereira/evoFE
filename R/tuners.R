@@ -6,7 +6,7 @@
 make_tunable(
   base_model_name = "lightgbm",
   param_ranges = list(
-    learning_rate = list(type = "numeric", lower = 0.01, upper = 0.3),
+    learning_rate = list(type = "numeric", lower = 0.01, upper = 0.3, log = TRUE),
     num_leaves = list(type = "integer", lower = 7, upper = 63),
     max_depth = list(type = "integer", lower = 3, upper = 10),
     feature_fraction = list(type = "numeric", lower = 0.5, upper = 1.0)
@@ -17,7 +17,7 @@ make_tunable(
 make_tunable(
   base_model_name = "xgboost",
   param_ranges = list(
-    eta = list(type = "numeric", lower = 0.01, upper = 0.3),
+    eta = list(type = "numeric", lower = 0.01, upper = 0.3, log = TRUE),
     max_depth = list(type = "integer", lower = 3, upper = 10),
     subsample = list(type = "numeric", lower = 0.5, upper = 1.0),
     colsample_bytree = list(type = "numeric", lower = 0.5, upper = 1.0)
@@ -28,7 +28,7 @@ make_tunable(
 make_tunable(
   base_model_name = "catboost",
   param_ranges = list(
-    learning_rate = list(type = "numeric", lower = 0.01, upper = 0.3),
+    learning_rate = list(type = "numeric", lower = 0.01, upper = 0.3, log = TRUE),
     depth = list(type = "integer", lower = 4, upper = 10),
     l2_leaf_reg = list(type = "numeric", lower = 1.0, upper = 10.0)
   ),
@@ -38,7 +38,7 @@ make_tunable(
 make_tunable(
   base_model_name = "realmlp",
   param_ranges = list(
-    realmlp_lr = list(type = "numeric", lower = 0.01, upper = 0.35),
+    realmlp_lr = list(type = "numeric", lower = 0.01, upper = 0.35, log = TRUE),
     hidden_dim = list(type = "integer", lower = 64, upper = 512),
     realmlp_n_cycles = list(type = "integer", lower = 1L, upper = 4L)
   ),
@@ -82,7 +82,7 @@ make_tunable(
   param_ranges = list(
     depth               = list(type = "integer", lower = 4, upper = 10),
     l2_leaf_reg         = list(type = "numeric", lower = 1.0, upper = 10.0),
-    random_strength     = list(type = "numeric", lower = 1e-9, upper = 10.0),
+    random_strength     = list(type = "numeric", lower = 1e-9, upper = 10.0, log = TRUE),
     bagging_temperature = list(type = "numeric", lower = 0.0, upper = 1.0)
   ),
   tuner_name = "catboost_tabarena"
@@ -92,7 +92,7 @@ make_tunable(
   base_model_name = "realmlp",
   param_ranges = list(
     hidden_dim       = list(type = "integer", lower = 128L, upper = 512L),
-    realmlp_lr       = list(type = "numeric", lower = 0.01, upper = 0.35),
+    realmlp_lr       = list(type = "numeric", lower = 0.01, upper = 0.35, log = TRUE),
     realmlp_n_cycles = list(type = "integer", lower = 1L, upper = 4L),
     batch_size       = list(type = "discrete", values = c(256L, 512L, 1024L, 2048L))
   ),

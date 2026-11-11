@@ -22,6 +22,8 @@ Each parameter definition must be a list containing:
     (required for \code{"numeric"} and \code{"integer"}).}
   \item{\code{upper}}{Numeric/Integer: Upper bound of the search space
     (required for \code{"numeric"} and \code{"integer"}).}
+  \item{\code{log}}{Logical: Whether to sample on a logarithmic scale
+    (optional for \code{"numeric"}, requires \code{lower > 0}).}
   \item{\code{values}}{Vector: Set of valid values (required for \code{"discrete"}).}
 }}
 
