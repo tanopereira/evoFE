@@ -541,6 +541,37 @@ test_that("viewer_to_json preserves array types, empty objects, na='null', and e
   expect_type(parsed$tournament$candidates, "list")
   expect_type(parsed$confirmation$split1_fitness, "list")
   expect_identical(parsed$generations[[1]]$global_best_recipe, "bad</script><!--x")
+
+  # NULL optional/scalar fields must serialize as JSON null rather than {}
+  null_mig_json <- viewer_to_json(list(
+    type = "migration",
+    data = list(
+      generation = 1L,
+      from = 1L,
+      to = 2L,
+      migrated_genes = list(),
+      donor_headroom = NULL,
+      dest_headroom = NULL
+    )
+  ))
+  expect_true(grepl('"donor_headroom":null', null_mig_json, fixed = TRUE))
+  expect_true(grepl('"dest_headroom":null', null_mig_json, fixed = TRUE))
+  expect_true(grepl('"migrated_genes":\\[\\]', null_mig_json))
+
+  null_cfg_json <- viewer_to_json(list(
+    type = "config",
+    data = list(
+      islands = 1L,
+      adj_list = NULL,
+      cv_folds = NULL,
+      numeric_cols = c("x1"),
+      categorical_cols = character(0),
+      datetime_cols = NULL
+    )
+  ))
+  expect_true(grepl('"adj_list":null', null_cfg_json, fixed = TRUE))
+  expect_true(grepl('"cv_folds":null', null_cfg_json, fixed = TRUE))
+  expect_true(grepl('"datetime_cols":\\[\\]', null_cfg_json))
 })
 
 test_that("view() emits valid standalone HTML and schema parity across islands, pooling, and confirmation", {

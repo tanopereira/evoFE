@@ -533,7 +533,7 @@ confirm_top_k_candidates <- function(confirm_top_k, best_ind, pop = NULL,
     winner$val_preds_trans <- .blend_oof_predictions(winner$val_preds_trans, conf_win$val_preds_trans)
   }
   if (!is.null(winner$best_iteration) && !is.null(conf_win$best_iteration) &&
-      is.finite(winner$best_iteration) && is.finite(conf_win$best_iteration)) {
+        is.finite(winner$best_iteration) && is.finite(conf_win$best_iteration)) {
     winner$best_iteration <- as.integer(round(0.5 * (winner$best_iteration + conf_win$best_iteration)))
   }
 

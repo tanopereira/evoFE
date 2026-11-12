@@ -223,7 +223,7 @@ start_evolution_viewer <- function(port = NULL) {
     return(NULL)
   }
   if (!is.numeric(port) || length(port) != 1L || is.na(port) || !is.finite(port) ||
-      port < 1 || port > 65535 || port != floor(port)) {
+        port < 1 || port > 65535 || port != floor(port)) {
     stop("port must be NULL or a single integer between 1 and 65535.")
   }
   as.integer(port)
@@ -433,7 +433,14 @@ viewer_to_json <- function(data, pretty = FALSE, is_full_log = FALSE, escape_scr
   }
 
   json <- as.character(
-    jsonlite::toJSON(prepared, auto_unbox = TRUE, na = "null", digits = 6, pretty = pretty)
+    jsonlite::toJSON(
+      prepared,
+      auto_unbox = TRUE,
+      na = "null",
+      null = "null",
+      digits = 6,
+      pretty = pretty
+    )
   )
   if (isTRUE(escape_script)) {
     json <- gsub("<", "\\u003c", json, fixed = TRUE)

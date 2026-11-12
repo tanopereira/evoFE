@@ -753,7 +753,7 @@ evolve_features <- function(data, target_col, task = "classification",
       if (isTRUE(browse_ok)) {
         wait_timeout <- getOption("evoFE.viewer_timeout", 5.0)
         if (!is.numeric(wait_timeout) || length(wait_timeout) != 1L || is.na(wait_timeout) ||
-            !is.finite(wait_timeout) || wait_timeout < 0) {
+              !is.finite(wait_timeout) || wait_timeout < 0) {
           wait_timeout <- 5.0
         }
         tryCatch(
