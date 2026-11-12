@@ -153,9 +153,7 @@ pool_final_genes <- function(pop, best_ind, data, target_col, task = "classifica
       fitness = if (!is.null(super_ind)) super_ind$fitness else best_ind$fitness,
       adopted = adopted_pooled
     )
-    if (!is.null(viewer)) {
-      viewer$send(list(type = "pooled", data = evolution_log$pooled))
-    }
+    viewer_send(viewer, "pooled", evolution_log$pooled)
   }
 
   list(
@@ -323,9 +321,7 @@ pool_historical_genes <- function(historical_best_genes, best_ind, data, target_
       fitness = if (!is.null(super_ind_hist)) super_ind_hist$fitness else best_ind$fitness,
       adopted = adopted_hist
     )
-    if (!is.null(viewer)) {
-      viewer$send(list(type = "historical", data = evolution_log$historical))
-    }
+    viewer_send(viewer, "historical", evolution_log$historical)
   }
 
   list(

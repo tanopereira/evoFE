@@ -32,43 +32,19 @@ start_evolution_viewer <- function(port = NULL) {
     }
   }
 
-  safe_random_port <- function() {
-    old_seed <- if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      get(".Random.seed", envir = globalenv(), inherits = FALSE)
-    } else {
-      NULL
-    }
-    on.exit({
-      if (!is.null(old_seed)) {
-        assign(".Random.seed", old_seed, envir = globalenv())
-      } else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-        rm(".Random.seed", envir = globalenv())
-      }
-    }, add = TRUE)
-    httpuv::randomPort()
-  }
-
   if (is.null(port)) {
     port <- getOption("evoFE.viewer_port", NULL)
   }
   if (is.null(port)) {
-    port <- safe_random_port()
+    port <- with_preserved_seed(httpuv::randomPort())
   }
 
   ws_connections <- list()
   history_buffer <- list()
 
-  html_path <- system.file("viewer", "index.html", package = "evoFE")
-  if (html_path == "") {
-    # Fallback/development path
-    html_path <- file.path(getwd(), "inst", "viewer", "index.html")
-  }
-
-  html_content <- if (file.exists(html_path)) {
-    paste(readLines(html_path, warn = FALSE), collapse = "\n")
-  } else {
-    "<html><body><h1>Evolution Viewer Template Missing</h1></body></html>"
-  }
+  html_content <- .load_viewer_template(
+    missing_fallback = "<html><body><h1>Evolution Viewer Template Missing</h1></body></html>"
+  )
 
   original_port <- port
   server <- NULL
@@ -79,7 +55,7 @@ start_evolution_viewer <- function(port = NULL) {
   while (is.null(server) && attempts < max_attempts) {
     attempts <- attempts + 1
     if (attempts > 1 || is.null(port)) {
-      port <- safe_random_port()
+      port <- with_preserved_seed(httpuv::randomPort())
     }
     server <- tryCatch({
       httpuv::startServer("127.0.0.1", port,
@@ -161,6 +137,71 @@ start_evolution_viewer <- function(port = NULL) {
   viewer
 }
 
+.load_viewer_template <- function(missing_fallback = NULL) {
+  html_path <- system.file("viewer", "index.html", package = "evoFE")
+  if (html_path == "") {
+    html_path <- file.path(getwd(), "inst", "viewer", "index.html")
+  }
+  if (!file.exists(html_path)) {
+    if (!is.null(missing_fallback)) {
+      return(missing_fallback)
+    }
+    stop("Evolution Viewer template not found at inst/viewer/index.html")
+  }
+  paste(readLines(html_path, warn = FALSE), collapse = "\n")
+}
+
+viewer_send <- function(viewer, type, data) {
+  if (is.null(viewer)) {
+    return(invisible(NULL))
+  }
+  viewer$send(list(type = type, data = data))
+  invisible(NULL)
+}
+
+.serialize_genes_for_log <- function(genes, importances = NULL, sort_by_importance = TRUE) {
+  if (length(genes) == 0) {
+    return(list())
+  }
+  serialized_genes <- lapply(genes, function(gene) {
+    col <- gene$output_col
+    imp_val <- if (!is.null(importances) && col %in% names(importances)) {
+      as.numeric(importances[[col]])
+    } else {
+      0.0
+    }
+    list(
+      formula = gene_to_formula(gene),
+      output_col = col,
+      importance = imp_val
+    )
+  })
+  if (isTRUE(sort_by_importance) && length(serialized_genes) > 0) {
+    gene_imps <- sapply(serialized_genes, function(x) x$importance)
+    serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
+  }
+  serialized_genes
+}
+
+.build_sample_preview <- function(ind, ref_dt, max_rows = 5L) {
+  head_dt <- utils::head(ref_dt, max_rows)
+  res_sample <- tryCatch(
+    {
+      with_preserved_seed(
+        apply_individual(ind, head_dt, NULL, NULL, state_cache = NULL, allow_prune = FALSE)
+      )
+    },
+    error = function(e) list(train = head_dt)
+  )
+  best_dt <- res_sample$train
+  best_list <- lapply(names(best_dt), function(col) {
+    val <- best_dt[[col]]
+    if (is.numeric(val)) round(val, 4) else as.character(val)
+  })
+  names(best_list) <- names(best_dt)
+  best_list
+}
+
 #' View the evolution history of an evo_recipe
 #'
 #' Opens an interactive HTML page in the browser to visualize the evolutionary
@@ -185,16 +226,7 @@ view.evo_recipe <- function(recipe, ...) {
   }
 
   json_data <- jsonlite::toJSON(recipe$evolution_log, auto_unbox = TRUE, pretty = TRUE)
-  html_path <- system.file("viewer", "index.html", package = "evoFE")
-  if (html_path == "") {
-    html_path <- file.path(getwd(), "inst", "viewer", "index.html")
-  }
-
-  if (!file.exists(html_path)) {
-    stop("Evolution Viewer template not found at inst/viewer/index.html")
-  }
-
-  html <- paste(readLines(html_path, warn = FALSE), collapse = "\n")
+  html <- .load_viewer_template()
   # Inject the logged JSON data into the template placeholder
   parts <- strsplit(html, "__EVOLUTION_DATA__", fixed = TRUE)[[1]]
   html <- paste0(parts[1], json_data, if (length(parts) > 1) parts[2] else "")

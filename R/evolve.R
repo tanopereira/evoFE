@@ -646,47 +646,47 @@ evolve_features <- function(data, target_col, task = "classification",
   viewer <- NULL
   evolution_log <- NULL
 
-  topo_obj <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
-    migration$topology
-  } else {
-    switch(migration_topology,
-      "grid" = topology_grid(islands),
-      "torus" = topology_torus(islands),
-      "hypercube" = topology_hypercube(islands),
-      "tiered" = topology_tiered(islands),
-      "hfc" = topology_tiered(islands),
-      "complete" = topology_complete(islands),
-      "feature_distance" = topology_feature_distance(islands),
-      topology_ring(islands)
-    )
-  }
+  if (record) {
+    topo_obj <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+      migration$topology
+    } else {
+      switch(migration_topology,
+        "grid" = topology_grid(islands),
+        "torus" = topology_torus(islands),
+        "hypercube" = topology_hypercube(islands),
+        "tiered" = topology_tiered(islands),
+        "hfc" = topology_tiered(islands),
+        "complete" = topology_complete(islands),
+        "feature_distance" = topology_feature_distance(islands),
+        topology_ring(islands)
+      )
+    }
 
-  tiers_count <- if (!is.null(topo_obj$tiers)) topo_obj$tiers else 3L
-  adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
+    tiers_count <- if (!is.null(topo_obj$tiers)) topo_obj$tiers else 3L
+    adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
 
-  policy_str <- "push_uniform"
-  policy_thresh_val <- "min_peer"
-  payload_str <- "full_individual"
-  if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
-    if (!is.null(migration$payload)) payload_str <- migration$payload
-    if (!is.null(migration$policy)) {
-      pol <- migration$policy
-      if (inherits(pol, "evo_policy_push_uniform")) {
-        policy_str <- "push_uniform"
-      } else if (inherits(pol, "evo_policy_gibbs_push")) {
-        policy_str <- paste0("gibbs_push_", pol$weight_by)
-      } else if (inherits(pol, "evo_policy_gibbs_pull")) {
-        policy_str <- paste0("gibbs_pull_", pol$weight_by)
-      } else if (inherits(pol, "evo_policy_tiered_admission")) {
-        policy_str <- "tiered_admission"
-        if (!is.null(pol$min_fitness_threshold)) {
-          policy_thresh_val <- pol$min_fitness_threshold
+    policy_str <- "push_uniform"
+    policy_thresh_val <- "min_peer"
+    payload_str <- "full_individual"
+    if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
+      if (!is.null(migration$payload)) payload_str <- migration$payload
+      if (!is.null(migration$policy)) {
+        pol <- migration$policy
+        if (inherits(pol, "evo_policy_push_uniform")) {
+          policy_str <- "push_uniform"
+        } else if (inherits(pol, "evo_policy_gibbs_push")) {
+          policy_str <- paste0("gibbs_push_", pol$weight_by)
+        } else if (inherits(pol, "evo_policy_gibbs_pull")) {
+          policy_str <- paste0("gibbs_pull_", pol$weight_by)
+        } else if (inherits(pol, "evo_policy_tiered_admission")) {
+          policy_str <- "tiered_admission"
+          if (!is.null(pol$min_fitness_threshold)) {
+            policy_thresh_val <- pol$min_fitness_threshold
+          }
         }
       }
     }
-  }
 
-  if (record) {
     evolution_log <- list(
       config = list(
         islands = islands, pop_size = pop_size, generations = generations,
@@ -722,7 +722,7 @@ evolve_features <- function(data, target_col, task = "classification",
         suppressWarnings(httpuv::service(10))
       }
     }
-    viewer$send(list(type = "config", data = evolution_log$config))
+    viewer_send(viewer, "config", evolution_log$config)
   }
 
   island_fitness_caches <- NULL
@@ -864,18 +864,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (record) {
-    res_sample <- tryCatch(
-      {
-        with_preserved_seed(apply_individual(baseline_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
-      },
-      error = function(e) list(train = utils::head(shared_full, 5))
-    )
-    baseline_dt <- res_sample$train
-    baseline_list <- lapply(names(baseline_dt), function(col) {
-      val <- baseline_dt[[col]]
-      if (is.numeric(val)) round(val, 4) else as.character(val)
-    })
-    names(baseline_list) <- names(baseline_dt)
+    baseline_list <- .build_sample_preview(baseline_ind, shared_full)
 
     evolution_log$baseline <- list(
       fitness = baseline_ind$fitness,
@@ -894,7 +883,7 @@ evolve_features <- function(data, target_col, task = "classification",
         NULL
       }
     )
-    viewer$send(list(type = "baseline", data = evolution_log$baseline))
+    viewer_send(viewer, "baseline", evolution_log$baseline)
   }
 
   # Initialize initial population(s)
@@ -1137,7 +1126,7 @@ evolve_features <- function(data, target_col, task = "classification",
       winner_fitness = best_ind$fitness
     )
     evolution_log$tournament <- tournament_data
-    viewer$send(list(type = "tournament", data = tournament_data))
+    viewer_send(viewer, "tournament", tournament_data)
   }
 
   # Final feature pooling
@@ -1476,36 +1465,8 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (record) {
-    res_sample <- tryCatch(
-      {
-        with_preserved_seed(apply_individual(best_ind, utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
-      },
-      error = function(e) list(train = utils::head(shared_full, 5))
-    )
-    best_dt <- res_sample$train
-    best_list <- lapply(names(best_dt), function(col) {
-      val <- best_dt[[col]]
-      if (is.numeric(val)) round(val, 4) else as.character(val)
-    })
-    names(best_list) <- names(best_dt)
-
-    serialized_genes <- lapply(best_ind$genes, function(gene) {
-      col <- gene$output_col
-      imp_val <- if (!is.null(best_ind$importances) && col %in% names(best_ind$importances)) {
-        as.numeric(best_ind$importances[[col]])
-      } else {
-        0.0
-      }
-      list(
-        formula = gene_to_formula(gene),
-        output_col = col,
-        importance = imp_val
-      )
-    })
-    if (length(serialized_genes) > 0) {
-      gene_imps <- sapply(serialized_genes, function(x) x$importance)
-      serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
-    }
+    best_list <- .build_sample_preview(best_ind, shared_full)
+    serialized_genes <- .serialize_genes_for_log(best_ind$genes, best_ind$importances)
 
     final_hr <- calculate_headroom(effective_fitness, baseline_ind$fitness, task, metric = metric)
     final_data <- list(
@@ -1525,7 +1486,7 @@ evolve_features <- function(data, target_col, task = "classification",
     )
     final_data$search_gap <- search_gap
     evolution_log$final <- final_data
-    viewer$send(list(type = "complete", data = final_data))
+    viewer_send(viewer, "complete", final_data)
   }
 
   recipe_hr <- calculate_headroom(best_ind$fitness, baseline_ind$fitness, task, metric = metric)

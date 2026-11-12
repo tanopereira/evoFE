@@ -55,7 +55,7 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
   }
 
   if (record) {
-    viewer$send(list(type = "status", data = list(island = 1, status = "evaluating", generation = g)))
+    viewer_send(viewer, "status", list(island = 1, status = "evaluating", generation = g))
   }
 
   eval_res <- evaluate_pop(pop, data, target_col, task, cv_folds, evaluation_strategy,
@@ -90,44 +90,16 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
   }
 
   if (record) {
-    viewer$send(list(type = "island_evaluated", data = list(
+    viewer_send(viewer, "island_evaluated", list(
       island = 1,
       generation = g,
       best_fitness = pop[[1]]$fitness,
       stagnation = generations_without_improvement,
       all_fitness = fitness_vals
-    )))
+    ))
 
-    res_sample <- tryCatch(
-      {
-        with_preserved_seed(apply_individual(pop[[1]], utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
-      },
-      error = function(e) list(train = utils::head(shared_full, 5))
-    )
-    best_dt <- res_sample$train
-    best_list <- lapply(names(best_dt), function(col) {
-      val <- best_dt[[col]]
-      if (is.numeric(val)) round(val, 4) else as.character(val)
-    })
-    names(best_list) <- names(best_dt)
-
-    serialized_genes <- lapply(pop[[1]]$genes, function(gene) {
-      col <- gene$output_col
-      imp_val <- if (!is.null(pop[[1]]$importances) && col %in% names(pop[[1]]$importances)) {
-        as.numeric(pop[[1]]$importances[[col]])
-      } else {
-        0.0
-      }
-      list(
-        formula = gene_to_formula(gene),
-        output_col = col,
-        importance = imp_val
-      )
-    })
-    if (length(serialized_genes) > 0) {
-      gene_imps <- sapply(serialized_genes, function(x) x$importance)
-      serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
-    }
+    best_list <- .build_sample_preview(pop[[1]], shared_full)
+    serialized_genes <- .serialize_genes_for_log(pop[[1]]$genes, pop[[1]]$importances)
 
     gen_snapshot <- list(
       generation = g,
@@ -152,7 +124,7 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
     )
     if (is.null(evolution_log)) evolution_log <- list(generations = list())
     evolution_log$generations[[g]] <- gen_snapshot
-    viewer$send(list(type = "generation", data = gen_snapshot))
+    viewer_send(viewer, "generation", gen_snapshot)
   }
 
   stop_early <- FALSE
@@ -320,7 +292,7 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
     }
 
     if (record) {
-      viewer$send(list(type = "status", data = list(island = j, status = "evaluating", generation = g)))
+      viewer_send(viewer, "status", list(island = j, status = "evaluating", generation = g))
     }
 
     eval_res <- evaluate_pop(pop_list[[j]], data, target_col, task, cv_folds, evaluation_strategy,
@@ -368,13 +340,13 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
     }
 
     if (record) {
-      viewer$send(list(type = "island_evaluated", data = list(
+      viewer_send(viewer, "island_evaluated", list(
         island = j,
         generation = g,
         best_fitness = pop_list[[j]][[1]]$fitness,
         stagnation = island_gens_without_improvement[j],
         all_fitness = fitness_vals
-      )))
+      ))
     }
 
     if (best_fitness_island > global_best_fitness) {
@@ -391,36 +363,11 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
   }
 
   if (record) {
-    res_sample <- tryCatch(
-      {
-        with_preserved_seed(apply_individual(global_best_individual, utils::head(shared_full, 5), NULL, NULL, state_cache = NULL, allow_prune = FALSE))
-      },
-      error = function(e) list(train = utils::head(shared_full, 5))
+    best_list <- .build_sample_preview(global_best_individual, shared_full)
+    serialized_genes <- .serialize_genes_for_log(
+      global_best_individual$genes,
+      global_best_individual$importances
     )
-    best_dt <- res_sample$train
-    best_list <- lapply(names(best_dt), function(col) {
-      val <- best_dt[[col]]
-      if (is.numeric(val)) round(val, 4) else as.character(val)
-    })
-    names(best_list) <- names(best_dt)
-
-    serialized_genes <- lapply(global_best_individual$genes, function(gene) {
-      col <- gene$output_col
-      imp_val <- if (!is.null(global_best_individual$importances) && col %in% names(global_best_individual$importances)) {
-        as.numeric(global_best_individual$importances[[col]])
-      } else {
-        0.0
-      }
-      list(
-        formula = gene_to_formula(gene),
-        output_col = col,
-        importance = imp_val
-      )
-    })
-    if (length(serialized_genes) > 0) {
-      gene_imps <- sapply(serialized_genes, function(x) x$importance)
-      serialized_genes <- serialized_genes[order(gene_imps, decreasing = TRUE)]
-    }
 
     ideal_val <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
 
@@ -471,7 +418,7 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
     )
     if (is.null(evolution_log)) evolution_log <- list(generations = list())
     evolution_log$generations[[g]] <- gen_snapshot
-    viewer$send(list(type = "generation", data = gen_snapshot))
+    viewer_send(viewer, "generation", gen_snapshot)
   }
 
   stop_early <- FALSE

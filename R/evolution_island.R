@@ -426,52 +426,41 @@ execute_island_migration <- function(migration_txs, pop_list, old_pop_list,
       }
     }
 
-    migrated_gene_details <- list()
-    if (length(new_genes) > 0) {
-      migrated_gene_details <- lapply(new_genes, function(g_mig) {
-        col <- g_mig$output_col
-        imp_val <- if (!is.null(best_ind_src$importances) && col %in% names(best_ind_src$importances)) {
-          as.numeric(best_ind_src$importances[[col]])
-        } else {
-          0.0
-        }
-        list(
-          formula = gene_to_formula(g_mig),
-          output_col = col,
-          importance = imp_val
-        )
-      })
-    }
-
-    ind_src <- if (length(pop_list[[src]]) > 0) pop_list[[src]][[1]] else NULL
-    ind_dest <- if (length(pop_list[[dest]]) > 0) pop_list[[dest]][[1]] else NULL
-    feat_dist <- .calc_feature_distance(ind_src, ind_dest)
-
-    migration_event <- list(
-      from = src,
-      to = dest,
-      topology = migration_topology,
-      is_pull = tx$is_pull,
-      n_recipes = effective_rate,
-      n_genes = n_injected,
-      migrated_genes = migrated_gene_details,
-      feature_distance = feat_dist,
-      donor_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[src] else NULL,
-      dest_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[dest] else NULL
-    )
-
-    if (record) {
-      if (is.null(evolution_log$generations[[g]]$migrations)) {
-        evolution_log$generations[[g]]$migrations <- list()
-      }
-      evolution_log$generations[[g]]$migrations <- c(
-        evolution_log$generations[[g]]$migrations,
-        list(migration_event)
+    if (record || !is.null(viewer)) {
+      migrated_gene_details <- .serialize_genes_for_log(
+        new_genes,
+        best_ind_src$importances,
+        sort_by_importance = FALSE
       )
-    }
 
-    if (!is.null(viewer)) {
-      viewer$send(list(type = "migration", data = migration_event))
+      ind_src <- if (length(pop_list[[src]]) > 0) pop_list[[src]][[1]] else NULL
+      ind_dest <- if (length(pop_list[[dest]]) > 0) pop_list[[dest]][[1]] else NULL
+      feat_dist <- .calc_feature_distance(ind_src, ind_dest)
+
+      migration_event <- list(
+        from = src,
+        to = dest,
+        topology = migration_topology,
+        is_pull = tx$is_pull,
+        n_recipes = effective_rate,
+        n_genes = n_injected,
+        migrated_genes = migrated_gene_details,
+        feature_distance = feat_dist,
+        donor_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[src] else NULL,
+        dest_headroom = if (exists("effective_island_fits") && use_rel_fits) effective_island_fits[dest] else NULL
+      )
+
+      if (record) {
+        if (is.null(evolution_log$generations[[g]]$migrations)) {
+          evolution_log$generations[[g]]$migrations <- list()
+        }
+        evolution_log$generations[[g]]$migrations <- c(
+          evolution_log$generations[[g]]$migrations,
+          list(migration_event)
+        )
+      }
+
+      viewer_send(viewer, "migration", migration_event)
     }
   }
 
