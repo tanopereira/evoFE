@@ -1910,11 +1910,13 @@
             return [val];
         }
 
+        const NON_FINITE_STRINGS = new Set(["NA", "NaN", "Inf", "-Inf", "Infinity", "-Infinity", "null", "undefined"]);
+
         function toFiniteNum(val) {
             if (typeof val === "number") return Number.isFinite(val) ? val : null;
             if (typeof val === "string") {
                 const s = val.trim();
-                if (!s || s === "NA" || s === "NaN" || s === "Inf" || s === "-Inf" || s === "null" || s === "undefined") {
+                if (!s || NON_FINITE_STRINGS.has(s)) {
                     return null;
                 }
                 const n = Number(s);
@@ -2202,7 +2204,8 @@
             cancelGlitch(el);
             const n = toFiniteNum(val);
             if (n === null) {
-                el.textContent = (typeof val === "string" && val.length && val !== "NA" && val !== "NaN") ? val : "-";
+                const s = typeof val === "string" ? val.trim() : "";
+                el.textContent = (s && !NON_FINITE_STRINGS.has(s)) ? s : "-";
                 return;
             }
             el._rawFitness = n;
@@ -4483,7 +4486,16 @@
 
             const interval = toFiniteNum(state.config && state.config.migration_interval);
             const rate = toFiniteNum(state.config && state.config.migration_rate);
-            addTooltipRow(tooltip, "Rate:", rate !== null ? `${(rate * 100).toFixed(0)}%` : "N/A");
+            let rateText = "N/A";
+            if (rate !== null) {
+                if (rate > 0 && rate < 1) {
+                    rateText = `${(rate * 100).toFixed(0)}%`;
+                } else {
+                    const countStr = Number.isInteger(rate) ? String(rate) : formatNum(rate, 2);
+                    rateText = `${countStr} ind`;
+                }
+            }
+            addTooltipRow(tooltip, "Rate:", rateText);
             addTooltipRow(tooltip, "Interval:", interval !== null ? `Every ${interval} gens` : "N/A");
 
             if (info) {
@@ -4861,7 +4873,7 @@
             switch (msg.type) {
                 case "config":
                     // If server replays config on same open connection, reset neatly
-                    if (state.activeIslands > 0 && state.chartHistory.length > 0) {
+                    if (state.activeIslands > 0 && (state.chartHistory.length > 0 || state.baselineFitness !== null)) {
                         resetRunState(false);
                     }
                     applyConfig(msg.data);
