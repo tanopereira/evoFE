@@ -148,10 +148,19 @@ pool_final_genes <- function(pop, best_ind, data, target_col, task = "classifica
 
   if (record) {
     if (is.null(evolution_log)) evolution_log <- list()
+    pooled_fit <- if (!is.null(super_ind)) super_ind$fitness else best_ind$fitness
+    pooled_ind <- if (!is.null(super_ind)) super_ind else best_ind
     evolution_log$pooled <- list(
       n_genes = length(deduped_genes),
-      fitness = if (!is.null(super_ind)) super_ind$fitness else best_ind$fitness,
-      adopted = adopted_pooled
+      fitness = pooled_fit,
+      adopted = adopted_pooled,
+      recipe = individual_to_recipe_string(pooled_ind),
+      baseline_fitness = baseline_fitness,
+      improvement = if (!is.null(baseline_fitness) && is.finite(baseline_fitness) && is.finite(pooled_fit)) {
+        pooled_fit - baseline_fitness
+      } else {
+        NULL
+      }
     )
     viewer_send(viewer, "pooled", evolution_log$pooled)
   }
@@ -316,10 +325,19 @@ pool_historical_genes <- function(historical_best_genes, best_ind, data, target_
 
   if (record) {
     if (is.null(evolution_log)) evolution_log <- list()
+    hist_fit <- if (!is.null(super_ind_hist)) super_ind_hist$fitness else best_ind$fitness
+    hist_ind <- if (!is.null(super_ind_hist)) super_ind_hist else best_ind
     evolution_log$historical <- list(
       n_genes = length(deduped_historical_genes),
-      fitness = if (!is.null(super_ind_hist)) super_ind_hist$fitness else best_ind$fitness,
-      adopted = adopted_hist
+      fitness = hist_fit,
+      adopted = adopted_hist,
+      recipe = individual_to_recipe_string(hist_ind),
+      baseline_fitness = baseline_fitness,
+      improvement = if (!is.null(baseline_fitness) && is.finite(baseline_fitness) && is.finite(hist_fit)) {
+        hist_fit - baseline_fitness
+      } else {
+        NULL
+      }
     )
     viewer_send(viewer, "historical", evolution_log$historical)
   }
@@ -539,6 +557,7 @@ confirm_top_k_candidates <- function(confirm_top_k, best_ind, pop = NULL,
       split2_fitness = fit_split2,
       mean_fitness = mean_fits
     )
+    viewer_send(viewer, "confirmation", evolution_log$confirmation)
   }
 
   list(

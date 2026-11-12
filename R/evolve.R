@@ -301,7 +301,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   # Validate record
-  if (!is.logical(record) || length(record) != 1) {
+  if (!is.logical(record) || length(record) != 1 || is.na(record)) {
     stop("record must be a logical scalar (TRUE or FALSE).")
   }
 
@@ -645,6 +645,7 @@ evolve_features <- function(data, target_col, task = "classification",
 
   viewer <- NULL
   evolution_log <- NULL
+  sample_ref_dt <- NULL
 
   if (record) {
     topo_obj <- if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
@@ -658,6 +659,10 @@ evolve_features <- function(data, target_col, task = "classification",
         "hfc" = topology_tiered(islands),
         "complete" = topology_complete(islands),
         "feature_distance" = topology_feature_distance(islands),
+        "gibbs_stagnation" = topology_complete(islands),
+        "gibbs_fitness" = topology_complete(islands),
+        "dual_gibbs_pull" = topology_complete(islands),
+        "random" = topology_complete(islands),
         topology_ring(islands)
       )
     }
@@ -665,7 +670,14 @@ evolve_features <- function(data, target_col, task = "classification",
     tiers_count <- if (!is.null(topo_obj$tiers)) topo_obj$tiers else 3L
     adj_list_payload <- if (!is.null(topo_obj) && !is.null(topo_obj$adj_list)) topo_obj$adj_list else NULL
 
-    policy_str <- "push_uniform"
+    policy_str <- switch(migration_topology,
+      "gibbs_stagnation" = "gibbs_push_stagnation",
+      "gibbs_fitness" = "gibbs_push_fitness",
+      "dual_gibbs_pull" = "gibbs_pull_fitness",
+      "tiered" = "tiered_admission",
+      "hfc" = "tiered_admission",
+      "push_uniform"
+    )
     policy_thresh_val <- "min_peer"
     payload_str <- "full_individual"
     if (!is.null(migration) && inherits(migration, "evo_migration_config")) {
@@ -692,8 +704,12 @@ evolve_features <- function(data, target_col, task = "classification",
         islands = islands, pop_size = pop_size, generations = generations,
         tiers = tiers_count, adj_list = adj_list_payload,
         task = task, evaluator = evaluator, evaluation_strategy = evaluation_strategy,
+        metric = .format_metric_label(metric),
+        ideal_ceiling = metric_ideal_ceiling(metric, task),
+        cv_folds = if (evaluation_strategy %in% c("cv", "metacv")) as.integer(cv_folds) else NULL,
         row_split_islands = row_split_islands, per_island_validation = per_island_validation,
         target_col = target_col, migration_interval = migration_interval,
+        migration_rate = as.integer(migration_rate),
         migration_topology = migration_topology, migration_policy = policy_str,
         min_fitness_threshold = policy_thresh_val,
         migration_payload = payload_str, migration_temperature = migration_temperature,
@@ -710,16 +726,45 @@ evolve_features <- function(data, target_col, task = "classification",
       final = NULL
     )
 
-    viewer <- with_preserved_seed(start_evolution_viewer(port = port))
-    on.exit(if (!is.null(viewer)) tryCatch(viewer$stop(), error = function(e) NULL), add = TRUE)
-    if (interactive()) {
-      utils::browseURL(viewer$url)
-      max_wait <- 10.0
-      slept <- 0.0
-      while (is.null(viewer$get_connection()) && slept < max_wait) {
-        Sys.sleep(0.1)
-        slept <- slept + 0.1
-        suppressWarnings(httpuv::service(10))
+    sample_ref_dt <- data.table::copy(data.table::as.data.table(utils::head(data, 5L)))
+
+    if (isTRUE(getOption("evoFE.viewer_live", TRUE))) {
+      viewer <- tryCatch(
+        with_preserved_seed(start_evolution_viewer(port = port)),
+        error = function(e) {
+          warning("Failed to start evolution viewer; continuing without live viewer: ", conditionMessage(e), call. = FALSE)
+          NULL
+        }
+      )
+      on.exit(if (!is.null(viewer)) tryCatch(viewer$stop(), error = function(e) NULL), add = TRUE)
+    }
+
+    if (!is.null(viewer) && isTRUE(getOption("evoFE.viewer_browse", interactive()))) {
+      browse_ok <- tryCatch(
+        with_preserved_seed({
+          utils::browseURL(viewer$url)
+          TRUE
+        }),
+        error = function(e) {
+          warning("Failed to open evolution viewer in browser: ", conditionMessage(e), call. = FALSE)
+          FALSE
+        }
+      )
+      if (isTRUE(browse_ok)) {
+        wait_timeout <- getOption("evoFE.viewer_timeout", 5.0)
+        if (!is.numeric(wait_timeout) || length(wait_timeout) != 1L || is.na(wait_timeout) ||
+            !is.finite(wait_timeout) || wait_timeout < 0) {
+          wait_timeout <- 5.0
+        }
+        tryCatch(
+          with_preserved_seed({
+            deadline <- proc.time()[["elapsed"]] + wait_timeout
+            while (is.null(viewer$get_connection()) && proc.time()[["elapsed"]] < deadline) {
+              suppressWarnings(httpuv::service(50))
+            }
+          }),
+          error = function(e) NULL
+        )
       }
     }
     viewer_send(viewer, "config", evolution_log$config)
@@ -864,7 +909,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (record) {
-    baseline_list <- .build_sample_preview(baseline_ind, shared_full)
+    baseline_list <- .build_sample_preview(baseline_ind, sample_ref_dt)
 
     evolution_log$baseline <- list(
       fitness = baseline_ind$fitness,
@@ -946,7 +991,7 @@ evolve_features <- function(data, target_col, task = "classification",
     complexity_floor = complexity_floor, complexity_target = complexity_target,
     island_baseline_inds = island_baseline_inds, baseline_ind = baseline_ind,
     cv_strategy = cv_strategy, time_col = time_col, group_col = group_col,
-    record = record, viewer = viewer,
+    record = record, viewer = viewer, sample_ref_dt = sample_ref_dt,
     evolution_log = evolution_log,
     early_stopping_generations = early_stopping_generations,
     dynamic_population = dynamic_population,
@@ -1465,7 +1510,12 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   if (record) {
-    best_list <- .build_sample_preview(best_ind, shared_full)
+    final_keep_cols <- intersect(
+      unique(c(original_cols, target_col, extract_individual_features(best_ind, target_col = NULL))),
+      names(res_full$train)
+    )
+    final_sample_dt <- utils::head(res_full$train[, final_keep_cols, with = FALSE], 5L)
+    best_list <- .format_sample_dt(final_sample_dt)
     serialized_genes <- .serialize_genes_for_log(best_ind$genes, best_ind$importances)
 
     final_hr <- calculate_headroom(effective_fitness, baseline_ind$fitness, task, metric = metric)
@@ -1487,6 +1537,7 @@ evolve_features <- function(data, target_col, task = "classification",
     final_data$search_gap <- search_gap
     evolution_log$final <- final_data
     viewer_send(viewer, "complete", final_data)
+    viewer_flush(viewer, 50L)
   }
 
   recipe_hr <- calculate_headroom(best_ind$fitness, baseline_ind$fitness, task, metric = metric)

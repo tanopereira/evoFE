@@ -26,6 +26,18 @@ tournament_select <- function(pop, k = 3) {
   pop[[candidates[which.max(fitnesses)]]]
 }
 
+#' Extract scalar headroom closed using calculate_headroom()
+#'
+#' @noRd
+.headroom_closed_scalar <- function(fitness, baseline, task, metric) {
+  hr <- calculate_headroom(fitness, baseline, task, metric = metric)
+  if (!is.null(hr$headroom_closed) && length(hr$headroom_closed) == 1L && is.finite(hr$headroom_closed)) {
+    hr$headroom_closed
+  } else {
+    0.0
+  }
+}
+
 #' Single generation step for a single island
 #'
 #' @noRd
@@ -41,7 +53,8 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
                                    generations, pop_size, dynamic_population,
                                    dynamic_population_growth_rate, dynamic_population_decay_rate,
                                    current_pop_size, crossover_type, allowed_transformers,
-                                   raw_toggle_prob, recalculate_mask_prob, historical_best_genes, ...) {
+                                   raw_toggle_prob, recalculate_mask_prob, historical_best_genes,
+                                   sample_ref_dt = NULL, ...) {
   if (verbose) {
     if (global_best_fitness > -Inf) {
       message(sprintf("\n--- Generation %d / %d (Current Best Fitness: %.4f) ---", g, generations, global_best_fitness))
@@ -91,22 +104,28 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
 
   if (record) {
     viewer_send(viewer, "island_evaluated", list(
-      island = 1,
+      island = 1L,
       generation = g,
       best_fitness = pop[[1]]$fitness,
       stagnation = generations_without_improvement,
       all_fitness = fitness_vals
     ))
 
-    best_list <- .build_sample_preview(pop[[1]], shared_full)
+    ref_dt <- if (!is.null(sample_ref_dt)) sample_ref_dt else data
+    best_list <- .build_sample_preview(pop[[1]], ref_dt)
     serialized_genes <- .serialize_genes_for_log(pop[[1]]$genes, pop[[1]]$importances)
+    base_fit <- baseline_ind$fitness
+    isl_h_closed <- .headroom_closed_scalar(best_fitness, base_fit, task, metric)
+    glob_h_closed <- .headroom_closed_scalar(global_best_fitness, base_fit, task, metric)
 
     gen_snapshot <- list(
       generation = g,
       islands = list(
         list(
-          island = 1,
+          island = 1L,
           best_fitness = best_fitness,
+          baseline_fitness = base_fit,
+          headroom_closed = isl_h_closed,
           stagnation = generations_without_improvement,
           pop_size = length(pop),
           population = lapply(utils::head(pop, 5), function(ind) {
@@ -116,6 +135,9 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
         )
       ),
       global_best_fitness = global_best_fitness,
+      global_best_island = 1L,
+      global_best_island_baseline = base_fit,
+      global_headroom_closed = glob_h_closed,
       global_best_recipe = individual_to_recipe_string(pop[[1]]),
       global_best_n_genes = length(pop[[1]]$genes),
       global_best_importances = if (!is.null(pop[[1]]$importances)) as.list(pop[[1]]$importances) else list(),
@@ -145,6 +167,10 @@ step_generation_single <- function(g, pop, data, target_col, task, cv_folds, eva
       evolution_log = evolution_log,
       stop_early = stop_early
     ))
+  }
+
+  if (record) {
+    viewer_send(viewer, "status", list(island = 1L, status = "breeding", generation = g))
   }
 
   num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
@@ -271,7 +297,8 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
                                   migration_topology, migration_temperature,
                                   pull_stagnation_threshold, row_split_islands,
                                   per_island_validation, tiers_count = NULL,
-                                  policy_thresh_val = NULL, get_island_transformers, ...) {
+                                  policy_thresh_val = NULL, get_island_transformers,
+                                  sample_ref_dt = NULL, ...) {
   prev_global_best_fitness <- global_best_fitness
 
   if (verbose) {
@@ -343,7 +370,7 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
       viewer_send(viewer, "island_evaluated", list(
         island = j,
         generation = g,
-        best_fitness = pop_list[[j]][[1]]$fitness,
+        best_fitness = island_best_fitness[j],
         stagnation = island_gens_without_improvement[j],
         all_fitness = fitness_vals
       ))
@@ -363,19 +390,21 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
   }
 
   if (record) {
-    best_list <- .build_sample_preview(global_best_individual, shared_full)
+    ref_dt <- if (!is.null(sample_ref_dt)) sample_ref_dt else data
+    best_list <- .build_sample_preview(global_best_individual, ref_dt)
     serialized_genes <- .serialize_genes_for_log(
       global_best_individual$genes,
       global_best_individual$importances
     )
 
-    ideal_val <- if (task %in% c("classification", "multiclass")) 1.0 else 0.0
-
-    best_island_idx <- 1L
-    for (j in seq_len(islands)) {
-      if (identical(pop_list[[j]][[1]], global_best_individual)) {
-        best_island_idx <- j
-        break
+    best_island_idx <- suppressWarnings(as.integer(sub("^Island\\s+", "", best_ind_source)))
+    if (is.na(best_island_idx) || length(best_island_idx) != 1L || best_island_idx < 1L || best_island_idx > islands) {
+      best_island_idx <- 1L
+      for (j in seq_len(islands)) {
+        if (identical(pop_list[[j]][[1]], global_best_individual)) {
+          best_island_idx <- j
+          break
+        }
       }
     }
     best_island_baseline <- if (length(island_baseline_inds) >= best_island_idx && !is.null(island_baseline_inds[[best_island_idx]]$fitness)) {
@@ -383,16 +412,14 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
     } else {
       baseline_ind$fitness
     }
-    best_island_h_denom <- ideal_val - best_island_baseline
-    best_island_headroom_closed <- if (abs(best_island_h_denom) < 1e-6 || is.na(global_best_fitness)) 0.0 else (global_best_fitness - best_island_baseline) / best_island_h_denom
+    best_island_headroom_closed <- .headroom_closed_scalar(global_best_fitness, best_island_baseline, task, metric)
 
     gen_snapshot <- list(
       generation = g,
       islands = lapply(seq_len(islands), function(j) {
         pop_j <- pop_list[[j]]
         base_j <- if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]]$fitness)) island_baseline_inds[[j]]$fitness else baseline_ind$fitness
-        h_denom <- ideal_val - base_j
-        h_closed <- if (abs(h_denom) < 1e-6 || is.na(island_best_fitness[j])) 0.0 else (island_best_fitness[j] - base_j) / h_denom
+        h_closed <- .headroom_closed_scalar(island_best_fitness[j], base_j, task, metric)
         list(
           island = j,
           best_fitness = island_best_fitness[j],
@@ -530,6 +557,9 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
 
   # --- BREEDING PHASE ---
   for (j in seq_len(islands)) {
+    if (record) {
+      viewer_send(viewer, "status", list(island = j, status = "breeding", generation = g))
+    }
     pop <- pop_list[[j]]
     num_survivors <- min(length(pop), max(2, floor(length(pop) / 2)))
     survivors <- pop[1:num_survivors]
@@ -693,7 +723,7 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
                                per_island_validation, get_island_transformers,
                                global_best_fitness_init, global_best_individual_init,
                                best_ind_source_init, tiers_count = NULL,
-                               policy_thresh_val = NULL, ...) {
+                               policy_thresh_val = NULL, sample_ref_dt = NULL, ...) {
   fitness_history <- numeric(generations)
   historical_best_genes <- list()
 
@@ -727,7 +757,8 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         current_pop_size = current_pop_size, crossover_type = crossover_type,
         allowed_transformers = allowed_transformers, raw_toggle_prob = raw_toggle_prob,
         recalculate_mask_prob = recalculate_mask_prob,
-        historical_best_genes = historical_best_genes, ...
+        historical_best_genes = historical_best_genes,
+        sample_ref_dt = sample_ref_dt, ...
       )
 
       pop <- step_res$pop
@@ -833,7 +864,8 @@ run_evolution_loop <- function(islands, pop_init, pop_list_init, generations,
         per_island_validation = per_island_validation,
         tiers_count = tiers_count,
         policy_thresh_val = policy_thresh_val,
-        get_island_transformers = get_island_transformers, ...
+        get_island_transformers = get_island_transformers,
+        sample_ref_dt = sample_ref_dt, ...
       )
 
       pop_list <- step_res$pop_list

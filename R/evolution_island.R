@@ -438,6 +438,7 @@ execute_island_migration <- function(migration_txs, pop_list, old_pop_list,
       feat_dist <- .calc_feature_distance(ind_src, ind_dest)
 
       migration_event <- list(
+        generation = g,
         from = src,
         to = dest,
         topology = migration_topology,
