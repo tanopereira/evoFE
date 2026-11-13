@@ -159,6 +159,24 @@
   kept
 }
 
+#' Remap evaluator stage args for `evolve_features()` calls
+#'
+#' Translates `s` to `lm_s` because `evolve_features()` has multiple formal
+#' arguments starting with `s` (`split_ratio`, `split_ids`, `seed`, `sd_penalty`,
+#' `seed_genes`), so passing `s = ...` via `do.call()` fails partial matching.
+#' @keywords internal
+#' @noRd
+.map_evaluator_args_for_evolve <- function(ev_args) {
+  if (length(ev_args) == 0L) return(ev_args)
+  if ("s" %in% names(ev_args)) {
+    if (!("lm_s" %in% names(ev_args)) || is.null(ev_args[["lm_s"]])) {
+      ev_args[["lm_s"]] <- ev_args[["s"]]
+    }
+    ev_args[["s"]] <- NULL
+  }
+  ev_args
+}
+
 #' Resolve Stage 4 tuned evaluator or fallback to untuned base
 #' @keywords internal
 #' @noRd
@@ -919,7 +937,7 @@ run_competition_pipeline <- function(
       verbose = verbose
     )
     ev_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
-    ev_evolve_args <- ev_args[!names(ev_args) %in% c("s")]
+    ev_evolve_args <- .map_evaluator_args_for_evolve(ev_args)
     for (k in names(ev_evolve_args)) s2_common[[k]] <- ev_evolve_args[[k]]
     stage2_recipes[[ev]] <- do.call(evolve_features, s2_common)
   }
@@ -1053,7 +1071,7 @@ run_competition_pipeline <- function(
         verbose = verbose
       )
       ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
-      ev_fast_evolve_args <- ev_fast_args[!names(ev_fast_args) %in% c("s")]
+      ev_fast_evolve_args <- .map_evaluator_args_for_evolve(ev_fast_args)
       for (k in names(ev_fast_evolve_args)) s35_common[[k]] <- ev_fast_evolve_args[[k]]
       rec_sup <- do.call(evolve_features, s35_common)
       stage3_sup_recipes[[ev]] <- rec_sup
@@ -1106,7 +1124,7 @@ run_competition_pipeline <- function(
       seed = s4_seed,
       verbose = verbose
     )
-    ev_evolve_args <- ev_args[!names(ev_args) %in% c("s")]
+    ev_evolve_args <- .map_evaluator_args_for_evolve(ev_args)
     for (k in names(ev_evolve_args)) s4_common[[k]] <- ev_evolve_args[[k]]
     stage4_recipes[[ev]] <- do.call(evolve_features, s4_common)
   }

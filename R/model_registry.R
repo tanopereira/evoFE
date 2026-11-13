@@ -461,11 +461,11 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
     stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
   }
   extra_params <- list(...)
-  if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
-  if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
-  if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
-  if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
-  if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+  if (!is.null(extra_params[["threads"]])) threads <- as.integer(extra_params[["threads"]])
+  if (!is.null(extra_params[["nthreads"]])) threads <- as.integer(extra_params[["nthreads"]])
+  if (!is.null(extra_params[["nthread"]])) threads <- as.integer(extra_params[["nthread"]])
+  if (!is.null(extra_params[["num_threads"]])) threads <- as.integer(extra_params[["num_threads"]])
+  if (!is.null(extra_params[["n_jobs"]])) threads <- as.integer(extra_params[["n_jobs"]])
   if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
   if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
   if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
@@ -1627,11 +1627,11 @@ register_evaluator(
   }
 
   extra_params <- list(...)
-  if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
-  if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
-  if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
-  if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
-  if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+  if (!is.null(extra_params[["threads"]])) threads <- as.integer(extra_params[["threads"]])
+  if (!is.null(extra_params[["nthreads"]])) threads <- as.integer(extra_params[["nthreads"]])
+  if (!is.null(extra_params[["nthread"]])) threads <- as.integer(extra_params[["nthread"]])
+  if (!is.null(extra_params[["num_threads"]])) threads <- as.integer(extra_params[["num_threads"]])
+  if (!is.null(extra_params[["n_jobs"]])) threads <- as.integer(extra_params[["n_jobs"]])
 
   is_sparse <- inherits(x_train, "sparseMatrix")
   cs <- attr(x_train, "cat_schema", exact = TRUE)
@@ -1661,49 +1661,43 @@ register_evaluator(
   }
 
   all_feats <- colnames(x_mat)
-  y_val <- extra_params$y_val
+  y_val <- extra_params[["y_val"]]
 
-  alpha <- if (!is.null(extra_params$alpha) && is.numeric(extra_params$alpha) && is.finite(extra_params$alpha)) {
-    min(max(as.numeric(extra_params$alpha), 0.0), 1.0)
+  alpha <- if (!is.null(extra_params[["alpha"]]) && is.numeric(extra_params[["alpha"]]) && is.finite(extra_params[["alpha"]])) {
+    min(max(as.numeric(extra_params[["alpha"]]), 0.0), 1.0)
   } else {
     0.5
   }
 
-  s_choice <- if (!is.null(extra_params$lm_s) && (is.character(extra_params$lm_s) || (is.numeric(extra_params$lm_s) && is.finite(extra_params$lm_s)))) {
-    extra_params$lm_s
-  } else if (!is.null(extra_params$s) && (is.character(extra_params$s) || (is.numeric(extra_params$s) && is.finite(extra_params$s)))) {
-    extra_params$s
-  } else {
-    "lambda.min"
-  }
+  s_choice <- .pick_glmnet_s(extra_params, default = "lambda.min")
 
-  lambda_val <- if (!is.null(extra_params$lambda) && is.numeric(extra_params$lambda) &&
-                    length(extra_params$lambda) == 1L && is.finite(extra_params$lambda) &&
-                    extra_params$lambda > 0) {
-    as.numeric(extra_params$lambda)
+  lambda_val <- if (!is.null(extra_params[["lambda"]]) && is.numeric(extra_params[["lambda"]]) &&
+                    length(extra_params[["lambda"]]) == 1L && is.finite(extra_params[["lambda"]]) &&
+                    extra_params[["lambda"]] > 0) {
+    as.numeric(extra_params[["lambda"]])
   } else {
     NULL
   }
 
-  standardize <- if (!is.null(extra_params$standardize) && is.logical(extra_params$standardize)) {
-    isTRUE(extra_params$standardize)
+  standardize <- if (!is.null(extra_params[["standardize"]]) && is.logical(extra_params[["standardize"]])) {
+    isTRUE(extra_params[["standardize"]])
   } else {
     TRUE
   }
-  relax <- isTRUE(extra_params$relax)
-  use_cv <- isTRUE(extra_params$use_cv)
+  relax <- isTRUE(extra_params[["relax"]])
+  use_cv <- isTRUE(extra_params[["use_cv"]])
 
-  metric_arg <- extra_params$metric
+  metric_arg <- extra_params[["metric"]]
   cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
     canonical_metric_name(metric_arg, task)
   } else {
     NULL
   }
 
-  type_measure <- if (!is.null(extra_params$type.measure) && is.character(extra_params$type.measure)) {
-    extra_params$type.measure
-  } else if (!is.null(extra_params$type_measure) && is.character(extra_params$type_measure)) {
-    extra_params$type_measure
+  type_measure <- if (!is.null(extra_params[["type.measure"]]) && is.character(extra_params[["type.measure"]])) {
+    extra_params[["type.measure"]]
+  } else if (!is.null(extra_params[["type_measure"]]) && is.character(extra_params[["type_measure"]])) {
+    extra_params[["type_measure"]]
   } else if (task == "classification") {
     if (!is.null(cm_arg) && cm_arg == "auc") "auc" else "deviance"
   } else if (task == "regression") {
@@ -1866,8 +1860,8 @@ register_evaluator(
   } else {
     # Case C: no validation set (or use_cv / relax requested) -> cv.glmnet fallback
     nfolds <- min(5L, nrow(fit_mat))
-    if (!is.null(extra_params$nfolds)) {
-      nfolds <- min(as.integer(extra_params$nfolds), nrow(fit_mat))
+    if (!is.null(extra_params[["nfolds"]])) {
+      nfolds <- min(as.integer(extra_params[["nfolds"]]), nrow(fit_mat))
     }
     if (nfolds < 3L) {
       fallback_lam <- if (!is.null(lambda_val)) lambda_val else 0.01
@@ -2038,15 +2032,7 @@ register_evaluator(
     x_mat <- .impute_and_col_stats(x_mat, means = col_means, compute_sd = FALSE)$mat
   }
 
-  s_choice <- if (!is.null(extra_args$lm_s) && (is.character(extra_args$lm_s) || (is.numeric(extra_args$lm_s) && is.finite(extra_args$lm_s)))) {
-    extra_args$lm_s
-  } else if (!is.null(extra_args$s) && (is.character(extra_args$s) || (is.numeric(extra_args$s) && is.finite(extra_args$s)))) {
-    extra_args$s
-  } else if (!is.null(model$s)) {
-    model$s
-  } else {
-    "lambda.min"
-  }
+  s_choice <- .pick_glmnet_s(extra_args, default = if (!is.null(model[["s"]])) model[["s"]] else "lambda.min")
 
   s_eval <- if (!inherits(model, "cv.glmnet") && is.character(s_choice)) {
     if (!is.null(model$best_lambda) && is.finite(model$best_lambda)) {
@@ -2519,6 +2505,20 @@ register_evaluator(
 )
 
 # Shared parameter alias helper for new evaluators
+# Exact lookup for glmnet regularization selection parameter (`lm_s` or `s`).
+# Uses `[[` instead of `$` so R list partial matching never resolves `s` to `seed`.
+.pick_glmnet_s <- function(extra_params, default = "lambda.min") {
+  for (k in c("lm_s", "s")) {
+    val <- extra_params[[k]]
+    if (!is.null(val) &&
+        length(val) == 1L &&
+        (is.character(val) || (is.numeric(val) && is.finite(val)))) {
+      return(val)
+    }
+  }
+  default
+}
+
 .pick_first_param <- function(extra_params, keys, default = NULL) {
   for (k in keys) {
     v <- extra_params[[k]]

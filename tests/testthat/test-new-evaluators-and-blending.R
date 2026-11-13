@@ -878,3 +878,110 @@ test_that("TabM logs progress at verbose = TRUE or evoFE.tabm_verbose without le
     verbose = FALSE
   )))
 })
+
+test_that("lm and spline_lm do not partial-match seed into s across train_model, evaluate_fitness, and evolve_features", {
+  set.seed(505)
+  n <- 500L
+  x1 <- stats::rnorm(n)
+  x2 <- exp(stats::rnorm(n, 0, 0.8))
+  x3 <- stats::rnorm(n)
+  eta <- -0.4 + 0.9 * (x1 * x3) + 0.6 * log(x2)
+  y <- stats::rbinom(n, 1L, 1 / (1 + exp(-eta)))
+  dt <- data.table::data.table(x1 = x1, x2 = x2, x3 = x3, y = y)
+  sids <- ifelse(seq_len(n) <= 350L, "train", "val")
+
+  # Direct train_model with seed = 42 must NOT resolve extra_params$s -> 42
+  m_lm <- train_model(
+    x_train = as.matrix(dt[1:350L, c("x1", "x2", "x3")]),
+    y_train = y[1:350L],
+    evaluator = "lm",
+    task = "classification",
+    seed = 42L
+  )
+  expect_identical(m_lm$model$s, "lambda.min")
+  preds_lm <- get_evaluator("lm")$predict_func(
+    m_lm$model,
+    as.matrix(dt[351:500L, c("x1", "x2", "x3")]),
+    task = "classification"
+  )
+  expect_gt(stats::sd(preds_lm), 1e-4)
+
+  ind_raw <- create_individual(genes = list(), numeric_cols = c("x1", "x2", "x3"))
+  ind_good <- create_individual(
+    genes = list(
+      create_gene("multiply", c("x1", "x3")),
+      create_gene("log", "x2")
+    ),
+    numeric_cols = c("x1", "x2", "x3")
+  )
+
+  for (ev in c("lm", "spline_lm")) {
+    f_raw <- evaluate_fitness(
+      ind_raw, dt, target_col = "y", task = "classification",
+      evaluator = ev, metric = "auc", evaluation_strategy = "split",
+      split_ids = sids, complexity_penalty = 0, seed = 42L
+    )
+    f_good <- evaluate_fitness(
+      ind_good, dt, target_col = "y", task = "classification",
+      evaluator = ev, metric = "auc", evaluation_strategy = "split",
+      split_ids = sids, complexity_penalty = 0, seed = 42L
+    )
+    expect_gt(stats::sd(f_raw$val_preds), 1e-4)
+    expect_gt(stats::sd(f_good$val_preds), 1e-4)
+    expect_gt(f_good$raw_fitness - f_raw$raw_fitness, 0.05)
+  }
+
+  evo_lm <- suppressMessages(evolve_features(
+    dt, target_col = "y", task = "classification",
+    evaluator = "lm", metric = "auc", evaluation_strategy = "split",
+    generations = 1L, population_size = 4L, seed = 42L, verbose = FALSE
+  ))
+  expect_gt(stats::sd(evo_lm$best_individual$val_preds), 1e-4)
+  expect_gt(evo_lm$best_individual$raw_fitness, 0.52)
+})
+
+test_that("run_competition_pipeline remaps s to lm_s without falling back to seed", {
+  mapped <- evoFE:::.map_evaluator_args_for_evolve(list(s = "lambda.1se", alpha = 0.2))
+  expect_false("s" %in% names(mapped))
+  expect_identical(mapped$lm_s, "lambda.1se")
+  expect_equal(mapped$alpha, 0.2)
+
+  kept <- evoFE:::.map_evaluator_args_for_evolve(list(s = "lambda.1se", lm_s = "lambda.min"))
+  expect_false("s" %in% names(kept))
+  expect_identical(kept$lm_s, "lambda.min")
+
+  set.seed(506)
+  n <- 600L
+  x1 <- stats::rnorm(n)
+  x2 <- exp(stats::rnorm(n, 0, 0.8))
+  x3 <- stats::rnorm(n)
+  eta <- -0.3 + 0.9 * (x1 * x3) + 0.6 * log(x2)
+  y <- stats::rbinom(n, 1L, 1 / (1 + exp(-eta)))
+  tr_df <- data.frame(x1 = x1[1:480], x2 = x2[1:480], x3 = x3[1:480], target = y[1:480])
+  te_df <- data.frame(x1 = x1[481:600], x2 = x2[481:600], x3 = x3[481:600])
+
+  pipe <- suppressMessages(run_competition_pipeline(
+    train = tr_df,
+    test = te_df,
+    target_col = "target",
+    task = "classification",
+    metric = "auc",
+    preset = "fast",
+    preset_overrides = list(s2_gen = 1L, s2_pop = 3L),
+    evaluators = c("lm", "spline_lm"),
+    evaluator_args = list(lm = list(s = "lambda.1se")),
+    tune_stage4 = "none",
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  ))
+
+  for (ev in c("lm", "spline_lm")) {
+    expect_gt(pipe$stage2_recipes[[ev]]$best_individual$raw_fitness, 0.52)
+    expect_gt(stats::sd(pipe$stage2_recipes[[ev]]$best_individual$val_preds), 1e-3)
+    expect_gt(pipe$stage4_recipes[[ev]]$best_individual$raw_fitness, 0.55)
+    expect_gt(stats::sd(pipe$stage4_recipes[[ev]]$best_individual$val_preds), 1e-3)
+  }
+  expect_gt(stats::sd(pipe$predictions), 0.01)
+})
