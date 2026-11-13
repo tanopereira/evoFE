@@ -11,389 +11,41 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#include "nn_common.h"
 #include "realmlp_fused.h"
 #include "realmlp_workspace.h"
 
-// M_PI is POSIX, not C++17 standard — provide fallback for strict compilers
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-#if defined(__APPLE__)
-#ifndef ACCELERATE_NEW_LAPACK
-#define ACCELERATE_NEW_LAPACK 1
-#endif
-// Include cblas_new.h and vForce.h directly instead of <Accelerate/Accelerate.h>
-// because Accelerate.h pulls in Fortran blas_new.h which conflicts with RcppEigen's blas.h.
-#include <vecLib/cblas_new.h>
-#include <vecLib/vForce.h>
-#endif
-
 namespace realmlp {
 
-// Fast SIMD-vectorizable IEEE-754 + 5th-degree minimax polynomial expf (relative error < 2e-7, NaN-safe)
-static inline float fast_expf(float x) noexcept {
-  if (!(x >= -87.3f)) return 0.0f;
-  if (x > 88.0f) x = 88.0f;
-  float z = x * 1.4426950408889634f;
-  float k = std::nearbyintf(z);
-  // Two-step Cody-Waite range reduction for ln(2)
-  float f = (x - k * 0.693145751953125f) - k * 1.428606765330187e-6f;
-  float p = 1.0f + f * (1.0f + f * (0.5000009f + f * (0.1666680f + f * (0.0416520f + f * 0.0083298f))));
-  int32_t ki = static_cast<int32_t>(k) + 127;
-  uint32_t bits = static_cast<uint32_t>(ki) << 23;
-  float scale;
-  std::memcpy(&scale, &bits, sizeof(float));
-  return p * scale;
-}
+using evofe::nn::fast_expf;
+using evofe::nn::gemm_f32;
+using evofe::nn::coslog_schedule;
+using evofe::nn::coslog4_schedule;
+using evofe::nn::AdamParam;
 
-// Direct FP32 GEMM wrapper: dispatches to Apple Accelerate cblas_sgemm$NEWLAPACK on macOS
-// (bypassing Fortran sgemm_ shadowing by R's libopenblas), with Eigen fallback on other platforms.
-inline void gemm_f32(bool transA, bool transB, int M, int N, int K,
-                     const Eigen::MatrixXf& A, const Eigen::MatrixXf& B,
-                     Eigen::MatrixXf& C, float alpha = 1.0f) {
-  if (M <= 0 || N <= 0 || K <= 0) return;
-#if defined(__APPLE__)
-  cblas_sgemm(CblasColMajor,
-              transA ? CblasTrans : CblasNoTrans,
-              transB ? CblasTrans : CblasNoTrans,
-              M, N, K, alpha,
-              A.data(), static_cast<int>(A.outerStride()),
-              B.data(), static_cast<int>(B.outerStride()),
-              0.0f,
-              C.data(), static_cast<int>(C.outerStride()));
-#else
-  if (!transA && !transB) {
-    C.block(0, 0, M, N).noalias() = (A.block(0, 0, M, K) * B.block(0, 0, K, N)) * alpha;
-  } else if (!transA && transB) {
-    C.block(0, 0, M, N).noalias() = (A.block(0, 0, M, K) * B.block(0, 0, N, K).transpose()) * alpha;
-  } else if (transA && !transB) {
-    C.block(0, 0, M, N).noalias() = (A.block(0, 0, K, M).transpose() * B.block(0, 0, K, N)) * alpha;
-  } else {
-    C.block(0, 0, M, N).noalias() = (A.block(0, 0, K, M).transpose() * B.block(0, 0, N, K).transpose()) * alpha;
-  }
-#endif
-}
-
-// Vectorized activation: Mish(x) = x * tanh(softplus(x)) or SELU (stride-aware for blocks)
 inline void apply_activation(const Eigen::Ref<const Eigen::MatrixXf>& in, Eigen::Ref<Eigen::MatrixXf> out, bool is_cls) {
-  int R = static_cast<int>(in.rows());
-  int C = static_cast<int>(in.cols());
-  int in_stride = static_cast<int>(in.outerStride());
-  int out_stride = static_cast<int>(out.outerStride());
-  const float* in_data = in.data();
-  float* out_data = out.data();
-
-  if (is_cls) {
-    // SELU: lambda * (x if x > 0 else alpha * expm1(x))
-    constexpr float LAMBDA = 1.0507009873554804934193349852946f;
-    constexpr float ALPHA  = 1.6732632423543772848170429916717f;
-    constexpr float LAMBDA_ALPHA = LAMBDA * ALPHA;
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 4)
-#endif
-    for (int c = 0; c < C; ++c) {
-      const float* in_col = in_data + c * in_stride;
-      float* out_col = out_data + c * out_stride;
-      for (int r = 0; r < R; ++r) {
-        float z = in_col[r];
-        out_col[r] = (z > 0.0f) ? (LAMBDA * z) : (LAMBDA_ALPHA * (fast_expf(z) - 1.0f));
-      }
-    }
-  } else {
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-    for (int c = 0; c < C; ++c) {
-      const float* in_col = in_data + c * in_stride;
-      float* out_col = out_data + c * out_stride;
-      for (int r = 0; r < R; ++r) {
-        float z = in_col[r];
-        if (z > 20.0f) {
-          out_col[r] = z;
-        } else if (z < -20.0f) {
-          out_col[r] = z * fast_expf(z);
-        } else {
-          float ez = fast_expf(z);
-          float w = 1.0f + ez;
-          float tsp = 1.0f - 2.0f / (w * w + 1.0f);
-          out_col[r] = z * tsp;
-        }
-      }
-    }
-  }
+  evofe::nn::apply_activation(in, out, is_cls ? evofe::nn::ActType::SELU : evofe::nn::ActType::Mish);
 }
 
 inline void apply_activation_grad_inplace(const Eigen::Ref<const Eigen::MatrixXf>& act_in, Eigen::Ref<Eigen::MatrixXf> delta, bool is_cls) {
-  int R = static_cast<int>(delta.rows());
-  int C = static_cast<int>(delta.cols());
-  int a_stride = static_cast<int>(act_in.outerStride());
-  int d_stride = static_cast<int>(delta.outerStride());
-  const float* a_data = act_in.data();
-  float* d_data = delta.data();
-
-  if (is_cls) {
-    constexpr float LAMBDA = 1.0507009873554804934193349852946f;
-    constexpr float ALPHA  = 1.6732632423543772848170429916717f;
-    constexpr float LAMBDA_ALPHA = LAMBDA * ALPHA;
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-    for (int c = 0; c < C; ++c) {
-      const float* a_col = a_data + c * a_stride;
-      float* d_col = d_data + c * d_stride;
-      for (int r = 0; r < R; ++r) {
-        float a = a_col[r];
-        d_col[r] *= (a > 0.0f) ? LAMBDA : (LAMBDA_ALPHA * fast_expf(a));
-      }
-    }
-  } else {
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-    for (int c = 0; c < C; ++c) {
-      const float* a_col = a_data + c * a_stride;
-      float* d_col = d_data + c * d_stride;
-      for (int r = 0; r < R; ++r) {
-        float a = a_col[r];
-        if (a > 20.0f) {
-          // derivative is 1.0, no-op
-        } else if (a < -20.0f) {
-          float ea = fast_expf(a);
-          d_col[r] *= ea * (1.0f + a);
-        } else {
-          float ea = fast_expf(a);
-          float w = 1.0f + ea;
-          float tsp = 1.0f - 2.0f / (w * w + 1.0f);
-          float sig = ea / w;
-          d_col[r] *= (tsp + a * sig * (1.0f - tsp * tsp));
-        }
-      }
-    }
-  }
+  evofe::nn::apply_activation_grad_inplace(act_in, delta, is_cls ? evofe::nn::ActType::SELU : evofe::nn::ActType::Mish);
 }
 
-// Fused activation with bias addition: computes out = act(in + bias) in a single cache-contiguous pass
 inline void apply_activation_with_bias(const Eigen::Ref<const Eigen::MatrixXf>& in,
-                                      const Eigen::Ref<const Eigen::MatrixXf>& bias,
-                                      Eigen::Ref<Eigen::MatrixXf> out, bool is_cls) {
-  int R = static_cast<int>(in.rows());
-  int C = static_cast<int>(in.cols());
-  int in_stride = static_cast<int>(in.outerStride());
-  int out_stride = static_cast<int>(out.outerStride());
-  const float* in_data = in.data();
-  float* out_data = out.data();
-  const float* b_data = bias.data();
-
-  if (is_cls) {
-    constexpr float LAMBDA = 1.0507009873554804934193349852946f;
-    constexpr float ALPHA  = 1.6732632423543772848170429916717f;
-    constexpr float LAMBDA_ALPHA = LAMBDA * ALPHA;
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 4)
-#endif
-    for (int c = 0; c < C; ++c) {
-      float b = b_data[c];
-      const float* in_col = in_data + c * in_stride;
-      float* out_col = out_data + c * out_stride;
-      for (int r = 0; r < R; ++r) {
-        float z = in_col[r] + b;
-        out_col[r] = (z > 0.0f) ? (LAMBDA * z) : (LAMBDA_ALPHA * (fast_expf(z) - 1.0f));
-      }
-    }
-  } else {
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-    for (int c = 0; c < C; ++c) {
-      float b = b_data[c];
-      const float* in_col = in_data + c * in_stride;
-      float* out_col = out_data + c * out_stride;
-      for (int r = 0; r < R; ++r) {
-        float z = in_col[r] + b;
-        if (z > 20.0f) {
-          out_col[r] = z;
-        } else if (z < -20.0f) {
-          out_col[r] = z * fast_expf(z);
-        } else {
-          float ez = fast_expf(z);
-          float w = 1.0f + ez;
-          float tsp = 1.0f - 2.0f / (w * w + 1.0f);
-          out_col[r] = z * tsp;
-        }
-      }
-    }
-  }
+                                       const Eigen::Ref<const Eigen::MatrixXf>& bias,
+                                       Eigen::Ref<Eigen::MatrixXf> out, bool is_cls) {
+  evofe::nn::apply_activation_with_bias(in, bias, out, is_cls ? evofe::nn::ActType::SELU : evofe::nn::ActType::Mish);
 }
 
-// Fused activation gradient and bias accumulation: computes delta = delta * act'(act_in + bias) and grad_b = sum(delta).
-// When act_out (forward activation output H) is provided for SELU (is_cls == true), reuses H + LAMBDA_ALPHA
-// directly with zero expf evaluations.
 inline void apply_activation_grad_and_accum_bias(const Eigen::Ref<const Eigen::MatrixXf>& act_in,
                                                  const Eigen::Ref<const Eigen::MatrixXf>& bias,
                                                  Eigen::Ref<Eigen::MatrixXf> delta,
                                                  Eigen::MatrixXf& grad_b,
                                                  bool is_cls,
                                                  const Eigen::Ref<const Eigen::MatrixXf>* act_out = nullptr) {
-  int R = static_cast<int>(delta.rows());
-  int C = static_cast<int>(delta.cols());
-  int a_stride = static_cast<int>(act_in.outerStride());
-  int d_stride = static_cast<int>(delta.outerStride());
-  const float* a_data = act_in.data();
-  float* d_data = delta.data();
-  const float* b_data = bias.data();
-  float* gb_data = grad_b.data();
-
-  if (is_cls) {
-    constexpr float LAMBDA = 1.0507009873554804934193349852946f;
-    constexpr float ALPHA  = 1.6732632423543772848170429916717f;
-    constexpr float LAMBDA_ALPHA = LAMBDA * ALPHA;
-    if (act_out != nullptr) {
-      int h_stride = static_cast<int>(act_out->outerStride());
-      const float* h_data = act_out->data();
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-      for (int c = 0; c < C; ++c) {
-        const float* h_col = h_data + c * h_stride;
-        float* d_col = d_data + c * d_stride;
-        float sum = 0.0f;
-        for (int r = 0; r < R; ++r) {
-          float h = h_col[r];
-          float d = d_col[r] * ((h > 0.0f) ? LAMBDA : (h + LAMBDA_ALPHA));
-          d_col[r] = d;
-          sum += d;
-        }
-        gb_data[c] = sum;
-      }
-    } else {
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-      for (int c = 0; c < C; ++c) {
-        float b = b_data[c];
-        const float* a_col = a_data + c * a_stride;
-        float* d_col = d_data + c * d_stride;
-        float sum = 0.0f;
-        for (int r = 0; r < R; ++r) {
-          float a = a_col[r] + b;
-          float d = d_col[r] * ((a > 0.0f) ? LAMBDA : (LAMBDA_ALPHA * fast_expf(a)));
-          d_col[r] = d;
-          sum += d;
-        }
-        gb_data[c] = sum;
-      }
-    }
-  } else {
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
-#endif
-    for (int c = 0; c < C; ++c) {
-      float b = b_data[c];
-      const float* a_col = a_data + c * a_stride;
-      float* d_col = d_data + c * d_stride;
-      float sum = 0.0f;
-      for (int r = 0; r < R; ++r) {
-        float a = a_col[r] + b;
-        float factor;
-        if (a > 20.0f) {
-          factor = 1.0f;
-        } else if (a < -20.0f) {
-          float ea = fast_expf(a);
-          factor = ea * (1.0f + a);
-        } else {
-          float ea = fast_expf(a);
-          float w = 1.0f + ea;
-          float tsp = 1.0f - 2.0f / (w * w + 1.0f);
-          float sig = ea / w;
-          factor = (tsp + a * sig * (1.0f - tsp * tsp));
-        }
-        float d = d_col[r] * factor;
-        d_col[r] = d;
-        sum += d;
-      }
-      gb_data[c] = sum;
-    }
-  }
+  evofe::nn::apply_activation_grad_and_accum_bias(
+      act_in, bias, delta, grad_b, is_cls ? evofe::nn::ActType::SELU : evofe::nn::ActType::Mish, act_out);
 }
-
-// Multi-cycle Coslog schedule as defined in PyTabKit (David Holzmüller et al.):
-// Combines cosine annealing with logarithmic cycle layout across n_cycles.
-// Each cycle warm-starts and anneals smoothly, with cycle lengths doubling logarithmically.
-inline double coslog_schedule(double t, int n_cycles = 4) {
-  t = std::clamp(t, 0.0, 1.0);
-  double scale = std::pow(2.0, n_cycles) - 1.0;
-  double u = std::log2(1.0 + scale * t);
-  return 0.5 * (1.0 - std::cos(2.0 * M_PI * u));
-}
-
-inline double coslog4_schedule(double t) {
-  return coslog_schedule(t, 4);
-}
-
-// Zero-allocation, vectorized in-place Adam optimizer state (FP32)
-struct AdamParam {
-  Eigen::MatrixXf val;
-  Eigen::MatrixXf m;
-  Eigen::MatrixXf v;
-
-  void init(int rows, int cols) {
-    val = Eigen::MatrixXf::Zero(rows, cols);
-    m = Eigen::MatrixXf::Zero(rows, cols);
-    v = Eigen::MatrixXf::Zero(rows, cols);
-  }
-
-  void update(const Eigen::MatrixXf& grad, double lr, double beta1, double beta2, double eps,
-              double b1_corr, double b2_corr) {
-    float alpha = static_cast<float>(lr * std::sqrt(b2_corr) / b1_corr);
-    float eps_scaled = static_cast<float>(eps * std::sqrt(b2_corr));
-    float b1_f = static_cast<float>(beta1);
-    float one_m_b1 = static_cast<float>(1.0 - beta1);
-    float b2_f = static_cast<float>(beta2);
-    float one_m_b2 = static_cast<float>(1.0 - beta2);
-    int sz = static_cast<int>(val.size());
-    float* val_ptr = val.data();
-    float* m_ptr = m.data();
-    float* v_ptr = v.data();
-    const float* g_ptr = grad.data();
-
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (sz >= 1024)
-#endif
-    for (int i = 0; i < sz; ++i) {
-      float g = g_ptr[i];
-      float m_val = b1_f * m_ptr[i] + one_m_b1 * g;
-      float v_val = b2_f * v_ptr[i] + one_m_b2 * g * g;
-      m_ptr[i] = m_val;
-      v_ptr[i] = v_val;
-      val_ptr[i] -= alpha * m_val / (std::sqrt(std::max(0.0f, v_val)) + eps_scaled);
-    }
-  }
-
-  void update_serial(const Eigen::MatrixXf& grad, double lr, double beta1, double beta2, double eps,
-                     double b1_corr, double b2_corr) {
-    float alpha = static_cast<float>(lr * std::sqrt(b2_corr) / b1_corr);
-    float eps_scaled = static_cast<float>(eps * std::sqrt(b2_corr));
-    float b1_f = static_cast<float>(beta1);
-    float one_m_b1 = static_cast<float>(1.0 - beta1);
-    float b2_f = static_cast<float>(beta2);
-    float one_m_b2 = static_cast<float>(1.0 - beta2);
-    int sz = static_cast<int>(val.size());
-    float* val_ptr = val.data();
-    float* m_ptr = m.data();
-    float* v_ptr = v.data();
-    const float* g_ptr = grad.data();
-
-    for (int i = 0; i < sz; ++i) {
-      float g = g_ptr[i];
-      float m_val = b1_f * m_ptr[i] + one_m_b1 * g;
-      float v_val = b2_f * v_ptr[i] + one_m_b2 * g * g;
-      m_ptr[i] = m_val;
-      v_ptr[i] = v_val;
-      val_ptr[i] -= alpha * m_val / (std::sqrt(std::max(0.0f, v_val)) + eps_scaled);
-    }
-  }
-};
 
 // ScalingLayer abstraction (stride-aware for row-sliced Eigen::Block batch views)
 struct ScalingLayer {
@@ -513,13 +165,7 @@ public:
         for (int i = 0; i < B; ++i) {
           th_col[i] = two_pi_om * x_col[i] + b_ph;
         }
-#if defined(__APPLE__)
-        vvcosf(z_col, th_col, &B);
-#else
-        for (int i = 0; i < B; ++i) {
-          z_col[i] = std::cos(th_col[i]);
-        }
-#endif
+        evofe::nn::vcos_f32(B, th_col, z_col);
       }
 
       // 2. Fused U = Z * W_j + beta_j (zero sgemm, zero OpenMP lock contention)
@@ -585,13 +231,7 @@ public:
         for (int i = 0; i < B; ++i) {
           z_col[i] = two_pi_om * x_col[i] + b_ph;
         }
-#if defined(__APPLE__)
-        vvcosf(z_col, z_col, &B);
-#else
-        for (int i = 0; i < B; ++i) {
-          z_col[i] = std::cos(z_col[i]);
-        }
-#endif
+        evofe::nn::vcos_f32(B, z_col, z_col);
       }
 
       // Fused U = Z * W_j + beta_j
@@ -669,11 +309,9 @@ public:
         float sum = 0.0f;
         for (int i = 0; i < B; ++i) sum += u_col[i];
         grad_beta_buf(j, c) = sum;
-        float m_val = b1_f * beta_proj.m(j, c) + one_m_b1 * sum;
-        float v_val = b2_f * beta_proj.v(j, c) + one_m_b2 * sum * sum;
-        beta_proj.m(j, c) = m_val;
-        beta_proj.v(j, c) = v_val;
-        beta_proj.val(j, c) -= alpha * m_val / (std::sqrt(std::max(0.0f, v_val)) + eps_scaled);
+        evofe::nn::adam_scalar_step(
+            beta_proj.val(j, c), beta_proj.m(j, c), beta_proj.v(j, c),
+            sum, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2);
       }
 
       // 2. grad_W = cache_Z[j]^T * grad_U (zero sgemm, cache-contiguous dot products)
@@ -709,26 +347,16 @@ public:
         const float* th_col = cache_Theta[j].col(k).data();
         float* gth_col = grad_Th.col(k).data();
         float sum_b = 0.0f;
-#if defined(__APPLE__)
-        vvsinf(gth_col, th_col, &B);
+        evofe::nn::vsin_f32(B, th_col, gth_col);
         for (int i = 0; i < B; ++i) {
           float gth = -gz_col[i] * gth_col[i];
           gth_col[i] = gth;
           sum_b += gth;
         }
-#else
-        for (int i = 0; i < B; ++i) {
-          float gth = -gz_col[i] * std::sin(th_col[i]);
-          gth_col[i] = gth;
-          sum_b += gth;
-        }
-#endif
         grad_b_buf(j, k) = sum_b;
-        float m_val = b1_f * b_phase.m(j, k) + one_m_b1 * sum_b;
-        float v_val = b2_f * b_phase.v(j, k) + one_m_b2 * sum_b * sum_b;
-        b_phase.m(j, k) = m_val;
-        b_phase.v(j, k) = v_val;
-        b_phase.val(j, k) -= alpha * m_val / (std::sqrt(std::max(0.0f, v_val)) + eps_scaled);
+        evofe::nn::adam_scalar_step(
+            b_phase.val(j, k), b_phase.m(j, k), b_phase.v(j, k),
+            sum_b, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2);
       }
 
       // 5. grad_omega = 2*pi * x.col(j)^T * grad_Th and in-parallel update
@@ -741,11 +369,9 @@ public:
         }
         float g_om = TWO_PI_F * dot;
         grad_omega_buf(j, k) = g_om;
-        float m_val = b1_f * omega.m(j, k) + one_m_b1 * g_om;
-        float v_val = b2_f * omega.v(j, k) + one_m_b2 * g_om * g_om;
-        omega.m(j, k) = m_val;
-        omega.v(j, k) = v_val;
-        omega.val(j, k) -= alpha * m_val / (std::sqrt(std::max(0.0f, v_val)) + eps_scaled);
+        evofe::nn::adam_scalar_step(
+            omega.val(j, k), omega.m(j, k), omega.v(j, k),
+            g_om, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2);
       }
     }
   }
@@ -840,40 +466,6 @@ struct TrainWorkspace {
     Y_shuf.resize(N, out_dim);
   }
 };
-
-// Fused standardize matrix helper into FP32 accepting Eigen::Ref with zero dynamic reallocations
-inline Eigen::MatrixXf fuse_standardize_matrix_f32(
-    const Eigen::Ref<const Eigen::MatrixXd>& X,
-    const Eigen::VectorXd& x_mean,
-    const Eigen::VectorXd& x_std) {
-  int B = static_cast<int>(X.rows());
-  int D = static_cast<int>(X.cols());
-  Eigen::MatrixXf X_norm(B, D);
-  Eigen::VectorXd x_inv_std(D);
-  for (int j = 0; j < D; ++j) {
-    double s = x_std(j);
-    if (s < 1e-5 || !std::isfinite(s)) {
-      x_inv_std(j) = 1.0;
-    } else {
-      x_inv_std(j) = 1.0 / s;
-    }
-  }
-  if (X.innerStride() == 1 && X.outerStride() == B) {
-    fuse_standardize_matrix_f32(X.data(), X_norm.data(), B, D, x_mean.data(), x_inv_std.data());
-  } else {
-    for (int j = 0; j < D; ++j) {
-      double m = x_mean(j);
-      double inv_s = x_inv_std(j);
-      for (int i = 0; i < B; ++i) {
-        double v = X(i, j);
-        double clean_v = std::isfinite(v) ? v : 0.0;
-        double z = (clean_v - m) * inv_s;
-        X_norm(i, j) = static_cast<float>(std::clamp(z, -30.0, 30.0));
-      }
-    }
-  }
-  return X_norm;
-}
 
 // Complete RealMLP Model (FP32 GEMM/Activation Core + FP64 Standardization/Output)
 class RealMLPModel {
