@@ -66,6 +66,53 @@ rcpp_realmlp_predict <- function(model_state, x_new, threads = 0L) {
     .Call(`_evoFE_rcpp_realmlp_predict`, model_state, x_new, threads)
 }
 
+#' Train TabM (TabM-mini BatchEnsemble MLP) Model in C++
+#'
+#' Native C++17 FP32 BatchEnsemble MLP with Quantile Piecewise Linear Encoding (PLE),
+#' lookup categorical embeddings, decoupled AdamW optimization, dropout, and chunked inference.
+#'
+#' @param x_train Numeric feature matrix (N x D).
+#' @param y_train Numeric target vector of length N.
+#' @param x_val Optional numeric validation matrix.
+#' @param y_val Optional numeric validation target vector.
+#' @param task One of `"regression"`, `"classification"`, or `"multiclass"`.
+#' @param n_epochs Maximum number of training epochs (default 100).
+#' @param batch_size Minibatch size (`<= 0` selects data-adaptive default).
+#' @param lr Base learning rate (default 0.002).
+#' @param weight_decay Decoupled AdamW weight decay (default 1e-4).
+#' @param early_stopping_rounds Patience for early stopping (`0` = disabled, default 16).
+#' @param seed Random seed (default 42).
+#' @param verbose Verbosity level (`0` = silent).
+#' @param num_classes Number of classes for `"multiclass"`.
+#' @param threads Number of threads for parallel execution (default 1).
+#' @param metric Validation metric name (default `"default"`).
+#' @param k_ensemble Number of BatchEnsemble members (default 16).
+#' @param d_block Hidden layer width (default 128).
+#' @param n_blocks Number of hidden MLP blocks (default 2).
+#' @param dropout Dropout probability (default 0.1).
+#' @param num_emb Numeric embedding scheme: `"pwl"` (Quantile PLE + Linear) or `"none"`.
+#' @param n_bins Target number of quantile bins for `"pwl"` (default 48).
+#' @param cat_cols Optional 1-based integer indices of categorical columns in `x_train`.
+#' @param cat_cardinalities Optional integer cardinalities aligned with `cat_cols`.
+#' @param d_embedding Embedding dimension per numeric/categorical feature (default 8).
+#' @param lr_warmup_frac Linear warmup fraction for cosine schedule (default 0.05).
+#' @return A List with `predictions`, `best_epoch`, `best_score`, `importances`, and `model_state`.
+#' @keywords internal
+rcpp_tabm_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 100L, batch_size = -1L, lr = 0.002, weight_decay = 1e-4, early_stopping_rounds = 16L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", k_ensemble = 16L, d_block = 128L, n_blocks = 2L, dropout = 0.1, num_emb = "pwl", n_bins = 48L, cat_cols = NULL, cat_cardinalities = NULL, d_embedding = 8L, lr_warmup_frac = 0.05) {
+    .Call(`_evoFE_rcpp_tabm_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac)
+}
+
+#' Predict with TabM Model in C++
+#'
+#' @param model_state List returned by `rcpp_tabm_train`.
+#' @param x_new Numeric matrix of new input features.
+#' @param threads Integer: number of threads for parallel prediction (default 0 = unchanged).
+#' @return A NumericMatrix of predictions.
+#' @keywords internal
+rcpp_tabm_predict <- function(model_state, x_new, threads = 0L) {
+    .Call(`_evoFE_rcpp_tabm_predict`, model_state, x_new, threads)
+}
+
 #' Fast C++ Row-wise Minimum
 #' @keywords internal
 rcpp_fused_row_min <- function(cols, threads = 1L) {
@@ -136,6 +183,15 @@ rcpp_sanitize_numeric_vec <- function(x) {
 #' @keywords internal
 rcpp_sanitize_feature_matrix <- function(x, threads = 1L) {
     .Call(`_evoFE_rcpp_sanitize_feature_matrix`, x, threads)
+}
+
+#' Fast C++ Single-Pass Matrix NA Mean Imputation & Sample SD
+#'
+#' Computes column finite means and post-imputation sample SDs in a single pass.
+#' Zero-copy: returns `x` directly in `$mat` when no elements require imputation.
+#' @keywords internal
+rcpp_impute_and_col_stats <- function(x, means = NULL, compute_sd = TRUE, threads = 1L) {
+    .Call(`_evoFE_rcpp_impute_and_col_stats`, x, means, compute_sd, threads)
 }
 
 #' Fast C++ Gene Constant & Redundancy Validator

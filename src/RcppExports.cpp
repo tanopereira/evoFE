@@ -124,6 +124,54 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rcpp_tabm_train
+List rcpp_tabm_train(NumericMatrix x_train, NumericVector y_train, Nullable<NumericMatrix> x_val, Nullable<NumericVector> y_val, std::string task, int n_epochs, int batch_size, double lr, double weight_decay, int early_stopping_rounds, int seed, int verbose, int num_classes, int threads, std::string metric, int k_ensemble, int d_block, int n_blocks, double dropout, std::string num_emb, int n_bins, Nullable<IntegerVector> cat_cols, Nullable<IntegerVector> cat_cardinalities, int d_embedding, double lr_warmup_frac);
+RcppExport SEXP _evoFE_rcpp_tabm_train(SEXP x_trainSEXP, SEXP y_trainSEXP, SEXP x_valSEXP, SEXP y_valSEXP, SEXP taskSEXP, SEXP n_epochsSEXP, SEXP batch_sizeSEXP, SEXP lrSEXP, SEXP weight_decaySEXP, SEXP early_stopping_roundsSEXP, SEXP seedSEXP, SEXP verboseSEXP, SEXP num_classesSEXP, SEXP threadsSEXP, SEXP metricSEXP, SEXP k_ensembleSEXP, SEXP d_blockSEXP, SEXP n_blocksSEXP, SEXP dropoutSEXP, SEXP num_embSEXP, SEXP n_binsSEXP, SEXP cat_colsSEXP, SEXP cat_cardinalitiesSEXP, SEXP d_embeddingSEXP, SEXP lr_warmup_fracSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type x_train(x_trainSEXP);
+    Rcpp::traits::input_parameter< NumericVector >::type y_train(y_trainSEXP);
+    Rcpp::traits::input_parameter< Nullable<NumericMatrix> >::type x_val(x_valSEXP);
+    Rcpp::traits::input_parameter< Nullable<NumericVector> >::type y_val(y_valSEXP);
+    Rcpp::traits::input_parameter< std::string >::type task(taskSEXP);
+    Rcpp::traits::input_parameter< int >::type n_epochs(n_epochsSEXP);
+    Rcpp::traits::input_parameter< int >::type batch_size(batch_sizeSEXP);
+    Rcpp::traits::input_parameter< double >::type lr(lrSEXP);
+    Rcpp::traits::input_parameter< double >::type weight_decay(weight_decaySEXP);
+    Rcpp::traits::input_parameter< int >::type early_stopping_rounds(early_stopping_roundsSEXP);
+    Rcpp::traits::input_parameter< int >::type seed(seedSEXP);
+    Rcpp::traits::input_parameter< int >::type verbose(verboseSEXP);
+    Rcpp::traits::input_parameter< int >::type num_classes(num_classesSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    Rcpp::traits::input_parameter< std::string >::type metric(metricSEXP);
+    Rcpp::traits::input_parameter< int >::type k_ensemble(k_ensembleSEXP);
+    Rcpp::traits::input_parameter< int >::type d_block(d_blockSEXP);
+    Rcpp::traits::input_parameter< int >::type n_blocks(n_blocksSEXP);
+    Rcpp::traits::input_parameter< double >::type dropout(dropoutSEXP);
+    Rcpp::traits::input_parameter< std::string >::type num_emb(num_embSEXP);
+    Rcpp::traits::input_parameter< int >::type n_bins(n_binsSEXP);
+    Rcpp::traits::input_parameter< Nullable<IntegerVector> >::type cat_cols(cat_colsSEXP);
+    Rcpp::traits::input_parameter< Nullable<IntegerVector> >::type cat_cardinalities(cat_cardinalitiesSEXP);
+    Rcpp::traits::input_parameter< int >::type d_embedding(d_embeddingSEXP);
+    Rcpp::traits::input_parameter< double >::type lr_warmup_frac(lr_warmup_fracSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_tabm_train(x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac));
+    return rcpp_result_gen;
+END_RCPP
+}
+// rcpp_tabm_predict
+NumericMatrix rcpp_tabm_predict(List model_state, NumericMatrix x_new, int threads);
+RcppExport SEXP _evoFE_rcpp_tabm_predict(SEXP model_stateSEXP, SEXP x_newSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< List >::type model_state(model_stateSEXP);
+    Rcpp::traits::input_parameter< NumericMatrix >::type x_new(x_newSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_tabm_predict(model_state, x_new, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rcpp_fused_row_min
 NumericVector rcpp_fused_row_min(List cols, int threads);
 RcppExport SEXP _evoFE_rcpp_fused_row_min(SEXP colsSEXP, SEXP threadsSEXP) {
@@ -275,6 +323,20 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// rcpp_impute_and_col_stats
+List rcpp_impute_and_col_stats(NumericMatrix x, Nullable<NumericVector> means, bool compute_sd, int threads);
+RcppExport SEXP _evoFE_rcpp_impute_and_col_stats(SEXP xSEXP, SEXP meansSEXP, SEXP compute_sdSEXP, SEXP threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< NumericMatrix >::type x(xSEXP);
+    Rcpp::traits::input_parameter< Nullable<NumericVector> >::type means(meansSEXP);
+    Rcpp::traits::input_parameter< bool >::type compute_sd(compute_sdSEXP);
+    Rcpp::traits::input_parameter< int >::type threads(threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_impute_and_col_stats(x, means, compute_sd, threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 // rcpp_validate_numeric_gene
 int rcpp_validate_numeric_gene(NumericVector new_col, SEXP train_data, CharacterVector exclude_cols, double cor_threshold, int max_cor_rows);
 RcppExport SEXP _evoFE_rcpp_validate_numeric_gene(SEXP new_colSEXP, SEXP train_dataSEXP, SEXP exclude_colsSEXP, SEXP cor_thresholdSEXP, SEXP max_cor_rowsSEXP) {
@@ -299,6 +361,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_fit_post_calibrator", (DL_FUNC) &_evoFE_rcpp_fit_post_calibrator, 8},
     {"_evoFE_rcpp_realmlp_train", (DL_FUNC) &_evoFE_rcpp_realmlp_train, 17},
     {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 3},
+    {"_evoFE_rcpp_tabm_train", (DL_FUNC) &_evoFE_rcpp_tabm_train, 25},
+    {"_evoFE_rcpp_tabm_predict", (DL_FUNC) &_evoFE_rcpp_tabm_predict, 3},
     {"_evoFE_rcpp_fused_row_min", (DL_FUNC) &_evoFE_rcpp_fused_row_min, 2},
     {"_evoFE_rcpp_fused_row_max", (DL_FUNC) &_evoFE_rcpp_fused_row_max, 2},
     {"_evoFE_rcpp_fused_geometric_mean", (DL_FUNC) &_evoFE_rcpp_fused_geometric_mean, 3},
@@ -311,6 +375,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_apply_box_cox", (DL_FUNC) &_evoFE_rcpp_apply_box_cox, 6},
     {"_evoFE_rcpp_sanitize_numeric_vec", (DL_FUNC) &_evoFE_rcpp_sanitize_numeric_vec, 1},
     {"_evoFE_rcpp_sanitize_feature_matrix", (DL_FUNC) &_evoFE_rcpp_sanitize_feature_matrix, 2},
+    {"_evoFE_rcpp_impute_and_col_stats", (DL_FUNC) &_evoFE_rcpp_impute_and_col_stats, 4},
     {"_evoFE_rcpp_validate_numeric_gene", (DL_FUNC) &_evoFE_rcpp_validate_numeric_gene, 5},
     {NULL, NULL, 0}
 };

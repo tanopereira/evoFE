@@ -1,5 +1,12 @@
 #include <Rcpp.h>
+#include <RcppEigen.h>
+#include <cstring>
+#include <string>
+#include <vector>
+#include "nn_common.h"
 #include "transformers_fused.h"
+
+// [[Rcpp::depends(RcppEigen)]]
 
 using namespace Rcpp;
 
@@ -217,7 +224,7 @@ SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads = 1) {
         dst[i] = (std::isfinite(v) && std::abs(v) <= MAX_FLOAT) ? v : NA_REAL;
       }
     } else {
-      const int* src = INTEGER(x);
+      const int* src = (type == LGLSXP) ? LOGICAL(x) : INTEGER(x);
 #if defined(_OPENMP)
 #pragma omp parallel for num_threads(n_threads) schedule(static) if (total >= 16384)
 #endif
@@ -230,6 +237,10 @@ SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads = 1) {
     SEXP dn = Rf_getAttrib(x, R_DimNamesSymbol);
     if (!Rf_isNull(dn)) {
       Rf_setAttrib(out, R_DimNamesSymbol, dn);
+    }
+    SEXP cat_schema = Rf_getAttrib(x, Rf_install("cat_schema"));
+    if (!Rf_isNull(cat_schema)) {
+      Rf_setAttrib(out, Rf_install("cat_schema"), cat_schema);
     }
     Rf_setAttrib(out, Rf_install("sanitized"), Rf_ScalarLogical(1));
     return out;
@@ -252,19 +263,31 @@ SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads = 1) {
 
     std::vector<const double*> dbl_ptrs(p, nullptr);
     std::vector<const int*> int_ptrs(p, nullptr);
+    std::vector<int> cat_cols;
+    std::vector<SEXP> cat_levels;
     for (int j = 0; j < p; ++j) {
       SEXP col = VECTOR_ELT(x, j);
-      if (Rf_length(col) != n || Rf_isObject(col) && !Rf_isFactor(col) && !Rf_inherits(col, "POSIXct") && !Rf_inherits(col, "Date")) {
+      if (Rf_length(col) != n || (Rf_isObject(col) && !Rf_isFactor(col) && !Rf_inherits(col, "POSIXct") && !Rf_inherits(col, "Date"))) {
         // Fallback to R data.matrix if column is a custom S3/S4 object other than factor/Date/POSIXct
         return R_NilValue;
       }
       int ct = TYPEOF(col);
-      if (ct == REALSXP) {
-        dbl_ptrs[j] = REAL(col);
-      } else if (ct == INTSXP || ct == LGLSXP) {
+      if (Rf_isFactor(col)) {
+        if (ct != INTSXP) return R_NilValue;
+        SEXP lvls = Rf_getAttrib(col, R_LevelsSymbol);
+        if (!Rf_isString(lvls)) return R_NilValue;
+        cat_cols.push_back(j + 1); // 1-based column index
+        cat_levels.push_back(lvls);
         int_ptrs[j] = INTEGER(col);
+      } else if (ct == REALSXP) {
+        dbl_ptrs[j] = REAL(col);
+      } else if (ct == INTSXP) {
+        int_ptrs[j] = INTEGER(col);
+      } else if (ct == LGLSXP) {
+        // Logical stays numeric {0, 1, NA_REAL}; never treat as categorical
+        int_ptrs[j] = LOGICAL(col);
       } else {
-        return R_NilValue; // Character or list column: fallback to R data.matrix
+        return R_NilValue; // Character (STRSXP) or list column: R aligns character->factor first
       }
     }
 
@@ -300,11 +323,207 @@ SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads = 1) {
       Rf_setAttrib(out, R_DimNamesSymbol, dn);
       UNPROTECT(1);
     }
+    if (!cat_cols.empty()) {
+      int n_cat = static_cast<int>(cat_cols.size());
+      IntegerVector cs_cols = wrap(cat_cols);
+      CharacterVector cs_names(n_cat);
+      List cs_levels(n_cat);
+      IntegerVector cs_cards(n_cat);
+      bool has_col_names = (!Rf_isNull(col_names) && TYPEOF(col_names) == STRSXP && Rf_length(col_names) == p);
+      for (int k = 0; k < n_cat; ++k) {
+        int j = cat_cols[k] - 1;
+        if (has_col_names) {
+          SET_STRING_ELT(cs_names, k, STRING_ELT(col_names, j));
+        } else {
+          cs_names[k] = "V" + std::to_string(j + 1);
+        }
+        SEXP lvls = cat_levels[k];
+        SET_VECTOR_ELT(cs_levels, k, lvls);
+        cs_cards[k] = Rf_length(lvls);
+      }
+      List cat_schema = List::create(
+        _["cols"] = cs_cols,
+        _["names"] = cs_names,
+        _["levels"] = cs_levels,
+        _["cardinalities"] = cs_cards
+      );
+      Rf_setAttrib(out, Rf_install("cat_schema"), cat_schema);
+    }
     Rf_setAttrib(out, Rf_install("sanitized"), Rf_ScalarLogical(1));
     return out;
   }
 
   return R_NilValue;
+}
+
+//' Fast C++ Single-Pass Matrix NA Mean Imputation & Sample SD
+//'
+//' Computes column finite means and post-imputation sample SDs in a single pass.
+//' Zero-copy: returns `x` directly in `$mat` when no elements require imputation.
+//' @keywords internal
+// [[Rcpp::export]]
+List rcpp_impute_and_col_stats(NumericMatrix x,
+                               Nullable<NumericVector> means = R_NilValue,
+                               bool compute_sd = true,
+                               int threads = 1) {
+  int N = x.nrow();
+  int p = x.ncol();
+  NumericVector col_means(p, 0.0);
+  NumericVector col_sds(p, 1.0);
+
+  if (N == 0 || p == 0) {
+    return List::create(
+      Named("mat") = RObject(x),
+      Named("col_means") = col_means,
+      Named("col_sds") = col_sds
+    );
+  }
+
+  bool has_means = means.isNotNull();
+  if (has_means) {
+    NumericVector m_in(means);
+    if (m_in.size() != p) {
+      stop("means length must match ncol(x).");
+    }
+    for (int j = 0; j < p; ++j) {
+      double mv = m_in[j];
+      col_means[j] = std::isfinite(mv) ? mv : 0.0;
+    }
+  }
+
+  int n_threads = (threads > 0) ? threads : 1;
+#if defined(_OPENMP)
+  n_threads = std::min(n_threads, omp_get_max_threads());
+#endif
+
+  const double* src_base = x.begin();
+  double* means_ptr = col_means.begin();
+  double* sds_ptr = col_sds.begin();
+  std::vector<unsigned char> col_needs_impute(p, 0);
+  size_t total = static_cast<size_t>(N) * static_cast<size_t>(p);
+
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) schedule(static) if (p >= 2 && total >= 4096)
+#endif
+  for (int j = 0; j < p; ++j) {
+    const double* src_col = src_base + static_cast<size_t>(j) * static_cast<size_t>(N);
+    if (!has_means) {
+      if (compute_sd) {
+        evofe::nn::FiniteColumnStats st = evofe::nn::compute_finite_column_stats(src_col, N);
+        means_ptr[j] = st.mean;
+        sds_ptr[j] = st.sd;
+        col_needs_impute[j] = (st.n_finite < N) ? 1 : 0;
+      } else {
+        double sum = 0.0;
+        int n_fin = 0;
+        for (int i = 0; i < N; ++i) {
+          double v = src_col[i];
+          if (std::isfinite(v)) {
+            sum += v;
+            n_fin++;
+          }
+        }
+        double mean = (n_fin > 0) ? (sum / n_fin) : 0.0;
+        if (!std::isfinite(mean)) mean = 0.0;
+        means_ptr[j] = mean;
+        sds_ptr[j] = 1.0;
+        col_needs_impute[j] = (n_fin < N) ? 1 : 0;
+      }
+    } else {
+      double ext_m = means_ptr[j];
+      if (!compute_sd) {
+        unsigned char bad = 0;
+        for (int i = 0; i < N; ++i) {
+          if (!std::isfinite(src_col[i])) {
+            bad = 1;
+            break;
+          }
+        }
+        col_needs_impute[j] = bad;
+        sds_ptr[j] = 1.0;
+      } else {
+        double sum_imp = 0.0;
+        unsigned char bad = 0;
+        for (int i = 0; i < N; ++i) {
+          double v = src_col[i];
+          if (std::isfinite(v)) {
+            sum_imp += v;
+          } else {
+            sum_imp += ext_m;
+            bad = 1;
+          }
+        }
+        col_needs_impute[j] = bad;
+        double imp_mean = sum_imp / N;
+        double sum_sq = 0.0;
+        for (int i = 0; i < N; ++i) {
+          double v = src_col[i];
+          double iv = std::isfinite(v) ? v : ext_m;
+          double diff = iv - imp_mean;
+          sum_sq += diff * diff;
+        }
+        double sd = (N > 1) ? std::sqrt(sum_sq / static_cast<double>(N - 1)) : 1.0;
+        if (!std::isfinite(sd) || sd <= 0.0) sd = 1.0;
+        sds_ptr[j] = sd;
+      }
+    }
+  }
+
+  bool any_impute = false;
+  for (int j = 0; j < p; ++j) {
+    if (col_needs_impute[j]) {
+      any_impute = true;
+      break;
+    }
+  }
+
+  if (!any_impute) {
+    return List::create(
+      Named("mat") = RObject(x),
+      Named("col_means") = col_means,
+      Named("col_sds") = col_sds
+    );
+  }
+
+  // MAYBE_REFERENCED safe: allocate new matrix whenever any element requires imputation
+  NumericMatrix out(no_init(N, p));
+  double* dst_base = out.begin();
+
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) schedule(static) if (p >= 2 && total >= 4096)
+#endif
+  for (int j = 0; j < p; ++j) {
+    const double* src_col = src_base + static_cast<size_t>(j) * static_cast<size_t>(N);
+    double* dst_col = dst_base + static_cast<size_t>(j) * static_cast<size_t>(N);
+    if (!col_needs_impute[j]) {
+      std::memcpy(dst_col, src_col, static_cast<size_t>(N) * sizeof(double));
+    } else {
+      double m = means_ptr[j];
+      for (int i = 0; i < N; ++i) {
+        double v = src_col[i];
+        dst_col[i] = std::isfinite(v) ? v : m;
+      }
+    }
+  }
+
+  SEXP dn = Rf_getAttrib(x, R_DimNamesSymbol);
+  if (!Rf_isNull(dn)) {
+    Rf_setAttrib(out, R_DimNamesSymbol, dn);
+  }
+  SEXP san = Rf_getAttrib(x, Rf_install("sanitized"));
+  if (!Rf_isNull(san)) {
+    Rf_setAttrib(out, Rf_install("sanitized"), san);
+  }
+  SEXP cat_schema = Rf_getAttrib(x, Rf_install("cat_schema"));
+  if (!Rf_isNull(cat_schema)) {
+    Rf_setAttrib(out, Rf_install("cat_schema"), cat_schema);
+  }
+
+  return List::create(
+    Named("mat") = out,
+    Named("col_means") = col_means,
+    Named("col_sds") = col_sds
+  );
 }
 
 namespace {
