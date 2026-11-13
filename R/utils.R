@@ -606,3 +606,104 @@ rank_transform_predictions <- function(p) {
   idx <- sample.int(n, 1L)
   if (is.list(x)) x[[idx]] else x[idx]
 }
+
+#' Row-Subset a Sanitized Feature Matrix While Preserving Metadata
+#'
+#' Standard R matrix indexing strips non-dim attributes such as \code{"sanitized"}
+#' and \code{"cat_schema"}. This helper preserves them across row subsets.
+#'
+#' @param mat A feature matrix (or NULL).
+#' @param idx Integer or logical row index vector.
+#' @return The row-subsetted matrix with \code{"sanitized"} and \code{"cat_schema"} preserved.
+#' @keywords internal
+#' @noRd
+.slice_feature_matrix <- function(mat, idx) {
+  if (is.null(mat)) return(NULL)
+  san <- attr(mat, "sanitized", exact = TRUE)
+  cs <- attr(mat, "cat_schema", exact = TRUE)
+  sub <- mat[idx, , drop = FALSE]
+  if (!is.null(san)) attr(sub, "sanitized") <- san
+  if (!is.null(cs)) attr(sub, "cat_schema") <- cs
+  sub
+}
+
+#' Resolve and Normalize Offset / Margin / Baseline Arguments
+#'
+#' Consolidates \code{init_score}, \code{base_margin}, \code{baseline}, and
+#' \code{offset} aliases for training, validation, and prediction inputs.
+#'
+#' @param extra_args Named list of caller arguments.
+#' @param n_train Number of training rows (or \code{NULL} during predict-only resolution).
+#' @param n_val Optional number of validation rows.
+#' @param task Task type: \code{"regression"}, \code{"classification"}, or \code{"multiclass"}.
+#' @param num_class Optional number of classes for multiclass.
+#' @param target_levels Optional character vector of class names (used to set multiclass column names).
+#' @return A list with elements \code{train}, \code{val}, and \code{new} (each \code{NULL} if absent).
+#' @keywords internal
+#' @noRd
+.resolve_offset_args <- function(extra_args, n_train = NULL, n_val = NULL,
+                                 task = "regression", num_class = NULL,
+                                 target_levels = NULL) {
+  pick_first <- function(keys) {
+    for (k in keys) {
+      if (!is.null(extra_args[[k]])) return(extra_args[[k]])
+    }
+    NULL
+  }
+
+  normalize_one <- function(off, n_rows, label) {
+    if (is.null(off) || is.null(n_rows)) return(NULL)
+    n_rows <- as.integer(n_rows)
+    if (identical(task, "multiclass")) {
+      k <- if (!is.null(num_class)) {
+        as.integer(num_class)
+      } else if (!is.null(target_levels)) {
+        length(target_levels)
+      } else if (is.matrix(off)) {
+        ncol(off)
+      } else {
+        stop(sprintf("Multiclass '%s' offset requires 'num_class' or a matrix.", label))
+      }
+      if (is.matrix(off)) {
+        if (nrow(off) != n_rows || ncol(off) != k) {
+          stop(sprintf("Multiclass '%s' offset matrix must be %d x %d (got %d x %d).",
+                       label, n_rows, k, nrow(off), ncol(off)))
+        }
+        storage.mode(off) <- "double"
+      } else {
+        if (length(off) != n_rows * k) {
+          stop(sprintf("Multiclass '%s' offset vector must have length %d (got %d).",
+                       label, n_rows * k, length(off)))
+        }
+        off <- matrix(as.numeric(off), nrow = n_rows, ncol = k)
+      }
+      if (!is.null(target_levels) && length(target_levels) == k && is.null(colnames(off))) {
+        colnames(off) <- as.character(target_levels)
+      }
+      return(off)
+    }
+
+    if (is.matrix(off)) {
+      if (nrow(off) != n_rows || ncol(off) != 1L) {
+        stop(sprintf("'%s' offset matrix must be %d x 1 (got %d x %d).",
+                     label, n_rows, nrow(off), ncol(off)))
+      }
+      return(as.numeric(off[, 1L]))
+    }
+    if (length(off) != n_rows) {
+      stop(sprintf("'%s' offset length (%d) must match row count (%d).",
+                   label, length(off), n_rows))
+    }
+    as.numeric(off)
+  }
+
+  raw_tr <- pick_first(c("init_score", "base_margin", "baseline", "offset", "train_offset"))
+  raw_va <- pick_first(c("val_init_score", "val_base_margin", "val_baseline", "val_offset", "offset_val"))
+  raw_nw <- pick_first(c("newoffset", "new_base_margin", "init_score", "base_margin", "baseline", "offset"))
+
+  list(
+    train = normalize_one(raw_tr, n_train, "train"),
+    val   = normalize_one(raw_va, n_val, "val"),
+    new   = if (is.null(n_train) && is.null(n_val)) raw_nw else normalize_one(raw_nw, n_train, "new")
+  )
+}

@@ -361,7 +361,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           x_val = x_val,
           y_val = y_val,
           val_idx = val_idx,
-          val_fold_feat = val_fold_feat,
+          y_val_raw = val_fold_feat[[target_col]],
           fold_idx = fi,
           tt_state = tt_state_fi
         )
@@ -473,11 +473,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           }
 
           y_val_encoded <- if (task == "multiclass") {
-            as.integer(factor(fd$val_fold_feat[[target_col]], levels = classes)) - 1
+            as.integer(factor(fd$y_val_raw, levels = classes)) - 1
           } else if (task == "classification") {
             fd$y_val
           } else {
-            fd$val_fold_feat[[target_col]]
+            fd$y_val_raw
           }
           metrics[orig_fi] <- if (!use_tt && !is.null(res_m$score) && is.finite(res_m$score)) {
             res_m$score

@@ -1,3 +1,90 @@
+#' Convert Probabilities to Logit Margins
+#'
+#' Clamps probabilities to \code{[eps, 1 - eps]} (binary) or \code{[eps, 1]}
+#' (multiclass, returning zero-sum centered log-probabilities).
+#'
+#' @keywords internal
+#' @noRd
+.prob_to_logit <- function(p, eps = 1e-6) {
+  if (is.matrix(p)) {
+    p[!is.finite(p)] <- eps
+    p <- pmax(p, eps)
+    lp <- log(p)
+    out <- lp - rowMeans(lp)
+    colnames(out) <- colnames(p)
+    return(out)
+  }
+  p[!is.finite(p)] <- 0.5
+  p <- pmin(pmax(p, eps), 1 - eps)
+  stats::qlogis(p)
+}
+
+#' Convert Logit Margins Back to Probabilities
+#'
+#' @keywords internal
+#' @noRd
+.logit_to_prob <- function(z) {
+  if (is.matrix(z)) {
+    max_r <- z[cbind(seq_len(nrow(z)), max.col(z, ties.method = "first"))]
+    ez <- exp(z - max_r)
+    out <- ez / rowSums(ez)
+    colnames(out) <- colnames(z)
+    return(out)
+  }
+  stats::plogis(z)
+}
+
+#' Blend Ensemble Candidate Predictions in Probability or Logit Space
+#'
+#' @keywords internal
+#' @noRd
+.blend_ensemble_preds <- function(preds_list, weights, stack_space = "prob") {
+  is_mat <- is.matrix(preds_list[[1L]])
+  use_logit <- identical(stack_space, "logit")
+  out <- NULL
+
+  if (!is_mat) {
+    for (j in seq_along(preds_list)) {
+      wj <- weights[j]
+      if (!is.finite(wj) || wj <= 0) next
+      pj <- preds_list[[j]]
+      if (use_logit) {
+        pj <- .prob_to_logit(pj)
+      } else {
+        pj[!is.finite(pj)] <- 0
+      }
+      out <- if (is.null(out)) wj * pj else out + wj * pj
+    }
+    if (is.null(out)) {
+      n_obs <- length(preds_list[[1L]])
+      return(numeric(n_obs))
+    }
+    return(if (use_logit) .logit_to_prob(out) else as.vector(out))
+  }
+
+  for (j in seq_along(preds_list)) {
+    wj <- weights[j]
+    if (!is.finite(wj) || wj <= 0) next
+    pj <- preds_list[[j]]
+    if (use_logit) {
+      pj <- .prob_to_logit(pj)
+    } else {
+      pj[!is.finite(pj)] <- 0
+    }
+    out <- if (is.null(out)) wj * pj else out + wj * pj
+  }
+  if (is.null(out)) return(NULL)
+  if (use_logit) {
+    return(.logit_to_prob(out))
+  }
+  rs <- rowSums(out)
+  pos <- rs > 0
+  if (any(pos)) {
+    out[pos, ] <- out[pos, , drop = FALSE] / rs[pos]
+  }
+  out
+}
+
 #' Internal Non-Negative Elastic-Net Stacking Engine
 #'
 #' Fits a non-negative elastic-net meta-learner over out-of-fold island predictions
@@ -113,25 +200,7 @@
   }
 
   blend_with <- function(w) {
-    if (!is.matrix(val_preds_list[[1]])) {
-      as.vector(X_fit %*% w)
-    } else {
-      out <- NULL
-      for (j in seq_len(n_candidates)) {
-        if (w[j] <= 0) next
-        p <- val_preds_list[[j]]
-        p[!is.finite(p)] <- 0
-        out <- if (is.null(out)) w[j] * p else out + w[j] * p
-      }
-      if (!is.null(out)) {
-        rs <- rowSums(out)
-        pos <- rs > 0
-        if (any(pos)) {
-          out[pos, ] <- out[pos, , drop = FALSE] / rs[pos]
-        }
-      }
-      out
-    }
+    .blend_ensemble_preds(val_preds_list, w, stack_space = "prob")
   }
 
   fallback_weights <- function(rows = seq_len(n_obs)) {

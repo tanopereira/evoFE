@@ -322,132 +322,143 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   "n_epochs", "iterations", "n_iterations", "seed"
 )
 
-# 1. LightGBM Evaluator
-register_evaluator(
-  "lightgbm",
-  train_func = function(x_train, y_train, x_val = NULL, task = "classification",
-                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
-    if (!requireNamespace("lightgbm", quietly = TRUE)) {
-      stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
-    }
-    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
-    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
-    dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
-    extra_params <- list(...)
-    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
-    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
-    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
-    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
-    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
-    if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
-    if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
-    if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
-    if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
-    if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
-    if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
-    if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
-    if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
-    if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
-    y_val <- extra_params$y_val
-    metric_arg <- extra_params$metric
-    early_stopping_rounds <- extra_params$early_stopping_rounds
+# Shared LightGBM Training Core (used by lightgbm and future lightgbm_rf)
+.lightgbm_fit_core <- function(x_train, y_train, x_val = NULL, task = "classification",
+                               threads = default_threads(), num_class = NULL, nrounds = 50,
+                               default_params = list(num_leaves = 15, learning_rate = 0.1), ...) {
+  if (!requireNamespace("lightgbm", quietly = TRUE)) {
+    stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
+  }
+  x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+  x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
+  dtrain <- lightgbm::lgb.Dataset(data = x_train, label = y_train)
+  extra_params <- list(...)
+  if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+  if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+  if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+  if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+  if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+  if (!is.null(extra_params$epochs)) nrounds <- as.integer(extra_params$epochs)
+  if (!is.null(extra_params$n_epochs)) nrounds <- as.integer(extra_params$n_epochs)
+  if (!is.null(extra_params$iterations)) nrounds <- as.integer(extra_params$iterations)
+  if (!is.null(extra_params$n_iterations)) nrounds <- as.integer(extra_params$n_iterations)
+  if (!is.null(extra_params$num_round)) nrounds <- as.integer(extra_params$num_round)
+  if (!is.null(extra_params$nround)) nrounds <- as.integer(extra_params$nround)
+  if (!is.null(extra_params$num_rounds)) nrounds <- as.integer(extra_params$num_rounds)
+  if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
+  if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
+  y_val <- extra_params$y_val
+  metric_arg <- extra_params$metric
+  early_stopping_rounds <- extra_params$early_stopping_rounds
 
-    cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
-      canonical_metric_name(metric_arg, task)
-    } else {
-      NULL
-    }
-    is_mae_metric <- !is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")
-    reg_obj <- if (is_mae_metric) "regression_l1" else "regression"
-    reg_metric <- if (is_mae_metric) "mae" else if (identical(cm_arg, "mape")) "mape" else "rmse"
-    cls_metric <- if (identical(cm_arg, "auc")) {
-      "auc"
-    } else if (identical(cm_arg, "aucpr")) {
-      "average_precision"
-    } else if (identical(cm_arg, "accuracy")) {
-      "binary_error"
-    } else {
-      "binary_logloss"
-    }
-    mc_metric <- if (identical(cm_arg, "accuracy")) "multi_error" else "multi_logloss"
+  cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
+    canonical_metric_name(metric_arg, task)
+  } else {
+    NULL
+  }
+  is_mae_metric <- !is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")
+  reg_obj <- if (is_mae_metric) "regression_l1" else "regression"
+  reg_metric <- if (is_mae_metric) "mae" else if (identical(cm_arg, "mape")) "mape" else "rmse"
+  cls_metric <- if (identical(cm_arg, "auc")) {
+    "auc"
+  } else if (identical(cm_arg, "aucpr")) {
+    "average_precision"
+  } else if (identical(cm_arg, "accuracy")) {
+    "binary_error"
+  } else {
+    "binary_logloss"
+  }
+  mc_metric <- if (identical(cm_arg, "accuracy")) "multi_error" else "multi_logloss"
 
-    learner_verbose <- is_learner_verbose(extra_params$verbose)
-    seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
-      as.integer(extra_params$seed)
-    } else {
-      42L
-    }
+  learner_verbose <- is_learner_verbose(extra_params$verbose)
+  seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
+    as.integer(extra_params$seed)
+  } else {
+    42L
+  }
 
-    params <- list(
-      objective = switch(task,
-        classification = "binary",
-        multiclass     = "multiclass",
-        reg_obj
-      ),
-      metric = switch(task,
-        classification = cls_metric,
-        multiclass     = mc_metric,
-        reg_metric
-      ),
-      num_leaves = 15,
-      learning_rate = 0.1,
-      verbose = if (learner_verbose) 1L else -1L,
-      num_threads = threads,
-      seed = seed_val
+  params <- list(
+    objective = switch(task,
+      classification = "binary",
+      multiclass     = "multiclass",
+      reg_obj
+    ),
+    metric = switch(task,
+      classification = cls_metric,
+      multiclass     = mc_metric,
+      reg_metric
+    ),
+    verbose = if (learner_verbose) 1L else -1L,
+    num_threads = threads,
+    seed = seed_val
+  )
+  for (dp_name in names(default_params)) {
+    params[[dp_name]] <- default_params[[dp_name]]
+  }
+  if (task == "multiclass") params$num_class <- num_class
+
+  use_custom_eval <- FALSE
+  custom_eval_type <- NULL
+  if (!is.null(metric_arg) && is.character(metric_arg)) {
+    metric_lower <- tolower(metric_arg)
+    if (metric_lower %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
+      use_custom_eval <- TRUE
+      custom_eval_type <- "ts_refinement"
+    } else if (metric_lower %in% c("cal_rmse", "cal-rmse")) {
+      use_custom_eval <- TRUE
+      custom_eval_type <- "cal_rmse"
+    } else if (metric_lower %in% c("cal_mae", "cal-mae")) {
+      use_custom_eval <- TRUE
+      custom_eval_type <- "cal_mae"
+    }
+  }
+
+  if (use_custom_eval) {
+    params$metric <- "None"
+  }
+
+  control_params <- .evaluator_control_params
+  extra_params <- extra_params[!names(extra_params) %in% control_params]
+  for (name in names(extra_params)) {
+    params[[name]] <- extra_params[[name]]
+  }
+
+  valids <- list()
+  needs_val <- (!is.null(early_stopping_rounds) && early_stopping_rounds > 0) || learner_verbose
+  if (needs_val && !is.null(x_val) && !is.null(y_val)) {
+    dval <- lightgbm::lgb.Dataset(data = x_val, label = y_val, reference = dtrain)
+    valids$val <- dval
+  }
+
+  cal_eval_score <- if (use_custom_eval && length(valids) > 0) {
+    make_calibration_eval_fn(y_val, custom_eval_type, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
+  } else {
+    NULL
+  }
+
+  # early_stopping_rounds requires at least one validation dataset
+  esr <- if (length(valids) > 0) early_stopping_rounds else NULL
+  eval_fn <- if (!is.null(cal_eval_score)) {
+    function(preds, dtrain) {
+      score <- cal_eval_score(preds, if (is.null(y_val)) lightgbm::get_field(dtrain, "label") else NULL)
+      list(name = custom_eval_type, value = score, higher_better = FALSE)
+    }
+  } else {
+    NULL
+  }
+
+  if (learner_verbose) {
+    model <- lightgbm::lgb.train(
+      params = params,
+      data = dtrain,
+      nrounds = nrounds,
+      valids = valids,
+      eval = eval_fn,
+      early_stopping_rounds = esr,
+      verbose = 1L
     )
-    if (task == "multiclass") params$num_class <- num_class
-
-    use_custom_eval <- FALSE
-    custom_eval_type <- NULL
-    if (!is.null(metric_arg) && is.character(metric_arg)) {
-      metric_lower <- tolower(metric_arg)
-      if (metric_lower %in% c("eval-ts-refinement", "ts-refinement", "ts_refinement", "eval_ts_refinement")) {
-        use_custom_eval <- TRUE
-        custom_eval_type <- "ts_refinement"
-      } else if (metric_lower %in% c("cal_rmse", "cal-rmse")) {
-        use_custom_eval <- TRUE
-        custom_eval_type <- "cal_rmse"
-      } else if (metric_lower %in% c("cal_mae", "cal-mae")) {
-        use_custom_eval <- TRUE
-        custom_eval_type <- "cal_mae"
-      }
-    }
-
-    if (use_custom_eval) {
-      params$metric <- "None"
-    }
-
-    control_params <- .evaluator_control_params
-    extra_params <- extra_params[!names(extra_params) %in% control_params]
-    for (name in names(extra_params)) {
-      params[[name]] <- extra_params[[name]]
-    }
-
-    valids <- list()
-    needs_val <- (!is.null(early_stopping_rounds) && early_stopping_rounds > 0) || learner_verbose
-    if (needs_val && !is.null(x_val) && !is.null(y_val)) {
-      dval <- lightgbm::lgb.Dataset(data = x_val, label = y_val, reference = dtrain)
-      valids$val <- dval
-    }
-
-    cal_eval_score <- if (use_custom_eval && length(valids) > 0) {
-      make_calibration_eval_fn(y_val, custom_eval_type, task = task, num_class = num_class, is_logits = FALSE, threads = threads)
-    } else {
-      NULL
-    }
-
-    # early_stopping_rounds requires at least one validation dataset
-    esr <- if (length(valids) > 0) early_stopping_rounds else NULL
-    eval_fn <- if (!is.null(cal_eval_score)) {
-      function(preds, dtrain) {
-        score <- cal_eval_score(preds, if (is.null(y_val)) lightgbm::get_field(dtrain, "label") else NULL)
-        list(name = custom_eval_type, value = score, higher_better = FALSE)
-      }
-    } else {
-      NULL
-    }
-
-    if (learner_verbose) {
+  } else {
+    utils::capture.output({
       model <- lightgbm::lgb.train(
         params = params,
         data = dtrain,
@@ -455,82 +466,88 @@ register_evaluator(
         valids = valids,
         eval = eval_fn,
         early_stopping_rounds = esr,
-        verbose = 1L
+        verbose = -1L
       )
-    } else {
-      utils::capture.output({
-        model <- lightgbm::lgb.train(
-          params = params,
-          data = dtrain,
-          nrounds = nrounds,
-          valids = valids,
-          eval = eval_fn,
-          early_stopping_rounds = esr,
-          verbose = -1L
-        )
-      })
-    }
+    })
+  }
 
-    best_it <- if (!is.null(model$best_iter) && model$best_iter > 0) model$best_iter else NULL
-    preds <- if (!is.null(x_val)) {
-      if (!is.null(best_it)) {
-        stats::predict(model, x_val, num_iteration = best_it, params = list(num_threads = threads))
+  best_it <- if (!is.null(model$best_iter) && model$best_iter > 0) model$best_iter else NULL
+  preds <- if (!is.null(x_val)) {
+    if (!is.null(best_it)) {
+      stats::predict(model, x_val, num_iteration = best_it, params = list(num_threads = threads))
+    } else {
+      stats::predict(model, x_val, params = list(num_threads = threads))
+    }
+  } else {
+    NULL
+  }
+
+  importances <- tryCatch(
+    {
+      n_tr <- nrow(x_train)
+      if (n_tr > 2000L) {
+        sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
+        x_sub <- as.matrix(.slice_feature_matrix(x_train, sub_idx))
+        sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
       } else {
-        stats::predict(model, x_val, params = list(num_threads = threads))
+        sh <- stats::predict(model, as.matrix(x_train), type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
       }
-    } else {
-      NULL
-    }
-
-    importances <- tryCatch(
-      {
-        n_tr <- nrow(x_train)
-        if (n_tr > 2000L) {
-          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-          x_sub <- as.matrix(x_train[sub_idx, , drop = FALSE])
-          sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
-        } else {
-          sh <- stats::predict(model, as.matrix(x_train), type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
+      .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
+    },
+    error = function(e) {
+      tryCatch({
+        df_imp <- lightgbm::lgb.importance(model)
+        imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
+        if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
+          imp[df_imp$Feature] <- df_imp$Gain
         }
-        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
-      },
-      error = function(e) {
-        tryCatch({
-          df_imp <- lightgbm::lgb.importance(model)
-          imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
-          if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
-            imp[df_imp$Feature] <- df_imp$Gain
-          }
-          imp
-        }, error = function(e2) NULL)
-      }
-    )
+        imp
+      }, error = function(e2) NULL)
+    }
+  )
 
-    rm(dtrain)
-    list(model = model, predictions = preds, importances = importances, best_iteration = best_it)
+  rm(dtrain)
+  list(model = model, predictions = preds, importances = importances, best_iteration = best_it)
+}
+
+.lightgbm_predict_core <- function(model, x_new, task, ...) {
+  if (!requireNamespace("lightgbm", quietly = TRUE)) {
+    stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
+  }
+  x_new <- .sanitize_feature_matrix(x_new)
+  extra_args <- list(...)
+  th <- resolve_param_aliases(extra_args)$threads
+  if (is.null(th)) {
+    th <- if (!is.null(model$params$num_threads)) as.integer(model$params$num_threads) else default_threads()
+  }
+  num_iter <- if (!is.null(extra_args$num_iteration)) {
+    as.integer(extra_args$num_iteration)
+  } else if (!is.null(model$best_iter) && model$best_iter > 0) {
+    model$best_iter
+  } else {
+    NULL
+  }
+  if (!is.null(num_iter) && num_iter > 0) {
+    stats::predict(model, x_new, num_iteration = num_iter, params = list(num_threads = th))
+  } else {
+    stats::predict(model, x_new, params = list(num_threads = th))
+  }
+}
+
+# 1. LightGBM Evaluator
+register_evaluator(
+  "lightgbm",
+  train_func = function(x_train, y_train, x_val = NULL, task = "classification",
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
+    .lightgbm_fit_core(
+      x_train = x_train, y_train = y_train, x_val = x_val,
+      task = task, threads = threads, num_class = num_class, nrounds = nrounds,
+      default_params = list(num_leaves = 15, learning_rate = 0.1),
+      ...
+    )
   },
   predict_func = function(model, x_new, task, ...) {
-    if (!requireNamespace("lightgbm", quietly = TRUE)) {
-      stop("The 'lightgbm' package is required to use the 'lightgbm' evaluator. Please install it.")
-    }
-    x_new <- .sanitize_feature_matrix(x_new)
-    extra_args <- list(...)
-    th <- resolve_param_aliases(extra_args)$threads
-    if (is.null(th)) {
-      th <- if (!is.null(model$params$num_threads)) as.integer(model$params$num_threads) else default_threads()
-    }
-    num_iter <- if (!is.null(extra_args$num_iteration)) {
-      as.integer(extra_args$num_iteration)
-    } else if (!is.null(model$best_iter) && model$best_iter > 0) {
-      model$best_iter
-    } else {
-      NULL
-    }
-    if (!is.null(num_iter) && num_iter > 0) {
-      stats::predict(model, x_new, num_iteration = num_iter, params = list(num_threads = th))
-    } else {
-      stats::predict(model, x_new, params = list(num_threads = th))
-    }
+    .lightgbm_predict_core(model = model, x_new = x_new, task = task, ...)
   },
   traits = list(is_tree = TRUE, iteration_param = "nrounds", scale_iterations_with_data = TRUE)
 )
@@ -713,7 +730,7 @@ register_evaluator(
         n_tr <- nrow(x_train)
         if (n_tr > 2000L) {
           sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-          dsub <- xgboost::xgb.DMatrix(data = x_train[sub_idx, , drop = FALSE], missing = NA, nthread = threads)
+          dsub <- xgboost::xgb.DMatrix(data = .slice_feature_matrix(x_train, sub_idx), missing = NA, nthread = threads)
           sh <- stats::predict(model, dsub, predcontrib = TRUE, iterationrange = best_it_range)
           rm(dsub)
         } else {
@@ -1047,7 +1064,7 @@ register_evaluator(
         n_tr <- nrow(x_train)
         pool_imp <- if (n_tr > 2000L) {
           sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-          catboost::catboost.load_pool(data = x_train[sub_idx, , drop = FALSE], label = y_train[sub_idx], thread_count = threads)
+          catboost::catboost.load_pool(data = .slice_feature_matrix(x_train, sub_idx), label = y_train[sub_idx], thread_count = threads)
         } else {
           dtrain
         }
@@ -1092,267 +1109,38 @@ register_evaluator(
 )
 
 ## 4. LM/GLM Evaluator (Penalized)
-register_evaluator(
-  "lm",
-  train_func = function(x_train, y_train, x_val = NULL, task = "regression",
-                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
-    if (!requireNamespace("glmnet", quietly = TRUE)) {
-      stop("The 'glmnet' package is required for the penalized lm evaluator.")
+# Shared Penalized Linear (glmnet) Core (used by lm and future spline_lm)
+.glmnet_fit_core <- function(x_train, y_train, x_val = NULL, task = "regression",
+                             threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
+  if (!requireNamespace("glmnet", quietly = TRUE)) {
+    stop("The 'glmnet' package is required for the penalized lm evaluator.")
+  }
+
+  extra_params <- list(...)
+  if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
+  if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
+  if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
+  if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
+  if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
+
+  x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+  x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
+
+  x_mat <- as.matrix(x_train)
+  col_means <- colMeans(x_mat, na.rm = TRUE)
+  col_means[is.na(col_means) | !is.finite(col_means)] <- 0
+  for (j in seq_len(ncol(x_mat))) {
+    na_idx <- is.na(x_mat[, j])
+    if (any(na_idx)) {
+      x_mat[na_idx, j] <- col_means[j]
     }
+  }
 
-    extra_params <- list(...)
-    if (!is.null(extra_params$threads)) threads <- as.integer(extra_params$threads)
-    if (!is.null(extra_params$nthreads)) threads <- as.integer(extra_params$nthreads)
-    if (!is.null(extra_params$nthread)) threads <- as.integer(extra_params$nthread)
-    if (!is.null(extra_params$num_threads)) threads <- as.integer(extra_params$num_threads)
-    if (!is.null(extra_params$n_jobs)) threads <- as.integer(extra_params$n_jobs)
-
-    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
-    x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
-    
-    x_mat <- as.matrix(x_train)
-    col_means <- colMeans(x_mat, na.rm = TRUE)
-    col_means[is.na(col_means) | !is.finite(col_means)] <- 0
-    for (j in seq_len(ncol(x_mat))) {
-      na_idx <- is.na(x_mat[, j])
-      if (any(na_idx)) {
-        x_mat[na_idx, j] <- col_means[j]
-      }
-    }
-
-    impute_mat <- function(x_data) {
-      if (is.null(x_data)) return(NULL)
-      xm <- if (is.matrix(x_data)) x_data else as.matrix(x_data)
-      for (j in seq_len(ncol(xm))) {
-        col_name <- if (!is.null(colnames(xm))) colnames(xm)[j] else NULL
-        c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) {
-          col_means[[col_name]]
-        } else if (j <= length(col_means)) {
-          col_means[j]
-        } else {
-          0
-        }
-        na_idx <- is.na(xm[, j])
-        if (any(na_idx)) {
-          xm[na_idx, j] <- c_mean
-        }
-      }
-      xm
-    }
-
-    all_feats <- colnames(x_train)
-
-    alpha <- if (!is.null(extra_params$alpha) && is.numeric(extra_params$alpha) && is.finite(extra_params$alpha)) {
-      min(max(as.numeric(extra_params$alpha), 0.0), 1.0)
-    } else {
-      0.5
-    }
-
-    s_choice <- if (!is.null(extra_params$lm_s) && (is.character(extra_params$lm_s) || (is.numeric(extra_params$lm_s) && is.finite(extra_params$lm_s)))) {
-      extra_params$lm_s
-    } else if (!is.null(extra_params$s) && (is.character(extra_params$s) || (is.numeric(extra_params$s) && is.finite(extra_params$s)))) {
-      extra_params$s
-    } else {
-      "lambda.min"
-    }
-
-    standardize <- if (!is.null(extra_params$standardize) && is.logical(extra_params$standardize)) {
-      isTRUE(extra_params$standardize)
-    } else {
-      TRUE
-    }
-
-    relax <- isTRUE(extra_params$relax)
-
-    metric_arg <- extra_params$metric
-    cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
-      canonical_metric_name(metric_arg, task)
-    } else {
-      NULL
-    }
-
-    type_measure <- if (!is.null(extra_params$type.measure) && is.character(extra_params$type.measure)) {
-      extra_params$type.measure
-    } else if (!is.null(extra_params$type_measure) && is.character(extra_params$type_measure)) {
-      extra_params$type_measure
-    } else if (task == "classification") {
-      if (!is.null(cm_arg) && cm_arg == "auc") "auc" else "deviance"
-    } else if (task == "regression") {
-      if (!is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")) "mae" else "mse"
-    } else if (task == "multiclass") {
-      if (!is.null(cm_arg) && cm_arg %in% c("accuracy", "class")) "class" else "deviance"
-    } else {
-      "default"
-    }
-
-    # Single-class degeneracy check in classification/multiclass
-    u_train <- unique(y_train[!is.na(y_train)])
-    if (task %in% c("classification", "multiclass") && length(u_train) < 2L) {
-      single_class <- if (length(u_train) == 1L) u_train[1] else 0
-      model <- list(
-        is_degenerate = TRUE,
-        degenerate_class = single_class,
-        task = task,
-        col_means = col_means,
-        s = s_choice,
-        num_class = num_class
-      )
-      preds <- NULL
-      if (!is.null(x_val)) {
-        val_mat <- impute_mat(x_val)
-        if (task == "classification") {
-          pred_val <- if (as.character(single_class) %in% c("1", "true", "TRUE")) 1.0 else 0.0
-          preds <- rep(pred_val, nrow(val_mat))
-        } else {
-          k <- if (!is.null(num_class)) as.integer(num_class) else 2L
-          preds <- matrix(0.0, nrow = nrow(val_mat), ncol = k)
-          cls_idx <- suppressWarnings(as.integer(as.character(single_class)))
-          if (!is.na(cls_idx)) {
-            col_idx <- if (cls_idx >= 1L && cls_idx <= k) cls_idx else if (cls_idx == 0L) 1L else 1L
-            preds[, col_idx] <- 1.0
-          } else {
-            preds[, 1L] <- 1.0
-          }
-        }
-      }
-      importances <- stats::setNames(rep(0, length(all_feats)), all_feats)
-      return(list(model = model, predictions = preds, importances = importances, col_means = col_means))
-    }
-
-    nfolds <- min(5, nrow(x_mat))
-    if (!is.null(extra_params$nfolds)) {
-      nfolds <- min(as.integer(extra_params$nfolds), nrow(x_mat))
-    }
-    
-    # Precompute standard deviations to make importances scale-invariant
-    sd_x <- apply(x_mat, 2, stats::sd, na.rm = TRUE)
-    sd_x[is.na(sd_x) | sd_x == 0] <- 1
-    
-    is_single_col <- (ncol(x_mat) == 1L)
-    fit_mat <- if (is_single_col) cbind(x_mat, .__dummy__ = 0.0) else x_mat
-
-    cv_args <- list(
-      x = fit_mat,
-      alpha = alpha,
-      nfolds = nfolds,
-      type.measure = type_measure,
-      standardize = standardize
-    )
-    if (isTRUE(relax)) {
-      cv_args$relax <- TRUE
-    }
-
-    if (task == "regression") {
-      cv_args$y <- y_train
-      cv_args$family <- "gaussian"
-      model <- do.call(glmnet::cv.glmnet, cv_args)
-      
-      preds <- NULL
-      if (!is.null(x_val)) {
-        val_mat <- impute_mat(x_val)
-        if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
-        preds <- as.numeric(stats::predict(model, newx = val_mat, s = s_choice))
-      }
-      
-      coefs <- as.matrix(stats::coef(model, s = s_choice))
-      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-      imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
-      if (is_single_col) {
-        imp <- imp[seq_len(ncol(x_train))]
-      }
-      importances <- imp * sd_x[seq_along(imp)]
-      if (!is.null(all_feats)) names(importances) <- all_feats
-      
-    } else if (task == "classification") {
-      cv_args$y <- as.factor(y_train)
-      cv_args$family <- "binomial"
-      model <- do.call(glmnet::cv.glmnet, cv_args)
-      
-      preds <- NULL
-      if (!is.null(x_val)) {
-        val_mat <- impute_mat(x_val)
-        if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
-        preds <- as.numeric(stats::predict(model, newx = val_mat, s = s_choice, type = "response"))
-      }
-      
-      coefs <- as.matrix(stats::coef(model, s = s_choice))
-      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-      imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
-      if (is_single_col) {
-        imp <- imp[seq_len(ncol(x_train))]
-      }
-      importances <- imp * sd_x[seq_along(imp)]
-      if (!is.null(all_feats)) names(importances) <- all_feats
-      
-    } else if (task == "multiclass") {
-      cv_args$y <- as.factor(y_train)
-      cv_args$family <- "multinomial"
-      model <- do.call(glmnet::cv.glmnet, cv_args)
-      
-      preds <- NULL
-      if (!is.null(x_val)) {
-        val_mat <- impute_mat(x_val)
-        if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
-        p_array <- stats::predict(model, newx = val_mat, s = s_choice, type = "response")
-        preds <- matrix(p_array[, , 1], nrow = nrow(val_mat))
-        if (!is.null(dimnames(p_array)[[2]])) {
-          colnames(preds) <- dimnames(p_array)[[2]]
-        }
-      }
-      
-      coefs_list <- stats::coef(model, s = s_choice)
-      imp_matrix <- do.call(cbind, lapply(coefs_list, function(c_mat) abs(as.numeric(c_mat)[-1])))
-      imp <- rowMeans(imp_matrix)
-      feat_names <- rownames(coefs_list[[1]])[-1]
-      names(imp) <- feat_names
-      if (is_single_col) {
-        imp <- imp[seq_len(ncol(x_train))]
-      }
-      importances <- imp * sd_x[seq_along(imp)]
-      if (!is.null(all_feats)) names(importances) <- all_feats
-    }
-    
-    # Ensure missing names map to 0
-    if (!is.null(all_feats)) {
-      missing <- setdiff(all_feats, names(importances))
-      if (length(missing) > 0) {
-        importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
-      }
-    }
-    
-    # Attach training-time imputation means and s to the model so predict-time
-    # imputation and evaluation is consistent with training (prevents train/serve skew).
-    model$col_means <- col_means
-    model$s <- s_choice
-    
-    list(model = model, predictions = preds, importances = importances, col_means = col_means)
-  },
-  predict_func = function(model, x_new, task, ...) {
-    x_mat <- .sanitize_feature_matrix(x_new)
-    if (is.null(x_mat) || length(x_mat) == 0L) return(numeric(0))
-
-    if (isTRUE(model$is_degenerate)) {
-      if (task == "classification") {
-        pred_val <- if (as.character(model$degenerate_class) %in% c("1", "true", "TRUE")) 1.0 else 0.0
-        return(rep(pred_val, nrow(x_mat)))
-      } else if (task == "multiclass") {
-        k <- if (!is.null(model$num_class)) as.integer(model$num_class) else 2L
-        out_mat <- matrix(0.0, nrow = nrow(x_mat), ncol = k)
-        cls_idx <- suppressWarnings(as.integer(as.character(model$degenerate_class)))
-        if (!is.na(cls_idx)) {
-          col_idx <- if (cls_idx >= 1L && cls_idx <= k) cls_idx else if (cls_idx == 0L) 1L else 1L
-          out_mat[, col_idx] <- 1.0
-        } else {
-          out_mat[, 1L] <- 1.0
-        }
-        return(out_mat)
-      }
-    }
-
-    col_means <- if (!is.null(model$col_means)) model$col_means else colMeans(x_mat, na.rm = TRUE)
-    col_means[is.na(col_means) | !is.finite(col_means)] <- 0
-    for (j in seq_len(ncol(x_mat))) {
-      col_name <- if (!is.null(colnames(x_mat))) colnames(x_mat)[j] else NULL
+  impute_mat <- function(x_data) {
+    if (is.null(x_data)) return(NULL)
+    xm <- if (is.matrix(x_data)) x_data else as.matrix(x_data)
+    for (j in seq_len(ncol(xm))) {
+      col_name <- if (!is.null(colnames(xm))) colnames(xm)[j] else NULL
       c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) {
         col_means[[col_name]]
       } else if (j <= length(col_means)) {
@@ -1360,36 +1148,251 @@ register_evaluator(
       } else {
         0
       }
-      na_idx <- is.na(x_mat[, j]) | !is.finite(x_mat[, j])
+      na_idx <- is.na(xm[, j])
       if (any(na_idx)) {
-        x_mat[na_idx, j] <- c_mean
+        xm[na_idx, j] <- c_mean
       }
     }
+    xm
+  }
 
-    extra_args <- list(...)
-    s_choice <- if (!is.null(extra_args$lm_s) && (is.character(extra_args$lm_s) || (is.numeric(extra_args$lm_s) && is.finite(extra_args$lm_s)))) {
-      extra_args$lm_s
-    } else if (!is.null(extra_args$s) && (is.character(extra_args$s) || (is.numeric(extra_args$s) && is.finite(extra_args$s)))) {
-      extra_args$s
-    } else if (!is.null(model$s)) {
-      model$s
-    } else {
-      "lambda.min"
+  all_feats <- colnames(x_train)
+
+  alpha <- if (!is.null(extra_params$alpha) && is.numeric(extra_params$alpha) && is.finite(extra_params$alpha)) {
+    min(max(as.numeric(extra_params$alpha), 0.0), 1.0)
+  } else {
+    0.5
+  }
+
+  s_choice <- if (!is.null(extra_params$lm_s) && (is.character(extra_params$lm_s) || (is.numeric(extra_params$lm_s) && is.finite(extra_params$lm_s)))) {
+    extra_params$lm_s
+  } else if (!is.null(extra_params$s) && (is.character(extra_params$s) || (is.numeric(extra_params$s) && is.finite(extra_params$s)))) {
+    extra_params$s
+  } else {
+    "lambda.min"
+  }
+
+  standardize <- if (!is.null(extra_params$standardize) && is.logical(extra_params$standardize)) {
+    isTRUE(extra_params$standardize)
+  } else {
+    TRUE
+  }
+
+  relax <- isTRUE(extra_params$relax)
+
+  metric_arg <- extra_params$metric
+  cm_arg <- if (!is.null(metric_arg) && is.character(metric_arg) && length(metric_arg) == 1L) {
+    canonical_metric_name(metric_arg, task)
+  } else {
+    NULL
+  }
+
+  type_measure <- if (!is.null(extra_params$type.measure) && is.character(extra_params$type.measure)) {
+    extra_params$type.measure
+  } else if (!is.null(extra_params$type_measure) && is.character(extra_params$type_measure)) {
+    extra_params$type_measure
+  } else if (task == "classification") {
+    if (!is.null(cm_arg) && cm_arg == "auc") "auc" else "deviance"
+  } else if (task == "regression") {
+    if (!is.null(cm_arg) && cm_arg %in% c("mae", "cal_mae")) "mae" else "mse"
+  } else if (task == "multiclass") {
+    if (!is.null(cm_arg) && cm_arg %in% c("accuracy", "class")) "class" else "deviance"
+  } else {
+    "default"
+  }
+
+  # Single-class degeneracy check in classification/multiclass
+  u_train <- unique(y_train[!is.na(y_train)])
+  if (task %in% c("classification", "multiclass") && length(u_train) < 2L) {
+    single_class <- if (length(u_train) == 1L) u_train[1] else 0
+    model <- list(
+      is_degenerate = TRUE,
+      degenerate_class = single_class,
+      task = task,
+      col_means = col_means,
+      s = s_choice,
+      num_class = num_class
+    )
+    preds <- NULL
+    if (!is.null(x_val)) {
+      val_mat <- impute_mat(x_val)
+      if (task == "classification") {
+        pred_val <- if (as.character(single_class) %in% c("1", "true", "TRUE")) 1.0 else 0.0
+        preds <- rep(pred_val, nrow(val_mat))
+      } else {
+        k <- if (!is.null(num_class)) as.integer(num_class) else 2L
+        preds <- matrix(0.0, nrow = nrow(val_mat), ncol = k)
+        cls_idx <- suppressWarnings(as.integer(as.character(single_class)))
+        if (!is.na(cls_idx)) {
+          col_idx <- if (cls_idx >= 1L && cls_idx <= k) cls_idx else if (cls_idx == 0L) 1L else 1L
+          preds[, col_idx] <- 1.0
+        } else {
+          preds[, 1L] <- 1.0
+        }
+      }
     }
+    importances <- stats::setNames(rep(0, length(all_feats)), all_feats)
+    return(list(model = model, predictions = preds, importances = importances, col_means = col_means))
+  }
 
-    pred_mat <- if (ncol(x_mat) == 1L) cbind(x_mat, .__dummy__ = 0.0) else x_mat
+  nfolds <- min(5, nrow(x_mat))
+  if (!is.null(extra_params$nfolds)) {
+    nfolds <- min(as.integer(extra_params$nfolds), nrow(x_mat))
+  }
+
+  # Precompute standard deviations to make importances scale-invariant
+  sd_x <- apply(x_mat, 2, stats::sd, na.rm = TRUE)
+  sd_x[is.na(sd_x) | sd_x == 0] <- 1
+
+  is_single_col <- (ncol(x_mat) == 1L)
+  fit_mat <- if (is_single_col) cbind(x_mat, .__dummy__ = 0.0) else x_mat
+
+  cv_args <- list(
+    x = fit_mat,
+    y = if (task == "regression") y_train else as.factor(y_train),
+    family = switch(task,
+      regression = "gaussian",
+      classification = "binomial",
+      multiclass = "multinomial",
+      stop(sprintf("Unsupported task '%s' for glmnet.", task))
+    ),
+    alpha = alpha,
+    nfolds = nfolds,
+    type.measure = type_measure,
+    standardize = standardize
+  )
+  if (isTRUE(relax)) {
+    cv_args$relax <- TRUE
+  }
+
+  model <- do.call(glmnet::cv.glmnet, cv_args)
+
+  preds <- NULL
+  if (!is.null(x_val)) {
+    val_mat <- impute_mat(x_val)
+    if (is_single_col) val_mat <- cbind(val_mat, .__dummy__ = 0.0)
     if (task == "regression") {
-      as.numeric(stats::predict(model, newx = pred_mat, s = s_choice))
+      preds <- as.numeric(stats::predict(model, newx = val_mat, s = s_choice))
     } else if (task == "classification") {
-      as.numeric(stats::predict(model, newx = pred_mat, s = s_choice, type = "response"))
-    } else if (task == "multiclass") {
-      p_array <- stats::predict(model, newx = pred_mat, s = s_choice, type = "response")
-      preds <- matrix(p_array[, , 1], nrow = nrow(x_mat))
+      preds <- as.numeric(stats::predict(model, newx = val_mat, s = s_choice, type = "response"))
+    } else {
+      p_array <- stats::predict(model, newx = val_mat, s = s_choice, type = "response")
+      preds <- matrix(p_array[, , 1], nrow = nrow(val_mat))
       if (!is.null(dimnames(p_array)[[2]])) {
         colnames(preds) <- dimnames(p_array)[[2]]
       }
-      preds
     }
+  }
+
+  if (task == "multiclass") {
+    coefs_list <- stats::coef(model, s = s_choice)
+    imp_matrix <- do.call(cbind, lapply(coefs_list, function(c_mat) abs(as.numeric(c_mat)[-1])))
+    imp <- rowMeans(imp_matrix)
+    names(imp) <- rownames(coefs_list[[1]])[-1]
+  } else {
+    coefs <- as.matrix(stats::coef(model, s = s_choice))
+    coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+    imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
+  }
+  if (is_single_col) {
+    imp <- imp[seq_len(ncol(x_train))]
+  }
+  importances <- imp * sd_x[seq_along(imp)]
+  if (!is.null(all_feats)) names(importances) <- all_feats
+
+  # Ensure missing names map to 0
+  if (!is.null(all_feats)) {
+    missing <- setdiff(all_feats, names(importances))
+    if (length(missing) > 0) {
+      importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
+    }
+  }
+
+  # Attach training-time imputation means and s to the model so predict-time
+  # imputation and evaluation is consistent with training (prevents train/serve skew).
+  model$col_means <- col_means
+  model$s <- s_choice
+
+  list(model = model, predictions = preds, importances = importances, col_means = col_means)
+}
+
+.glmnet_predict_core <- function(model, x_new, task, ...) {
+  x_mat <- .sanitize_feature_matrix(x_new)
+  if (is.null(x_mat) || length(x_mat) == 0L) return(numeric(0))
+
+  if (isTRUE(model$is_degenerate)) {
+    if (task == "classification") {
+      pred_val <- if (as.character(model$degenerate_class) %in% c("1", "true", "TRUE")) 1.0 else 0.0
+      return(rep(pred_val, nrow(x_mat)))
+    } else if (task == "multiclass") {
+      k <- if (!is.null(model$num_class)) as.integer(model$num_class) else 2L
+      out_mat <- matrix(0.0, nrow = nrow(x_mat), ncol = k)
+      cls_idx <- suppressWarnings(as.integer(as.character(model$degenerate_class)))
+      if (!is.na(cls_idx)) {
+        col_idx <- if (cls_idx >= 1L && cls_idx <= k) cls_idx else if (cls_idx == 0L) 1L else 1L
+        out_mat[, col_idx] <- 1.0
+      } else {
+        out_mat[, 1L] <- 1.0
+      }
+      return(out_mat)
+    }
+  }
+
+  col_means <- if (!is.null(model$col_means)) model$col_means else colMeans(x_mat, na.rm = TRUE)
+  col_means[is.na(col_means) | !is.finite(col_means)] <- 0
+  for (j in seq_len(ncol(x_mat))) {
+    col_name <- if (!is.null(colnames(x_mat))) colnames(x_mat)[j] else NULL
+    c_mean <- if (!is.null(col_name) && col_name %in% names(col_means)) {
+      col_means[[col_name]]
+    } else if (j <= length(col_means)) {
+      col_means[j]
+    } else {
+      0
+    }
+    na_idx <- is.na(x_mat[, j]) | !is.finite(x_mat[, j])
+    if (any(na_idx)) {
+      x_mat[na_idx, j] <- c_mean
+    }
+  }
+
+  extra_args <- list(...)
+  s_choice <- if (!is.null(extra_args$lm_s) && (is.character(extra_args$lm_s) || (is.numeric(extra_args$lm_s) && is.finite(extra_args$lm_s)))) {
+    extra_args$lm_s
+  } else if (!is.null(extra_args$s) && (is.character(extra_args$s) || (is.numeric(extra_args$s) && is.finite(extra_args$s)))) {
+    extra_args$s
+  } else if (!is.null(model$s)) {
+    model$s
+  } else {
+    "lambda.min"
+  }
+
+  pred_mat <- if (ncol(x_mat) == 1L) cbind(x_mat, .__dummy__ = 0.0) else x_mat
+  if (task == "regression") {
+    as.numeric(stats::predict(model, newx = pred_mat, s = s_choice))
+  } else if (task == "classification") {
+    as.numeric(stats::predict(model, newx = pred_mat, s = s_choice, type = "response"))
+  } else if (task == "multiclass") {
+    p_array <- stats::predict(model, newx = pred_mat, s = s_choice, type = "response")
+    preds <- matrix(p_array[, , 1], nrow = nrow(x_mat))
+    if (!is.null(dimnames(p_array)[[2]])) {
+      colnames(preds) <- dimnames(p_array)[[2]]
+    }
+    preds
+  }
+}
+
+register_evaluator(
+  "lm",
+  train_func = function(x_train, y_train, x_val = NULL, task = "regression",
+                        threads = default_threads(), num_class = NULL, nrounds = 50, ...) {
+    .glmnet_fit_core(
+      x_train = x_train, y_train = y_train, x_val = x_val,
+      task = task, threads = threads, num_class = num_class, nrounds = nrounds,
+      ...
+    )
+  },
+  predict_func = function(model, x_new, task, ...) {
+    .glmnet_predict_core(model = model, x_new = x_new, task = task, ...)
   },
   traits = list(is_tree = FALSE, iteration_param = NULL, scale_iterations_with_data = FALSE)
 )
