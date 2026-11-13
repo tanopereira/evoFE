@@ -815,3 +815,66 @@ test_that("Stage 5 logit-space stacking, residual blender, pipeline consistency,
   imp_str <- paste(c(dcf[, intersect(c("Imports", "Depends"), colnames(dcf))]), collapse = " ")
   expect_false(grepl("reticulate|python|tensorflow|torch", imp_str, ignore.case = TRUE))
 })
+
+test_that("TabM logs progress at verbose = TRUE or evoFE.tabm_verbose without leaking into GBDTs", {
+  set.seed(404)
+  n <- 40L
+  x <- matrix(stats::rnorm(n * 4L), ncol = 4L)
+  colnames(x) <- paste0("f", 1:4)
+  y <- as.numeric(x[, 1] + 0.5 * x[, 2] + stats::rnorm(n, sd = 0.2))
+
+  expect_silent(train_model(
+    x_train = x[1:30, ], y_train = y[1:30],
+    x_val = x[31:40, ], y_val = y[31:40],
+    task = "regression", evaluator = "tabm",
+    epochs = 6L, early_stopping_rounds = 0L, threads = 1L, verbose = FALSE
+  ))
+
+  out_true <- capture.output(train_model(
+    x_train = x[1:30, ], y_train = y[1:30],
+    x_val = x[31:40, ], y_val = y[31:40],
+    task = "regression", evaluator = "tabm",
+    epochs = 6L, early_stopping_rounds = 0L, threads = 1L, verbose = TRUE
+  ))
+  expect_true(any(grepl("\\[TabM C\\+\\+", out_true)))
+
+  old_opt <- getOption("evoFE.tabm_verbose")
+  options(evoFE.tabm_verbose = 2L)
+  on.exit(options(evoFE.tabm_verbose = old_opt), add = TRUE)
+
+  out_opt <- capture.output(train_model(
+    x_train = x[1:30, ], y_train = y[1:30],
+    x_val = x[31:40, ], y_val = y[31:40],
+    task = "regression", evaluator = "tabm",
+    epochs = 6L, early_stopping_rounds = 0L, threads = 1L, verbose = FALSE
+  ))
+  expect_true(any(grepl("\\[TabM C\\+\\+.*Epoch", out_opt)))
+
+  # LightGBM must remain silent when only evoFE.tabm_verbose is enabled
+  out_lgb <- capture.output(train_model(
+    x_train = x[1:30, ], y_train = y[1:30],
+    x_val = x[31:40, ], y_val = y[31:40],
+    task = "regression", evaluator = "lightgbm",
+    nrounds = 5L, early_stopping_rounds = 0L, threads = 1L, verbose = TRUE
+  ))
+  expect_false(any(grepl("\\[LightGBM\\]", out_lgb)))
+  options(evoFE.tabm_verbose = old_opt)
+
+  # run_competition_pipeline accepts per-evaluator verbose override in evaluator_args
+  df_tr <- data.frame(x, y = y)[1:30, ]
+  df_te <- data.frame(x)[31:40, , drop = FALSE]
+  expect_no_error(suppressMessages(run_competition_pipeline(
+    train = df_tr,
+    test = df_te,
+    target_col = "y",
+    task = "regression",
+    preset = "fast",
+    preset_overrides = list(s2_gen = 1L, s2_pop = 2L, s2_mlp_gen = 1L, s2_mlp_pop = 2L,
+                            s2_mlp_epochs = 4L, s4_mlp_epochs = 4L),
+    evaluators = c("tabm"),
+    evaluator_args = list(tabm = list(tabm_verbose = 0L, verbose = FALSE)),
+    cv_folds = 2L,
+    threads = 1L,
+    verbose = FALSE
+  )))
+})

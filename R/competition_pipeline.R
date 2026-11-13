@@ -877,7 +877,7 @@ run_competition_pipeline <- function(
   for (idx in seq_along(active_evaluators)) {
     ev <- active_evaluators[idx]
     base_ev <- get_base_evaluator(ev)
-    is_mlp <- identical(base_ev, "realmlp")
+    is_mlp <- base_ev %in% c("realmlp", "tabm")
     if (show_msg) {
       message(sprintf("[Stage 2] Discovering features with '%s' (%d/%d)...", base_ev, idx, length(active_evaluators)))
     }
@@ -920,7 +920,8 @@ run_competition_pipeline <- function(
     )
     ev_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
     ev_evolve_args <- ev_args[!names(ev_args) %in% c("s")]
-    stage2_recipes[[ev]] <- do.call(evolve_features, c(s2_common, ev_evolve_args))
+    for (k in names(ev_evolve_args)) s2_common[[k]] <- ev_evolve_args[[k]]
+    stage2_recipes[[ev]] <- do.call(evolve_features, s2_common)
   }
 
   # Stage 3: Mega-Matrix Synthesis onto 100% of train_dt and test_dt
@@ -1053,7 +1054,8 @@ run_competition_pipeline <- function(
       )
       ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
       ev_fast_evolve_args <- ev_fast_args[!names(ev_fast_args) %in% c("s")]
-      rec_sup <- do.call(evolve_features, c(s35_common, ev_fast_evolve_args))
+      for (k in names(ev_fast_evolve_args)) s35_common[[k]] <- ev_fast_evolve_args[[k]]
+      rec_sup <- do.call(evolve_features, s35_common)
       stage3_sup_recipes[[ev]] <- rec_sup
       sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, mega_feature_names)
     }
@@ -1105,7 +1107,8 @@ run_competition_pipeline <- function(
       verbose = verbose
     )
     ev_evolve_args <- ev_args[!names(ev_args) %in% c("s")]
-    stage4_recipes[[ev]] <- do.call(evolve_features, c(s4_common, ev_evolve_args))
+    for (k in names(ev_evolve_args)) s4_common[[k]] <- ev_evolve_args[[k]]
+    stage4_recipes[[ev]] <- do.call(evolve_features, s4_common)
   }
 
   stage4_fitness <- vapply(stage4_recipes, function(r) {

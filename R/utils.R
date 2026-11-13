@@ -724,6 +724,47 @@ is_learner_verbose <- function(verbose = NULL) {
     (is.numeric(opt_val) && opt_val >= 3)
 }
 
+#' Resolve Neural Evaluator Verbosity Level (0..3) Without Waking GBDT Logs
+#'
+#' Checks explicit per-learner arguments/options (\code{evoFE.tabm_verbose},
+#' \code{evoFE.realmlp_verbose}, \code{evoFE.nn_verbose}) before falling back
+#' to \code{verbose} / \code{evoFE.verbose}.
+#'
+#' @keywords internal
+#' @noRd
+.nn_verbose_level <- function(extra_params = list(), learner_opt = NULL,
+                              param_keys = "nn_verbose") {
+  explicit <- NULL
+  for (pk in param_keys) {
+    if (!is.null(extra_params[[pk]])) {
+      explicit <- extra_params[[pk]]
+      break
+    }
+  }
+  if (is.null(explicit) && !is.null(learner_opt)) {
+    explicit <- getOption(learner_opt, NULL)
+  }
+  if (is.null(explicit)) {
+    explicit <- getOption("evoFE.nn_verbose", NULL)
+  }
+  if (!is.null(explicit)) {
+    if (is.logical(explicit)) return(if (isTRUE(explicit)) 1L else 0L)
+    if (is.numeric(explicit) && is.finite(explicit)) {
+      return(max(0L, min(3L, as.integer(floor(explicit)))))
+    }
+    return(0L)
+  }
+
+  opt_verbose <- getOption("evoFE.verbose", 0)
+  verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
+  show_log <- isTRUE(verbose_arg) || (is.numeric(verbose_arg) && verbose_arg >= 1) ||
+    isTRUE(opt_verbose) || (is.numeric(opt_verbose) && opt_verbose >= 1)
+  if (!show_log) return(0L)
+  if (is_learner_verbose(verbose_arg)) return(3L)
+  if (isTRUE(verbose_arg >= 2) || isTRUE(opt_verbose >= 2)) return(2L)
+  1L
+}
+
 #' Rank Transform Predictions to Uniform [0, 1] Quantiles
 #'
 #' Maps predictions to [0, 1] percentile ranks. For matrices (multiclass),

@@ -2351,12 +2351,13 @@ register_evaluator(
     batch_size <- if (!is.null(extra_params$batch_size)) as.integer(extra_params$batch_size) else -1L
     lr_val <- if (!is.null(extra_params$realmlp_lr)) as.numeric(extra_params$realmlp_lr) else if (!is.null(extra_params$lr)) as.numeric(extra_params$lr) else -1.0
 
-    opt_verbose <- getOption("evoFE.verbose", 0)
-    verbose_arg <- if (!is.null(extra_params$verbose)) extra_params$verbose else opt_verbose
-    show_log <- isTRUE(verbose_arg) || (is.numeric(verbose_arg) && verbose_arg >= 1) || isTRUE(opt_verbose) || (is.numeric(opt_verbose) && opt_verbose >= 1)
-    is_detail <- isTRUE(verbose_arg >= 2) || isTRUE(opt_verbose >= 2)
-    is_super  <- is_learner_verbose(verbose_arg)
-    verbose_int <- if (show_log) (if (is_super) 3L else if (is_detail) 2L else 1L) else 0L
+    verbose_int <- .nn_verbose_level(
+      extra_params,
+      learner_opt = "evoFE.realmlp_verbose",
+      param_keys = c("realmlp_verbose", "nn_verbose")
+    )
+    show_log <- verbose_int >= 1L
+    is_detail <- verbose_int >= 2L
 
     use_es <- early_stopping_rounds > 0L && !is.null(x_val) && !is.null(y_val)
     es_rounds_to_pass <- if (use_es) early_stopping_rounds else 0L
@@ -2825,8 +2826,11 @@ register_evaluator(
     use_es <- !is.null(x_val) && !is.null(y_val) && is.numeric(es_raw) && is.finite(es_raw) && es_raw > 0
     es_rounds <- if (use_es) as.integer(es_raw) else 0L
 
-    learner_verbose <- is_learner_verbose(extra_params$verbose)
-    verbose_int <- if (learner_verbose) 1L else 0L
+    verbose_int <- .nn_verbose_level(
+      extra_params,
+      learner_opt = "evoFE.tabm_verbose",
+      param_keys = c("tabm_verbose", "nn_verbose")
+    )
 
     x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)

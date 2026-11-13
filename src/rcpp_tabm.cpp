@@ -501,13 +501,14 @@ List rcpp_tabm_train(NumericMatrix x_train,
   bool stopped_early = false;
   int stopped_epoch = actual_epochs;
   int best_epoch = actual_epochs;
-  int log_interval = (verbose >= 3) ? 1 : ((verbose >= 2) ? 16 : 32);
+  int log_interval = (verbose >= 3) ? 1 : ((verbose >= 2) ? 8 : 16);
 
   if (verbose >= 1) {
     Rprintf("    [TabM C++ %s] Training: %d rows (%d num, %d cat) | k=%d, d_block=%d, n_blocks=%d, emb=%s, epochs=%d, batch=%d\n",
             task.c_str(), N, static_cast<int>(model.num_col_indices.size()),
             static_cast<int>(model.cat_col_indices.size()),
             actual_K, actual_d_block, actual_n_blocks, model.num_emb.c_str(), actual_epochs, actual_B);
+    R_FlushConsole();
   }
 
   int step = 0;
@@ -572,6 +573,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
         Rprintf("    [TabM C++ %s] Epoch %3d/%d | Train loss: %.4f\n",
                 task.c_str(), cur_epoch, actual_epochs, avg_loss);
       }
+      R_FlushConsole();
     }
 
     if (early_stopping_rounds > 0 && has_val && N_val > 0 && no_improve_epochs >= early_stopping_rounds) {
@@ -580,6 +582,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
       if (verbose >= 1) {
         Rprintf("    [TabM C++ %s] Early stopping at epoch %d (best epoch=%d, best val=%.4f)\n",
                 task.c_str(), cur_epoch, best_epoch, best_val_score);
+        R_FlushConsole();
       }
       break;
     }
