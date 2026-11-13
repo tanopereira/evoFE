@@ -43,30 +43,126 @@ resolve_param_aliases <- function(extra_args, defaults = list()) {
   res
 }
 
+#' Align Categorical Columns to a Frozen Training Schema
+#'
+#' Returns a shallow-copied \code{data.table}/\code{data.frame} whose factor or
+#' character columns listed in \code{cat_schema$names} are aligned to
+#' \code{factor(col, levels = cat_schema$levels[[nm]])} so unseen levels and NAs
+#' map to \code{NA} and integer codes \code{1..K} never drift between train,
+#' validation, and prediction splits. Logical columns are never converted.
+#'
+#' @param dt A \code{data.table}, \code{data.frame}, or \code{NULL}.
+#' @param cat_schema Categorical schema list with \code{names} and \code{levels}.
+#' @return Aligned \code{data.table}/\code{data.frame}, or \code{dt} unchanged when
+#'   no alignment is needed.
+#' @keywords internal
+#' @noRd
+.align_cat_schema <- function(dt, cat_schema) {
+  if (is.null(dt) || is.null(cat_schema) || is.null(cat_schema$names) || length(cat_schema$names) == 0L) {
+    return(dt)
+  }
+  if (!is.data.frame(dt)) return(dt)
+  dt_names <- names(dt)
+  schema_levels <- cat_schema$levels
+  if (is.null(dt_names) || is.null(schema_levels)) return(dt)
+
+  target_cols <- intersect(cat_schema$names, dt_names)
+  if (length(target_cols) == 0L) return(dt)
+
+  is_dt <- data.table::is.data.table(dt)
+  out <- NULL
+  for (nm in target_cols) {
+    lvls <- schema_levels[[nm]]
+    if (is.null(lvls)) next
+    col <- dt[[nm]]
+    if (is.logical(col)) next
+    if (is.factor(col)) {
+      if (identical(levels(col), lvls)) next
+      if (is.null(out)) out <- if (is_dt) shallow_copy_dt(dt) else dt
+      aligned <- factor(col, levels = lvls)
+      if (is_dt) data.table::set(out, j = nm, value = aligned) else out[[nm]] <- aligned
+    } else if (is.character(col)) {
+      if (is.null(out)) out <- if (is_dt) shallow_copy_dt(dt) else dt
+      aligned <- factor(col, levels = lvls)
+      if (is_dt) data.table::set(out, j = nm, value = aligned) else out[[nm]] <- aligned
+    }
+  }
+  if (is.null(out)) dt else out
+}
+
 #' Sanitize Input Feature Matrix for C++ and Tree-Based ML Backends
 #'
 #' Converts input data (matrix or data.frame) into a clean double-precision numeric
 #' matrix safe for C++ ML engines (XGBoost, LightGBM, CatBoost, RealMLP).
 #' Converts non-finite numbers (Inf, -Inf, NaN) and values exceeding IEEE 754 32-bit
-#' single-precision float limits (~3.402823e38) to NA_real_.
+#' single-precision float limits (~3.402823e38) to NA_real_, while preserving
+#' \code{1..K} + \code{NA_real_} encoding and \code{attr(mat, "cat_schema")} for
+#' factor and character columns (never converting logical columns to categorical).
 #'
-#' @param x A matrix, data.frame, or NULL.
-#' @return A numeric matrix of type double with attribute `sanitized = TRUE`, or NULL if `x` is NULL.
+#' @param x A matrix, data.frame, data.table, or NULL.
+#' @param threads Integer thread count for C++ sanitization.
+#' @param cat_schema Optional categorical schema from training split for level alignment.
+#' @return A numeric matrix of type double with attribute \code{sanitized = TRUE}
+#'   (and \code{cat_schema} when categorical columns are present), or NULL if \code{x} is NULL.
 #' @keywords internal
 #' @noRd
-sanitize_feature_matrix <- function(x, threads = getOption("evoFE.threads", 1L)) {
+sanitize_feature_matrix <- function(x, threads = default_threads(), cat_schema = NULL) {
   if (is.null(x)) return(NULL)
   if (isTRUE(attr(x, "sanitized", exact = TRUE))) return(x)
   if (!is.numeric(threads) || is.na(threads) || threads < 1L) threads <- 1L
-  res <- rcpp_sanitize_feature_matrix(x, as.integer(threads))
-  if (!is.null(res)) return(res)
-  if (!is.matrix(x)) {
-    x <- if (is.data.frame(x)) data.matrix(x) else as.matrix(x)
+  threads <- as.integer(threads)
+
+  out_schema <- NULL
+  if (is.data.frame(x)) {
+    if (!is.null(cat_schema)) {
+      x <- .align_cat_schema(x, cat_schema)
+    }
+    char_cols <- names(x)[vapply(x, is.character, logical(1))]
+    if (length(char_cols) > 0L) {
+      is_dt <- data.table::is.data.table(x)
+      if (is_dt) x <- shallow_copy_dt(x)
+      for (cn in char_cols) {
+        col_v <- x[[cn]]
+        lvls <- sort(unique(col_v[!is.na(col_v)]), method = "radix")
+        fac_v <- factor(col_v, levels = lvls)
+        if (is_dt) data.table::set(x, j = cn, value = fac_v) else x[[cn]] <- fac_v
+      }
+    }
+    is_fac <- vapply(x, is.factor, logical(1))
+    cat_idx <- which(is_fac)
+    if (length(cat_idx) > 0L) {
+      cat_names <- names(x)[cat_idx]
+      if (is.null(cat_names)) cat_names <- paste0("V", cat_idx)
+      cat_lvls <- lapply(cat_idx, function(idx) levels(x[[idx]]))
+      names(cat_lvls) <- cat_names
+      cat_cards <- vapply(cat_lvls, length, integer(1))
+      out_schema <- list(
+        cols = as.integer(cat_idx),
+        names = as.character(cat_names),
+        levels = cat_lvls,
+        cardinalities = cat_cards
+      )
+    }
   }
-  if (!is.numeric(x)) {
-    storage.mode(x) <- "double"
+
+  res <- rcpp_sanitize_feature_matrix(x, threads)
+  if (is.null(res)) {
+    if (!is.matrix(x)) {
+      x <- if (is.data.frame(x)) data.matrix(x) else as.matrix(x)
+    }
+    if (!is.numeric(x)) {
+      storage.mode(x) <- "double"
+    }
+    res <- rcpp_sanitize_feature_matrix(x, threads)
   }
-  rcpp_sanitize_feature_matrix(x, as.integer(threads))
+
+  if (is.null(out_schema) && !is.null(cat_schema) && !is.null(cat_schema$cols) && length(cat_schema$cols) > 0L) {
+    out_schema <- cat_schema
+  }
+  if (!is.null(res) && !is.null(out_schema)) {
+    attr(res, "cat_schema") <- out_schema
+  }
+  res
 }
 
 #' @keywords internal
@@ -533,12 +629,34 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
     }
     return(args)
   }
+  if (identical(unwrapped, "tabm")) {
+    args$early_stopping_rounds <- 0L
+    args$early_stopping_round <- NULL
+    if (!is.null(target_iters) && is.numeric(target_iters) && !is.na(target_iters) && target_iters > 0) {
+      t_int <- as.integer(target_iters)
+      for (alias in c("epochs", "n_epochs")) {
+        if (alias %in% names(args)) args[[alias]] <- t_int
+      }
+      if (!any(c("epochs", "n_epochs") %in% names(args))) {
+        args$epochs <- t_int
+      }
+    }
+    return(args)
+  }
+  if (unwrapped %in% c("lm", "spline_lm", "rff")) {
+    return(args)
+  }
   if (is.null(target_iters) || !is.numeric(target_iters) || is.na(target_iters) || target_iters <= 0) {
     return(args)
   }
   target_iters <- as.integer(target_iters)
+  if (identical(unwrapped, "ranger")) {
+    args$num.trees <- target_iters
+    return(args)
+  }
   iter_aliases <- c("nrounds", "num_rounds", "n_rounds", "num_round", "nround",
-                    "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs")
+                    "epochs", "n_epochs", "iterations", "n_iterations", "realmlp_epochs",
+                    "num.trees")
   for (alias in iter_aliases) {
     if (alias %in% names(args)) {
       args[[alias]] <- target_iters
@@ -556,6 +674,38 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
     args$early_stopping <- NULL
   }
   args
+}
+
+#' Check Whether an Evaluator Should Scale Iterations With Dataset Size
+#'
+#' @param evaluator Evaluator name or object.
+#' @return Logical scalar TRUE when validation iterations should scale with data size.
+#' @keywords internal
+#' @noRd
+.evaluator_scales_iterations <- function(evaluator) {
+  if (is.list(evaluator)) {
+    if (!is.null(evaluator$traits) && !is.null(evaluator$traits$scale_iterations_with_data)) {
+      return(isTRUE(evaluator$traits$scale_iterations_with_data))
+    }
+    if (!is.null(evaluator$base_evaluator)) {
+      return(.evaluator_scales_iterations(evaluator$base_evaluator))
+    }
+    return(FALSE)
+  }
+  if (!is.character(evaluator) || length(evaluator) != 1L || is.na(evaluator)) {
+    return(FALSE)
+  }
+  base_name <- unwrap_evaluator(evaluator)
+  if (base_name %in% c("lightgbm_rf", "ranger", "tabm", "rff", "spline_lm", "realmlp", "lm")) {
+    return(FALSE)
+  }
+  if (exists("has_evaluator", mode = "function") && has_evaluator(base_name)) {
+    ev <- get_evaluator(base_name)
+    if (!is.null(ev$traits) && !is.null(ev$traits$scale_iterations_with_data)) {
+      return(isTRUE(ev$traits$scale_iterations_with_data))
+    }
+  }
+  is_tree_evaluator(evaluator)
 }
 
 #' Check if Learner-Level Verbosity is Requested
@@ -627,6 +777,79 @@ rank_transform_predictions <- function(p) {
   sub
 }
 
+#' Slice a Vector or Matrix Offset Across Row Indices
+#'
+#' @param offset Numeric vector, matrix, or \code{NULL}.
+#' @param idx Integer or logical row index vector.
+#' @return Row-subsetted offset preserving matrix shape and column names, or \code{NULL}.
+#' @keywords internal
+#' @noRd
+.slice_offset_arg <- function(offset, idx) {
+  if (is.null(offset)) return(NULL)
+  if (is.matrix(offset) || is.data.frame(offset)) {
+    return(offset[idx, , drop = FALSE])
+  }
+  offset[idx]
+}
+
+.OFFSET_TRAIN_KEYS <- c("init_score", "base_margin", "baseline", "offset", "train_offset")
+.OFFSET_VAL_KEYS   <- c("val_init_score", "val_base_margin", "val_baseline", "val_offset", "offset_val")
+
+#' Extract and Slice Train/Val Offset Pair from Caller Extra Arguments
+#'
+#' @keywords internal
+#' @noRd
+.extract_sliced_offset_pair <- function(extra_args, tr_idx, va_idx, n_total) {
+  if (is.null(extra_args) || length(extra_args) == 0L || is.null(n_total)) return(NULL)
+  matched_key <- NULL
+  full_off <- NULL
+  for (k in .OFFSET_TRAIN_KEYS) {
+    val <- extra_args[[k]]
+    if (!is.null(val)) {
+      matched_key <- k
+      full_off <- val
+      break
+    }
+  }
+  if (is.null(full_off) || NROW(full_off) != as.integer(n_total)) return(NULL)
+  val_key <- switch(matched_key,
+    init_score = "val_init_score",
+    base_margin = "val_base_margin",
+    baseline = "val_baseline",
+    "val_offset"
+  )
+  list(
+    train_key = matched_key,
+    val_key = val_key,
+    train = if (!is.null(tr_idx)) .slice_offset_arg(full_off, tr_idx) else NULL,
+    val = if (!is.null(va_idx)) .slice_offset_arg(full_off, va_idx) else NULL
+  )
+}
+
+#' Apply a Pre-Sliced Train/Val Offset Pair to Argument List
+#'
+#' @keywords internal
+#' @noRd
+.apply_offset_pair <- function(args, offset_pair) {
+  if (is.null(offset_pair)) return(args)
+  for (k in c(.OFFSET_TRAIN_KEYS, .OFFSET_VAL_KEYS)) {
+    args[[k]] <- NULL
+  }
+  if (!is.null(offset_pair$train)) args[[offset_pair$train_key]] <- offset_pair$train
+  if (!is.null(offset_pair$val)) args[[offset_pair$val_key]] <- offset_pair$val
+  args
+}
+
+#' Slice Any Full-Dataset Offset in Extra Arguments Across Train/Val Row Indices
+#'
+#' @keywords internal
+#' @noRd
+.slice_offset_extra_args <- function(extra_args, tr_idx, va_idx, n_total) {
+  pair <- .extract_sliced_offset_pair(extra_args, tr_idx, va_idx, n_total)
+  if (is.null(pair)) return(extra_args)
+  .apply_offset_pair(extra_args, pair)
+}
+
 #' Resolve and Normalize Offset / Margin / Baseline Arguments
 #'
 #' Consolidates \code{init_score}, \code{base_margin}, \code{baseline}, and
@@ -635,6 +858,7 @@ rank_transform_predictions <- function(p) {
 #' @param extra_args Named list of caller arguments.
 #' @param n_train Number of training rows (or \code{NULL} during predict-only resolution).
 #' @param n_val Optional number of validation rows.
+#' @param n_new Optional number of prediction rows.
 #' @param task Task type: \code{"regression"}, \code{"classification"}, or \code{"multiclass"}.
 #' @param num_class Optional number of classes for multiclass.
 #' @param target_levels Optional character vector of class names (used to set multiclass column names).
@@ -642,8 +866,8 @@ rank_transform_predictions <- function(p) {
 #' @keywords internal
 #' @noRd
 .resolve_offset_args <- function(extra_args, n_train = NULL, n_val = NULL,
-                                 task = "regression", num_class = NULL,
-                                 target_levels = NULL) {
+                                 n_new = NULL, task = "regression",
+                                 num_class = NULL, target_levels = NULL) {
   pick_first <- function(keys) {
     for (k in keys) {
       if (!is.null(extra_args[[k]])) return(extra_args[[k]])
@@ -697,13 +921,13 @@ rank_transform_predictions <- function(p) {
     as.numeric(off)
   }
 
-  raw_tr <- pick_first(c("init_score", "base_margin", "baseline", "offset", "train_offset"))
-  raw_va <- pick_first(c("val_init_score", "val_base_margin", "val_baseline", "val_offset", "offset_val"))
+  raw_tr <- pick_first(.OFFSET_TRAIN_KEYS)
+  raw_va <- pick_first(.OFFSET_VAL_KEYS)
   raw_nw <- pick_first(c("newoffset", "new_base_margin", "init_score", "base_margin", "baseline", "offset"))
 
   list(
     train = normalize_one(raw_tr, n_train, "train"),
     val   = normalize_one(raw_va, n_val, "val"),
-    new   = if (is.null(n_train) && is.null(n_val)) raw_nw else normalize_one(raw_nw, n_train, "new")
+    new   = if (!is.null(n_new)) normalize_one(raw_nw, n_new, "new") else raw_nw
   )
 }

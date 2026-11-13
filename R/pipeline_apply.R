@@ -217,7 +217,12 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
     if (out_type == "categorical") {
       # Fallback level alignment in case train_data has already been converted to factor
       train_factor <- train_data[[gene$output_col]]
-      train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
+      train_levels <- if (is.factor(train_factor)) {
+        levels(train_factor)
+      } else {
+        tf_char <- as.character(train_factor)
+        sort(unique(tf_char[!is.na(tf_char)]), method = "radix")
+      }
       new_col_val <- factor(new_col_val, levels = train_levels)
     }
     if (data.table::is.data.table(val_data)) {
@@ -233,7 +238,12 @@ apply_gene <- function(gene, train_data, val_data = NULL, target_col = NULL, sta
       new_col_full <- t_def$apply_func(full_data, gene, state)
       if (out_type == "categorical") {
         train_factor <- train_data[[gene$output_col]]
-        train_levels <- if (is.factor(train_factor)) levels(train_factor) else unique(as.character(train_factor))
+        train_levels <- if (is.factor(train_factor)) {
+          levels(train_factor)
+        } else {
+          tf_char <- as.character(train_factor)
+          sort(unique(tf_char[!is.na(tf_char)]), method = "radix")
+        }
         new_col_full <- factor(new_col_full, levels = train_levels)
       } else if (is.double(new_col_full)) {
         new_col_full <- rcpp_sanitize_numeric_vec(new_col_full)
@@ -307,21 +317,41 @@ apply_individual <- function(ind, train_data, val_data = NULL, target_col = NULL
     if (is.null(res) || !is.null(res$skip)) {
       if (is.null(target_col)) {
         # At inference/prediction time, an already trained feature schema must NEVER be pruned.
-        # Fallback to a neutral numeric vector so matrix dimensions and column schemas remain intact.
-        def_val <- 0.0
-        if (!is.null(gene$state) && !is.null(gene$state$default_val) && is.numeric(gene$state$default_val)) {
-          def_val <- gene$state$default_val
-        }
-        if (data.table::is.data.table(dt_train)) {
-          dt_train[, (gene$output_col) := def_val]
-        } else {
-          dt_train[[gene$output_col]] <- def_val
-        }
-        if (!is.null(dt_val)) {
-          if (data.table::is.data.table(dt_val)) {
-            dt_val[, (gene$output_col) := def_val]
+        # Fallback to a neutral vector matching output_type so matrix dimensions and column schemas remain intact.
+        t_def_fb <- evo_transformers[[gene$transformer_name]]
+        is_cat_fb <- !is.null(t_def_fb) && identical(t_def_fb$output_type, "categorical")
+        if (is_cat_fb) {
+          lvls_fb <- if (!is.null(gene$state) && !is.null(gene$state$levels)) gene$state$levels else character(0)
+          def_tr <- factor(rep(NA_character_, nrow(dt_train)), levels = lvls_fb)
+          if (data.table::is.data.table(dt_train)) {
+            dt_train[, (gene$output_col) := def_tr]
           } else {
-            dt_val[[gene$output_col]] <- def_val
+            dt_train[[gene$output_col]] <- def_tr
+          }
+          if (!is.null(dt_val)) {
+            def_va <- factor(rep(NA_character_, nrow(dt_val)), levels = lvls_fb)
+            if (data.table::is.data.table(dt_val)) {
+              dt_val[, (gene$output_col) := def_va]
+            } else {
+              dt_val[[gene$output_col]] <- def_va
+            }
+          }
+        } else {
+          def_val <- 0.0
+          if (!is.null(gene$state) && !is.null(gene$state$default_val) && is.numeric(gene$state$default_val)) {
+            def_val <- gene$state$default_val
+          }
+          if (data.table::is.data.table(dt_train)) {
+            dt_train[, (gene$output_col) := def_val]
+          } else {
+            dt_train[[gene$output_col]] <- def_val
+          }
+          if (!is.null(dt_val)) {
+            if (data.table::is.data.table(dt_val)) {
+              dt_val[, (gene$output_col) := def_val]
+            } else {
+              dt_val[[gene$output_col]] <- def_val
+            }
           }
         }
         new_genes[[length(new_genes) + 1L]] <- gene

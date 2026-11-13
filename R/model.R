@@ -29,7 +29,11 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
   nrounds <- resolved$nrounds
 
   x_train <- .sanitize_feature_matrix(x_train, threads = threads)
-  x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
+  x_val   <- .sanitize_feature_matrix(
+    x_val,
+    threads = threads,
+    cat_schema = if (!is.null(x_train)) attr(x_train, "cat_schema", exact = TRUE) else NULL
+  )
 
   evaluator_entry$train_func(
     x_train = x_train,
@@ -94,7 +98,9 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
     features <- extract_individual_features(ind_f, target_col = target_col)
 
     x_tr <- .sanitize_feature_matrix(res_f$train[, features, with = FALSE], threads = threads)
-    x_va <- .sanitize_feature_matrix(res_f$val[, features, with = FALSE], threads = threads)
+    fold_cat_schema <- attr(x_tr, "cat_schema", exact = TRUE)
+    x_va <- .sanitize_feature_matrix(res_f$val[, features, with = FALSE], threads = threads,
+                                     cat_schema = fold_cat_schema)
     y_tr <- res_f$train[[target_col]]
     y_va <- res_f$val[[target_col]]
     if (task == "multiclass") {
@@ -115,6 +121,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
     }
 
     fold_seed <- if (!is.null(seed) && is.finite(seed)) as.integer(seed) + as.integer(idx) else NULL
+    fold_model_args <- .slice_offset_extra_args(model_args, tr_idx, va_idx, nrow(data_dt))
     res_m <- do.call(train_model, c(
       list(
         x_train = x_tr, y_train = y_tr,
@@ -124,7 +131,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
         metric = metric, verbose = FALSE,
         best_params = best_params, seed = fold_seed
       ),
-      model_args
+      fold_model_args
     ))
     if (use_tt && !is.null(tt_state_f)) {
       tt_state_f <- .update_target_transform_smearing(tt_state_f, y_va_raw, res_m$predictions)
@@ -134,6 +141,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       model = res_m$model,
       evaluator = final_eval,
       best_iteration = extract_best_iteration(res_m),
+      cat_schema = fold_cat_schema,
       target_transform_state = tt_state_f,
       use_smearing = use_smear
     )
@@ -163,13 +171,24 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       allow_prune = TRUE, state_cache = NULL, full_data = NULL
     )
     feats <- extract_individual_features(res_f$ind, target_col = target_col, unique = TRUE)
+    fm_cat_schema <- if (!is.null(fm$cat_schema)) fm$cat_schema else fm$model$cat_schema
     missing_feats <- setdiff(feats, names(res_f$train))
     if (length(missing_feats) > 0L) {
+      cat_names_fm <- if (!is.null(fm_cat_schema) && !is.null(fm_cat_schema$names)) fm_cat_schema$names else character(0)
       for (mf in missing_feats) {
-        res_f$train[, (mf) := 0.0]
+        if (mf %in% cat_names_fm) {
+          lvls_mf <- fm_cat_schema$levels[[mf]]
+          res_f$train[, (mf) := factor(rep(NA_character_, nrow(res_f$train)), levels = lvls_mf)]
+        } else {
+          res_f$train[, (mf) := 0.0]
+        }
       }
     }
-    x_new <- .sanitize_feature_matrix(res_f$train[, feats, with = FALSE], threads = threads)
+    x_new <- .sanitize_feature_matrix(
+      res_f$train[, feats, with = FALSE],
+      threads = threads,
+      cat_schema = fm_cat_schema
+    )
     preds_f <- do.call(eval_entry$predict_func, c(
       list(model = fm$model, x_new = x_new, task = task, threads = threads),
       user_args

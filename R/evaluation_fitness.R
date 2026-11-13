@@ -60,6 +60,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     return(ind)
   }
 
+  extra_args <- list(...)
   use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
   use_smear <- metric_uses_smearing(metric, task)
 
@@ -128,7 +129,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     dt_sub_tr <- train_fold_feat[, features, with = FALSE]
     dt_sub_va <- val_fold_feat[, features, with = FALSE]
     x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
-    x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
+    split_cat_schema <- attr(x_train, "cat_schema", exact = TRUE)
+    x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads, cat_schema = split_cat_schema)
     y_train <- train_fold_feat[[target_col]]
     y_val <- val_fold_feat[[target_col]]
     if (task == "multiclass") {
@@ -160,12 +162,27 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       tt_state_split <- tt_fit$state
     }
 
-    res_model <- train_model(x_train, y_train, x_val,
-      y_val = y_val, task = task,
-      evaluator = evaluator, threads = threads,
-      num_class = num_class, metric = metric,
-      verbose = verbose, ...
-    )
+    tr_idx_off <- attr(train_fold, ".row_id", exact = TRUE)
+    va_idx_off <- attr(val_fold, ".row_id", exact = TRUE)
+    if (is.null(tr_idx_off) && !is.null(split_ids)) tr_idx_off <- which(split_ids == "train")
+    if (is.null(va_idx_off) && !is.null(split_ids)) va_idx_off <- which(split_ids == "val")
+    n_total_off <- if (!is.null(shared_full)) nrow(shared_full) else nrow(data)
+    call_extra_args <- if (!is.null(tr_idx_off)) {
+      .slice_offset_extra_args(extra_args, tr_idx_off, va_idx_off, n_total_off)
+    } else {
+      extra_args
+    }
+
+    res_model <- do.call(train_model, c(
+      list(
+        x_train, y_train, x_val,
+        y_val = y_val, task = task,
+        evaluator = evaluator, threads = threads,
+        num_class = num_class, metric = metric,
+        verbose = verbose
+      ),
+      call_extra_args
+    ))
     preds_trans <- res_model$predictions
     preds <- preds_trans
     if (use_tt && !is.null(tt_state_split)) {
@@ -230,6 +247,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     )
 
     ind <- .finalize_importances(ind, res_model$importances)
+    if (!is.null(split_cat_schema)) ind$cat_schema <- split_cat_schema
 
     ind$holdout_fitness <- NULL
   } else {
@@ -254,6 +272,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     metrics <- rep(NA_real_, k_folds)
     fold_importances <- list()
     last_fit_genes <- NULL
+    last_cat_schema <- NULL
 
     n_total <- nrow(dt)
     if (task == "multiclass") {
@@ -276,6 +295,10 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         train_fold <- shallow_copy_dt(shared_folds[[f]]$train)
         val_fold <- shallow_copy_dt(shared_folds[[f]]$val)
         val_idx <- if (!is.null(fold_ids)) which(fold_ids == f) else seq_len(nrow(val_fold))
+        tr_idx_off <- attr(train_fold, ".row_id", exact = TRUE)
+        if (is.null(tr_idx_off) && !is.null(fold_ids)) tr_idx_off <- which(fold_ids != f)
+        va_idx_off <- attr(val_fold, ".row_id", exact = TRUE)
+        if (is.null(va_idx_off)) va_idx_off <- val_idx
       } else {
         train_idx <- which(folds != f)
         val_idx <- which(folds == f)
@@ -283,6 +306,8 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         val_fold <- dt[val_idx, ]
         data.table::setattr(train_fold, ".row_id", train_idx)
         data.table::setattr(val_fold, ".row_id", val_idx)
+        tr_idx_off <- train_idx
+        va_idx_off <- val_idx
       }
       fold_train_sizes <- c(fold_train_sizes, nrow(train_fold))
 
@@ -321,7 +346,9 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       dt_sub_tr <- train_fold_feat[, features, with = FALSE]
       dt_sub_va <- val_fold_feat[, features, with = FALSE]
       x_train <- .sanitize_feature_matrix(dt_sub_tr, threads = threads)
-      x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads)
+      fold_cat_schema <- attr(x_train, "cat_schema", exact = TRUE)
+      if (!is.null(fold_cat_schema)) last_cat_schema <- fold_cat_schema
+      x_val <- .sanitize_feature_matrix(dt_sub_va, threads = threads, cat_schema = fold_cat_schema)
       y_train <- train_fold_feat[[target_col]]
       y_val <- val_fold_feat[[target_col]]
       if (task == "multiclass") {
@@ -354,6 +381,11 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       }
 
       if (is_tuned) {
+        fold_offset_pair <- if (!is.null(tr_idx_off)) {
+          .extract_sliced_offset_pair(extra_args, tr_idx_off, va_idx_off, n_total)
+        } else {
+          NULL
+        }
         fold_data[[fi]] <- list(
           x_train = x_train,
           y_train = y_train,
@@ -363,15 +395,26 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
           val_idx = val_idx,
           y_val_raw = val_fold_feat[[target_col]],
           fold_idx = fi,
-          tt_state = tt_state_fi
+          tt_state = tt_state_fi,
+          cat_schema = fold_cat_schema,
+          offset_args = fold_offset_pair
         )
       } else {
-        res_model <- train_model(x_train, y_train, x_val,
-          y_val = y_val, task = task,
-          evaluator = evaluator, threads = threads,
-          num_class = num_class, metric = metric,
-          verbose = verbose, ...
-        )
+        fold_extra_args <- if (!is.null(tr_idx_off)) {
+          .slice_offset_extra_args(extra_args, tr_idx_off, va_idx_off, n_total)
+        } else {
+          extra_args
+        }
+        res_model <- do.call(train_model, c(
+          list(
+            x_train, y_train, x_val,
+            y_val = y_val, task = task,
+            evaluator = evaluator, threads = threads,
+            num_class = num_class, metric = metric,
+            verbose = verbose
+          ),
+          fold_extra_args
+        ))
         preds_trans <- res_model$predictions
         preds <- preds_trans
         if (use_tt && !is.null(tt_state_fi)) {
@@ -534,6 +577,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
     # Propagate fitted gene states from the last successful fold and compute complexity penalty
     # on the exact feature set trained before pruning any dead-weight leaf genes
     if (!is.null(last_fit_genes)) ind$genes <- last_fit_genes
+    if (!is.null(last_cat_schema)) ind$cat_schema <- last_cat_schema
 
     ind <- apply_complexity_penalty(
       raw_score = raw_score,

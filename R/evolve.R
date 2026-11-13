@@ -1334,7 +1334,11 @@ evolve_features <- function(data, target_col, task = "classification",
 
   features <- extract_individual_features(best_ind, target_col = target_col)
 
-  x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
+  x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE], threads = threads)
+  full_cat_schema <- attr(x_full, "cat_schema", exact = TRUE)
+  if (!is.null(full_cat_schema)) {
+    best_ind$cat_schema <- full_cat_schema
+  }
   y_full <- res_full$train[[target_col]]
   if (task == "multiclass") {
     y_full <- encode_multiclass_target(y_full, classes)
@@ -1344,6 +1348,9 @@ evolve_features <- function(data, target_col, task = "classification",
 
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
   final_model_args <- list(...)
+  if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
+    final_model_args <- .slice_offset_extra_args(final_model_args, tr_ho_idx, NULL, nrow(data))
+  }
   target_iters <- NULL
   if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
       is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
@@ -1358,23 +1365,23 @@ evolve_features <- function(data, target_col, task = "classification",
       total_data_size
     }
 
-    target_iters <- if (is_tree_evaluator(best_evaluator)) {
+    target_iters <- if (.evaluator_scales_iterations(best_evaluator)) {
       scale_evaluator_iterations(best_evaluator, best_ind$best_iteration, training_size, total_data_size)
     } else {
       as.integer(best_ind$best_iteration)
     }
     if (verbose) {
       scale_factor <- if (training_size > 0 && total_data_size > training_size) total_data_size / training_size else 1.0
-      if (is_tree_evaluator(best_evaluator) && scale_factor > 1.0) {
+      if (.evaluator_scales_iterations(best_evaluator) && scale_factor > 1.0 && target_iters != as.integer(best_ind$best_iteration)) {
         message(sprintf("  Using best validation iterations scaled by data size (%.2fx: %d -> %d) for final model",
                         scale_factor, best_ind$best_iteration, target_iters))
       } else {
-        iter_label <- if (unwrap_evaluator(best_evaluator) == "realmlp") "epochs" else "iterations/rounds"
+        iter_label <- if (unwrap_evaluator(best_evaluator) %in% c("realmlp", "tabm")) "epochs" else "iterations/rounds"
         message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
       }
     }
     final_model_args <- apply_iteration_target(final_model_args, target_iters, best_evaluator)
-  } else if (unwrap_evaluator(best_evaluator) == "realmlp") {
+  } else if (unwrap_evaluator(best_evaluator) %in% c("realmlp", "tabm")) {
     final_model_args <- apply_iteration_target(final_model_args, NULL, best_evaluator)
   }
 
@@ -1459,7 +1466,11 @@ evolve_features <- function(data, target_col, task = "classification",
       )
       if (!is.null(res_conf)) {
         conf_features <- extract_individual_features(res_conf$ind, target_col = target_col)
-        x_conf <- .sanitize_feature_matrix(res_conf$train[, conf_features, with = FALSE])
+        x_conf <- .sanitize_feature_matrix(
+          res_conf$train[, conf_features, with = FALSE],
+          threads = threads,
+          cat_schema = full_cat_schema
+        )
         preds_conf <- tryCatch(
           get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
           error = function(e) NULL
@@ -1579,6 +1590,7 @@ evolve_features <- function(data, target_col, task = "classification",
     best_model = best_model,
     fold_models = fold_models,
     bag_folds = isTRUE(bag_folds),
+    cat_schema = full_cat_schema,
     target_transform = target_transform,
     target_transform_state = target_transform_state,
     use_smearing = use_smear,

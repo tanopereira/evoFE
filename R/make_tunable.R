@@ -185,21 +185,25 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     }
 
     if (!use_split && !use_fold_data) {
+      x_train <- .sanitize_feature_matrix(x_train, threads = threads)
       folds <- stratified_kfold_ids(y_train, mbo_folds, task)
+      n_tr_total <- nrow(x_train)
       cv_fold_data <- lapply(seq_len(mbo_folds), function(i) {
         idx_train <- which(folds != i)
         idx_val <- which(folds == i)
         list(
-          x_train = .sanitize_feature_matrix(x_train[idx_train, , drop = FALSE], threads = threads),
+          x_train = .slice_feature_matrix(x_train, idx_train),
           y_train = y_train[idx_train],
-          x_val = .sanitize_feature_matrix(x_train[idx_val, , drop = FALSE], threads = threads),
-          y_val = y_train[idx_val]
+          x_val = .slice_feature_matrix(x_train, idx_val),
+          y_val = y_train[idx_val],
+          offset_args = .extract_sliced_offset_pair(extra_args, idx_train, idx_val, n_tr_total)
         )
       })
     }
     if (use_split) {
       x_train <- .sanitize_feature_matrix(x_train, threads = threads)
-      x_val   <- .sanitize_feature_matrix(x_val, threads = threads)
+      x_val   <- .sanitize_feature_matrix(x_val, threads = threads,
+                                          cat_schema = attr(x_train, "cat_schema", exact = TRUE))
     }
     
     # Cache winning trial outputs so use_fold_data and use_split modes never retrain post-MBO
@@ -209,6 +213,16 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     best_trial_cache$res <- NULL
     best_trial_cache$fold_res <- NULL
     best_trial_cache$best_iteration <- NULL
+    best_trial_cache$best_lambda <- NULL
+
+    extract_trial_lambda <- function(res) {
+      lam <- if (!is.null(res$best_lambda)) res$best_lambda else if (!is.null(res$model$best_lambda)) res$model$best_lambda else NULL
+      if (!is.null(lam) && is.numeric(lam) && length(lam) == 1L && is.finite(lam) && lam > 0) {
+        as.numeric(lam)
+      } else {
+        NULL
+      }
+    }
 
     # Define optimization objective function
     fn <- function(x) {
@@ -221,18 +235,25 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         # Global cross-validation mode across pre-computed folds
         scores <- numeric(mbo_folds)
         trial_fold_res <- vector("list", mbo_folds)
+        trial_lambdas <- numeric(0)
         for (i in seq_len(mbo_folds)) {
           fd <- fold_data[[i]]
+          fold_params <- .apply_offset_pair(trial_params, fd$offset_args)
           res <- do.call(base_evaluator$train_func, c(
             list(x_train = fd$x_train, y_train = fd$y_train,
                  x_val = fd$x_val, y_val = fd$y_val,
                  task = task, threads = threads, num_class = num_class,
                  metric = metric, verbose = FALSE),
-            trial_params
+            fold_params
           ))
           scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
           res$score <- scores[i]
           res$best_iteration <- extract_best_iteration(res)
+          lam_val <- extract_trial_lambda(res)
+          if (!is.null(lam_val)) {
+            res$best_lambda <- lam_val
+            trial_lambdas <- c(trial_lambdas, lam_val)
+          }
           if (!is.null(base_evaluator$cleanup_func) && !is.null(res$model)) {
             base_evaluator$cleanup_func(res$model)
           }
@@ -244,6 +265,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           best_trial_cache$score <- mean_score
           best_trial_cache$params <- x
           best_trial_cache$fold_res <- trial_fold_res
+          best_trial_cache$best_lambda <- if (length(trial_lambdas) > 0L) stats::median(trial_lambdas) else NULL
         }
         if (verbose) {
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
@@ -281,8 +303,10 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         # Cross-validation mode across pre-sliced folds
         scores <- numeric(mbo_folds)
         trial_best_iters <- integer(0)
+        trial_lambdas <- numeric(0)
         for (i in seq_len(mbo_folds)) {
           fd <- cv_fold_data[[i]]
+          fold_params <- .apply_offset_pair(trial_params, fd$offset_args)
           
           res <- do.call(base_evaluator$train_func, c(
             list(x_train = fd$x_train, 
@@ -291,11 +315,15 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
                  y_val = fd$y_val,
                  task = task, threads = threads, num_class = num_class, 
                  metric = metric, verbose = FALSE),
-            trial_params
+            fold_params
           ))
           iter_val <- extract_best_iteration(res)
           if (!is.null(iter_val)) {
             trial_best_iters <- c(trial_best_iters, iter_val)
+          }
+          lam_val <- extract_trial_lambda(res)
+          if (!is.null(lam_val)) {
+            trial_lambdas <- c(trial_lambdas, lam_val)
           }
           if (!is.null(base_evaluator$cleanup_func)) base_evaluator$cleanup_func(res$model)
           scores[i] <- compute_metric(fd$y_val, res$predictions, task, metric = metric, num_class = num_class, threads = threads)
@@ -306,6 +334,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           best_trial_cache$score <- mean_score
           best_trial_cache$params <- x
           best_trial_cache$best_iteration <- if (length(trial_best_iters) > 0) as.integer(round(mean(trial_best_iters))) else NULL
+          best_trial_cache$best_lambda <- if (length(trial_lambdas) > 0L) stats::median(trial_lambdas) else NULL
         }
         if (verbose) {
           param_str <- paste0(names(x), "=", unlist(x), collapse = ", ")
@@ -436,11 +465,15 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     # 5. Return cached winning trial outputs (or train on full data when no split/fold_data was used)
     if (use_fold_data) {
       if (!is.null(best_trial_cache$fold_res)) {
-        return(list(
+        out <- list(
           best_params = best_hyperparams,
           fold_res = best_trial_cache$fold_res,
           score = best_trial_cache$score
-        ))
+        )
+        if (!is.null(best_trial_cache$best_lambda)) {
+          out$best_lambda <- best_trial_cache$best_lambda
+        }
+        return(out)
       }
       final_params <- utils::modifyList(list(...), fixed_params)
       final_params <- utils::modifyList(final_params, best_hyperparams)
@@ -449,12 +482,13 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       fold_res <- vector("list", mbo_folds)
       for (i in seq_len(mbo_folds)) {
         fd <- fold_data[[i]]
+        fold_final_params <- .apply_offset_pair(final_params, fd$offset_args)
         fold_res[[i]] <- do.call(base_evaluator$train_func, c(
           list(x_train = fd$x_train, y_train = fd$y_train,
                x_val = fd$x_val, y_val = fd$y_val,
                task = task, threads = threads, num_class = num_class,
                metric = metric, verbose = FALSE),
-          final_params
+          fold_final_params
         ))
       }
       return(list(
@@ -466,16 +500,22 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     if (use_split && !is.null(best_trial_cache$res)) {
       final_res <- best_trial_cache$res
       final_res$best_params <- best_hyperparams
+      if (is.null(final_res$best_lambda) && !is.null(final_res$model$best_lambda)) {
+        final_res$best_lambda <- final_res$model$best_lambda
+      }
       return(final_res)
     }
 
     final_params <- utils::modifyList(list(...), fixed_params)
     final_params <- utils::modifyList(final_params, best_hyperparams)
     final_params$fold_data <- NULL
+    if (!is.null(best_trial_cache$best_lambda) && is.null(final_params$lambda)) {
+      final_params$lambda <- best_trial_cache$best_lambda
+    }
     target_iters <- NULL
     if (!use_split && !use_fold_data && !is.null(best_trial_cache$best_iteration)) {
       avg_train_size <- mean(vapply(cv_fold_data, function(fd) nrow(fd$x_train), numeric(1)))
-      target_iters <- if (is_tree_evaluator(base_model_name)) {
+      target_iters <- if (.evaluator_scales_iterations(base_model_name)) {
         scale_evaluator_iterations(base_model_name, best_trial_cache$best_iteration, avg_train_size, nrow(x_train))
       } else {
         as.integer(best_trial_cache$best_iteration)
@@ -489,6 +529,13 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
     ))
     if (!is.null(target_iters)) {
       final_res$best_iteration <- target_iters
+    }
+    if (is.null(final_res$best_lambda)) {
+      if (!is.null(final_res$model$best_lambda)) {
+        final_res$best_lambda <- final_res$model$best_lambda
+      } else if (!is.null(best_trial_cache$best_lambda)) {
+        final_res$best_lambda <- best_trial_cache$best_lambda
+      }
     }
     final_res$best_params <- best_hyperparams
     return(final_res)
