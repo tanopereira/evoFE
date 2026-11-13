@@ -34,6 +34,29 @@
   stats::plogis(z)
 }
 
+#' Resolve Ensemble Blending Space
+#'
+#' Resolves \code{"prob"}, \code{"logit"}, or \code{"auto"} into a concrete
+#' blending space (\code{"prob"} or \code{"logit"}).
+#'
+#' @keywords internal
+#' @noRd
+.resolve_stack_space <- function(stack_space = c("prob", "logit", "auto"),
+                                 task = "classification",
+                                 metric = NULL,
+                                 rank_average = FALSE) {
+  if (is.null(stack_space)) stack_space <- "prob"
+  stack_space <- match.arg(stack_space, c("prob", "logit", "auto"))
+  if (!identical(stack_space, "auto")) {
+    return(stack_space)
+  }
+  if (task %in% c("classification", "multiclass") && !isTRUE(rank_average)) {
+    "logit"
+  } else {
+    "prob"
+  }
+}
+
 #' Blend Ensemble Candidate Predictions in Probability or Logit Space
 #'
 #' @keywords internal
@@ -78,7 +101,7 @@
     return(.logit_to_prob(out))
   }
   rs <- rowSums(out)
-  pos <- rs > 0
+  pos <- is.finite(rs) & rs > 0
   if (any(pos)) {
     out[pos, ] <- out[pos, , drop = FALSE] / rs[pos]
   }
@@ -96,7 +119,8 @@
 .stack_select <- function(y_true, val_preds_list, task, metric,
                           num_class = NULL, classes = NULL,
                           stack_folds = 5L, fold_partition = NULL,
-                          alpha = 0.5, seed = NULL, rank_average = FALSE, verbose = FALSE) {
+                          alpha = 0.5, seed = NULL, rank_average = FALSE,
+                          stack_space = "prob", verbose = FALSE) {
   n_candidates <- length(val_preds_list)
   candidate_names <- names(val_preds_list)
   n_obs <- if (is.matrix(val_preds_list[[1]])) nrow(val_preds_list[[1]]) else length(val_preds_list[[1]])
@@ -104,6 +128,8 @@
   if (isTRUE(rank_average)) {
     val_preds_list <- lapply(val_preds_list, rank_transform_predictions)
   }
+
+  resolved_space <- .resolve_stack_space(stack_space, task, metric, rank_average)
 
   fam <- switch(task,
     regression = "gaussian",
@@ -140,7 +166,12 @@
   }
 
   # Level-2 design matrix: one block of columns per candidate island
-  blocks <- lapply(val_preds_list, function(p) {
+  preds_for_fit <- if (identical(resolved_space, "logit") && task %in% c("classification", "multiclass")) {
+    lapply(val_preds_list, .prob_to_logit)
+  } else {
+    val_preds_list
+  }
+  blocks <- lapply(preds_for_fit, function(p) {
     if (is.matrix(p)) p else matrix(p, ncol = 1)
   })
   block_ncols <- vapply(blocks, ncol, integer(1))
@@ -200,7 +231,7 @@
   }
 
   blend_with <- function(w) {
-    .blend_ensemble_preds(val_preds_list, w, stack_space = "prob")
+    .blend_ensemble_preds(val_preds_list, w, stack_space = resolved_space)
   }
 
   fallback_weights <- function(rows = seq_len(n_obs)) {
@@ -252,7 +283,7 @@
       tab <- table(y_tr)
       if (length(tab[tab > 0]) < 2L || any(tab[tab > 0] < 2L)) {
         fit_direct <- tryCatch({
-          glmnet::glmnet(
+          d_args <- list(
             x = X_fit[rows, , drop = FALSE],
             y = y_tr,
             family = fam,
@@ -260,6 +291,8 @@
             standardize = FALSE,
             lambda = 0.01
           )
+          if (fam != "multinomial") d_args$lower.limits <- 0
+          do.call(glmnet::glmnet, d_args)
         }, error = function(e) NULL)
         return(fit_direct)
       }
@@ -283,7 +316,7 @@
       do.call(glmnet::cv.glmnet, args)
     }, error = function(e) {
       tryCatch({
-        glmnet::glmnet(
+        fb_args <- list(
           x = X_fit[rows, , drop = FALSE],
           y = y_tr,
           family = fam,
@@ -291,6 +324,8 @@
           standardize = FALSE,
           lambda = 0.01
         )
+        if (fam != "multinomial") fb_args$lower.limits <- 0
+        do.call(glmnet::glmnet, fb_args)
       }, error = function(e2) NULL)
     })
   }
@@ -360,4 +395,329 @@
     final_fitness = final_fitness,
     stack_cv_fitness = stack_cv_fitness
   )
+}
+
+#' Build Feature Matrix for Residual Blender
+#'
+#' Extracts the union of active recipe features on \code{data}, sanitizes and
+#' median-imputes non-finite entries, and optionally expands numeric features
+#' into B-spline bases when \code{mode = "spline_lm"}.
+#'
+#' @keywords internal
+#' @noRd
+.build_residual_design <- function(active_recipes, data, target_col = NULL,
+                                   active_cat_schemas = NULL,
+                                   mode = c("lm", "spline_lm"),
+                                   fit_spec = NULL) {
+  mode <- match.arg(mode)
+  if (is.null(active_recipes) || length(active_recipes) == 0L) return(NULL)
+
+  dt_base <- shallow_copy_dt(data.table::as.data.table(data))
+  out_dt <- shallow_copy_dt(dt_base)
+  all_features <- character(0)
+
+  for (name in names(active_recipes)) {
+    ind_i <- active_recipes[[name]]
+    dt_i <- shallow_copy_dt(dt_base)
+    res_i <- apply_individual(
+      ind_i, dt_i, val_data = NULL, target_col = NULL,
+      allow_prune = TRUE, state_cache = NULL, full_data = NULL
+    )
+    sub_dt <- res_i$train
+    new_cols <- setdiff(names(sub_dt), names(out_dt))
+    if (length(new_cols) > 0L) {
+      for (col in new_cols) {
+        out_dt[[col]] <- sub_dt[[col]]
+      }
+    }
+    feats_i <- extract_individual_features(res_i$ind, target_col = target_col, unique = TRUE)
+    all_features <- union(all_features, feats_i)
+  }
+
+  feature_names <- if (is.null(fit_spec)) {
+    setdiff(all_features, target_col)
+  } else {
+    fit_spec$feature_names
+  }
+  if (length(feature_names) == 0L) return(NULL)
+
+  missing_feats <- setdiff(feature_names, names(out_dt))
+  if (length(missing_feats) > 0L) {
+    for (mf in missing_feats) {
+      out_dt[, (mf) := 0.0]
+    }
+  }
+
+  feat_dt <- out_dt[, feature_names, with = FALSE]
+  cs <- NULL
+  if (!is.null(active_cat_schemas) && length(active_cat_schemas) > 0L) {
+    for (item in active_cat_schemas) {
+      if (!is.null(item)) {
+        cs <- item
+        break
+      }
+    }
+  }
+  x_mat <- if (!is.null(cs) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
+    .sanitize_feature_matrix(feat_dt, cat_schema = cs)
+  } else {
+    .sanitize_feature_matrix(feat_dt)
+  }
+  if (is.null(x_mat) || ncol(x_mat) == 0L) return(NULL)
+
+  p <- ncol(x_mat)
+  col_medians <- if (is.null(fit_spec)) {
+    vapply(seq_len(p), function(j) {
+      v <- x_mat[, j]
+      fin <- is.finite(v)
+      if (!any(fin)) return(0.0)
+      m <- stats::median(v[fin])
+      if (is.finite(m)) m else 0.0
+    }, numeric(1L))
+  } else {
+    fit_spec$col_medians
+  }
+
+  for (j in seq_len(p)) {
+    bad <- !is.finite(x_mat[, j])
+    if (any(bad)) x_mat[bad, j] <- col_medians[j]
+  }
+
+  spline_spec <- if (is.null(fit_spec)) vector("list", p) else fit_spec$spline_spec
+  if (identical(mode, "spline_lm") && requireNamespace("splines", quietly = TRUE)) {
+    cols_list <- vector("list", p)
+    for (j in seq_len(p)) {
+      v <- x_mat[, j]
+      if (is.null(fit_spec)) {
+        ux <- unique(v)
+        b_knots <- range(v)
+        if (length(ux) >= 6L && b_knots[2] > b_knots[1]) {
+          knots <- unique(stats::quantile(v, probs = c(0.25, 0.50, 0.75), names = FALSE))
+          knots <- knots[knots > b_knots[1] & knots < b_knots[2]]
+          if (length(knots) >= 1L) {
+            spline_spec[[j]] <- list(knots = knots, boundary = b_knots)
+          }
+        }
+      }
+      sp <- spline_spec[[j]]
+      if (!is.null(sp)) {
+        v_clamped <- pmin(pmax(v, sp$boundary[1]), sp$boundary[2])
+        cols_list[[j]] <- splines::bs(
+          v_clamped,
+          knots = sp$knots,
+          Boundary.knots = sp$boundary,
+          degree = 3L,
+          intercept = FALSE
+        )
+      } else {
+        cols_list[[j]] <- matrix(v, ncol = 1L)
+      }
+    }
+    x_mat <- do.call(cbind, cols_list)
+  }
+
+  if (requireNamespace("Matrix", quietly = TRUE)) {
+    x_mat <- Matrix::Matrix(x_mat, sparse = TRUE)
+  }
+
+  list(
+    x = x_mat,
+    spec = list(
+      feature_names = feature_names,
+      col_medians = col_medians,
+      spline_spec = spline_spec,
+      mode = mode
+    )
+  )
+}
+
+#' Fit Regularized Residual Blender on Top of Base Ensemble OOF Margin
+#'
+#' Fits a damped ridge (\code{alpha = 0}) \code{glmnet} model with
+#' \code{offset = base_margin} over the union of active recipe features and
+#' verifies via honest out-of-fold predictions that it improves over the base
+#' ensemble. Returns \code{NULL} if no improvement is observed.
+#'
+#' @keywords internal
+#' @noRd
+.fit_residual_blender <- function(y_true, val_preds_list, weights,
+                                  active_recipes, data, target_col,
+                                  task, metric, num_class = NULL, classes = NULL,
+                                  stack_space = "prob",
+                                  residual_blender = c("none", "lm", "spline_lm"),
+                                  fold_partition = NULL,
+                                  active_cat_schemas = NULL,
+                                  seed = NULL, threads = NULL, verbose = FALSE) {
+  residual_blender <- match.arg(residual_blender)
+  if (identical(residual_blender, "none")) return(NULL)
+  if (!requireNamespace("glmnet", quietly = TRUE)) {
+    warning("Package 'glmnet' is required for residual_blender; skipping.")
+    return(NULL)
+  }
+
+  base_oof <- .blend_ensemble_preds(val_preds_list, weights, stack_space = stack_space)
+  if (is.null(base_oof)) return(NULL)
+
+  fam <- switch(task,
+    regression = "gaussian",
+    classification = "binomial",
+    multiclass = "multinomial",
+    return(NULL)
+  )
+
+  if (task == "regression") {
+    y_fit <- as.numeric(y_true)
+    base_margin <- as.numeric(base_oof)
+  } else {
+    lv <- if (!is.null(classes)) classes else sort(unique(as.character(y_true)))
+    y_lab <- if (is.numeric(y_true) && length(lv) > 0L &&
+                 all(stats::na.omit(y_true) %in% (seq_along(lv) - 1))) {
+      lv[as.integer(y_true) + 1]
+    } else {
+      as.character(y_true)
+    }
+    y_fit <- factor(y_lab, levels = lv)
+    if (task == "classification") {
+      base_margin <- .prob_to_logit(as.numeric(base_oof))
+    } else {
+      base_margin <- .prob_to_logit(base_oof)
+      colnames(base_margin) <- lv
+    }
+  }
+
+  design <- .build_residual_design(
+    active_recipes = active_recipes,
+    data = data,
+    target_col = target_col,
+    active_cat_schemas = active_cat_schemas,
+    mode = residual_blender
+  )
+  if (is.null(design) || ncol(design$x) == 0L || nrow(design$x) != length(y_fit)) {
+    return(NULL)
+  }
+
+  n_obs <- length(y_fit)
+  foldid <- if (!is.null(fold_partition) && length(fold_partition) == n_obs &&
+                length(unique(fold_partition)) >= 2L) {
+    as.integer(factor(fold_partition))
+  } else {
+    with_seed(if (!is.null(seed)) seed + 17919L else NULL, function() {
+      sample(rep(seq_len(min(5L, max(2L, n_obs %/% 4L))), length.out = n_obs))
+    })
+  }
+
+  fit <- tryCatch({
+    glmnet::cv.glmnet(
+      x = design$x,
+      y = y_fit,
+      family = fam,
+      alpha = 0,
+      offset = base_margin,
+      foldid = foldid,
+      keep = TRUE,
+      standardize = TRUE
+    )
+  }, error = function(e) NULL)
+  if (is.null(fit) || is.null(fit$fit.preval)) return(NULL)
+
+  eval_fn <- function(y, p) {
+    if (is.null(p) || length(p) == 0L) return(-Inf)
+    mask <- if (is.matrix(p)) !is.na(p[, 1L]) & !is.na(y) else !is.na(p) & !is.na(y)
+    if (!any(mask)) return(-Inf)
+    res <- tryCatch(
+      if (is.matrix(p)) compute_metric(y[mask], p[mask, , drop = FALSE], task = task, metric = metric, num_class = num_class)
+      else compute_metric(y[mask], p[mask], task = task, metric = metric),
+      error = function(e) -Inf
+    )
+    if (is.na(res) || is.nan(res)) -Inf else res
+  }
+
+  idx_min <- which.min(abs(fit$lambda - fit$lambda.min))
+  oof_pred <- if (fam == "gaussian") {
+    as.numeric(fit$fit.preval[, idx_min])
+  } else if (fam == "binomial") {
+    stats::plogis(as.numeric(fit$fit.preval[, idx_min]))
+  } else {
+    .logit_to_prob(fit$fit.preval[, , idx_min])
+  }
+
+  base_score <- eval_fn(y_true, base_oof)
+  blend_score <- eval_fn(y_true, oof_pred)
+  if (!is.finite(blend_score) || blend_score <= base_score + 1e-6) {
+    if (verbose) {
+      message(sprintf("  Residual blender (%s) did not improve OOF (%.4f <= %.4f); keeping base ensemble.",
+                      residual_blender, blend_score, base_score))
+    }
+    return(NULL)
+  }
+
+  if (verbose) {
+    message(sprintf("  Residual blender (%s) improved OOF: %.4f -> %.4f",
+                    residual_blender, base_score, blend_score))
+  }
+
+  structure(
+    list(
+      fit = fit,
+      spec = design$spec,
+      active_recipes = active_recipes,
+      active_cat_schemas = active_cat_schemas,
+      target_col = target_col,
+      task = task,
+      classes = if (task == "multiclass") levels(y_fit) else classes,
+      stack_space = stack_space,
+      mode = residual_blender,
+      base_score = base_score,
+      blender_score = blend_score
+    ),
+    class = "evo_residual_blender"
+  )
+}
+
+#' Predict with Fitted Residual Blender Using Base Ensemble Predictions as Offset
+#'
+#' @keywords internal
+#' @noRd
+.predict_residual_blender <- function(blender, base_preds, newdata) {
+  if (is.null(blender) || is.null(blender$fit)) return(base_preds)
+
+  design <- .build_residual_design(
+    active_recipes = blender$active_recipes,
+    data = newdata,
+    target_col = blender$target_col,
+    active_cat_schemas = blender$active_cat_schemas,
+    mode = blender$mode,
+    fit_spec = blender$spec
+  )
+  if (is.null(design)) return(base_preds)
+
+  newoffset <- if (blender$task == "regression") {
+    as.numeric(base_preds)
+  } else if (blender$task == "classification") {
+    .prob_to_logit(as.numeric(base_preds))
+  } else {
+    m <- .prob_to_logit(base_preds)
+    if (!is.null(blender$classes)) colnames(m) <- blender$classes
+    m
+  }
+
+  pred <- tryCatch({
+    stats::predict(
+      blender$fit,
+      newx = design$x,
+      s = "lambda.min",
+      newoffset = newoffset,
+      type = "response"
+    )
+  }, error = function(e) NULL)
+  if (is.null(pred)) return(base_preds)
+
+  if (blender$task == "multiclass") {
+    p_mat <- pred[, , 1L, drop = TRUE]
+    if (!is.matrix(p_mat)) {
+      p_mat <- matrix(p_mat, nrow = nrow(design$x), ncol = length(blender$classes))
+    }
+    return(format_multiclass_predictions(p_mat, blender$classes))
+  }
+  as.numeric(pred)
 }

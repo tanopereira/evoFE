@@ -129,7 +129,18 @@
     stop("'evaluators' must be a non-empty character vector.")
   }
   evaluators <- unique(evaluators)
-  pkg_map <- c(lightgbm = "lightgbm", xgboost = "xgboost", catboost = "catboost", keras3 = "keras3", lm = "glmnet")
+  pkg_map <- c(
+    lightgbm = "lightgbm",
+    lightgbm_rf = "lightgbm",
+    xgboost = "xgboost",
+    catboost = "catboost",
+    keras3 = "keras3",
+    lm = "glmnet",
+    spline_lm = "glmnet",
+    rff = "glmnet",
+    ranger = "ranger",
+    tabm = "torch"
+  )
   kept <- character(0)
   for (ev in evaluators) {
     if (!has_evaluator(ev)) {
@@ -229,6 +240,29 @@
       )
     } else if (base_ev == "lm") {
       list(alpha = 0.5, s = "lambda.min")
+    } else if (base_ev == "lightgbm_rf") {
+      list(
+        boosting = "rf",
+        bagging_freq = 1L,
+        bagging_fraction = 0.80,
+        feature_fraction = 0.80,
+        num_leaves = 63L,
+        nrounds = cfg$s2_nrounds,
+        early_stopping_rounds = cfg$s2_es
+      )
+    } else if (base_ev == "ranger") {
+      list(num.trees = 100L, save.memory = FALSE)
+    } else if (base_ev == "spline_lm") {
+      list(alpha = 0.5, s = "lambda.min")
+    } else if (base_ev == "rff") {
+      list(alpha = 0.0, s = "lambda.min", n_components = 128L)
+    } else if (base_ev == "tabm") {
+      bs <- if (n_rows >= 8192L) 2048L else -1L
+      list(
+        epochs = cfg$s2_mlp_epochs,
+        early_stopping_rounds = cfg$s2_mlp_es,
+        batch_size = bs
+      )
     } else {
       list(nrounds = cfg$s2_nrounds, early_stopping_rounds = cfg$s2_es)
     }
@@ -278,6 +312,48 @@
           s = "lambda.min",
           mbo_iters = mbo_it,
           mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "lightgbm_rf") {
+        list(
+          boosting = "rf",
+          bagging_freq = 1L,
+          bagging_fraction = 0.80,
+          feature_fraction = 0.80,
+          nrounds = cfg$s4_lgb_nrounds,
+          early_stopping_rounds = cfg$s4_lgb_es,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "ranger") {
+        list(
+          num.trees = 300L,
+          save.memory = FALSE,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "spline_lm") {
+        list(
+          alpha = 0.5,
+          s = "lambda.min",
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "rff") {
+        list(
+          alpha = 0.0,
+          s = "lambda.min",
+          n_components = 256L,
+          mbo_iters = mbo_it,
+          mbo_init_design = mbo_id
+        )
+      } else if (base_ev == "tabm") {
+        bs <- if (n_rows >= 8192L) 2048L else -1L
+        list(
+          epochs = cfg$s4_mlp_epochs,
+          early_stopping_rounds = cfg$s4_mlp_es,
+          batch_size = bs,
+          mbo_iters = max(2L, as.integer(ceiling(mbo_it * 0.7))),
+          mbo_init_design = max(3L, as.integer(ceiling(mbo_id * 0.75)))
         )
       } else {
         list(
@@ -337,6 +413,39 @@
           alpha = 0.5,
           s = "lambda.min"
         )
+      } else if (base_ev == "lightgbm_rf") {
+        list(
+          boosting = "rf",
+          bagging_freq = 1L,
+          bagging_fraction = 0.80,
+          feature_fraction = 0.80,
+          num_leaves = 63L,
+          nrounds = cfg$s4_lgb_nrounds,
+          early_stopping_rounds = cfg$s4_lgb_es
+        )
+      } else if (base_ev == "ranger") {
+        list(
+          num.trees = 300L,
+          save.memory = FALSE
+        )
+      } else if (base_ev == "spline_lm") {
+        list(
+          alpha = 0.5,
+          s = "lambda.min"
+        )
+      } else if (base_ev == "rff") {
+        list(
+          alpha = 0.0,
+          s = "lambda.min",
+          n_components = 256L
+        )
+      } else if (base_ev == "tabm") {
+        bs <- if (n_rows >= 8192L) 2048L else -1L
+        list(
+          epochs = cfg$s4_mlp_epochs,
+          early_stopping_rounds = cfg$s4_mlp_es,
+          batch_size = bs
+        )
       } else {
         list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)
       }
@@ -347,7 +456,11 @@
     stage_key <- paste0("stage", stage)
 
     # 1. Global / top-level arguments (not keyed by evaluator or stage)
-    section_keys <- c("stage2", "stage4", "stage3_5", "lightgbm", "xgboost", "realmlp", "catboost", "lm")
+    section_keys <- c(
+      "stage2", "stage4", "stage3_5",
+      "lightgbm", "lightgbm_rf", "xgboost", "realmlp", "catboost",
+      "lm", "spline_lm", "rff", "ranger", "tabm"
+    )
     for (k in names(custom_evaluator_args)) {
       if (!k %in% section_keys && !has_evaluator(k)) {
         args[[k]] <- custom_evaluator_args[[k]]
@@ -395,6 +508,24 @@
   }
 
   args
+}
+
+#' Prune Heavy Internal Caches from Stage Recipes While Preserving Documented Fields
+#' @keywords internal
+#' @noRd
+.prune_stage_recipes <- function(recipes) {
+  if (is.null(recipes) || !is.list(recipes)) return(recipes)
+  for (i in seq_along(recipes)) {
+    r <- recipes[[i]]
+    if (inherits(r, "evo_recipe")) {
+      r$population <- NULL
+      r$history <- NULL
+      r$fold_models <- NULL
+      r$alignment_cache <- NULL
+      recipes[[i]] <- r
+    }
+  }
+  recipes
 }
 
 #' Harmonize column data types and categorical levels between train and test
@@ -531,6 +662,12 @@
 #'   \code{"aucpr"}), and \code{FALSE} otherwise. Set to \code{TRUE} when optimizing
 #'   calibration metrics like \code{"ts_refinement"} during feature evolution while
 #'   submitting to a rank-based competition evaluation metric like AUC.
+#' @param stage5_stack_space Character string. Blending space for Stage 5 stacking:
+#'   \code{"auto"} (default, uses \code{"logit"} for classification/multiclass when
+#'   \code{rank_average = FALSE}, else \code{"prob"}), \code{"prob"}, or \code{"logit"}.
+#' @param stage5_residual_blender Character string. Optional second-stage residual model
+#'   fit on top of Stage 5 ensemble margins: \code{"none"} (default), \code{"lm"}, or
+#'   \code{"spline_lm"}.
 #' @param submission_file Optional file path to write \code{$submission} via \code{data.table::fwrite()}.
 #' @param threads Integer thread count (default \code{\link{default_threads}()}).
 #' @param seed Integer RNG seed for reproducibility (caller's \code{.Random.seed} is preserved).
@@ -565,6 +702,8 @@ run_competition_pipeline <- function(
   supervised_stage4 = FALSE,
   bag_folds = TRUE,
   rank_average = NULL,
+  stage5_stack_space = c("auto", "prob", "logit"),
+  stage5_residual_blender = c("none", "lm", "spline_lm"),
   submission_file = NULL,
   threads = default_threads(),
   seed = 42L,
@@ -590,6 +729,8 @@ run_competition_pipeline <- function(
 
   preset <- match.arg(preset)
   tune_stage4 <- match.arg(tune_stage4)
+  stage5_stack_space <- match.arg(stage5_stack_space)
+  stage5_residual_blender <- match.arg(stage5_residual_blender)
   if (tune_stage4 %in% c("tabarena", "mbo")) {
     missing_pkgs <- character(0)
     for (pkg in c("mlr3mbo", "paradox", "bbotk")) {
@@ -847,6 +988,11 @@ run_competition_pipeline <- function(
     ))
   }
 
+  if (nrow(train_dt) >= 10000L) {
+    stage2_recipes <- .prune_stage_recipes(stage2_recipes)
+    gc(verbose = FALSE)
+  }
+
   # Optional Stage 3.5: Fast decoupled supervised discovery on train_mega
   # Searches at fast Stage-2 surrogate speeds (subsampled if > max_search_rows),
   # then extracts ONLY unfitted symbolic gene formulas (state = NULL) for Stage 4!
@@ -984,6 +1130,8 @@ run_competition_pipeline <- function(
       stack_folds = cv_folds,
       stack_alpha = 0.5,
       rank_average = resolved_rank_avg,
+      stack_space = stage5_stack_space,
+      residual_blender = stage5_residual_blender,
       bag_folds = isTRUE(bag_folds),
       threads = threads,
       seed = s4_seed,
@@ -994,6 +1142,11 @@ run_competition_pipeline <- function(
   }
 
   preds <- predict_model(final_model, test_mega, bag_folds = isTRUE(bag_folds), threads = threads)
+
+  if (nrow(train_dt) >= 10000L && length(stage4_recipes) >= 2L) {
+    stage4_recipes <- .prune_stage_recipes(stage4_recipes)
+    gc(verbose = FALSE)
+  }
 
   if (is.matrix(preds)) {
     sub_dt <- data.table::as.data.table(preds)

@@ -166,7 +166,12 @@ predict_model.evo_recipe <- function(object, newdata, bag_folds = NULL, ...) {
   features_dt <- stats::predict(object, newdata)
   
   # Step 2: Convert to clean numeric matrix
-  x_new <- .sanitize_feature_matrix(features_dt)
+  cs <- object$cat_schema
+  x_new <- if (!is.null(cs) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
+    .sanitize_feature_matrix(features_dt, cat_schema = cs)
+  } else {
+    .sanitize_feature_matrix(features_dt)
+  }
   
   # Step 3: Run prediction
   evaluator_entry <- get_evaluator(object$evaluator)
@@ -219,10 +224,10 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
 
   use_bag <- if (!is.null(bag_folds)) isTRUE(bag_folds) else (isTRUE(object$bag_folds) || !is.null(object$active_fold_models))
   dt_base <- shallow_copy_dt(data.table::as.data.table(newdata))
-  weighted_preds <- NULL
+  preds_list <- vector("list", length(active_names))
+  names(preds_list) <- active_names
 
   for (name in active_names) {
-    w <- weights[[name]]
     ind_i <- object$active_recipes[[name]]
     mod_i <- object$active_models[[name]]
     eval_i <- if (!is.null(object$active_evaluators[[name]])) object$active_evaluators[[name]] else object$evaluator
@@ -255,7 +260,18 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
         }
       }
       feat_dt <- res_i$train[, features, with = FALSE]
-      x_new <- .sanitize_feature_matrix(feat_dt)
+      cs_i <- if (!is.null(object$active_cat_schemas[[name]])) {
+        object$active_cat_schemas[[name]]
+      } else if (is.list(mod_i) && !is.null(mod_i$cat_schema)) {
+        mod_i$cat_schema
+      } else {
+        NULL
+      }
+      x_new <- if (!is.null(cs_i) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
+        .sanitize_feature_matrix(feat_dt, cat_schema = cs_i)
+      } else {
+        .sanitize_feature_matrix(feat_dt)
+      }
 
       preds_i <- do.call(evaluator_entry$predict_func, c(
         list(model = mod_i, x_new = x_new, task = object$task, threads = th),
@@ -298,19 +314,15 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
       preds_i <- format_multiclass_predictions(preds_i, object$classes)
     }
 
-    if (is.null(weighted_preds)) {
-      weighted_preds <- w * preds_i
-    } else {
-      weighted_preds <- weighted_preds + (w * preds_i)
-    }
+    preds_list[[name]] <- preds_i
   }
 
-  if (isTRUE(object$rank_average) && is.matrix(weighted_preds) && ncol(weighted_preds) > 1L) {
-    rs <- rowSums(weighted_preds)
-    pos <- is.finite(rs) & rs > 0
-    if (any(pos)) {
-      weighted_preds[pos, ] <- weighted_preds[pos, , drop = FALSE] / rs[pos]
-    }
+  eff_space <- if (!is.null(object$stack_space)) object$stack_space else "prob"
+  active_w <- weights[active_names]
+  weighted_preds <- .blend_ensemble_preds(preds_list, active_w, stack_space = eff_space)
+
+  if (!is.null(object$residual_blender)) {
+    weighted_preds <- .predict_residual_blender(object$residual_blender, weighted_preds, dt_base)
   }
 
   if (!is.null(object$calibrator) && !isTRUE(object$rank_average)) {

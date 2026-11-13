@@ -45,6 +45,8 @@ LinkingTo:
 SystemRequirements: C++17
 Suggests: 
     glmnet,
+    Matrix,
+    splines,
     RhpcBLASctl,
     testthat,
     knitr,

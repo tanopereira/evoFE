@@ -34,6 +34,15 @@
 #'   quantiles in [0, 1] before computing ensemble weights and predictions.
 #'   Recommended for ranking-based metrics like AUC. If \code{NULL} (default),
 #'   automatically defaults to \code{TRUE} when \code{metric = "auc"}.
+#' @param stack_space Character string. Blending space for ensemble weights and
+#'   predictions: \code{"prob"} (default, linear probability averaging),
+#'   \code{"logit"} (linear log-odds averaging for classification/multiclass), or
+#'   \code{"auto"} (uses \code{"logit"} for classification/multiclass when
+#'   \code{rank_average = FALSE}, else \code{"prob"}).
+#' @param residual_blender Character string. Optional second-stage residual model
+#'   fit on top of base ensemble out-of-fold margins: \code{"none"} (default),
+#'   \code{"lm"} (ridge-regularized linear residual), or \code{"spline_lm"}
+#'   (ridge-regularized B-spline residual).
 #' @param seed Optional integer seed for reproducible bagged sampling. Does not mutate
 #'   the user's global RNG state.
 #' @param threads Integer. Number of threads to use for model training.
@@ -90,6 +99,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              stack_alpha = 0.5,
                              metric = NULL,
                              rank_average = NULL,
+                             stack_space = c("prob", "logit", "auto"),
+                             residual_blender = c("none", "lm", "spline_lm"),
                              bag_folds = NULL,
                              seed = NULL,
                              threads = NULL,
@@ -145,6 +156,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
   method <- match.arg(method, valid_methods)
   if (method %in% c("uniform", "average")) method <- "equal"
+  stack_space <- match.arg(stack_space)
+  residual_blender <- match.arg(residual_blender)
   old_threads <- getOption("evoFE.threads")
   on.exit(options(evoFE.threads = old_threads), add = TRUE)
   options(evoFE.threads = threads)
@@ -204,6 +217,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   if (isTRUE(rank_average) && !metric_is_rank_invariant(metric, task) && task == "classification") {
     metric <- "auc"
   }
+  eff_space <- .resolve_stack_space(stack_space, task, metric, rank_average)
 
   # Collect validation prediction vectors, targets, and evaluators across all recipes
   val_preds_list <- list()
@@ -433,6 +447,17 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       rank_average = rank_average,
       verbose = verbose
     )
+    if (identical(eff_space, "logit") && task %in% c("classification", "multiclass")) {
+      preds_for_blend <- if (isTRUE(rank_average)) lapply(val_preds_list, rank_transform_predictions) else val_preds_list
+      ens_preds <- .blend_ensemble_preds(preds_for_blend, selection_res$weights, stack_space = eff_space)
+      if (!is.null(ens_preds)) {
+        selection_res$final_fitness <- if (task == "multiclass") {
+          compute_metric(y_val, ens_preds, task, metric, num_class, threads = threads)
+        } else {
+          compute_metric(y_val, ens_preds, task, metric, threads = threads)
+        }
+      }
+    }
   } else if (method == "stack") {
     if (!requireNamespace("glmnet", quietly = TRUE)) {
       stop("Package 'glmnet' is required for method = \"stack\". ",
@@ -465,6 +490,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       alpha = stack_alpha,
       seed = seed,
       rank_average = rank_average,
+      stack_space = eff_space,
       verbose = verbose
     )
   } else if (method == "equal") {
@@ -475,22 +501,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     } else {
       val_preds_list
     }
-    ens_preds <- if (is_metacv_equal && !isTRUE(rank_average)) {
+    ens_preds <- if (is_metacv_equal && !isTRUE(rank_average) && identical(eff_space, "prob")) {
       first_recipe$metacv_island_oof_preds
     } else {
-      if (task == "multiclass") {
-        res_mat <- matrix(0, nrow = nrow(preds_for_blend[[1]]), ncol = ncol(preds_for_blend[[1]]))
-        for (nm in names(weights)) {
-          res_mat <- res_mat + weights[[nm]] * preds_for_blend[[nm]]
-        }
-        res_mat
-      } else {
-        res_vec <- numeric(length(preds_for_blend[[1]]))
-        for (nm in names(weights)) {
-          res_vec <- res_vec + weights[[nm]] * preds_for_blend[[nm]]
-        }
-        res_vec
-      }
+      .blend_ensemble_preds(preds_for_blend, weights, stack_space = eff_space)
     }
     final_fitness <- if (task == "multiclass") {
       compute_metric(y_val, ens_preds, task, metric, num_class, threads = threads)
@@ -550,6 +564,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   active_fold_models <- list()
   active_target_transforms <- list()
   active_evaluators <- list()
+  active_cat_schemas <- list()
 
   if (is.null(bag_folds)) {
     bag_folds <- any(vapply(recipe_list, function(r) isTRUE(r$bag_folds) || !is.null(r$fold_models), logical(1)))
@@ -569,6 +584,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     best_ind_str <- individual_to_recipe_string(rec_i$best_individual)
 
     active_evaluators[[name]] <- eval_i
+    if (!is.null(rec_i$cat_schema)) {
+      active_cat_schemas[[name]] <- rec_i$cat_schema
+    }
 
     user_args_passed <- list(...)
     has_user_override <- length(user_args_passed) > 0 ||
@@ -623,7 +641,15 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       features <- c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols)
       features <- setdiff(features, target_col)
 
-      x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
+      cs_i <- rec_i$cat_schema
+      x_full <- if (!is.null(cs_i) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
+        .sanitize_feature_matrix(res_full$train[, features, with = FALSE], cat_schema = cs_i)
+      } else {
+        .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
+      }
+      if (is.null(active_cat_schemas[[name]]) && !is.null(attr(x_full, "cat_schema", exact = TRUE))) {
+        active_cat_schemas[[name]] <- attr(x_full, "cat_schema", exact = TRUE)
+      }
       y_full <- res_full$train[[target_col]]
       if (task == "multiclass") {
         y_full <- as.integer(factor(y_full, levels = classes)) - 1
@@ -786,20 +812,11 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   if (!isTRUE(rank_average) && is.character(metric) && length(metric) == 1L &&
       metric %in% c("ts_refinement", "cal_rmse", "cal_mae", "f1", "mcc", "balanced_accuracy", "accuracy", "qwk") &&
       length(active_names) > 0) {
-    first_vp <- val_preds_list[[active_names[1]]]
-    ens_val_preds <- if (is.matrix(first_vp)) {
-      res_mat <- matrix(0, nrow = nrow(first_vp), ncol = ncol(first_vp))
-      for (nm in active_names) {
-        res_mat <- res_mat + weights[[nm]] * val_preds_list[[nm]]
-      }
-      res_mat
-    } else {
-      res_vec <- numeric(length(first_vp))
-      for (nm in active_names) {
-        res_vec <- res_vec + weights[[nm]] * val_preds_list[[nm]]
-      }
-      res_vec
-    }
+    ens_val_preds <- .blend_ensemble_preds(
+      val_preds_list[active_names],
+      weights[active_names],
+      stack_space = eff_space
+    )
     calibrator <- fit_post_calibrator(
       y_true = y_val,
       y_pred = ens_val_preds,
@@ -810,12 +827,41 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     )
   }
 
+  res_blender <- NULL
+  if (!identical(residual_blender, "none") && length(active_names) > 0L) {
+    preds_for_rb <- if (isTRUE(rank_average)) {
+      lapply(val_preds_list[active_names], rank_transform_predictions)
+    } else {
+      val_preds_list[active_names]
+    }
+    res_blender <- .fit_residual_blender(
+      y_true = y_val,
+      val_preds_list = preds_for_rb,
+      weights = weights[active_names],
+      active_recipes = active_recipes,
+      data = dt_full,
+      target_col = target_col,
+      task = task,
+      metric = metric,
+      num_class = num_class,
+      classes = classes,
+      stack_space = eff_space,
+      residual_blender = residual_blender,
+      fold_partition = stored_folds,
+      active_cat_schemas = if (length(active_cat_schemas) > 0L) active_cat_schemas else NULL,
+      seed = seed,
+      threads = threads,
+      verbose = verbose
+    )
+  }
+
   structure(
     list(
       active_recipes = active_recipes,
       active_models = active_models,
       active_fold_models = if (length(active_fold_models) > 0) active_fold_models else NULL,
       active_target_transforms = if (length(active_target_transforms) > 0) active_target_transforms else NULL,
+      active_cat_schemas = if (length(active_cat_schemas) > 0) active_cat_schemas else NULL,
       bag_folds = isTRUE(bag_folds),
       active_evaluators = active_evaluators,
       weights = weights,
@@ -830,6 +876,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       island_improvements = isl_improvements,
       island_headroom_closed = isl_headroom_closed,
       method = method,
+      stack_space = eff_space,
+      residual_blender = res_blender,
       rank_average = isTRUE(rank_average),
       rank_ecdfs = rank_ecdfs,
       calibrator = calibrator,
