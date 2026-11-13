@@ -35,8 +35,7 @@ predict.evo_recipe <- function(object, newdata, ...) {
   dt_input <- shallow_copy_dt(data.table::as.data.table(newdata))
   res <- apply_individual(ind, dt_input, val_data = NULL, target_col = NULL, allow_prune = TRUE)
   applied_ind <- res$ind
-  
-  gene_cols <- if (length(applied_ind$genes) > 0) vapply(applied_ind$genes, function(g) g$output_col, character(1)) else character(0)
+
   features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
   missing_feats <- setdiff(features, names(res$train))
   if (length(missing_feats) > 0L) {
@@ -166,12 +165,7 @@ predict_model.evo_recipe <- function(object, newdata, bag_folds = NULL, ...) {
   features_dt <- stats::predict(object, newdata)
   
   # Step 2: Convert to clean numeric matrix
-  cs <- object$cat_schema
-  x_new <- if (!is.null(cs) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
-    .sanitize_feature_matrix(features_dt, cat_schema = cs)
-  } else {
-    .sanitize_feature_matrix(features_dt)
-  }
+  x_new <- .sanitize_feature_matrix(features_dt, cat_schema = object$cat_schema)
   
   # Step 3: Run prediction
   evaluator_entry <- get_evaluator(object$evaluator)
@@ -267,11 +261,7 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
       } else {
         NULL
       }
-      x_new <- if (!is.null(cs_i) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
-        .sanitize_feature_matrix(feat_dt, cat_schema = cs_i)
-      } else {
-        .sanitize_feature_matrix(feat_dt)
-      }
+      x_new <- .sanitize_feature_matrix(feat_dt, cat_schema = cs_i)
 
       preds_i <- do.call(evaluator_entry$predict_func, c(
         list(model = mod_i, x_new = x_new, task = object$task, threads = th),

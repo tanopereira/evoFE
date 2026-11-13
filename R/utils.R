@@ -108,7 +108,13 @@ resolve_param_aliases <- function(extra_args, defaults = list()) {
 #' @noRd
 sanitize_feature_matrix <- function(x, threads = default_threads(), cat_schema = NULL) {
   if (is.null(x)) return(NULL)
-  if (isTRUE(attr(x, "sanitized", exact = TRUE))) return(x)
+  if (inherits(x, "sparseMatrix")) return(x)
+  if (isTRUE(attr(x, "sanitized", exact = TRUE))) {
+    if (!is.null(cat_schema) && is.null(attr(x, "cat_schema", exact = TRUE))) {
+      attr(x, "cat_schema") <- cat_schema
+    }
+    return(x)
+  }
   if (!is.numeric(threads) || is.na(threads) || threads < 1L) threads <- 1L
   threads <- as.integer(threads)
 
@@ -930,4 +936,316 @@ rank_transform_predictions <- function(p) {
     val   = normalize_one(raw_va, n_val, "val"),
     new   = if (!is.null(n_new)) normalize_one(raw_nw, n_new, "new") else raw_nw
   )
+}
+
+#' @keywords internal
+#' @noRd
+.parse_bool_flag <- function(x, default = FALSE) {
+  if (is.null(x) || length(x) == 0L) return(default)
+  v <- x[[1L]]
+  if (is.logical(v)) return(!is.na(v) && v)
+  if (is.numeric(v)) return(is.finite(v) && v != 0)
+  if (is.character(v)) {
+    s <- tolower(trimws(v))
+    if (s %in% c("true", "t", "1", "yes")) return(TRUE)
+    if (s %in% c("false", "f", "0", "no")) return(FALSE)
+  }
+  default
+}
+
+#' Resolve Valid 1-Based Categorical Column Indices and Cardinalities
+#'
+#' @keywords internal
+#' @noRd
+.resolve_cat_cols <- function(x, extra_args = list(),
+                              cat_schema = attr(x, "cat_schema", exact = TRUE)) {
+  p <- ncol(x)
+  cs <- if (!is.null(cat_schema)) cat_schema else extra_args$cat_schema
+  raw_cols <- if (!is.null(cs$cols)) cs$cols else extra_args$cat_cols
+  if (is.null(raw_cols) || length(raw_cols) == 0L || p == 0L) {
+    return(list(cols = integer(0L), cardinalities = integer(0L), schema = cs))
+  }
+  raw_cols <- as.integer(raw_cols)
+  keep <- is.finite(raw_cols) & raw_cols >= 1L & raw_cols <= p
+  cols <- raw_cols[keep]
+  if (length(cols) == 0L) {
+    return(list(cols = integer(0L), cardinalities = integer(0L), schema = cs))
+  }
+  ord <- !duplicated(cols)
+  cols <- cols[ord]
+
+  cards <- integer(length(cols))
+  if (!is.null(cs$cardinalities) && length(cs$cardinalities) == length(raw_cols)) {
+    cards <- as.integer(cs$cardinalities[keep][ord])
+  } else if (!is.null(cs$levels) && length(cs$levels) >= length(cols)) {
+    cards <- as.integer(lengths(cs$levels)[seq_along(cols)])
+  } else if (!is.null(extra_args$cat_cardinalities) &&
+             length(extra_args$cat_cardinalities) == length(raw_cols)) {
+    cards <- as.integer(extra_args$cat_cardinalities[keep][ord])
+  } else {
+    for (i in seq_along(cols)) {
+      mx <- suppressWarnings(max(x[, cols[i]], na.rm = TRUE))
+      cards[i] <- if (is.finite(mx) && mx >= 1) as.integer(ceiling(mx)) else 1L
+    }
+  }
+  cards <- pmax(1L, cards)
+  list(cols = cols, cardinalities = cards, schema = cs)
+}
+
+#' Single-Pass Column Mean Imputation and Standard Deviations
+#'
+#' @keywords internal
+#' @noRd
+.impute_and_col_stats <- function(mat, means = NULL, compute_sd = TRUE, threads = 1L) {
+  fn <- get0("rcpp_impute_and_col_stats", mode = "function")
+  if (!is.null(fn)) {
+    return(fn(mat, means = means, compute_sd = isTRUE(compute_sd), threads = as.integer(threads)))
+  }
+
+  if (!is.matrix(mat) || storage.mode(mat) != "double") {
+    mat <- as.matrix(mat)
+    storage.mode(mat) <- "double"
+  }
+  n <- nrow(mat)
+  p <- ncol(mat)
+  col_means <- if (!is.null(means)) as.numeric(means) else numeric(p)
+  col_sds <- if (isTRUE(compute_sd)) rep(1.0, p) else numeric(0L)
+  if (n == 0L || p == 0L) {
+    return(list(mat = mat, col_means = col_means, col_sds = col_sds))
+  }
+
+  rng <- suppressWarnings(range(mat))
+  has_nonfinite <- !all(is.finite(rng))
+  out_mat <- mat
+
+  if (!has_nonfinite) {
+    if (is.null(means)) col_means <- base::colMeans(out_mat)
+    if (isTRUE(compute_sd) && n > 1L) {
+      for (j in seq_len(p)) {
+        s <- stats::sd(out_mat[, j])
+        col_sds[j] <- if (is.finite(s) && s > 0) s else 1.0
+      }
+    }
+    return(list(mat = out_mat, col_means = col_means, col_sds = col_sds))
+  }
+
+  for (j in seq_len(p)) {
+    col_j <- out_mat[, j]
+    bad <- !is.finite(col_j)
+    m_j <- if (!is.null(means)) {
+      col_means[j]
+    } else {
+      good <- col_j[!bad]
+      if (length(good) > 0L) mean(good) else 0.0
+    }
+    if (!is.finite(m_j)) m_j <- 0.0
+    if (is.null(means)) col_means[j] <- m_j
+    if (any(bad)) {
+      out_mat[bad, j] <- m_j
+    }
+    if (isTRUE(compute_sd) && n > 1L) {
+      s <- stats::sd(out_mat[, j])
+      col_sds[j] <- if (is.finite(s) && s > 0) s else 1.0
+    }
+  }
+  list(mat = out_mat, col_means = col_means, col_sds = col_sds)
+}
+
+#' Convert a Dense Matrix to Sparse dgCMatrix
+#'
+#' @keywords internal
+#' @noRd
+.to_dgc <- function(mat) {
+  d <- dim(mat)
+  nz <- which(mat != 0, arr.ind = TRUE)
+  Matrix::sparseMatrix(
+    i = nz[, 1L],
+    j = nz[, 2L],
+    x = as.numeric(mat[nz]),
+    dims = d
+  )
+}
+
+#' Build Sparse B-Spline + Categorical OHE Design Matrix
+#'
+#' @keywords internal
+#' @noRd
+.build_sparse_spline_design <- function(x, cat_schema = NULL, state = NULL,
+                                        n_knots = 5L, degree = 2L,
+                                        include_linear = TRUE, max_cat_levels = 64L) {
+  if (!requireNamespace("Matrix", quietly = TRUE) ||
+      !requireNamespace("splines", quietly = TRUE)) {
+    stop("Packages 'Matrix' and 'splines' are required for sparse spline designs.")
+  }
+  n <- nrow(x)
+  p <- ncol(x)
+
+  if (is.null(state)) {
+    n_knots <- max(0L, as.integer(n_knots))
+    degree <- max(1L, min(3L, as.integer(degree)))
+    include_linear <- .parse_bool_flag(include_linear, default = TRUE)
+    max_cat_levels <- max(1L, as.integer(max_cat_levels))
+
+    cat_info <- .resolve_cat_cols(x, cat_schema = cat_schema)
+    cat_set <- cat_info$cols
+    num_cols <- setdiff(seq_len(p), cat_set)
+    in_names <- colnames(x)
+    if (is.null(in_names)) in_names <- paste0("V", seq_len(p))
+
+    sub_idx <- if (n > 20000L) {
+      unique(as.integer(round(seq.int(1, n, length.out = 20000L))))
+    } else {
+      seq_len(n)
+    }
+
+    blocks <- list()
+    col_group <- integer(0L)
+    out_names <- character(0L)
+    num_specs <- list()
+
+    for (j in num_cols) {
+      v <- as.numeric(x[, j])
+      ok <- is.finite(v)
+      if (!any(ok)) next
+      m <- mean(v[ok])
+      if (!all(ok)) v[!ok] <- m
+      s <- if (n > 1L) stats::sd(v) else 0.0
+      if (!is.finite(s) || s <= 1e-12) next
+      vs <- (v - m) / s
+      bmin <- min(vs)
+      bmax <- max(vs)
+      if (!is.finite(bmin) || !is.finite(bmax) || bmax <= bmin) next
+
+      vs_sub <- vs[sub_idx]
+      u_n <- length(unique(vs_sub))
+      emit_linear <- isTRUE(include_linear) || u_n < 3L
+      knots_vec <- NULL
+      deg_eff <- 0L
+      has_spline <- FALSE
+
+      if (u_n >= 3L && (n_knots > 0L || !isTRUE(include_linear))) {
+        ik <- if (n_knots > 0L) {
+          probs <- seq(0, 1, length.out = n_knots + 2L)[-c(1L, n_knots + 2L)]
+          sort(unique(stats::quantile(vs_sub, probs = probs, names = FALSE, type = 7L)))
+        } else {
+          numeric(0L)
+        }
+        ik <- ik[ik > bmin + 1e-12 & ik < bmax - 1e-12]
+        if (length(ik) > n_knots && n_knots > 0L) ik <- ik[seq_len(n_knots)]
+        deg_eff <- max(1L, min(degree, u_n - 1L))
+        B <- tryCatch(
+          splines::bs(vs, knots = ik, degree = deg_eff,
+                      Boundary.knots = c(bmin, bmax), intercept = FALSE),
+          error = function(e) NULL
+        )
+        if (!is.null(B) && ncol(B) > 0L) {
+          has_spline <- TRUE
+          knots_vec <- ik
+          B_mat <- unclass(B)
+          dimnames(B_mat) <- NULL
+          sp_B <- .to_dgc(B_mat)
+        }
+      }
+
+      if (emit_linear) {
+        nz_v <- which(vs != 0)
+        sp_lin <- Matrix::sparseMatrix(i = nz_v, j = rep.int(1L, length(nz_v)), x = vs[nz_v], dims = c(n, 1L))
+        blocks[[length(blocks) + 1L]] <- sp_lin
+        col_group <- c(col_group, j)
+        out_names <- c(out_names, paste0(in_names[j], "__lin"))
+      }
+      if (has_spline) {
+        blocks[[length(blocks) + 1L]] <- sp_B
+        col_group <- c(col_group, rep(j, ncol(sp_B)))
+        out_names <- c(out_names, paste0(in_names[j], "__sp", seq_len(ncol(sp_B))))
+      }
+
+      num_specs[[length(num_specs) + 1L]] <- list(
+        orig_col = j,
+        mean = m,
+        sd = s,
+        bmin = bmin,
+        bmax = bmax,
+        emit_linear = emit_linear,
+        has_spline = has_spline,
+        knots = knots_vec,
+        degree = deg_eff
+      )
+    }
+
+    cat_specs <- list()
+    for (idx_c in seq_along(cat_set)) {
+      j <- cat_set[idx_c]
+      K_keep <- min(cat_info$cardinalities[idx_c], max_cat_levels)
+      code <- suppressWarnings(as.integer(floor(x[, j])))
+      bad <- is.na(code) | code < 1L | code > K_keep
+      code[bad] <- K_keep + 1L
+      sp_cat <- Matrix::sparseMatrix(i = seq_len(n), j = code, x = 1.0,
+                                     dims = c(n, K_keep + 1L))
+      blocks[[length(blocks) + 1L]] <- sp_cat
+      col_group <- c(col_group, rep(j, K_keep + 1L))
+      out_names <- c(out_names, paste0(in_names[j], "__cat", seq_len(K_keep + 1L)))
+      cat_specs[[length(cat_specs) + 1L]] <- list(orig_col = j, K_keep = K_keep)
+    }
+
+    design <- if (length(blocks) > 0L) {
+      do.call(cbind, blocks)
+    } else {
+      Matrix::sparseMatrix(i = integer(0L), j = integer(0L), x = numeric(0L), dims = c(n, 0L))
+    }
+    if (ncol(design) > 0L) colnames(design) <- out_names
+
+    state_out <- list(
+      p_in = p,
+      in_names = in_names,
+      num_specs = num_specs,
+      cat_specs = cat_specs,
+      col_group = col_group,
+      out_names = out_names
+    )
+    return(list(matrix = design, state = state_out))
+  }
+
+  # Predict-time alignment reusing exact saved knots, boundary clamps, and OHE widths
+  blocks <- list()
+  for (sp in state$num_specs) {
+    v <- as.numeric(x[, sp$orig_col])
+    bad <- !is.finite(v)
+    if (any(bad)) v[bad] <- sp$mean
+    vs <- (v - sp$mean) / sp$sd
+
+    if (isTRUE(sp$emit_linear)) {
+      nz_v <- which(vs != 0)
+      blocks[[length(blocks) + 1L]] <- Matrix::sparseMatrix(
+        i = nz_v, j = rep.int(1L, length(nz_v)), x = vs[nz_v], dims = c(n, 1L)
+      )
+    }
+    if (isTRUE(sp$has_spline)) {
+      vs_clamp <- pmin(pmax(vs, sp$bmin), sp$bmax)
+      B <- splines::bs(vs_clamp, knots = sp$knots, degree = sp$degree,
+                       Boundary.knots = c(sp$bmin, sp$bmax), intercept = FALSE)
+      B_mat <- unclass(B)
+      dimnames(B_mat) <- NULL
+      blocks[[length(blocks) + 1L]] <- .to_dgc(B_mat)
+    }
+  }
+  for (cs in state$cat_specs) {
+    K_keep <- cs$K_keep
+    code <- suppressWarnings(as.integer(floor(x[, cs$orig_col])))
+    bad <- is.na(code) | code < 1L | code > K_keep
+    code[bad] <- K_keep + 1L
+    blocks[[length(blocks) + 1L]] <- Matrix::sparseMatrix(
+      i = seq_len(n), j = code, x = 1.0, dims = c(n, K_keep + 1L)
+    )
+  }
+
+  design <- if (length(blocks) > 0L) {
+    do.call(cbind, blocks)
+  } else {
+    Matrix::sparseMatrix(i = integer(0L), j = integer(0L), x = numeric(0L), dims = c(n, 0L))
+  }
+  if (ncol(design) > 0L && length(state$out_names) == ncol(design)) {
+    colnames(design) <- state$out_names
+  }
+  design
 }

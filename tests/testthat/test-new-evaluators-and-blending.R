@@ -625,7 +625,7 @@ test_that("End-to-end cat_schema preserves logical flag_active and handles unsee
     if ("flag_active" %in% names(feat_te)) {
       expect_true(is.logical(feat_te$flag_active) || is.numeric(feat_te$flag_active))
     }
-    san_tr <- evoFE:::.sanitize_with_cat_schema(tr_df[, setdiff(names(tr_df), "target")])
+    san_tr <- evoFE:::.sanitize_feature_matrix(tr_df[, setdiff(names(tr_df), "target")])
     cs_tr <- attr(san_tr, "cat_schema", exact = TRUE)
     expect_false("flag_active" %in% names(cs_tr$levels))
     expect_true(all(san_tr[, "flag_active"] %in% c(0, 1)))

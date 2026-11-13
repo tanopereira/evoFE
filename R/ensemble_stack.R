@@ -64,29 +64,17 @@
 .blend_ensemble_preds <- function(preds_list, weights, stack_space = "prob") {
   is_mat <- is.matrix(preds_list[[1L]])
   use_logit <- identical(stack_space, "logit")
+  w_names <- names(weights)
+  p_names <- names(preds_list)
   out <- NULL
 
-  if (!is_mat) {
-    for (j in seq_along(preds_list)) {
-      wj <- weights[j]
-      if (!is.finite(wj) || wj <= 0) next
-      pj <- preds_list[[j]]
-      if (use_logit) {
-        pj <- .prob_to_logit(pj)
-      } else {
-        pj[!is.finite(pj)] <- 0
-      }
-      out <- if (is.null(out)) wj * pj else out + wj * pj
-    }
-    if (is.null(out)) {
-      n_obs <- length(preds_list[[1L]])
-      return(numeric(n_obs))
-    }
-    return(if (use_logit) .logit_to_prob(out) else as.vector(out))
-  }
-
   for (j in seq_along(preds_list)) {
-    wj <- weights[j]
+    nm <- if (!is.null(p_names)) p_names[j] else NULL
+    wj <- if (!is.null(nm) && nzchar(nm) && !is.null(w_names) && nm %in% w_names) {
+      weights[[nm]]
+    } else {
+      weights[j]
+    }
     if (!is.finite(wj) || wj <= 0) next
     pj <- preds_list[[j]]
     if (use_logit) {
@@ -95,6 +83,13 @@
       pj[!is.finite(pj)] <- 0
     }
     out <- if (is.null(out)) wj * pj else out + wj * pj
+  }
+
+  if (!is_mat) {
+    if (is.null(out)) {
+      return(numeric(length(preds_list[[1L]])))
+    }
+    return(if (use_logit) .logit_to_prob(out) else as.vector(out))
   }
   if (is.null(out)) return(NULL)
   if (use_logit) {
@@ -458,74 +453,52 @@
       }
     }
   }
-  x_mat <- if (!is.null(cs) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
-    .sanitize_feature_matrix(feat_dt, cat_schema = cs)
-  } else {
-    .sanitize_feature_matrix(feat_dt)
-  }
+  x_mat <- .sanitize_feature_matrix(feat_dt, cat_schema = cs)
   if (is.null(x_mat) || ncol(x_mat) == 0L) return(NULL)
 
-  p <- ncol(x_mat)
-  col_medians <- if (is.null(fit_spec)) {
-    vapply(seq_len(p), function(j) {
-      v <- x_mat[, j]
-      fin <- is.finite(v)
-      if (!any(fin)) return(0.0)
-      m <- stats::median(v[fin])
-      if (is.finite(m)) m else 0.0
-    }, numeric(1L))
-  } else {
-    fit_spec$col_medians
-  }
-
-  for (j in seq_len(p)) {
-    bad <- !is.finite(x_mat[, j])
-    if (any(bad)) x_mat[bad, j] <- col_medians[j]
-  }
-
-  spline_spec <- if (is.null(fit_spec)) vector("list", p) else fit_spec$spline_spec
-  if (identical(mode, "spline_lm") && requireNamespace("splines", quietly = TRUE)) {
-    cols_list <- vector("list", p)
-    for (j in seq_len(p)) {
-      v <- x_mat[, j]
-      if (is.null(fit_spec)) {
-        ux <- unique(v)
-        b_knots <- range(v)
-        if (length(ux) >= 6L && b_knots[2] > b_knots[1]) {
-          knots <- unique(stats::quantile(v, probs = c(0.25, 0.50, 0.75), names = FALSE))
-          knots <- knots[knots > b_knots[1] & knots < b_knots[2]]
-          if (length(knots) >= 1L) {
-            spline_spec[[j]] <- list(knots = knots, boundary = b_knots)
-          }
-        }
-      }
-      sp <- spline_spec[[j]]
-      if (!is.null(sp)) {
-        v_clamped <- pmin(pmax(v, sp$boundary[1]), sp$boundary[2])
-        cols_list[[j]] <- splines::bs(
-          v_clamped,
-          knots = sp$knots,
-          Boundary.knots = sp$boundary,
-          degree = 3L,
-          intercept = FALSE
-        )
-      } else {
-        cols_list[[j]] <- matrix(v, ncol = 1L)
-      }
+  col_means <- NULL
+  spline_state <- NULL
+  if (identical(mode, "spline_lm") &&
+      requireNamespace("splines", quietly = TRUE) &&
+      requireNamespace("Matrix", quietly = TRUE)) {
+    if (is.null(fit_spec)) {
+      sp <- .build_sparse_spline_design(
+        x_mat,
+        cat_schema = cs,
+        n_knots = 3L,
+        degree = 3L,
+        include_linear = TRUE,
+        max_cat_levels = 32L
+      )
+      x_mat <- sp$matrix
+      spline_state <- sp$state
+    } else if (!is.null(fit_spec$spline_state)) {
+      x_mat <- .build_sparse_spline_design(
+        x_mat,
+        cat_schema = cs,
+        state = fit_spec$spline_state
+      )
+      spline_state <- fit_spec$spline_state
     }
-    x_mat <- do.call(cbind, cols_list)
-  }
-
-  if (requireNamespace("Matrix", quietly = TRUE)) {
-    x_mat <- Matrix::Matrix(x_mat, sparse = TRUE)
+  } else {
+    imp <- .impute_and_col_stats(
+      x_mat,
+      means = if (!is.null(fit_spec)) fit_spec$col_means else NULL,
+      compute_sd = FALSE
+    )
+    x_mat <- imp$mat
+    col_means <- imp$col_means
+    if (requireNamespace("Matrix", quietly = TRUE)) {
+      x_mat <- Matrix::Matrix(x_mat, sparse = TRUE)
+    }
   }
 
   list(
     x = x_mat,
     spec = list(
       feature_names = feature_names,
-      col_medians = col_medians,
-      spline_spec = spline_spec,
+      col_means = col_means,
+      spline_state = spline_state,
       mode = mode
     )
   )

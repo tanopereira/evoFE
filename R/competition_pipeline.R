@@ -137,9 +137,7 @@
     keras3 = "keras3",
     lm = "glmnet",
     spline_lm = "glmnet",
-    rff = "glmnet",
-    ranger = "ranger",
-    tabm = "torch"
+    ranger = "ranger"
   )
   kept <- character(0)
   for (ev in evaluators) {

@@ -171,7 +171,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
       allow_prune = TRUE, state_cache = NULL, full_data = NULL
     )
     feats <- extract_individual_features(res_f$ind, target_col = target_col, unique = TRUE)
-    fm_cat_schema <- if (!is.null(fm$cat_schema)) fm$cat_schema else fm$model$cat_schema
+    fm_cat_schema <- if (!is.null(fm$cat_schema)) fm$cat_schema else if (is.list(fm$model)) fm$model$cat_schema else NULL
     missing_feats <- setdiff(feats, names(res_f$train))
     if (length(missing_feats) > 0L) {
       cat_names_fm <- if (!is.null(fm_cat_schema) && !is.null(fm_cat_schema$names)) fm_cat_schema$names else character(0)

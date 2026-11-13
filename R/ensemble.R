@@ -642,11 +642,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       features <- setdiff(features, target_col)
 
       cs_i <- rec_i$cat_schema
-      x_full <- if (!is.null(cs_i) && "cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
-        .sanitize_feature_matrix(res_full$train[, features, with = FALSE], cat_schema = cs_i)
-      } else {
-        .sanitize_feature_matrix(res_full$train[, features, with = FALSE])
-      }
+      x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE], cat_schema = cs_i)
       if (is.null(active_cat_schemas[[name]]) && !is.null(attr(x_full, "cat_schema", exact = TRUE))) {
         active_cat_schemas[[name]] <- attr(x_full, "cat_schema", exact = TRUE)
       }

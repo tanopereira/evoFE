@@ -337,147 +337,6 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   "max.depth"
 )
 
-# Parse boolean tuner/stage flags cleanly (make_tunable yields "TRUE"/"FALSE" strings)
-.parse_bool_flag <- function(x, default = FALSE) {
-  if (is.null(x) || length(x) == 0L) return(default)
-  v <- x[[1L]]
-  if (is.logical(v)) return(!is.na(v) && v)
-  if (is.numeric(v)) return(is.finite(v) && v != 0)
-  if (is.character(v)) {
-    s <- tolower(trimws(v))
-    if (s %in% c("true", "t", "1", "yes")) return(TRUE)
-    if (s %in% c("false", "f", "0", "no")) return(FALSE)
-  }
-  default
-}
-
-# Sanitize inputs with cat_schema propagation, compatible before and after R/utils.R update
-.sanitize_with_cat_schema <- function(x, threads = default_threads(), cat_schema = NULL) {
-  if (is.null(x)) return(NULL)
-  if (inherits(x, "sparseMatrix")) return(x)
-
-  if ("cat_schema" %in% names(formals(.sanitize_feature_matrix))) {
-    return(.sanitize_feature_matrix(x, threads = threads, cat_schema = cat_schema))
-  }
-
-  if (is.data.frame(x)) {
-    col_names <- names(x)
-    if (!is.null(cat_schema) && length(cat_schema$names) > 0L) {
-      df_work <- as.data.frame(x)
-      for (nm in cat_schema$names) {
-        if (!(nm %in% col_names)) next
-        lv <- cat_schema$levels[[nm]]
-        df_work[[nm]] <- as.numeric(match(as.character(df_work[[nm]]), lv))
-      }
-      mat <- .sanitize_feature_matrix(df_work, threads = threads)
-      attr(mat, "cat_schema") <- cat_schema
-      return(mat)
-    }
-
-    is_cat <- vapply(x, function(col) is.factor(col) || is.character(col), logical(1L))
-    if (any(is_cat)) {
-      cat_idx <- which(is_cat)
-      cat_nms <- col_names[cat_idx]
-      lv_list <- vector("list", length(cat_idx))
-      names(lv_list) <- cat_nms
-      df_work <- as.data.frame(x)
-      for (k in seq_along(cat_idx)) {
-        j <- cat_idx[k]
-        col <- df_work[[j]]
-        lv <- if (is.factor(col)) levels(col) else sort(unique(as.character(col[!is.na(col)])))
-        if (length(lv) == 0L) lv <- character(0L)
-        lv_list[[k]] <- lv
-        df_work[[j]] <- as.numeric(match(as.character(col), lv))
-      }
-      schema_out <- list(
-        cols = as.integer(cat_idx),
-        names = cat_nms,
-        levels = lv_list,
-        cardinalities = as.integer(lengths(lv_list))
-      )
-      mat <- .sanitize_feature_matrix(df_work, threads = threads)
-      attr(mat, "cat_schema") <- schema_out
-      return(mat)
-    }
-    return(.sanitize_feature_matrix(x, threads = threads))
-  }
-
-  cs_in <- attr(x, "cat_schema", exact = TRUE)
-  out <- .sanitize_feature_matrix(x, threads = threads)
-  if (!is.null(cat_schema)) {
-    attr(out, "cat_schema") <- cat_schema
-  } else if (!is.null(cs_in)) {
-    attr(out, "cat_schema") <- cs_in
-  }
-  out
-}
-
-# Resolve valid 1-based categorical column indices and cardinalities from matrix/schema/args
-.resolve_cat_cols <- function(x, extra_args = list(),
-                              cat_schema = attr(x, "cat_schema", exact = TRUE)) {
-  p <- ncol(x)
-  cs <- if (!is.null(cat_schema)) cat_schema else extra_args$cat_schema
-  raw_cols <- if (!is.null(cs$cols)) cs$cols else extra_args$cat_cols
-  if (is.null(raw_cols) || length(raw_cols) == 0L || p == 0L) {
-    return(list(cols = integer(0L), cardinalities = integer(0L), schema = cs))
-  }
-  raw_cols <- as.integer(raw_cols)
-  keep <- is.finite(raw_cols) & raw_cols >= 1L & raw_cols <= p
-  cols <- raw_cols[keep]
-  if (length(cols) == 0L) {
-    return(list(cols = integer(0L), cardinalities = integer(0L), schema = cs))
-  }
-  ord <- !duplicated(cols)
-  cols <- cols[ord]
-
-  cards <- integer(length(cols))
-  if (!is.null(cs$cardinalities) && length(cs$cardinalities) == length(raw_cols)) {
-    cards <- as.integer(cs$cardinalities[keep][ord])
-  } else if (!is.null(cs$levels) && length(cs$levels) >= length(cols)) {
-    cards <- as.integer(lengths(cs$levels)[seq_along(cols)])
-  } else if (!is.null(extra_args$cat_cardinalities) &&
-             length(extra_args$cat_cardinalities) == length(raw_cols)) {
-    cards <- as.integer(extra_args$cat_cardinalities[keep][ord])
-  } else {
-    for (i in seq_along(cols)) {
-      mx <- suppressWarnings(max(x[, cols[i]], na.rm = TRUE))
-      cards[i] <- if (is.finite(mx) && mx >= 1) as.integer(ceiling(mx)) else 1L
-    }
-  }
-  cards <- pmax(1L, cards)
-  list(cols = cols, cardinalities = cards, schema = cs)
-}
-
-# Predict-time offset resolver compatible before and after .resolve_offset_args(n_new = ...)
-.get_predict_offset <- function(extra_args, n_new, task = "regression",
-                                num_class = NULL, target_levels = NULL) {
-  if ("n_new" %in% names(formals(.resolve_offset_args))) {
-    return(.resolve_offset_args(
-      extra_args,
-      n_new = as.integer(n_new),
-      task = task,
-      num_class = num_class,
-      target_levels = target_levels
-    )$new)
-  }
-  raw_nw <- NULL
-  for (k in c("newoffset", "new_base_margin", "init_score", "base_margin", "baseline", "offset")) {
-    if (!is.null(extra_args[[k]])) {
-      raw_nw <- extra_args[[k]]
-      break
-    }
-  }
-  if (is.null(raw_nw)) return(NULL)
-  .resolve_offset_args(
-    list(newoffset = raw_nw),
-    n_train = as.integer(n_new),
-    n_val = NULL,
-    task = task,
-    num_class = num_class,
-    target_levels = target_levels
-  )$new
-}
-
 # Combine raw margin predictions with offset and apply link inverse
 .apply_raw_margin_offset <- function(raw_preds, offset_vec, task, n_rows, num_class = NULL) {
   if (task == "regression") {
@@ -495,257 +354,6 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   row_max <- z[cbind(seq_len(nrow(z)), max.col(z, ties.method = "first"))]
   ez <- exp(z - row_max)
   ez / rowSums(ez)
-}
-
-# Shared mean-imputation and column statistics (C++ accelerated when available, zero-copy when finite)
-.impute_and_col_stats <- function(mat, means = NULL, compute_sd = TRUE, threads = 1L) {
-  fn <- get0("rcpp_impute_and_col_stats", mode = "function")
-  if (!is.null(fn)) {
-    return(fn(mat, means = means, compute_sd = isTRUE(compute_sd), threads = as.integer(threads)))
-  }
-
-  if (!is.matrix(mat) || storage.mode(mat) != "double") {
-    mat <- as.matrix(mat)
-    storage.mode(mat) <- "double"
-  }
-  n <- nrow(mat)
-  p <- ncol(mat)
-  col_means <- if (!is.null(means)) as.numeric(means) else numeric(p)
-  col_sds <- if (isTRUE(compute_sd)) rep(1.0, p) else numeric(0L)
-  if (n == 0L || p == 0L) {
-    return(list(mat = mat, col_means = col_means, col_sds = col_sds))
-  }
-
-  # range() scans in C without allocating an N x p logical mask
-  rng <- suppressWarnings(range(mat))
-  has_nonfinite <- !all(is.finite(rng))
-  out_mat <- mat
-
-  if (!has_nonfinite) {
-    if (is.null(means)) col_means <- base::colMeans(out_mat)
-    if (isTRUE(compute_sd) && n > 1L) {
-      for (j in seq_len(p)) {
-        s <- stats::sd(out_mat[, j])
-        col_sds[j] <- if (is.finite(s) && s > 0) s else 1.0
-      }
-    }
-    return(list(mat = out_mat, col_means = col_means, col_sds = col_sds))
-  }
-
-  for (j in seq_len(p)) {
-    col_j <- out_mat[, j]
-    bad <- !is.finite(col_j)
-    m_j <- if (!is.null(means)) {
-      col_means[j]
-    } else {
-      good <- col_j[!bad]
-      if (length(good) > 0L) mean(good) else 0.0
-    }
-    if (!is.finite(m_j)) m_j <- 0.0
-    if (is.null(means)) col_means[j] <- m_j
-    if (any(bad)) {
-      # R copy-on-modify clones out_mat at most once when the first non-finite column is patched
-      out_mat[bad, j] <- m_j
-    }
-    if (isTRUE(compute_sd) && n > 1L) {
-      s <- stats::sd(out_mat[, j])
-      col_sds[j] <- if (is.finite(s) && s > 0) s else 1.0
-    }
-  }
-  list(mat = out_mat, col_means = col_means, col_sds = col_sds)
-}
-
-.to_dgc <- function(mat) {
-  d <- dim(mat)
-  nz <- which(mat != 0, arr.ind = TRUE)
-  Matrix::sparseMatrix(
-    i = nz[, 1L],
-    j = nz[, 2L],
-    x = as.numeric(mat[nz]),
-    dims = d
-  )
-}
-
-# Build sparse B-spline + categorical OHE design for spline_lm (consistent column alignment at predict)
-.build_sparse_spline_design <- function(x, cat_schema = NULL, state = NULL,
-                                        n_knots = 5L, degree = 2L,
-                                        include_linear = TRUE, max_cat_levels = 64L) {
-  if (!requireNamespace("Matrix", quietly = TRUE) ||
-      !requireNamespace("splines", quietly = TRUE)) {
-    stop("Packages 'Matrix' and 'splines' are required for 'spline_lm'.")
-  }
-  n <- nrow(x)
-  p <- ncol(x)
-
-  if (is.null(state)) {
-    n_knots <- max(0L, as.integer(n_knots))
-    degree <- max(1L, min(3L, as.integer(degree)))
-    include_linear <- .parse_bool_flag(include_linear, default = TRUE)
-    max_cat_levels <- max(1L, as.integer(max_cat_levels))
-
-    cat_info <- .resolve_cat_cols(x, cat_schema = cat_schema)
-    cat_set <- cat_info$cols
-    num_cols <- setdiff(seq_len(p), cat_set)
-    in_names <- colnames(x)
-    if (is.null(in_names)) in_names <- paste0("V", seq_len(p))
-
-    sub_idx <- if (n > 20000L) {
-      unique(as.integer(round(seq.int(1, n, length.out = 20000L))))
-    } else {
-      seq_len(n)
-    }
-
-    blocks <- list()
-    col_group <- integer(0L)
-    out_names <- character(0L)
-    num_specs <- list()
-
-    for (j in num_cols) {
-      v <- as.numeric(x[, j])
-      ok <- is.finite(v)
-      if (!any(ok)) next
-      m <- mean(v[ok])
-      if (!all(ok)) v[!ok] <- m
-      s <- if (n > 1L) stats::sd(v) else 0.0
-      if (!is.finite(s) || s <= 1e-12) next
-      vs <- (v - m) / s
-      bmin <- min(vs)
-      bmax <- max(vs)
-      if (!is.finite(bmin) || !is.finite(bmax) || bmax <= bmin) next
-
-      vs_sub <- vs[sub_idx]
-      u_n <- length(unique(vs_sub))
-      emit_linear <- isTRUE(include_linear) || u_n < 3L
-      knots_vec <- NULL
-      deg_eff <- 0L
-      has_spline <- FALSE
-
-      if (u_n >= 3L && (n_knots > 0L || !isTRUE(include_linear))) {
-        ik <- if (n_knots > 0L) {
-          probs <- seq(0, 1, length.out = n_knots + 2L)[-c(1L, n_knots + 2L)]
-          sort(unique(stats::quantile(vs_sub, probs = probs, names = FALSE, type = 7L)))
-        } else {
-          numeric(0L)
-        }
-        ik <- ik[ik > bmin + 1e-12 & ik < bmax - 1e-12]
-        if (length(ik) > n_knots && n_knots > 0L) ik <- ik[seq_len(n_knots)]
-        deg_eff <- max(1L, min(degree, u_n - 1L))
-        B <- tryCatch(
-          splines::bs(vs, knots = ik, degree = deg_eff,
-                      Boundary.knots = c(bmin, bmax), intercept = FALSE),
-          error = function(e) NULL
-        )
-        if (!is.null(B) && ncol(B) > 0L) {
-          has_spline <- TRUE
-          knots_vec <- ik
-          B_mat <- unclass(B)
-          dimnames(B_mat) <- NULL
-          sp_B <- .to_dgc(B_mat)
-        }
-      }
-
-      if (emit_linear) {
-        nz_v <- which(vs != 0)
-        sp_lin <- Matrix::sparseMatrix(i = nz_v, j = rep.int(1L, length(nz_v)), x = vs[nz_v], dims = c(n, 1L))
-        blocks[[length(blocks) + 1L]] <- sp_lin
-        col_group <- c(col_group, j)
-        out_names <- c(out_names, paste0(in_names[j], "__lin"))
-      }
-      if (has_spline) {
-        blocks[[length(blocks) + 1L]] <- sp_B
-        col_group <- c(col_group, rep(j, ncol(sp_B)))
-        out_names <- c(out_names, paste0(in_names[j], "__sp", seq_len(ncol(sp_B))))
-      }
-
-      num_specs[[length(num_specs) + 1L]] <- list(
-        orig_col = j,
-        mean = m,
-        sd = s,
-        bmin = bmin,
-        bmax = bmax,
-        emit_linear = emit_linear,
-        has_spline = has_spline,
-        knots = knots_vec,
-        degree = deg_eff
-      )
-    }
-
-    cat_specs <- list()
-    for (idx_c in seq_along(cat_set)) {
-      j <- cat_set[idx_c]
-      K_keep <- min(cat_info$cardinalities[idx_c], max_cat_levels)
-      code <- suppressWarnings(as.integer(floor(x[, j])))
-      bad <- is.na(code) | code < 1L | code > K_keep
-      code[bad] <- K_keep + 1L
-      sp_cat <- Matrix::sparseMatrix(i = seq_len(n), j = code, x = 1.0,
-                                     dims = c(n, K_keep + 1L))
-      blocks[[length(blocks) + 1L]] <- sp_cat
-      col_group <- c(col_group, rep(j, K_keep + 1L))
-      out_names <- c(out_names, paste0(in_names[j], "__cat", seq_len(K_keep + 1L)))
-      cat_specs[[length(cat_specs) + 1L]] <- list(orig_col = j, K_keep = K_keep)
-    }
-
-    design <- if (length(blocks) > 0L) {
-      do.call(cbind, blocks)
-    } else {
-      Matrix::sparseMatrix(i = integer(0L), j = integer(0L), x = numeric(0L), dims = c(n, 0L))
-    }
-    if (ncol(design) > 0L) colnames(design) <- out_names
-
-    state_out <- list(
-      p_in = p,
-      in_names = in_names,
-      num_specs = num_specs,
-      cat_specs = cat_specs,
-      col_group = col_group,
-      out_names = out_names
-    )
-    return(list(matrix = design, state = state_out))
-  }
-
-  # Predict-time alignment reusing exact saved knots, boundary clamps, and OHE widths
-  blocks <- list()
-  for (sp in state$num_specs) {
-    v <- as.numeric(x[, sp$orig_col])
-    bad <- !is.finite(v)
-    if (any(bad)) v[bad] <- sp$mean
-    vs <- (v - sp$mean) / sp$sd
-
-    if (isTRUE(sp$emit_linear)) {
-      nz_v <- which(vs != 0)
-      blocks[[length(blocks) + 1L]] <- Matrix::sparseMatrix(
-        i = nz_v, j = rep.int(1L, length(nz_v)), x = vs[nz_v], dims = c(n, 1L)
-      )
-    }
-    if (isTRUE(sp$has_spline)) {
-      # Clamp outside training range so splines extrapolate constantly without errors
-      vs_clamp <- pmin(pmax(vs, sp$bmin), sp$bmax)
-      B <- splines::bs(vs_clamp, knots = sp$knots, degree = sp$degree,
-                       Boundary.knots = c(sp$bmin, sp$bmax), intercept = FALSE)
-      B_mat <- unclass(B)
-      dimnames(B_mat) <- NULL
-      blocks[[length(blocks) + 1L]] <- .to_dgc(B_mat)
-    }
-  }
-  for (cs in state$cat_specs) {
-    K_keep <- cs$K_keep
-    code <- suppressWarnings(as.integer(floor(x[, cs$orig_col])))
-    bad <- is.na(code) | code < 1L | code > K_keep
-    code[bad] <- K_keep + 1L
-    blocks[[length(blocks) + 1L]] <- Matrix::sparseMatrix(
-      i = seq_len(n), j = code, x = 1.0, dims = c(n, K_keep + 1L)
-    )
-  }
-
-  design <- if (length(blocks) > 0L) {
-    do.call(cbind, blocks)
-  } else {
-    Matrix::sparseMatrix(i = integer(0L), j = integer(0L), x = numeric(0L), dims = c(n, 0L))
-  }
-  if (ncol(design) > 0L && length(state$out_names) == ncol(design)) {
-    colnames(design) <- state$out_names
-  }
-  design
 }
 
 # Build dense numeric + bounded OHE matrix for RFF (zero-copy when purely numeric)
@@ -868,9 +476,9 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
   if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
 
-  x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+  x_train <- .sanitize_feature_matrix(x_train, threads = threads)
   cs <- attr(x_train, "cat_schema", exact = TRUE)
-  x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+  x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
   cat_info <- .resolve_cat_cols(x_train, extra_args = extra_params, cat_schema = cs)
   cat_cols <- cat_info$cols
 
@@ -1110,10 +718,10 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
     th <- if (!is.null(model$params$num_threads)) as.integer(model$params$num_threads) else default_threads()
   }
   cs <- attr(model, "evofe_cat_schema", exact = TRUE)
-  x_new <- .sanitize_with_cat_schema(x_new, threads = th, cat_schema = cs)
+  x_new <- .sanitize_feature_matrix(x_new, threads = th, cat_schema = cs)
   nc <- attr(model, "evofe_num_class", exact = TRUE)
   if (is.null(nc) && identical(task, "multiclass")) nc <- model$params$num_class
-  off_new <- .get_predict_offset(extra_args, n_new = nrow(x_new), task = task, num_class = nc)
+  off_new <- .resolve_offset_args(extra_args, n_new = nrow(x_new), task = task, num_class = nc)$new
 
   num_iter <- if (!is.null(extra_args$num_iteration)) {
     as.integer(extra_args$num_iteration)
@@ -1226,9 +834,9 @@ register_evaluator(
     if (!is.null(extra_params$n_rounds)) nrounds <- as.integer(extra_params$n_rounds)
     if (!is.null(extra_params$nrounds)) nrounds <- as.integer(extra_params$nrounds)
 
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
     cat_info <- .resolve_cat_cols(x_train, extra_args = extra_params, cat_schema = cs)
     cat_cols <- cat_info$cols
     ft <- if (length(cat_cols) > 0L) {
@@ -1487,11 +1095,11 @@ register_evaluator(
       }, error = function(e) NULL)
     }
     cs_model <- attr(model, "evofe_cat_schema", exact = TRUE)
-    x_new <- .sanitize_with_cat_schema(x_new, threads = th, cat_schema = cs_model)
+    x_new <- .sanitize_feature_matrix(x_new, threads = th, cat_schema = cs_model)
     ft <- attr(model, "evofe_feature_types", exact = TRUE)
     cat_cols <- attr(model, "evofe_cat_cols", exact = TRUE)
     nc <- attr(model, "evofe_num_class", exact = TRUE)
-    off_new <- .get_predict_offset(extra_args, n_new = nrow(x_new), task = task, num_class = nc)
+    off_new <- .resolve_offset_args(extra_args, n_new = nrow(x_new), task = task, num_class = nc)$new
 
     best_iter <- .xgb_best_iter(model)
     iter_range <- if (!is.null(extra_args$iterationrange)) {
@@ -1562,9 +1170,9 @@ register_evaluator(
     }
     threads <- max(1L, threads_val)
 
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
     cat_info <- .resolve_cat_cols(x_train, extra_args = extra_params, cat_schema = cs)
     cat_cols <- cat_info$cols
 
@@ -1891,11 +1499,11 @@ register_evaluator(
       default_threads()
     }
     cs_model <- attr(model, "evofe_cat_schema", exact = TRUE)
-    x_new <- .sanitize_with_cat_schema(x_new, threads = th, cat_schema = cs_model)
+    x_new <- .sanitize_feature_matrix(x_new, threads = th, cat_schema = cs_model)
     cat_cols <- attr(model, "evofe_cat_cols", exact = TRUE)
     nc <- attr(model, "evofe_num_class", exact = TRUE)
     if (is.null(nc) && !is.null(user_args$num_class)) nc <- user_args$num_class
-    off_new <- .get_predict_offset(user_args, n_new = nrow(x_new), task = task, num_class = nc)
+    off_new <- .resolve_offset_args(user_args, n_new = nrow(x_new), task = task, num_class = nc)$new
 
     dval <- .cb_load_pool(
       data = x_new,
@@ -2037,9 +1645,9 @@ register_evaluator(
     sd_x[!is.finite(sd_x) | sd_x <= 0] <- 1.0
     val_mat <- if (!is.null(x_val)) x_val else NULL
   } else {
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
     imp_tr <- .impute_and_col_stats(x_train, compute_sd = TRUE, threads = threads)
     x_mat <- imp_tr$mat
     col_means <- imp_tr$col_means
@@ -2369,7 +1977,7 @@ register_evaluator(
     x_mat <- x_new
     if (nrow(x_mat) == 0L || ncol(x_mat) == 0L) return(numeric(0L))
   } else {
-    x_mat <- .sanitize_with_cat_schema(x_new, cat_schema = model$cat_schema)
+    x_mat <- .sanitize_feature_matrix(x_new, cat_schema = model$cat_schema)
     if (is.null(x_mat) || length(x_mat) == 0L) return(numeric(0L))
   }
 
@@ -2378,13 +1986,13 @@ register_evaluator(
 
   off_new <- NULL
   if (isTRUE(model$uses_offset)) {
-    off_new <- .get_predict_offset(
+    off_new <- .resolve_offset_args(
       extra_args,
       n_new = n_new,
       task = task,
       num_class = model$num_class,
       target_levels = model$offset_levels
-    )
+    )$new
     if (is.null(off_new)) {
       off_new <- if (identical(task, "multiclass")) {
         k <- if (!is.null(model$offset_levels)) length(model$offset_levels) else if (!is.null(model$num_class)) as.integer(model$num_class) else 2L
@@ -2942,9 +2550,9 @@ register_evaluator(
     th <- .pick_first_param(extra_params, c("threads", "nthreads", "nthread", "num_threads", "n_jobs"), threads)
     threads <- as.integer(th)
 
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
 
     n_knots <- as.integer(.pick_first_param(extra_params, "n_knots", 5L))
     degree <- as.integer(.pick_first_param(extra_params, "degree", 2L))
@@ -2996,7 +2604,7 @@ register_evaluator(
     )
   },
   predict_func = function(model, x_new, task, ...) {
-    x_san <- .sanitize_with_cat_schema(x_new, cat_schema = model$cat_schema)
+    x_san <- .sanitize_feature_matrix(x_new, cat_schema = model$cat_schema)
     x_sp <- .build_sparse_spline_design(x_san, state = model$spline_state)
     .glmnet_predict_core(model = model$glmnet_model, x_new = x_sp, task = task, ...)
   },
@@ -3018,9 +2626,9 @@ register_evaluator(
     th <- .pick_first_param(extra_params, c("threads", "nthreads", "nthread", "num_threads", "n_jobs"), threads)
     threads <- max(1L, as.integer(th))
 
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
 
     max_cat_levels <- as.integer(.pick_first_param(extra_params, "max_cat_levels", 32L))
     ohe_tr <- .build_categorical_ohe_or_matrix(
@@ -3145,15 +2753,15 @@ register_evaluator(
     } else {
       default_threads()
     }
-    x_san <- .sanitize_with_cat_schema(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    x_san <- .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
     x_num <- .build_categorical_ohe_or_matrix(x_san, state = model$ohe_state, threads = n_threads)
-    off_new <- .get_predict_offset(
+    off_new <- .resolve_offset_args(
       extra_args,
       n_new = nrow(x_num),
       task = task,
       num_class = if (identical(task, "multiclass")) model$num_class else NULL,
       target_levels = model$levels_target
-    )
+    )$new
     raw_preds <- fn_predict(
       model$model_state,
       x_num,
@@ -3220,9 +2828,9 @@ register_evaluator(
     learner_verbose <- is_learner_verbose(extra_params$verbose)
     verbose_int <- if (learner_verbose) 1L else 0L
 
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
 
     cat_info <- .resolve_cat_cols(x_train, extra_args = extra_params, cat_schema = cs)
     cat_cols_arg <- if (length(cat_info$cols) > 0L) as.integer(cat_info$cols) else NULL
@@ -3321,7 +2929,7 @@ register_evaluator(
     } else {
       default_threads()
     }
-    x_san <- .sanitize_with_cat_schema(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    x_san <- .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
     raw_preds <- fn_predict(model$model_state, x_san, threads = n_threads)
     if (identical(task, "multiclass")) {
       probs <- as.matrix(raw_preds)
@@ -3336,7 +2944,6 @@ register_evaluator(
 
 # Helper to prepare NA-free ranger inputs (zero-copy numeric matrix fast path, factor DF when cats exist)
 .ranger_prepare_input <- function(x, cat_info = NULL, state = NULL, threads = 1L) {
-  n <- nrow(x)
   p <- ncol(x)
   if (is.null(state)) {
     in_names <- colnames(x)
@@ -3493,9 +3100,9 @@ register_evaluator(
       nrounds
     )))
 
-    x_train <- .sanitize_with_cat_schema(x_train, threads = threads)
+    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_with_cat_schema(x_val, threads = threads, cat_schema = cs)
+    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
 
     cat_info <- .resolve_cat_cols(x_train, extra_args = extra_params, cat_schema = cs)
     prep_tr <- .ranger_prepare_input(x_train, cat_info = cat_info, threads = threads)
@@ -3648,7 +3255,7 @@ register_evaluator(
     } else {
       default_threads()
     }
-    x_san <- .sanitize_with_cat_schema(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    x_san <- .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
     x_prep <- .ranger_prepare_input(x_san, state = model$prep_state, threads = n_threads)
     n_rows <- nrow(x_prep)
 
