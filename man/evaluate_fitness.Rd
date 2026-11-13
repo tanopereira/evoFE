@@ -101,6 +101,8 @@ evaluate_fitness(
 
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 
+\item{fitness_cache}{Optional environment mapping schema keys to cached evaluated individuals and pruned gene states across generations.}
+
 \item{...}{Additional arguments passed to the underlying evaluator training functions.}
 }
 \value{

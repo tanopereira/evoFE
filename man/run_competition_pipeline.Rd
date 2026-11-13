@@ -129,7 +129,7 @@ fit on top of Stage 5 ensemble margins: \code{"none"} (default), \code{"lm"}, or
 
 \item{submission_file}{Optional file path to write \code{$submission} via \code{data.table::fwrite()}.}
 
-\item{threads}{Integer thread count (default \code{\link{default_threads}()}).}
+\item{threads}{Integer thread count (default \code{default_threads()}).}
 
 \item{seed}{Integer RNG seed for reproducibility (caller's \code{.Random.seed} is preserved).}
 

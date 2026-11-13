@@ -667,7 +667,7 @@
 #'   fit on top of Stage 5 ensemble margins: \code{"none"} (default), \code{"lm"}, or
 #'   \code{"spline_lm"}.
 #' @param submission_file Optional file path to write \code{$submission} via \code{data.table::fwrite()}.
-#' @param threads Integer thread count (default \code{\link{default_threads}()}).
+#' @param threads Integer thread count (default \code{default_threads()}).
 #' @param seed Integer RNG seed for reproducibility (caller's \code{.Random.seed} is preserved).
 #' @param verbose Logical or integer verbosity level.
 #' @return An S3 object of class \code{"evo_competition_run"} containing:

@@ -34,6 +34,7 @@
 #' @param target_transform Optional regression target transformation (\code{"none"}, \code{"log1p"}, \code{"yeo_johnson"}, \code{"rank_gauss"}).
 #' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}).
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
+#' @param fitness_cache Optional environment mapping schema keys to cached evaluated individuals and pruned gene states across generations.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
 #' @return The input \code{evo_individual} with its \code{fitness} field set to
 #'   the computed score (higher is better), \code{importances} set to a named

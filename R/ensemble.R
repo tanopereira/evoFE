@@ -43,6 +43,9 @@
 #'   fit on top of base ensemble out-of-fold margins: \code{"none"} (default),
 #'   \code{"lm"} (ridge-regularized linear residual), or \code{"spline_lm"}
 #'   (ridge-regularized B-spline residual).
+#' @param bag_folds Logical or \code{NULL}. Whether to train and retain per-fold
+#'   models (\code{fold_models}) during out-of-fold evaluation for bagged prediction.
+#'   If \code{NULL} (default), inferred from candidate recipes.
 #' @param seed Optional integer seed for reproducible bagged sampling. Does not mutate
 #'   the user's global RNG state.
 #' @param threads Integer. Number of threads to use for model training.
