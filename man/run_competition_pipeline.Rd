@@ -28,6 +28,8 @@ run_competition_pipeline(
   supervised_stage4 = FALSE,
   bag_folds = TRUE,
   rank_average = NULL,
+  stage5_stack_space = c("auto", "prob", "logit"),
+  stage5_residual_blender = c("none", "lm", "spline_lm"),
   submission_file = NULL,
   threads = default_threads(),
   seed = 42L,
@@ -116,6 +118,14 @@ defaults to \code{TRUE} if \code{metric} is rank-invariant (e.g. \code{"auc"},
 \code{"aucpr"}), and \code{FALSE} otherwise. Set to \code{TRUE} when optimizing
 calibration metrics like \code{"ts_refinement"} during feature evolution while
 submitting to a rank-based competition evaluation metric like AUC.}
+
+\item{stage5_stack_space}{Character string. Blending space for Stage 5 stacking:
+\code{"auto"} (default, uses \code{"logit"} for classification/multiclass when
+\code{rank_average = FALSE}, else \code{"prob"}), \code{"prob"}, or \code{"logit"}.}
+
+\item{stage5_residual_blender}{Character string. Optional second-stage residual model
+fit on top of Stage 5 ensemble margins: \code{"none"} (default), \code{"lm"}, or
+\code{"spline_lm"}.}
 
 \item{submission_file}{Optional file path to write \code{$submission} via \code{data.table::fwrite()}.}
 

@@ -16,6 +16,8 @@ ensemble_islands(
   stack_alpha = 0.5,
   metric = NULL,
   rank_average = NULL,
+  stack_space = c("prob", "logit", "auto"),
+  residual_blender = c("none", "lm", "spline_lm"),
   bag_folds = NULL,
   seed = NULL,
   threads = NULL,
@@ -62,6 +64,17 @@ calibration metrics like \code{"ts_refinement"}).}
 quantiles in [0, 1] before computing ensemble weights and predictions.
 Recommended for ranking-based metrics like AUC. If \code{NULL} (default),
 automatically defaults to \code{TRUE} when \code{metric = "auc"}.}
+
+\item{stack_space}{Character string. Blending space for ensemble weights and
+predictions: \code{"prob"} (default, linear probability averaging),
+\code{"logit"} (linear log-odds averaging for classification/multiclass), or
+\code{"auto"} (uses \code{"logit"} for classification/multiclass when
+\code{rank_average = FALSE}, else \code{"prob"}).}
+
+\item{residual_blender}{Character string. Optional second-stage residual model
+fit on top of base ensemble out-of-fold margins: \code{"none"} (default),
+\code{"lm"} (ridge-regularized linear residual), or \code{"spline_lm"}
+(ridge-regularized B-spline residual).}
 
 \item{seed}{Optional integer seed for reproducible bagged sampling. Does not mutate
 the user's global RNG state.}
