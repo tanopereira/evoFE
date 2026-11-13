@@ -66,6 +66,42 @@ rcpp_realmlp_predict <- function(model_state, x_new, threads = 0L) {
     .Call(`_evoFE_rcpp_realmlp_predict`, model_state, x_new, threads)
 }
 
+#' Train RFF or Nystrom Kernel Ridge / Logistic Model in C++
+#'
+#' @param x_train Numeric matrix of training features.
+#' @param y_train Numeric vector of training targets.
+#' @param x_val Optional validation feature matrix.
+#' @param y_val Optional validation target vector.
+#' @param task Task type: "regression", "classification", or "multiclass".
+#' @param sigma Kernel bandwidth (> 0); if <= 0, auto median heuristic is used.
+#' @param lambda L2 ridge regularization penalty.
+#' @param n_features Number of random features or Nystrom landmarks.
+#' @param kernel Kernel family: "rbf" or "laplacian".
+#' @param approx_method Approximation method: "rff" or "nystrom".
+#' @param threads Number of threads for BLAS/OpenMP.
+#' @param seed Random seed.
+#' @param num_classes Number of classes for multiclass (0 = infer from y_train).
+#' @param metric Validation metric name.
+#' @param offset_train Optional training offset vector (N or N * K column-major).
+#' @param offset_val Optional validation offset vector (N_val or N_val * K column-major).
+#' @param max_irls_iter Maximum Newton-IRLS / L-BFGS iterations for classification.
+#' @param irls_tol Convergence tolerance for classification solver.
+#' @return A List containing model_state, val_preds, val_score, importances, and sigma.
+rcpp_rff_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", sigma = -1.0, lambda = 1e-2, n_features = 512L, kernel = "rbf", approx_method = "rff", threads = 1L, seed = 42L, num_classes = 0L, metric = "default", offset_train = NULL, offset_val = NULL, max_irls_iter = 25L, irls_tol = 1e-6) {
+    .Call(`_evoFE_rcpp_rff_train`, x_train, y_train, x_val, y_val, task, sigma, lambda, n_features, kernel, approx_method, threads, seed, num_classes, metric, offset_train, offset_val, max_irls_iter, irls_tol)
+}
+
+#' Predict with RFF or Nystrom Kernel Model in C++
+#'
+#' @param model_state List returned inside `rcpp_rff_train(...)$model_state`.
+#' @param x_new Numeric matrix of new input features.
+#' @param offset_new Optional offset vector (N_new or N_new * K column-major).
+#' @param threads Integer: number of threads (0 = unchanged).
+#' @return NumericMatrix of predictions.
+rcpp_rff_predict <- function(model_state, x_new, offset_new = NULL, threads = 0L) {
+    .Call(`_evoFE_rcpp_rff_predict`, model_state, x_new, offset_new, threads)
+}
+
 #' Train TabM (TabM-mini BatchEnsemble MLP) Model in C++
 #'
 #' Native C++17 FP32 BatchEnsemble MLP with Quantile Piecewise Linear Encoding (PLE),
