@@ -60,6 +60,35 @@ evo_transformers$numeric_freq <- create_transformer(
   name_generator = function(gene) .gene_col_name(gene, "nfreq")
 )
 
+evo_transformers$pair_freq_encode <- create_transformer(
+  name = "pair_freq_encode",
+  type = "binary",
+  input_type = "any",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col = NULL) {
+    cols <- gene$input_cols
+    if (length(cols) < 2L) return(list(valid = FALSE))
+    d1 <- .fit_col_discretizer(data[[cols[1L]]])
+    d2 <- .fit_col_discretizer(data[[cols[2L]]])
+    k1 <- .apply_col_discretizer(data[[cols[1L]]], d1)
+    k2 <- .apply_col_discretizer(data[[cols[2L]]], d2)
+    x_joint <- paste0(k1, "___", k2)
+    freq_state <- .fit_frequency_mapping(x_joint)
+    list(valid = TRUE, d1 = d1, d2 = d2, freq = freq_state)
+  },
+  apply_func = function(data, gene, state = NULL) {
+    if (is.null(state) || !isTRUE(state$valid) || is.null(state$freq) || length(gene$input_cols) < 2L) {
+      return(rep(0, nrow(data)))
+    }
+    cols <- gene$input_cols
+    k1 <- .apply_col_discretizer(data[[cols[1L]]], state$d1)
+    k2 <- .apply_col_discretizer(data[[cols[2L]]], state$d2)
+    x_joint <- paste0(k1, "___", k2)
+    .apply_frequency_mapping(x_joint, state$freq)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "pfreq")
+)
+
 
 # --- STATEFUL MIXED TRANSFORMERS ---
 

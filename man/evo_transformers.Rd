@@ -85,6 +85,10 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{ridge_oof_encode}}{Exact closed-form hat-matrix leave-one-out Ridge target encoding across 2--5 standardized numeric features (\code{lambda} sampled from \{0.1, 1, 10, 100\}, polynomial \code{degree} sampled from \{1, 2\}).}
   \item{\code{cat_interaction_target_encode}}{Smoothed mean-target encoding for joint
     Cartesian interaction of two categorical columns.}
+  \item{\code{numeric_target_encode}}{Hierarchical exact-value + quantile-bin empirical-Bayes
+    target encoding with Leave-One-Out training values for numeric features.}
+  \item{\code{pair_target_encode}}{Smoothed mean-target encoding for joint pairs of any
+    two numeric or categorical columns (with automatic numeric quantile discretization).}
   \item{\code{woe_encode}}{Weight of Evidence encoding for binary
     classification: \code{ln(P(event|cat) / P(non-event|cat))} with Laplace
     smoothing.  Falls back to 0 for non-binary targets.}
@@ -95,6 +99,7 @@ for the evolutionary feature-engineering search.  Every entry is an
   \item{\code{concat}}{Concatenates 2 or 3 categorical columns row-wise using an underscore separator.}
   \item{\code{frequency_encode}}{Count of each category level in training data.}
   \item{\code{numeric_freq}}{Count of each unique numerical value in training data (frequency proxy for spiky/clustered numerics).}
+  \item{\code{pair_freq_encode}}{Joint occurrence count for pairs of any two numeric or categorical columns (with automatic numeric quantile discretization).}
   \item{\code{one_hot_encode}}{Binary indicator for up to 5 top categories plus
     an "other" bucket (\code{comp_idx} 1-6).}
   \item{\code{similarity_encode}}{Character 3-gram Jaccard similarity between string

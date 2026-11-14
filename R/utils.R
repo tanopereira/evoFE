@@ -118,8 +118,9 @@ sanitize_feature_matrix <- function(x, threads = default_threads(), cat_schema =
   if (!is.numeric(threads) || is.na(threads) || threads < 1L) threads <- 1L
   threads <- as.integer(threads)
 
+  was_df <- is.data.frame(x)
   out_schema <- NULL
-  if (is.data.frame(x)) {
+  if (was_df) {
     if (!is.null(cat_schema)) {
       x <- .align_cat_schema(x, cat_schema)
     }
@@ -162,7 +163,7 @@ sanitize_feature_matrix <- function(x, threads = default_threads(), cat_schema =
     res <- rcpp_sanitize_feature_matrix(x, threads)
   }
 
-  if (is.null(out_schema) && !is.null(cat_schema) && !is.null(cat_schema$cols) && length(cat_schema$cols) > 0L) {
+  if (!was_df && is.null(out_schema) && !is.null(cat_schema) && !is.null(cat_schema$cols) && length(cat_schema$cols) > 0L) {
     out_schema <- cat_schema
   }
   if (!is.null(res) && !is.null(out_schema)) {

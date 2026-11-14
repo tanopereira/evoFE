@@ -446,15 +446,23 @@
   feat_dt <- out_dt[, feature_names, with = FALSE]
   cs <- NULL
   if (!is.null(active_cat_schemas) && length(active_cat_schemas) > 0L) {
+    merged_levels <- list()
     for (item in active_cat_schemas) {
-      if (!is.null(item)) {
-        cs <- item
-        break
+      if (!is.null(item) && !is.null(item$levels)) {
+        for (nm in names(item$levels)) {
+          if (is.null(merged_levels[[nm]])) {
+            merged_levels[[nm]] <- item$levels[[nm]]
+          }
+        }
       }
+    }
+    if (length(merged_levels) > 0L) {
+      cs <- list(names = names(merged_levels), levels = merged_levels)
     }
   }
   x_mat <- .sanitize_feature_matrix(feat_dt, cat_schema = cs)
   if (is.null(x_mat) || ncol(x_mat) == 0L) return(NULL)
+  cs_mat <- attr(x_mat, "cat_schema", exact = TRUE)
 
   col_means <- NULL
   spline_state <- NULL
@@ -464,7 +472,7 @@
     if (is.null(fit_spec)) {
       sp <- .build_sparse_spline_design(
         x_mat,
-        cat_schema = cs,
+        cat_schema = cs_mat,
         n_knots = 3L,
         degree = 3L,
         include_linear = TRUE,
@@ -475,7 +483,7 @@
     } else if (!is.null(fit_spec$spline_state)) {
       x_mat <- .build_sparse_spline_design(
         x_mat,
-        cat_schema = cs,
+        cat_schema = cs_mat,
         state = fit_spec$spline_state
       )
       spline_state <- fit_spec$spline_state

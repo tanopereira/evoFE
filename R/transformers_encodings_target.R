@@ -1,6 +1,103 @@
 # Supervised (target-based) encoders: mean/WoE/quantile target encodings.
 # Split out of transformers.R; loaded after it (alphabetical file order).
 
+.fit_smoothed_mean_te <- function(x_key, y_raw, smoothing = 10, key_col = "x") {
+  y <- .normalize_target_for_encoding(y_raw)
+  if (is.null(y) || sum(!is.na(y)) == 0L) {
+    return(list(mapping = NULL, global_mean = 0, valid = FALSE))
+  }
+
+  global_mean <- mean(y, na.rm = TRUE)
+  dt <- data.table::data.table(x = x_key, y = y)
+  stats <- dt[, .(mean_y = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
+  stats[, smoothed := (n * mean_y + smoothing * global_mean) / (n + smoothing)]
+
+  mapping <- stats[, .(x, smoothed)]
+  if (!identical(key_col, "x")) {
+    data.table::setnames(mapping, "x", key_col)
+  }
+  data.table::setkeyv(mapping, key_col)
+
+  mapped <- stats[dt, on = "x"]
+  n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
+  sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
+  loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
+  loo_vals[is.na(loo_vals)] <- global_mean
+  loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+  list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
+}
+
+.apply_smoothed_mean_te <- function(x_key, state, key_col = "x") {
+  if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
+    return(rep(0, length(x_key)))
+  }
+  dt <- data.table::data.table(x = x_key)
+  if (!identical(key_col, "x")) {
+    data.table::setnames(dt, "x", key_col)
+  }
+  res <- tryCatch(state$mapping[dt, on = key_col]$smoothed, error = function(e) NULL)
+  if (is.null(res)) return(rep(state$global_mean, length(x_key)))
+  res[is.na(res)] <- state$global_mean
+  res
+}
+
+.fit_col_discretizer <- function(x, n_bins = 20L) {
+  if (!is.numeric(x)) {
+    return(list(mode = "cat"))
+  }
+  x_num <- as.numeric(x)
+  fin <- is.finite(x_num)
+  u_fin <- sort(unique(x_num[fin]))
+  if (length(u_fin) == 0L) {
+    return(list(mode = "empty"))
+  }
+  if (length(u_fin) <= n_bins) {
+    return(list(mode = "num_exact", levels = u_fin, keys = paste0("v_", seq_along(u_fin))))
+  }
+  breaks <- unique(stats::quantile(x_num[fin], probs = seq(0, 1, length.out = n_bins + 1L), na.rm = TRUE, names = FALSE))
+  if (length(breaks) < 2L) {
+    return(list(mode = "num_exact", levels = u_fin, keys = paste0("v_", seq_along(u_fin))))
+  }
+  list(mode = "num_bins", breaks = breaks)
+}
+
+.apply_col_discretizer <- function(x, state) {
+  if (is.null(x)) return(character(0))
+  n_rows <- length(x)
+  if (n_rows == 0L) return(character(0))
+  if (is.null(state) || identical(state$mode, "cat")) {
+    out <- as.character(x)
+    out[is.na(out)] <- ".__NA__"
+    return(out)
+  }
+  if (identical(state$mode, "empty")) {
+    return(rep(".__NA__", n_rows))
+  }
+  x_num <- if (is.numeric(x)) as.numeric(x) else suppressWarnings(as.numeric(as.character(x)))
+  out <- rep(".__NA__", n_rows)
+  fin <- is.finite(x_num)
+  if (!any(fin)) return(out)
+  if (identical(state$mode, "num_exact")) {
+    lvls <- state$levels
+    if (length(lvls) <= 1L) {
+      out[fin] <- state$keys[1L]
+    } else {
+      mids <- 0.5 * (lvls[-length(lvls)] + lvls[-1L])
+      idx <- findInterval(x_num[fin], mids) + 1L
+      out[fin] <- state$keys[idx]
+    }
+    return(out)
+  }
+  if (length(state$breaks) < 2L) {
+    out[fin] <- "b_1"
+    return(out)
+  }
+  idx <- findInterval(x_num[fin], state$breaks, all.inside = TRUE)
+  out[fin] <- paste0("b_", idx)
+  out
+}
+
 evo_transformers$target_encode <- create_transformer(
   name = "target_encode",
   type = "supervised_unary",
@@ -9,38 +106,7 @@ evo_transformers$target_encode <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.character(data[[input_cols[1]]])
     x[is.na(x)] <- ".__NA__"
-    y <- .normalize_target_for_encoding(data[[target_col]])
-    if (is.null(y)) {
-      return(list(mapping = NULL, global_mean = 0, valid = FALSE))
-    }
-    
-    # Calculate global mean
-    global_mean <- mean(y, na.rm = TRUE)
-    
-    # Calculate category means and counts
-    dt <- data.table::data.table(x = x, y = y)
-    stats <- dt[, .(mean = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
-    
-    # Smoothing parameters (can be adjusted)
-    min_samples_leaf <- 10
-    smoothing <- 10
-    
-    # Calculate smoothed target encoding
-    # formula: (n * mean + smoothing * global_mean) / (n + smoothing)
-    stats[, smoothed := (n * mean + smoothing * global_mean) / (n + smoothing)]
-    
-    mapping <- stats[, .(x, smoothed)]
-    data.table::setkey(mapping, x)
-
-    # Leave-one-out (LOO) smoothed values on the training split to prevent in-sample target leakage
-    mapped <- stats[dt, on = "x"]
-    n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
-    sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
-    loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
-    loo_vals[is.na(loo_vals)] <- global_mean
-    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
-    
-    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
+    .fit_smoothed_mean_te(x, data[[target_col]], smoothing = 10, key_col = "x")
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -49,16 +115,7 @@ evo_transformers$target_encode <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.character(data[[input_cols[1]]])
     x[is.na(x)] <- ".__NA__"
-    
-    # Join with mapping
-    dt <- data.table::data.table(x = x)
-    mapping <- state$mapping
-    
-    # Map, filling missing categories with global mean
-    res <- tryCatch(mapping[dt, on = "x"]$smoothed, error = function(e) NULL)
-    if (is.null(res)) return(rep(state$global_mean, nrow(data)))
-    res[is.na(res)] <- state$global_mean
-    res
+    .apply_smoothed_mean_te(x, state, key_col = "x")
   },
   name_generator = function(gene) .gene_col_name(gene, "te")
 )
@@ -407,29 +464,7 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     x1 <- as.character(data[[input_cols[1]]])
     x2 <- as.character(data[[input_cols[2]]])
     x_joint <- paste0(x1, "___", x2)
-    y <- .normalize_target_for_encoding(data[[target_col]])
-    if (is.null(y)) {
-      return(list(mapping = NULL, global_mean = 0, valid = FALSE))
-    }
-
-    global_mean <- mean(y, na.rm = TRUE)
-    dt <- data.table::data.table(x_joint = x_joint, y = y)
-    stats_dt <- dt[, .(mean_y = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x_joint]
-
-    smoothing <- 10
-    stats_dt[, smoothed := (n * mean_y + smoothing * global_mean) / (n + smoothing)]
-
-    mapping <- stats_dt[, .(x_joint, smoothed)]
-    data.table::setkey(mapping, x_joint)
-
-    mapped <- stats_dt[dt, on = "x_joint"]
-    n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
-    sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
-    loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
-    loo_vals[is.na(loo_vals)] <- global_mean
-    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
-
-    list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
+    .fit_smoothed_mean_te(x_joint, data[[target_col]], smoothing = 10, key_col = "x_joint")
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -439,15 +474,186 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     x1 <- as.character(data[[input_cols[1]]])
     x2 <- as.character(data[[input_cols[2]]])
     x_joint <- paste0(x1, "___", x2)
-
-    dt <- data.table::data.table(x_joint = x_joint)
-    mapping <- state$mapping
-
-    res <- mapping[dt, on = "x_joint"]$smoothed
-    res[is.na(res)] <- state$global_mean
-    res
+    .apply_smoothed_mean_te(x_joint, state, key_col = "x_joint")
   },
   name_generator = function(gene) .gene_col_name(gene, "cite")
+)
+
+# Hierarchical Exact-Value + Quantile-Bin Empirical-Bayes Target Encoding for Numerics
+evo_transformers$numeric_target_encode <- create_transformer(
+  name = "numeric_target_encode",
+  type = "supervised_unary",
+  input_type = "numeric",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    raw_x <- data[[gene$input_cols[1L]]]
+    x <- if (is.numeric(raw_x)) as.numeric(raw_x) else suppressWarnings(as.numeric(as.character(raw_x)))
+    y <- .normalize_target_for_encoding(data[[target_col]])
+    if (is.null(y) || sum(!is.na(y)) == 0L) {
+      return(list(mapping = NULL, breaks = NULL, bin_smoothed = NULL, global_mean = 0, valid = FALSE, loo_train = NULL))
+    }
+
+    global_mean <- mean(y, na.rm = TRUE)
+    smoothing <- 10.0
+    fin_x <- is.finite(x)
+    if (!any(fin_x)) {
+      return(list(mapping = NULL, breaks = NULL, bin_smoothed = global_mean, global_mean = global_mean, valid = FALSE, loo_train = NULL))
+    }
+
+    u_fin_x <- unique(x[fin_x])
+    breaks <- NULL
+    b_idx <- integer(length(x))
+    if (length(u_fin_x) >= 2L) {
+      breaks <- unique(stats::quantile(x[fin_x], probs = seq(0, 1, length.out = 33L), na.rm = TRUE, names = FALSE))
+      if (length(breaks) >= 2L) {
+        b_idx[fin_x] <- findInterval(x[fin_x], breaks, all.inside = TRUE)
+      } else {
+        b_idx[fin_x] <- 1L
+      }
+    } else {
+      b_idx[fin_x] <- 1L
+    }
+
+    has_y <- !is.na(y)
+    y_clean <- ifelse(has_y, y, 0.0)
+    y_obs <- as.integer(has_y)
+
+    max_b0 <- max(b_idx + 1L)
+    bin_sum <- numeric(max_b0)
+    bin_n <- numeric(max_b0)
+    dt_bin <- data.table::data.table(b_idx = b_idx, y = y)
+    bin_stats <- dt_bin[, .(sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = b_idx]
+    b_slots <- bin_stats$b_idx + 1L
+    bin_sum[b_slots] <- bin_stats$sum_y
+    bin_n[b_slots] <- as.numeric(bin_stats$n)
+
+    bin_smoothed <- ifelse(
+      bin_n > 0,
+      (bin_sum + smoothing * global_mean) / (bin_n + smoothing),
+      global_mean
+    )
+
+    row_b_slot <- b_idx + 1L
+    n_b_loo <- pmax(0, bin_n[row_b_slot] - y_obs)
+    s_b_loo <- bin_sum[row_b_slot] - y_clean
+    bin_loo <- (s_b_loo + smoothing * global_mean) / (n_b_loo + smoothing)
+    bin_loo[!is.finite(bin_loo)] <- global_mean
+
+    x_key <- rep(".__NA__", length(x))
+    x_key[fin_x] <- as.character(signif(x[fin_x], 12))
+
+    dt_ex <- data.table::data.table(x_key = x_key, y = y, b_idx = b_idx)
+    ex_stats <- dt_ex[, .(
+      sum_y = sum(y, na.rm = TRUE),
+      n = sum(!is.na(y)),
+      b_idx = b_idx[1L]
+    ), by = x_key]
+    ex_prior <- bin_smoothed[ex_stats$b_idx + 1L]
+    ex_stats[, smoothed := (sum_y + smoothing * ex_prior) / (n + smoothing)]
+
+    mapping <- ex_stats[, .(x_key, smoothed)]
+    data.table::setkey(mapping, x_key)
+
+    mapped <- ex_stats[dt_ex, on = "x_key"]
+    n_ex_loo <- pmax(0, mapped$n - y_obs)
+    s_ex_loo <- mapped$sum_y - y_clean
+    loo_vals <- (s_ex_loo + smoothing * bin_loo) / (n_ex_loo + smoothing)
+    loo_vals[!is.finite(loo_vals)] <- global_mean
+    loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+
+    list(
+      mapping = mapping,
+      breaks = breaks,
+      bin_smoothed = bin_smoothed,
+      global_mean = global_mean,
+      valid = TRUE,
+      loo_train = loo_train
+    )
+  },
+  apply_func = function(data, gene, state) {
+    n_out <- nrow(data)
+    if (n_out == 0L) return(numeric(0))
+    g_mean <- if (!is.null(state) && !is.null(state$global_mean) && is.finite(state$global_mean)) state$global_mean else 0.0
+    if (is.null(state) || !isTRUE(state$valid) || is.null(state$bin_smoothed)) {
+      return(rep(g_mean, n_out))
+    }
+
+    raw_x <- data[[gene$input_cols[1L]]]
+    x <- if (is.numeric(raw_x)) as.numeric(raw_x) else suppressWarnings(as.numeric(as.character(raw_x)))
+    fin_x <- is.finite(x)
+
+    b_idx <- integer(n_out)
+    if (any(fin_x)) {
+      if (!is.null(state$breaks) && length(state$breaks) >= 2L) {
+        b_idx[fin_x] <- findInterval(x[fin_x], state$breaks, all.inside = TRUE)
+      } else {
+        b_idx[fin_x] <- 1L
+      }
+    }
+    slots <- pmin(pmax(b_idx + 1L, 1L), length(state$bin_smoothed))
+    fallback <- as.numeric(state$bin_smoothed[slots])
+    fallback[!is.finite(fallback)] <- g_mean
+
+    if (is.null(state$mapping)) {
+      return(fallback)
+    }
+
+    x_key <- rep(".__NA__", n_out)
+    if (any(fin_x)) {
+      x_key[fin_x] <- as.character(signif(x[fin_x], 12))
+    }
+    dt_q <- data.table::data.table(x_key = x_key)
+    res <- tryCatch(state$mapping[dt_q, on = "x_key"]$smoothed, error = function(e) NULL)
+    if (is.null(res)) return(fallback)
+    miss <- is.na(res) | !is.finite(res)
+    if (any(miss)) res[miss] <- fallback[miss]
+    as.numeric(res)
+  },
+  name_generator = function(gene) .gene_col_name(gene, "nte")
+)
+
+# Mixed-Type Pairwise Joint Target Encoding (cat x cat, cat x num, num x num)
+evo_transformers$pair_target_encode <- create_transformer(
+  name = "pair_target_encode",
+  type = "supervised_binary",
+  input_type = "any",
+  output_type = "numeric",
+  fit_func = function(data, gene, target_col) {
+    cols <- gene$input_cols
+    if (length(cols) < 2L) {
+      return(list(valid = FALSE, global_mean = 0, loo_train = NULL))
+    }
+    d1 <- .fit_col_discretizer(data[[cols[1L]]])
+    d2 <- .fit_col_discretizer(data[[cols[2L]]])
+    k1 <- .apply_col_discretizer(data[[cols[1L]]], d1)
+    k2 <- .apply_col_discretizer(data[[cols[2L]]], d2)
+    x_joint <- paste0(k1, "___", k2)
+    te_state <- .fit_smoothed_mean_te(x_joint, data[[target_col]], smoothing = 10, key_col = "x_joint")
+    loo_train <- te_state$loo_train
+    te_state$loo_train <- NULL
+    list(
+      d1 = d1,
+      d2 = d2,
+      te = te_state,
+      valid = !isTRUE(te_state$valid == FALSE),
+      global_mean = te_state$global_mean,
+      loo_train = loo_train
+    )
+  },
+  apply_func = function(data, gene, state) {
+    n_out <- nrow(data)
+    if (n_out == 0L) return(numeric(0))
+    if (is.null(state) || !isTRUE(state$valid) || is.null(state$te) || length(gene$input_cols) < 2L) {
+      g_mean <- if (!is.null(state) && !is.null(state$global_mean) && is.finite(state$global_mean)) state$global_mean else 0.0
+      return(rep(g_mean, n_out))
+    }
+    cols <- gene$input_cols
+    k1 <- .apply_col_discretizer(data[[cols[1L]]], state$d1)
+    k2 <- .apply_col_discretizer(data[[cols[2L]]], state$d2)
+    x_joint <- paste0(k1, "___", k2)
+    .apply_smoothed_mean_te(x_joint, state$te, key_col = "x_joint")
+  },
+  name_generator = function(gene) .gene_col_name(gene, "pte2")
 )
 
 # Target Standard Deviation Encoding (with Leave-One-Out jackknife SD on training data)

@@ -587,9 +587,6 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
     best_ind_str <- individual_to_recipe_string(rec_i$best_individual)
 
     active_evaluators[[name]] <- eval_i
-    if (!is.null(rec_i$cat_schema)) {
-      active_cat_schemas[[name]] <- rec_i$cat_schema
-    }
 
     user_args_passed <- list(...)
     has_user_override <- length(user_args_passed) > 0 ||
@@ -602,6 +599,10 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       }
       active_recipes[[name]] <- rec_i$best_individual
       active_models[[name]] <- rec_i$best_model
+      cs_reuse <- if (!is.null(rec_i$cat_schema)) rec_i$cat_schema else ind_i$cat_schema
+      if (!is.null(cs_reuse)) {
+        active_cat_schemas[[name]] <- cs_reuse
+      }
       if (!is.null(rec_i$target_transform_state)) {
         active_target_transforms[[name]] <- list(
           state = rec_i$target_transform_state,
@@ -644,9 +645,9 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
       features <- c(applied_ind$numeric_cols, applied_ind$categorical_cols, applied_ind$datetime_cols, gene_cols)
       features <- setdiff(features, target_col)
 
-      cs_i <- rec_i$cat_schema
+      cs_i <- ind_i$cat_schema
       x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE], cat_schema = cs_i)
-      if (is.null(active_cat_schemas[[name]]) && !is.null(attr(x_full, "cat_schema", exact = TRUE))) {
+      if (!is.null(attr(x_full, "cat_schema", exact = TRUE))) {
         active_cat_schemas[[name]] <- attr(x_full, "cat_schema", exact = TRUE)
       }
       y_full <- res_full$train[[target_col]]

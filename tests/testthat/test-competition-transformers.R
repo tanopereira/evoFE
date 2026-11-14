@@ -308,3 +308,157 @@ testthat::test_that("MEDIUM fixes: schema sync, leak-free smearing, multiclass r
   )
   expect_gt(rmlp_fit$importances[1L], rmlp_fit$importances[2L] * 2.0)
 })
+
+testthat::test_that("numeric_target_encode handles spiky focal points and unique continuous values with LOO", {
+  expect_true(is_supervised_transformer("numeric_target_encode"))
+  expect_false("numeric_target_encode" %in% evoFE:::filter_transformers_for_task(names(evo_transformers), "multiclass"))
+
+  set.seed(123)
+  n_bg <- 120L
+  x_spiky <- c(
+    rep(55.0, 20L),
+    rep(25.0, 20L),
+    seq(10.0, 90.0, length.out = n_bg),
+    77.77,
+    NA_real_, NA_real_
+  )
+  y_spiky <- c(
+    rep(15.0, 20L),
+    rep(0.0, 20L),
+    rep(2.0, n_bg),
+    200.0,
+    5.0, 5.0
+  )
+  dt_tr <- data.table::data.table(x = x_spiky, y = y_spiky)
+  dt_te <- data.table::data.table(x = c(55.0, 25.0, 77.77, 54.999, NA_real_))
+
+  g_nte <- create_gene("numeric_target_encode", "x")
+  res <- apply_gene(g_nte, data.table::copy(dt_tr), data.table::copy(dt_te), target_col = "y", validate_genes = FALSE)
+  tr_vals <- res$train[[g_nte$output_col]]
+  te_vals <- res$val[[g_nte$output_col]]
+
+  expect_length(tr_vals, nrow(dt_tr))
+  expect_length(te_vals, nrow(dt_te))
+  expect_true(all(is.finite(tr_vals)))
+  expect_true(all(is.finite(te_vals)))
+
+  # Singleton spike 77.77 (idx 40 + n_bg + 1) has n_ex_loo = 0 on train, so must NOT memorize y = 200
+  sing_idx <- 40L + n_bg + 1L
+  expect_lt(tr_vals[sing_idx], 15.0)
+  expect_gt(te_vals[3L], tr_vals[sing_idx] + 10.0)
+
+  # Repeated focal spikes separate cleanly; unseen neighbor 54.999 backs off to surrounding quantile bin prior
+  expect_gt(te_vals[1L], 10.0)
+  expect_lt(te_vals[2L], 1.5)
+  expect_gt(te_vals[1L], te_vals[4L] + 4.0)
+
+  # Purely unique continuous non-monotonic feature
+  x_cont <- seq(0.05, 0.95, length.out = 120L)
+  dt_cont <- data.table::data.table(x = x_cont, y = sin(2.0 * pi * x_cont))
+  dt_cont_te <- data.table::data.table(x = c(0.253, 0.753, NA_real_))
+  res_cont <- apply_gene(g_nte, data.table::copy(dt_cont), data.table::copy(dt_cont_te), target_col = "y")
+  expect_gt(length(unique(res_cont$train[[g_nte$output_col]])), 10L)
+  expect_true(all(is.finite(res_cont$val[[g_nte$output_col]])))
+  expect_gt(res_cont$val[[g_nte$output_col]][1L], 0.15)
+  expect_lt(res_cont$val[[g_nte$output_col]][2L], -0.15)
+  expect_gt(res_cont$val[[g_nte$output_col]][1L], res_cont$val[[g_nte$output_col]][2L] + 0.4)
+})
+
+testthat::test_that("pair_target_encode and pair_freq_encode work across types, mutation, and evolve_features", {
+  expect_true(is_supervised_transformer("pair_target_encode"))
+  expect_false(is_supervised_transformer("pair_freq_encode"))
+  expect_false("pair_target_encode" %in% evoFE:::filter_transformers_for_task(names(evo_transformers), "multiclass"))
+  expect_true("pair_freq_encode" %in% evoFE:::filter_transformers_for_task(names(evo_transformers), "multiclass"))
+
+  set.seed(456)
+  n <- 160L
+  c1 <- factor(rep(c("A", "B"), length.out = n))
+  c2 <- factor(rep(c("X", "X", "Y", "Y"), length.out = n))
+  n_disc <- rep(c(1.0, 2.0, 3.0, 4.0), length.out = n)
+  n_cont <- stats::rnorm(n)
+  # Interaction target mixing cat, discrete num, and continuous num
+  y <- as.numeric((c1 == "A") == (c2 == "X")) +
+    0.8 * ifelse((n_cont > 0) & (c1 == "A"), 1.0, -1.0) +
+    0.5 * ifelse((n_disc %in% c(1, 2)) & (n_cont > 0), 1.0, 0.0) +
+    stats::rnorm(n, sd = 0.05)
+
+  dt_tr <- data.table::data.table(c1 = c1, c2 = c2, n_disc = n_disc, n_cont = n_cont, y = y)
+  # Inject singleton rare pair at row 1 with extreme target to confirm LOO protection
+  dt_tr[1L, c("c1", "c2", "y") := list(factor("RARE1", levels = c("A", "B", "RARE1")), factor("RARE2", levels = c("X", "Y", "RARE2")), 999.0)]
+  dt_te <- data.table::data.table(
+    c1 = factor(c("A", "B", "RARE1", "UNSEEN", NA), levels = c("A", "B", "RARE1", "UNSEEN")),
+    c2 = factor(c("X", "X", "RARE2", "Y", "X"), levels = c("X", "Y", "RARE2")),
+    n_disc = c(1.0, 2.5, 3.0, NA_real_, 10.0),
+    n_cont = c(1.2, -1.1, 0.3, 0.0, NA_real_)
+  )
+
+  for (pair_cols in list(c("c1", "c2"), c("c1", "n_cont"), c("n_disc", "n_cont"))) {
+    g_pte <- create_gene("pair_target_encode", pair_cols)
+    res_pte <- apply_gene(g_pte, data.table::copy(dt_tr), data.table::copy(dt_te), target_col = "y", validate_genes = FALSE)
+    expect_length(res_pte$train[[g_pte$output_col]], n)
+    expect_length(res_pte$val[[g_pte$output_col]], nrow(dt_te))
+    expect_true(all(is.finite(res_pte$train[[g_pte$output_col]])))
+    expect_true(all(is.finite(res_pte$val[[g_pte$output_col]])))
+    expect_null(res_pte$gene$state$te$loo_train)
+
+    if (identical(pair_cols, c("c1", "c2"))) {
+      # Singleton RARE1___RARE2 on train must map to global mean (LOO), not leak 999
+      expect_lt(res_pte$train[[g_pte$output_col]][1L], 20.0)
+      expect_gt(res_pte$val[[g_pte$output_col]][3L], res_pte$train[[g_pte$output_col]][1L] + 20.0)
+    }
+
+    g_pfreq <- create_gene("pair_freq_encode", pair_cols)
+    res_pfreq <- apply_gene(g_pfreq, data.table::copy(dt_tr), data.table::copy(dt_te), target_col = "y", validate_genes = FALSE)
+    expect_length(res_pfreq$train[[g_pfreq$output_col]], n)
+    expect_length(res_pfreq$val[[g_pfreq$output_col]], nrow(dt_te))
+    expect_true(all(is.finite(res_pfreq$train[[g_pfreq$output_col]])))
+    expect_true(all(is.finite(res_pfreq$val[[g_pfreq$output_col]])))
+    if (identical(pair_cols, c("c1", "c2"))) {
+      expect_gt(res_pfreq$val[[g_pfreq$output_col]][1L], res_pfreq$val[[g_pfreq$output_col]][3L])
+    }
+  }
+
+  # Mutation works on 0-categorical dataset (only numeric columns) and picks 2 distinct columns
+  ind_num_only <- create_individual(numeric_cols = c("x1", "x2", "x3"))
+  mut_pte <- mutate(ind_num_only, force_add = TRUE, task = "regression", allowed_transformers = "pair_target_encode")
+  expect_length(mut_pte$genes, 1L)
+  expect_equal(length(unique(mut_pte$genes[[1L]]$input_cols)), 2L)
+
+  mut_pfreq <- mutate(ind_num_only, force_add = TRUE, task = "multiclass", allowed_transformers = "pair_freq_encode")
+  expect_length(mut_pfreq$genes, 1L)
+  expect_equal(length(unique(mut_pfreq$genes[[1L]]$input_cols)), 2L)
+
+  mut_mc_blocked <- mutate(ind_num_only, force_add = TRUE, task = "multiclass", allowed_transformers = c("numeric_target_encode", "pair_target_encode"))
+  expect_length(mut_mc_blocked$genes, 0L)
+
+  # End-to-end evolve_features + predict_model + stripped loo_train
+  dt_evo <- data.table::data.table(
+    c1 = factor(sample(c("A", "B", "C"), 90L, replace = TRUE)),
+    x1 = c(rep(10.0, 30L), stats::runif(60L, 0, 20)),
+    x2 = stats::rnorm(90L)
+  )
+  dt_evo[, y := ifelse(x1 == 10.0, 4.0, sin(x1)) + ifelse((c1 == "A") & (x2 > 0), 2.0, -1.0) + stats::rnorm(90L, sd = 0.1)]
+  rec <- evolve_features(
+    data = dt_evo,
+    target_col = "y",
+    task = "regression",
+    evaluator = "lm",
+    allowed_transformers = c("numeric_target_encode", "pair_target_encode", "pair_freq_encode"),
+    pop_size = 4L,
+    generations = 2L,
+    cv_folds = 2L,
+    islands = 1L,
+    seed = 42L,
+    threads = 1L,
+    verbose = FALSE
+  )
+  preds <- predict_model(rec, newdata = dt_evo[1:20])
+  expect_length(preds, 20L)
+  expect_true(all(is.finite(preds)))
+  for (g in rec$best_individual$genes) {
+    if (!is.null(g$state)) {
+      expect_null(g$state$loo_train)
+      if (!is.null(g$state$te)) expect_null(g$state$te$loo_train)
+    }
+  }
+})

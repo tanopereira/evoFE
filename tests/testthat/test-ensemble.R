@@ -678,6 +678,83 @@ test_that("bag_folds = TRUE trains and averages K fold models in evolve_features
   expect_equal(ens_preds, preds_bag, tolerance = 1e-12)
 })
 
+test_that("cross-island cat_schema does not bleed onto numeric islands in ensemble_islands", {
+  testthat::skip_if_not_installed("glmnet")
+  data(mtcars)
+  df <- mtcars
+  df$am <- as.integer(df$am)
+
+  dt_num <- data.table::as.data.table(df[, setdiff(names(df), "am")])
+  dt_num[, gene_wt := wt]
+  foreign_cs <- list(
+    cols = 11L,
+    names = "qbc_dummy",
+    levels = list(qbc_dummy = c("1", "2")),
+    cardinalities = c(qbc_dummy = 2L)
+  )
+  x_san <- .sanitize_feature_matrix(dt_num, cat_schema = foreign_cs)
+  expect_null(attr(x_san, "cat_schema", exact = TRUE))
+
+  set.seed(123)
+  rec <- suppressWarnings(evolve_features(
+    data = df,
+    target_col = "am",
+    task = "classification",
+    evaluator = "xgboost",
+    generations = 1,
+    pop_size = 2,
+    islands = 2,
+    cv_folds = 2,
+    verbose = FALSE
+  ))
+
+  num_cols <- setdiff(names(df), "am")
+  g_cat <- create_gene("quantile_binning_cat", input_cols = "mpg")
+  g_num <- create_gene("smooth_clip", input_cols = "wt")
+
+  ind1 <- create_individual(list(g_cat), numeric_cols = num_cols, categorical_cols = character(0), datetime_cols = character(0))
+  ind2 <- create_individual(list(g_num), numeric_cols = num_cols, categorical_cols = character(0), datetime_cols = character(0))
+
+  res1 <- apply_individual(ind1, data.table::as.data.table(df), target_col = "am", validate_genes = FALSE)
+  feats1 <- extract_individual_features(res1$ind, target_col = "am")
+  x1 <- .sanitize_feature_matrix(res1$train[, feats1, with = FALSE])
+  ind1 <- strip_loo_state(res1$ind)
+  ind1$cat_schema <- attr(x1, "cat_schema", exact = TRUE)
+  ind1$evaluator <- "xgboost"
+
+  set.seed(1)
+  p1 <- stats::runif(nrow(df), 0.1, 0.9)
+  p2 <- stats::runif(nrow(df), 0.1, 0.9)
+  p1[df$am == 1] <- pmin(0.95, p1[df$am == 1] + 0.2)
+  p2[df$am == 1] <- pmin(0.95, p2[df$am == 1] + 0.15)
+  ind1$val_preds <- p1
+  ind1$y_val <- df$am
+  ind1$raw_fitness <- 0.85
+  ind1$fitness <- 0.85
+
+  ind2$evaluator <- "xgboost"
+  ind2$val_preds <- p2
+  ind2$y_val <- df$am
+  ind2$raw_fitness <- 0.84
+  ind2$fitness <- 0.84
+
+  rec$best_individual <- ind1
+  rec$cat_schema <- ind1$cat_schema
+  rec$best_model <- NULL
+  rec$island_bests <- list(ind1, ind2)
+  rec$aligned_island_preds <- NULL
+  rec$aligned_island_y <- NULL
+
+  ens <- suppressWarnings(ensemble_islands(rec, df, method = "stack", seed = 1, verbose = FALSE))
+  expect_s3_class(ens, "evo_ensemble")
+  expect_true("recipe1_island_1" %in% names(ens$active_cat_schemas))
+  expect_false("recipe1_island_2" %in% names(ens$active_cat_schemas))
+
+  preds <- predict_model(ens, df[1:5, ])
+  expect_length(preds, 5L)
+  expect_true(all(is.finite(preds) & preds >= 0 & preds <= 1))
+})
+
 
 
 

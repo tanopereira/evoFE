@@ -357,6 +357,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
           avail_date
         } else if (t_def$input_type == "mixed") {
           c(avail_cat, avail_num) # Placeholder to pass length check
+        } else if (t_def$input_type == "any") {
+          c(avail_cat, avail_num)
         } else {
           character(0)
         }
@@ -386,7 +388,7 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
         } else if (t_def$type %in% c("unary", "supervised_unary")) {
           cols <- weighted_sample(available_cols, 1)
         } else if (t_def$type %in% c("binary", "supervised_binary")) {
-          allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff", "groupby_nunique", "cat_interaction_target_encode")) FALSE else TRUE
+          allow_rep <- if (t_name %in% c("subtract", "divide", "date_diff", "groupby_nunique", "cat_interaction_target_encode", "pair_target_encode", "pair_freq_encode")) FALSE else TRUE
           if (!allow_rep && length(available_cols) < 2) next
           cols <- weighted_sample(available_cols, 2, replace = allow_rep)
         } else if (t_def$type %in% c("multivariate", "supervised_multivariate")) {

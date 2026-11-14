@@ -3,6 +3,7 @@ utils::globalVariables(c(
   ".",           # data.table's .() alias for list()
   ".N",          # data.table row count symbol
   ".SD",         # data.table Subset of Data symbol
+  "b_idx",       # numeric_target_encode quantile bin index
   "c",           # data.table component index
   "cat",         # data.table category symbol
   "cat_q",       # groupby_quantile transformer
@@ -20,10 +21,12 @@ utils::globalVariables(c(
   "score",       # mst_score transformer
   "sd_val",      # cat_zscore transformer
   "smoothed",    # target_encode fit/apply
+  "sum_y",       # smoothed target_encode helper
   "val",         # cat_mean/cat_sd/cat_max/cat_min transformers
   "var",         # pooled_target_encode transformer
   "woe",         # woe_encode transformer
   "x",           # target_encode by column
+  "x_key",       # numeric_target_encode exact key column
   "x_joint",     # cat_interaction_target_encode
   "y"            # target_encode target column
 ))

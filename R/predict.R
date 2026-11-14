@@ -247,13 +247,6 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
       applied_ind <- res_i$ind
 
       features <- extract_individual_features(applied_ind, target_col = object$target_col, unique = TRUE)
-      missing_feats <- setdiff(features, names(res_i$train))
-      if (length(missing_feats) > 0L) {
-        for (mf in missing_feats) {
-          res_i$train[, (mf) := 0.0]
-        }
-      }
-      feat_dt <- res_i$train[, features, with = FALSE]
       cs_i <- if (!is.null(object$active_cat_schemas[[name]])) {
         object$active_cat_schemas[[name]]
       } else if (is.list(mod_i) && !is.null(mod_i$cat_schema)) {
@@ -261,6 +254,19 @@ predict_model.evo_ensemble <- function(object, newdata, bag_folds = NULL, ...) {
       } else {
         NULL
       }
+      missing_feats <- setdiff(features, names(res_i$train))
+      if (length(missing_feats) > 0L) {
+        cat_names_i <- if (!is.null(cs_i) && !is.null(cs_i$names)) cs_i$names else character(0)
+        for (mf in missing_feats) {
+          if (mf %in% cat_names_i) {
+            lvls_mf <- cs_i$levels[[mf]]
+            res_i$train[, (mf) := factor(rep(NA_character_, nrow(res_i$train)), levels = lvls_mf)]
+          } else {
+            res_i$train[, (mf) := 0.0]
+          }
+        }
+      }
+      feat_dt <- res_i$train[, features, with = FALSE]
       x_new <- .sanitize_feature_matrix(feat_dt, cat_schema = cs_i)
 
       preds_i <- do.call(evaluator_entry$predict_func, c(
