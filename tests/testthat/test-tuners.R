@@ -484,4 +484,127 @@ test_that("lm_mbo tunes alpha over a toy dataset with MBO", {
   expect_true(all(is.finite(preds)))
 })
 
+test_that("compute_importances = FALSE suppresses importance calculation across evaluators", {
+  set.seed(42)
+  n <- 60L
+  x <- matrix(rnorm(n * 4L), ncol = 4L)
+  colnames(x) <- paste0("f", 1:4)
+  y <- 2 * x[, 1L] - x[, 2L] + rnorm(n, sd = 0.2)
+  x_tr <- x[1:48, , drop = FALSE]
+  y_tr <- y[1:48]
+  x_va <- x[49:60, , drop = FALSE]
+  y_va <- y[49:60]
+
+  configs <- list(
+    list(name = "lightgbm", pkg = "lightgbm", args = list(nrounds = 5L)),
+    list(name = "lightgbm_rf", pkg = "lightgbm", args = list(nrounds = 5L)),
+    list(name = "xgboost", pkg = "xgboost", args = list(nrounds = 5L)),
+    list(name = "realmlp", pkg = NULL, args = list(nrounds = 2L, hidden_dim = 16L, batch_size = 16L)),
+    list(name = "tabm", pkg = NULL, args = list(nrounds = 2L, hidden_dim = 16L, batch_size = 16L)),
+    list(name = "rff", pkg = NULL, args = list(n_features = 16L)),
+    list(name = "lm", pkg = "glmnet", args = list()),
+    list(name = "spline_lm", pkg = "glmnet", args = list()),
+    list(name = "ranger", pkg = "ranger", args = list(num.trees = 10L))
+  )
+  if (system.file(package = "catboost") != "") {
+    configs[[length(configs) + 1L]] <- list(
+      name = "catboost",
+      pkg = "catboost",
+      args = list(iterations = 10L, allow_writing_files = FALSE)
+    )
+  }
+
+  for (cfg in configs) {
+    if (!is.null(cfg$pkg) && !requireNamespace(cfg$pkg, quietly = TRUE)) next
+    base_args <- c(
+      list(
+        x_train = x_tr,
+        y_train = y_tr,
+        x_val = x_va,
+        y_val = y_va,
+        task = "regression",
+        evaluator = cfg$name,
+        threads = 1L,
+        verbose = FALSE
+      ),
+      cfg$args
+    )
+
+    fit_off <- do.call(train_model, c(base_args, list(compute_importances = FALSE)))
+    expect_null(fit_off$importances, info = cfg$name)
+    expect_false(is.null(fit_off$model), info = cfg$name)
+    expect_length(fit_off$predictions, nrow(x_va))
+    expect_true(all(is.finite(fit_off$predictions)), info = cfg$name)
+
+    fit_on <- do.call(train_model, base_args)
+    expect_true(is.numeric(fit_on$importances), info = cfg$name)
+    expect_length(fit_on$importances, ncol(x_tr))
+  }
+})
+
+test_that("make_tunable skips importances in MBO trials but preserves them on standalone CV refit", {
+  testthat::skip_if_not_installed("mlr3mbo")
+  testthat::skip_if_not_installed("paradox")
+  testthat::skip_if_not_installed("bbotk")
+
+  calls <- list()
+  register_evaluator(
+    "mock_imp_base",
+    train_func = function(x_train, y_train, x_val = NULL, y_val = NULL,
+                          task = "regression", alpha = 0.5, ...) {
+      extra <- list(...)
+      calls[[length(calls) + 1L]] <<- list(
+        has_val = !is.null(x_val),
+        compute_importances = extra$compute_importances,
+        has_arg = "compute_importances" %in% names(extra)
+      )
+      preds <- if (!is.null(x_val)) rep(mean(y_train) + alpha * 0.01, nrow(x_val)) else NULL
+      imp <- if (isFALSE(extra$compute_importances)) {
+        NULL
+      } else {
+        stats::setNames(rep(1.0, ncol(x_train)), colnames(x_train))
+      }
+      list(model = list(mean_y = mean(y_train)), predictions = preds, importances = imp)
+    },
+    predict_func = function(model, x_new, task = "regression", ...) {
+      rep(model$mean_y, nrow(x_new))
+    }
+  )
+  on.exit(rm("mock_imp_base", envir = evo_evaluators), add = TRUE)
+
+  make_tunable(
+    base_model_name = "mock_imp_base",
+    param_ranges = list(alpha = list(type = "numeric", lower = 0.0, upper = 1.0)),
+    tuner_name = "mock_imp_mbo"
+  )
+  on.exit(rm("mock_imp_mbo", envir = evo_evaluators), add = TRUE)
+
+  set.seed(123)
+  x <- matrix(rnorm(40L * 3L), ncol = 3L)
+  colnames(x) <- paste0("f", 1:3)
+  y <- x[, 1L] + rnorm(40L, sd = 0.1)
+
+  fit <- train_model(
+    x_train = x,
+    y_train = y,
+    task = "regression",
+    evaluator = "mock_imp_mbo",
+    mbo_iters = 1L,
+    mbo_init_design = 2L,
+    verbose = FALSE
+  )
+
+  expect_gt(length(calls), 1L)
+  trial_calls <- calls[-length(calls)]
+  final_call <- calls[[length(calls)]]
+
+  expect_true(all(vapply(trial_calls, function(c) isTRUE(c$has_val) && isFALSE(c$compute_importances), logical(1L))))
+  expect_false(final_call$has_val)
+  expect_false(final_call$has_arg)
+  expect_null(final_call$compute_importances)
+  expect_equal(as.numeric(fit$importances), rep(1.0, ncol(x)))
+  expect_equal(names(fit$importances), colnames(x))
+})
+
+
 

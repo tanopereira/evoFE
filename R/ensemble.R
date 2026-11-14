@@ -352,6 +352,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         first_recipe$threads
       }
       if (is.null(cand_threads_eval)) cand_threads_eval <- default_threads()
+      resolved_re$extra_args$compute_importances <- FALSE
 
       ind_re <- do.call(evaluate_fitness, c(
         list(
@@ -715,6 +716,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
         first_recipe$threads
       }
       if (is.null(cand_threads)) cand_threads <- default_threads()
+      final_args_i$compute_importances <- FALSE
 
       res_m <- do.call(train_model, c(
         list(

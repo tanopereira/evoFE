@@ -230,6 +230,9 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       trial_params <- utils::modifyList(list(...), fixed_params)
       trial_params <- utils::modifyList(trial_params, x)
       trial_params$fold_data <- NULL
+      if (is.null(trial_params$compute_importances)) {
+        trial_params$compute_importances <- FALSE
+      }
       
       if (use_fold_data) {
         # Global cross-validation mode across pre-computed folds
@@ -478,6 +481,9 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       final_params <- utils::modifyList(list(...), fixed_params)
       final_params <- utils::modifyList(final_params, best_hyperparams)
       final_params$fold_data <- NULL
+      if (is.null(final_params$compute_importances)) {
+        final_params$compute_importances <- FALSE
+      }
 
       fold_res <- vector("list", mbo_folds)
       for (i in seq_len(mbo_folds)) {

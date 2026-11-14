@@ -114,6 +114,7 @@ inline RFFModel list_to_rff_model(const List& lst) {
 //' @param offset_val Optional validation offset vector (N_val or N_val * K column-major).
 //' @param max_irls_iter Maximum Newton-IRLS / L-BFGS iterations for classification.
 //' @param irls_tol Convergence tolerance for classification solver.
+//' @param compute_importances Logical: whether to compute feature importances (default TRUE).
 //' @return A List containing model_state, val_preds, val_score, importances, and sigma.
 // [[Rcpp::export]]
 List rcpp_rff_train(
@@ -134,7 +135,8 @@ List rcpp_rff_train(
     Nullable<NumericVector> offset_train = R_NilValue,
     Nullable<NumericVector> offset_val = R_NilValue,
     int max_irls_iter = 25,
-    double irls_tol = 1e-6) {
+    double irls_tol = 1e-6,
+    bool compute_importances = true) {
 
   ThreadGuard guard(threads);
 
@@ -272,7 +274,10 @@ List rcpp_rff_train(
   }
 
   // Fast permutation-free importances on up to 1000 rows
-  std::vector<double> importances = model.compute_importances(X_tr_f32, N, off_tr_ptr, ws);
+  std::vector<double> importances;
+  if (compute_importances) {
+    importances = model.compute_importances(X_tr_f32, N, off_tr_ptr, ws);
+  }
 
   return List::create(
     Named("model_state") = rff_model_to_list(model),

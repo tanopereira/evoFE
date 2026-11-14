@@ -51,9 +51,10 @@ rcpp_fit_post_calibrator <- function(y_true, y_pred, task, metric, num_class = 0
 #' @param hidden_dim Integer: hidden layer dimension (default 256).
 #' @param n_cycles Integer: number of cycles in the coslog schedule (default 4; 0 = auto-scale based on epochs).
 #' @param stop_epoch Integer: optional target stopping epoch (<= n_epochs) when refitting without validation while preserving the n_epochs coslog schedule horizon (default 0 = run all n_epochs).
+#' @param compute_importances Logical: whether to compute feature importances via mean occlusion (default TRUE).
 #' @return A List containing model weights, training statistics, and feature importances.
-rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = -1L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", hidden_dim = 256L, n_cycles = 4L, stop_epoch = 0L) {
-    .Call(`_evoFE_rcpp_realmlp_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric, hidden_dim, n_cycles, stop_epoch)
+rcpp_realmlp_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 256L, batch_size = -1L, lr = -1.0, early_stopping_rounds = 0L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", hidden_dim = 256L, n_cycles = 4L, stop_epoch = 0L, compute_importances = TRUE) {
+    .Call(`_evoFE_rcpp_realmlp_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, early_stopping_rounds, seed, verbose, num_classes, threads, metric, hidden_dim, n_cycles, stop_epoch, compute_importances)
 }
 
 #' Predict with RealMLP Model in C++
@@ -86,9 +87,10 @@ rcpp_realmlp_predict <- function(model_state, x_new, threads = 0L) {
 #' @param offset_val Optional validation offset vector (N_val or N_val * K column-major).
 #' @param max_irls_iter Maximum Newton-IRLS / L-BFGS iterations for classification.
 #' @param irls_tol Convergence tolerance for classification solver.
+#' @param compute_importances Logical: whether to compute feature importances (default TRUE).
 #' @return A List containing model_state, val_preds, val_score, importances, and sigma.
-rcpp_rff_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", sigma = -1.0, lambda = 1e-2, n_features = 512L, kernel = "rbf", approx_method = "rff", threads = 1L, seed = 42L, num_classes = 0L, metric = "default", offset_train = NULL, offset_val = NULL, max_irls_iter = 25L, irls_tol = 1e-6) {
-    .Call(`_evoFE_rcpp_rff_train`, x_train, y_train, x_val, y_val, task, sigma, lambda, n_features, kernel, approx_method, threads, seed, num_classes, metric, offset_train, offset_val, max_irls_iter, irls_tol)
+rcpp_rff_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", sigma = -1.0, lambda = 1e-2, n_features = 512L, kernel = "rbf", approx_method = "rff", threads = 1L, seed = 42L, num_classes = 0L, metric = "default", offset_train = NULL, offset_val = NULL, max_irls_iter = 25L, irls_tol = 1e-6, compute_importances = TRUE) {
+    .Call(`_evoFE_rcpp_rff_train`, x_train, y_train, x_val, y_val, task, sigma, lambda, n_features, kernel, approx_method, threads, seed, num_classes, metric, offset_train, offset_val, max_irls_iter, irls_tol, compute_importances)
 }
 
 #' Predict with RFF or Nystrom Kernel Model in C++
@@ -133,10 +135,11 @@ rcpp_rff_predict <- function(model_state, x_new, offset_new = NULL, threads = 0L
 #' @param d_embedding Embedding dimension per numeric/categorical feature (default 8).
 #' @param lr_warmup_frac Linear warmup fraction for cosine schedule (default 0.05).
 #' @param stop_epoch Optional epoch cap while preserving the full `n_epochs` cosine LR horizon (`0` = disabled).
+#' @param compute_importances Logical: whether to compute feature importances via mean occlusion (default TRUE).
 #' @return A List with `predictions`, `best_epoch`, `best_score`, `importances`, and `model_state`.
 #' @keywords internal
-rcpp_tabm_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 100L, batch_size = -1L, lr = 0.002, weight_decay = 1e-4, early_stopping_rounds = 16L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", k_ensemble = 16L, d_block = 128L, n_blocks = 2L, dropout = 0.1, num_emb = "pwl", n_bins = 48L, cat_cols = NULL, cat_cardinalities = NULL, d_embedding = 8L, lr_warmup_frac = 0.05, stop_epoch = 0L) {
-    .Call(`_evoFE_rcpp_tabm_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac, stop_epoch)
+rcpp_tabm_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 100L, batch_size = -1L, lr = 0.002, weight_decay = 1e-4, early_stopping_rounds = 16L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", k_ensemble = 16L, d_block = 128L, n_blocks = 2L, dropout = 0.1, num_emb = "pwl", n_bins = 48L, cat_cols = NULL, cat_cardinalities = NULL, d_embedding = 8L, lr_warmup_frac = 0.05, stop_epoch = 0L, compute_importances = TRUE) {
+    .Call(`_evoFE_rcpp_tabm_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac, stop_epoch, compute_importances)
 }
 
 #' Predict with TabM Model in C++

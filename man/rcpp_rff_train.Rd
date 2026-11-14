@@ -22,7 +22,8 @@ rcpp_rff_train(
   offset_train = NULL,
   offset_val = NULL,
   max_irls_iter = 25L,
-  irls_tol = 1e-06
+  irls_tol = 1e-06,
+  compute_importances = TRUE
 )
 }
 \arguments{
@@ -61,6 +62,8 @@ rcpp_rff_train(
 \item{max_irls_iter}{Maximum Newton-IRLS / L-BFGS iterations for classification.}
 
 \item{irls_tol}{Convergence tolerance for classification solver.}
+
+\item{compute_importances}{Logical: whether to compute feature importances (default TRUE).}
 }
 \value{
 A List containing model_state, val_preds, val_score, importances, and sigma.

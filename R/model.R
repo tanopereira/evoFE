@@ -122,6 +122,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
 
     fold_seed <- if (!is.null(seed) && is.finite(seed)) as.integer(seed) + as.integer(idx) else NULL
     fold_model_args <- .slice_offset_extra_args(model_args, tr_idx, va_idx, nrow(data_dt))
+    fold_model_args$compute_importances <- FALSE
     res_m <- do.call(train_model, c(
       list(
         x_train = x_tr, y_train = y_tr,

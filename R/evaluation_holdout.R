@@ -93,6 +93,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   resolved_eval <- resolve_tuned_evaluator(evaluator, ind$best_params, list(...), always_unwrap = TRUE)
   final_evaluator <- resolved_eval$evaluator
   final_args <- resolved_eval$extra_args
+  final_args$compute_importances <- FALSE
 
   res_model <- do.call(train_model, c(
     list(

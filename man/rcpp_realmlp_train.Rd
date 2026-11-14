@@ -21,7 +21,8 @@ rcpp_realmlp_train(
   metric = "default",
   hidden_dim = 256L,
   n_cycles = 4L,
-  stop_epoch = 0L
+  stop_epoch = 0L,
+  compute_importances = TRUE
 )
 }
 \arguments{
@@ -58,6 +59,8 @@ rcpp_realmlp_train(
 \item{n_cycles}{Integer: number of cycles in the coslog schedule (default 4; 0 = auto-scale based on epochs).}
 
 \item{stop_epoch}{Integer: optional target stopping epoch (<= n_epochs) when refitting without validation while preserving the n_epochs coslog schedule horizon (default 0 = run all n_epochs).}
+
+\item{compute_importances}{Logical: whether to compute feature importances via mean occlusion (default TRUE).}
 }
 \value{
 A List containing model weights, training statistics, and feature importances.

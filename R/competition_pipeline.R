@@ -1123,6 +1123,7 @@ run_competition_pipeline <- function(
     )
     ev_evolve_args <- .map_evaluator_args_for_evolve(ev_args)
     for (k in names(ev_evolve_args)) s4_common[[k]] <- ev_evolve_args[[k]]
+    if (is.null(s4_common$compute_importances)) s4_common$compute_importances <- FALSE
     stage4_recipes[[ev]] <- do.call(evolve_features, s4_common)
   }
 

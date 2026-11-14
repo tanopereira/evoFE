@@ -334,7 +334,7 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   "kernel", "max_irls_iter", "irls_tol",
   "mtry_ratio", "num.trees", "splitrule", "min.node.size", "sample.fraction",
   "num.random.splits", "respect.unordered.factors", "save.memory", "replace",
-  "max.depth"
+  "max.depth", "compute_importances"
 )
 
 # Combine raw margin predictions with offset and apply link inverse
@@ -523,6 +523,7 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   mc_metric <- if (identical(cm_arg, "accuracy")) "multi_error" else "multi_logloss"
 
   learner_verbose <- is_learner_verbose(extra_params$verbose)
+  compute_imp <- !isFALSE(extra_params$compute_importances)
   seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
     as.integer(extra_params$seed)
   } else {
@@ -680,29 +681,33 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
     NULL
   }
 
-  importances <- tryCatch(
-    {
-      n_tr <- nrow(x_train)
-      if (n_tr > 2000L) {
-        sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-        x_sub <- as.matrix(.slice_feature_matrix(x_train, sub_idx))
-        sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
-      } else {
-        sh <- stats::predict(model, as.matrix(x_train), type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
-      }
-      .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
-    },
-    error = function(e) {
-      tryCatch({
-        df_imp <- lightgbm::lgb.importance(model)
-        imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
-        if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
-          imp[df_imp$Feature] <- df_imp$Gain
+  importances <- if (compute_imp) {
+    tryCatch(
+      {
+        n_tr <- nrow(x_train)
+        if (n_tr > 2000L) {
+          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
+          x_sub <- as.matrix(.slice_feature_matrix(x_train, sub_idx))
+          sh <- stats::predict(model, x_sub, type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
+        } else {
+          sh <- stats::predict(model, as.matrix(x_train), type = "contrib", num_iteration = best_it, params = list(num_threads = threads))
         }
-        imp
-      }, error = function(e2) NULL)
-    }
-  )
+        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
+      },
+      error = function(e) {
+        tryCatch({
+          df_imp <- lightgbm::lgb.importance(model)
+          imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
+          if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
+            imp[df_imp$Feature] <- df_imp$Gain
+          }
+          imp
+        }, error = function(e2) NULL)
+      }
+    )
+  } else {
+    NULL
+  }
 
   rm(dtrain)
   list(model = model, predictions = preds, importances = importances, best_iteration = best_it)
@@ -887,6 +892,7 @@ register_evaluator(
     mc_eval_metric <- if (identical(cm_arg, "accuracy")) "merror" else "mlogloss"
 
     learner_verbose <- is_learner_verbose(extra_params$verbose)
+    compute_imp <- !isFALSE(extra_params$compute_importances)
     seed_val <- if (!is.null(extra_params$seed) && is.numeric(extra_params$seed) && is.finite(extra_params$seed)) {
       as.integer(extra_params$seed)
     } else {
@@ -1038,42 +1044,46 @@ register_evaluator(
       NULL
     }
 
-    importances <- tryCatch(
-      {
-        best_it_range <- if (!is.null(best_iter) && best_iter >= 1) c(1, best_iter + 1) else NULL
-        n_tr <- nrow(x_train)
-        if (n_tr > 2000L) {
-          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-          sub_margin <- if (!is.null(offs$train)) {
-            if (is.matrix(offs$train)) offs$train[sub_idx, , drop = FALSE] else offs$train[sub_idx]
+    importances <- if (compute_imp) {
+      tryCatch(
+        {
+          best_it_range <- if (!is.null(best_iter) && best_iter >= 1) c(1, best_iter + 1) else NULL
+          n_tr <- nrow(x_train)
+          if (n_tr > 2000L) {
+            sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
+            sub_margin <- if (!is.null(offs$train)) {
+              if (is.matrix(offs$train)) offs$train[sub_idx, , drop = FALSE] else offs$train[sub_idx]
+            } else {
+              NULL
+            }
+            dsub <- .xgb_make_dmatrix(
+              data = .slice_feature_matrix(x_train, sub_idx),
+              cat_cols = cat_cols,
+              feature_types = ft,
+              base_margin = sub_margin,
+              nthread = threads
+            )
+            sh <- stats::predict(model, dsub, predcontrib = TRUE, iterationrange = best_it_range)
+            rm(dsub)
           } else {
-            NULL
+            sh <- stats::predict(model, dtrain, predcontrib = TRUE, iterationrange = best_it_range)
           }
-          dsub <- .xgb_make_dmatrix(
-            data = .slice_feature_matrix(x_train, sub_idx),
-            cat_cols = cat_cols,
-            feature_types = ft,
-            base_margin = sub_margin,
-            nthread = threads
-          )
-          sh <- stats::predict(model, dsub, predcontrib = TRUE, iterationrange = best_it_range)
-          rm(dsub)
-        } else {
-          sh <- stats::predict(model, dtrain, predcontrib = TRUE, iterationrange = best_it_range)
+          .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
+        },
+        error = function(e) {
+          tryCatch({
+            df_imp <- xgboost::xgb.importance(model = model)
+            imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
+            if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
+              imp[df_imp$Feature] <- df_imp$Gain
+            }
+            imp
+          }, error = function(e2) NULL)
         }
-        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
-      },
-      error = function(e) {
-        tryCatch({
-          df_imp <- xgboost::xgb.importance(model = model)
-          imp <- stats::setNames(numeric(ncol(x_train)), colnames(x_train))
-          if (is.data.frame(df_imp) && nrow(df_imp) > 0 && "Feature" %in% names(df_imp) && "Gain" %in% names(df_imp)) {
-            imp[df_imp$Feature] <- df_imp$Gain
-          }
-          imp
-        }, error = function(e2) NULL)
-      }
-    )
+      )
+    } else {
+      NULL
+    }
 
     rm(dtrain)
     if (!is.null(dval_metric)) rm(dval_metric)
@@ -1454,31 +1464,36 @@ register_evaluator(
     }
 
     # Fetch feature importance and map column names
-    importances <- tryCatch(
-      {
-        n_tr <- nrow(x_train)
-        pool_imp <- if (n_tr > 2000L) {
-          sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
-          sub_base <- if (!is.null(offs$train)) {
-            if (is.matrix(offs$train)) offs$train[sub_idx, , drop = FALSE] else offs$train[sub_idx]
+    compute_imp <- !isFALSE(extra_params$compute_importances)
+    importances <- if (compute_imp) {
+      tryCatch(
+        {
+          n_tr <- nrow(x_train)
+          pool_imp <- if (n_tr > 2000L) {
+            sub_idx <- with_seed(seed_val, sample.int(n_tr, 2000L))
+            sub_base <- if (!is.null(offs$train)) {
+              if (is.matrix(offs$train)) offs$train[sub_idx, , drop = FALSE] else offs$train[sub_idx]
+            } else {
+              NULL
+            }
+            .cb_load_pool(
+              data = .slice_feature_matrix(x_train, sub_idx),
+              label = y_train[sub_idx],
+              cat_cols = cat_cols,
+              baseline = sub_base,
+              thread_count = threads
+            )
           } else {
-            NULL
+            dtrain
           }
-          .cb_load_pool(
-            data = .slice_feature_matrix(x_train, sub_idx),
-            label = y_train[sub_idx],
-            cat_cols = cat_cols,
-            baseline = sub_base,
-            thread_count = threads
-          )
-        } else {
-          dtrain
-        }
-        sh <- catboost::catboost.get_feature_importance(model, pool = pool_imp, type = "ShapValues", thread_count = threads)
-        .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
-      },
-      error = function(e) NULL
-    )
+          sh <- catboost::catboost.get_feature_importance(model, pool = pool_imp, type = "ShapValues", thread_count = threads)
+          .extract_shap_importances(sh, ncol(x_train), colnames(x_train))
+        },
+        error = function(e) NULL
+      )
+    } else {
+      NULL
+    }
 
     best_it <- tryCatch(
       if (!is.null(model$tree_count) && model$tree_count > 0) as.integer(model$tree_count) else NULL,
@@ -1633,22 +1648,27 @@ register_evaluator(
   if (!is.null(extra_params[["num_threads"]])) threads <- as.integer(extra_params[["num_threads"]])
   if (!is.null(extra_params[["n_jobs"]])) threads <- as.integer(extra_params[["n_jobs"]])
 
+  compute_imp <- !isFALSE(extra_params[["compute_importances"]])
   is_sparse <- inherits(x_train, "sparseMatrix")
   cs <- attr(x_train, "cat_schema", exact = TRUE)
   if (is_sparse) {
     x_mat <- x_train
     col_means <- numeric(0L)
-    n_r <- nrow(x_mat)
-    mu_sp <- Matrix::colMeans(x_mat)
-    ex2_sp <- Matrix::colSums(x_mat^2)
-    sd_x <- sqrt(pmax(0.0, (ex2_sp - n_r * (mu_sp^2)) / max(1.0, n_r - 1.0)))
-    sd_x[!is.finite(sd_x) | sd_x <= 0] <- 1.0
+    if (compute_imp) {
+      n_r <- nrow(x_mat)
+      mu_sp <- Matrix::colMeans(x_mat)
+      ex2_sp <- Matrix::colSums(x_mat^2)
+      sd_x <- sqrt(pmax(0.0, (ex2_sp - n_r * (mu_sp^2)) / max(1.0, n_r - 1.0)))
+      sd_x[!is.finite(sd_x) | sd_x <= 0] <- 1.0
+    } else {
+      sd_x <- numeric(0L)
+    }
     val_mat <- if (!is.null(x_val)) x_val else NULL
   } else {
     x_train <- .sanitize_feature_matrix(x_train, threads = threads)
     cs <- attr(x_train, "cat_schema", exact = TRUE)
     x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
-    imp_tr <- .impute_and_col_stats(x_train, compute_sd = TRUE, threads = threads)
+    imp_tr <- .impute_and_col_stats(x_train, compute_sd = compute_imp, threads = threads)
     x_mat <- imp_tr$mat
     col_means <- imp_tr$col_means
     sd_x <- imp_tr$col_sds
@@ -1781,7 +1801,13 @@ register_evaluator(
         preds[, col_idx] <- 1.0
       }
     }
-    importances <- if (!is.null(all_feats)) stats::setNames(rep(0, length(all_feats)), all_feats) else numeric(0L)
+    importances <- if (!compute_imp) {
+      NULL
+    } else if (!is.null(all_feats)) {
+      stats::setNames(rep(0, length(all_feats)), all_feats)
+    } else {
+      numeric(0L)
+    }
     return(list(model = model, predictions = preds, importances = importances, col_means = col_means))
   }
 
@@ -1928,27 +1954,31 @@ register_evaluator(
     }
   }
 
-  if (task == "multiclass") {
-    coefs_list <- stats::coef(model, s = s_extract)
-    imp_matrix <- do.call(cbind, lapply(coefs_list, function(c_mat) abs(as.numeric(c_mat)[-1L])))
-    imp <- rowMeans(imp_matrix)
-    names(imp) <- rownames(coefs_list[[1L]])[-1L]
-  } else {
-    coefs <- as.matrix(stats::coef(model, s = s_extract))
-    coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
-    imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
-  }
-  if (is_single_col) {
-    imp <- imp[seq_len(ncol(x_mat))]
-  }
-  importances <- imp * sd_x[seq_along(imp)]
-  if (!is.null(all_feats)) names(importances) <- all_feats
-
-  if (!is.null(all_feats)) {
-    missing <- setdiff(all_feats, names(importances))
-    if (length(missing) > 0L) {
-      importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
+  if (compute_imp) {
+    if (task == "multiclass") {
+      coefs_list <- stats::coef(model, s = s_extract)
+      imp_matrix <- do.call(cbind, lapply(coefs_list, function(c_mat) abs(as.numeric(c_mat)[-1L])))
+      imp <- rowMeans(imp_matrix)
+      names(imp) <- rownames(coefs_list[[1L]])[-1L]
+    } else {
+      coefs <- as.matrix(stats::coef(model, s = s_extract))
+      coefs <- coefs[rownames(coefs) != "(Intercept)", , drop = FALSE]
+      imp <- stats::setNames(abs(as.numeric(coefs)), rownames(coefs))
     }
+    if (is_single_col) {
+      imp <- imp[seq_len(ncol(x_mat))]
+    }
+    importances <- imp * sd_x[seq_along(imp)]
+    if (!is.null(all_feats)) names(importances) <- all_feats
+
+    if (!is.null(all_feats)) {
+      missing <- setdiff(all_feats, names(importances))
+      if (length(missing) > 0L) {
+        importances <- c(importances, stats::setNames(rep(0, length(missing)), missing))
+      }
+    }
+  } else {
+    importances <- NULL
   }
 
   model$col_means <- col_means
@@ -2379,6 +2409,7 @@ register_evaluator(
       4L
     }
 
+    compute_imp <- !isFALSE(extra_params$compute_importances)
     fit_res <- rcpp_realmlp_train(
       x_train = x_train, y_train = y_train_num,
       x_val = x_val,
@@ -2389,7 +2420,8 @@ register_evaluator(
       threads = as.integer(threads), metric = metric_arg,
       hidden_dim = hidden_dim_val,
       n_cycles = n_cycles_val,
-      stop_epoch = stop_epoch_val
+      stop_epoch = stop_epoch_val,
+      compute_importances = compute_imp
     )
 
     preds <- NULL
@@ -2585,12 +2617,16 @@ register_evaluator(
       ...
     )
 
-    importances <- .aggregate_grouped_importances(
-      fit_res$importances,
-      sp_tr$state$col_group,
-      ncol(x_train),
-      colnames(x_train)
-    )
+    importances <- if (!is.null(fit_res$importances)) {
+      .aggregate_grouped_importances(
+        fit_res$importances,
+        sp_tr$state$col_group,
+        ncol(x_train),
+        colnames(x_train)
+      )
+    } else {
+      NULL
+    }
 
     wrapped <- list(
       glmnet_model = fit_res$model,
@@ -2624,6 +2660,7 @@ register_evaluator(
     }
 
     extra_params <- list(...)
+    compute_imp <- !isFALSE(extra_params$compute_importances)
     th <- .pick_first_param(extra_params, c("threads", "nthreads", "nthread", "num_threads", "n_jobs"), threads)
     threads <- max(1L, as.integer(th))
 
@@ -2696,7 +2733,8 @@ register_evaluator(
       offset_train = if (!is.null(offs$train)) as.numeric(offs$train) else NULL,
       offset_val = if (!is.null(offs$val)) as.numeric(offs$val) else NULL,
       max_irls_iter = max_irls_iter,
-      irls_tol = irls_tol
+      irls_tol = irls_tol,
+      compute_importances = compute_imp
     )
 
     preds <- NULL
@@ -2722,12 +2760,16 @@ register_evaluator(
       }
     }
 
-    importances <- .aggregate_grouped_importances(
-      fit_res$importances,
-      ohe_tr$col_group,
-      ncol(x_train),
-      colnames(x_train)
-    )
+    importances <- if (compute_imp && length(fit_res$importances) > 0L) {
+      .aggregate_grouped_importances(
+        fit_res$importances,
+        ohe_tr$col_group,
+        ncol(x_train),
+        colnames(x_train)
+      )
+    } else {
+      NULL
+    }
 
     wrapped <- list(
       model_state = fit_res$model_state,
@@ -2792,6 +2834,7 @@ register_evaluator(
     }
 
     extra_params <- list(...)
+    compute_imp <- !isFALSE(extra_params$compute_importances)
     th <- .pick_first_param(extra_params, c("threads", "nthreads", "nthread", "num_threads", "n_jobs"), threads)
     threads <- max(1L, as.integer(th))
 
@@ -2874,7 +2917,8 @@ register_evaluator(
       cat_cardinalities = cat_cards_arg,
       d_embedding = d_embedding,
       lr_warmup_frac = lr_warmup_frac,
-      stop_epoch = stop_epoch_val
+      stop_epoch = stop_epoch_val,
+      compute_importances = compute_imp
     )
 
     preds <- NULL
@@ -3096,6 +3140,7 @@ register_evaluator(
       stop("The 'ranger' package is required to use the 'ranger' evaluator.")
     }
     extra_params <- list(...)
+    compute_imp <- !isFALSE(extra_params$compute_importances)
     th <- .pick_first_param(extra_params, c("threads", "nthreads", "nthread", "num_threads", "n_jobs"), threads)
     threads <- max(1L, as.integer(th))
 
@@ -3148,7 +3193,7 @@ register_evaluator(
             preds[, col_i] <- 1.0
           }
         }
-        imp <- stats::setNames(numeric(p_in), orig_names)
+        imp <- if (compute_imp) stats::setNames(numeric(p_in), orig_names) else NULL
         return(list(model = wrapped, predictions = preds, importances = imp))
       }
       if (task == "classification") {
@@ -3186,7 +3231,7 @@ register_evaluator(
       num.trees = num_trees,
       splitrule = splitrule,
       probability = prob_flag,
-      importance = "impurity",
+      importance = if (compute_imp) "impurity" else "none",
       save.memory = FALSE,
       num.threads = threads,
       seed = seed_val,
@@ -3224,19 +3269,23 @@ register_evaluator(
       NULL
     }
 
-    imp <- tryCatch({
-      ri <- ranger::importance(fit)
-      out_imp <- numeric(p_in)
-      if (length(ri) == p_in) {
-        out_imp <- as.numeric(ri)
-      } else if (!is.null(names(ri))) {
-        idx <- match(prep_state$in_names, names(ri))
-        ok <- !is.na(idx)
-        out_imp[ok] <- as.numeric(ri[idx[ok]])
-      }
-      if (!is.null(orig_names)) names(out_imp) <- orig_names
-      out_imp
-    }, error = function(e) NULL)
+    imp <- if (compute_imp) {
+      tryCatch({
+        ri <- ranger::importance(fit)
+        out_imp <- numeric(p_in)
+        if (length(ri) == p_in) {
+          out_imp <- as.numeric(ri)
+        } else if (!is.null(names(ri))) {
+          idx <- match(prep_state$in_names, names(ri))
+          ok <- !is.na(idx)
+          out_imp[ok] <- as.numeric(ri[idx[ok]])
+        }
+        if (!is.null(orig_names)) names(out_imp) <- orig_names
+        out_imp
+      }, error = function(e) NULL)
+    } else {
+      NULL
+    }
 
     wrapped <- list(
       ranger_fit = fit,

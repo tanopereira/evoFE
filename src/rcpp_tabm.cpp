@@ -315,6 +315,7 @@ void resolve_cat_schema_args(const NumericMatrix& x_train,
 //' @param d_embedding Embedding dimension per numeric/categorical feature (default 8).
 //' @param lr_warmup_frac Linear warmup fraction for cosine schedule (default 0.05).
 //' @param stop_epoch Optional epoch cap while preserving the full `n_epochs` cosine LR horizon (`0` = disabled).
+//' @param compute_importances Logical: whether to compute feature importances via mean occlusion (default TRUE).
 //' @return A List with `predictions`, `best_epoch`, `best_score`, `importances`, and `model_state`.
 //' @keywords internal
 // [[Rcpp::export]]
@@ -343,7 +344,8 @@ List rcpp_tabm_train(NumericMatrix x_train,
                      Nullable<IntegerVector> cat_cardinalities = R_NilValue,
                      int d_embedding = 8,
                      double lr_warmup_frac = 0.05,
-                     int stop_epoch = 0) {
+                     int stop_epoch = 0,
+                     bool compute_importances = true) {
 
   int N = x_train.nrow();
   int D = x_train.ncol();
@@ -632,47 +634,49 @@ List rcpp_tabm_train(NumericMatrix x_train,
   }
 
   // Feature importances via mean occlusion in embedding space mapped to ncol(x_train)
-  bool use_val_imp = (has_val && N_val > 0 && y_v_ptr != nullptr);
-  const Eigen::MatrixXf& X_num_imp_src = use_val_imp ? X_num_val : X_num_tr;
-  const Eigen::MatrixXi& X_cat_imp_src = use_val_imp ? X_cat_val : X_cat_tr;
-  const double* y_imp_ptr = use_val_imp ? y_v_ptr : y_train.begin();
-  int N_avail = use_val_imp ? N_val : N;
-  int N_eval = std::min(N_avail, 1000);
-
   std::vector<double> importances;
-  if (N_eval <= 0) {
-    importances.assign(D, 1.0 / std::max(1, D));
-  } else if (N_eval == N_avail) {
-    importances = model.compute_importances(X_num_imp_src, X_cat_imp_src, y_imp_ptr, N_eval);
-  } else {
-    std::vector<int> imp_idx(N_avail);
-    for (int i = 0; i < N_avail; ++i) imp_idx[i] = i;
-    std::mt19937 imp_rng(static_cast<unsigned int>(seed + 777));
-    for (int i = 0; i < N_eval; ++i) {
-      std::uniform_int_distribution<int> dist(i, N_avail - 1);
-      std::swap(imp_idx[i], imp_idx[dist(imp_rng)]);
-    }
-    std::sort(imp_idx.begin(), imp_idx.begin() + N_eval);
+  if (compute_importances) {
+    bool use_val_imp = (has_val && N_val > 0 && y_v_ptr != nullptr);
+    const Eigen::MatrixXf& X_num_imp_src = use_val_imp ? X_num_val : X_num_tr;
+    const Eigen::MatrixXi& X_cat_imp_src = use_val_imp ? X_cat_val : X_cat_tr;
+    const double* y_imp_ptr = use_val_imp ? y_v_ptr : y_train.begin();
+    int N_avail = use_val_imp ? N_val : N;
+    int N_eval = std::min(N_avail, 1000);
 
-    int n_num = static_cast<int>(model.num_col_indices.size());
-    int n_cat = static_cast<int>(model.cat_col_indices.size());
-    Eigen::MatrixXf Xn_sub;
-    Eigen::MatrixXi Xc_sub;
-    if (n_num > 0) {
-      Xn_sub.resize(N_eval, n_num);
-      for (int j = 0; j < n_num; ++j) {
-        for (int i = 0; i < N_eval; ++i) Xn_sub(i, j) = X_num_imp_src(imp_idx[i], j);
+    if (N_eval <= 0) {
+      importances.assign(D, 1.0 / std::max(1, D));
+    } else if (N_eval == N_avail) {
+      importances = model.compute_importances(X_num_imp_src, X_cat_imp_src, y_imp_ptr, N_eval);
+    } else {
+      std::vector<int> imp_idx(N_avail);
+      for (int i = 0; i < N_avail; ++i) imp_idx[i] = i;
+      std::mt19937 imp_rng(static_cast<unsigned int>(seed + 777));
+      for (int i = 0; i < N_eval; ++i) {
+        std::uniform_int_distribution<int> dist(i, N_avail - 1);
+        std::swap(imp_idx[i], imp_idx[dist(imp_rng)]);
       }
-    }
-    if (n_cat > 0) {
-      Xc_sub.resize(N_eval, n_cat);
-      for (int c = 0; c < n_cat; ++c) {
-        for (int i = 0; i < N_eval; ++i) Xc_sub(i, c) = X_cat_imp_src(imp_idx[i], c);
+      std::sort(imp_idx.begin(), imp_idx.begin() + N_eval);
+
+      int n_num = static_cast<int>(model.num_col_indices.size());
+      int n_cat = static_cast<int>(model.cat_col_indices.size());
+      Eigen::MatrixXf Xn_sub;
+      Eigen::MatrixXi Xc_sub;
+      if (n_num > 0) {
+        Xn_sub.resize(N_eval, n_num);
+        for (int j = 0; j < n_num; ++j) {
+          for (int i = 0; i < N_eval; ++i) Xn_sub(i, j) = X_num_imp_src(imp_idx[i], j);
+        }
       }
+      if (n_cat > 0) {
+        Xc_sub.resize(N_eval, n_cat);
+        for (int c = 0; c < n_cat; ++c) {
+          for (int i = 0; i < N_eval; ++i) Xc_sub(i, c) = X_cat_imp_src(imp_idx[i], c);
+        }
+      }
+      std::vector<double> y_eval(N_eval);
+      for (int i = 0; i < N_eval; ++i) y_eval[i] = y_imp_ptr[imp_idx[i]];
+      importances = model.compute_importances(Xn_sub, Xc_sub, y_eval.data(), N_eval);
     }
-    std::vector<double> y_eval(N_eval);
-    for (int i = 0; i < N_eval; ++i) y_eval[i] = y_imp_ptr[imp_idx[i]];
-    importances = model.compute_importances(Xn_sub, Xc_sub, y_eval.data(), N_eval);
   }
 
   return List::create(

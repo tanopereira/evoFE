@@ -1399,6 +1399,7 @@ evolve_features <- function(data, target_col, task = "classification",
     target_transform_state <- tt_full_fit$state
   }
 
+  final_model_args$compute_importances <- FALSE
   res_model <- do.call(train_model, c(
     list(
       x_train = x_full, y_train = y_full,

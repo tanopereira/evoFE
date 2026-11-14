@@ -30,7 +30,8 @@ rcpp_tabm_train(
   cat_cardinalities = NULL,
   d_embedding = 8L,
   lr_warmup_frac = 0.05,
-  stop_epoch = 0L
+  stop_epoch = 0L,
+  compute_importances = TRUE
 )
 }
 \arguments{
@@ -85,6 +86,8 @@ rcpp_tabm_train(
 \item{lr_warmup_frac}{Linear warmup fraction for cosine schedule (default 0.05).}
 
 \item{stop_epoch}{Optional epoch cap while preserving the full `n_epochs` cosine LR horizon (`0` = disabled).}
+
+\item{compute_importances}{Logical: whether to compute feature importances via mean occlusion (default TRUE).}
 }
 \value{
 A List with `predictions`, `best_epoch`, `best_score`, `importances`, and `model_state`.
