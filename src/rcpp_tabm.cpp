@@ -314,6 +314,7 @@ void resolve_cat_schema_args(const NumericMatrix& x_train,
 //' @param cat_cardinalities Optional integer cardinalities aligned with `cat_cols`.
 //' @param d_embedding Embedding dimension per numeric/categorical feature (default 8).
 //' @param lr_warmup_frac Linear warmup fraction for cosine schedule (default 0.05).
+//' @param stop_epoch Optional epoch cap while preserving the full `n_epochs` cosine LR horizon (`0` = disabled).
 //' @return A List with `predictions`, `best_epoch`, `best_score`, `importances`, and `model_state`.
 //' @keywords internal
 // [[Rcpp::export]]
@@ -341,7 +342,8 @@ List rcpp_tabm_train(NumericMatrix x_train,
                      Nullable<IntegerVector> cat_cols = R_NilValue,
                      Nullable<IntegerVector> cat_cardinalities = R_NilValue,
                      int d_embedding = 8,
-                     double lr_warmup_frac = 0.05) {
+                     double lr_warmup_frac = 0.05,
+                     int stop_epoch = 0) {
 
   int N = x_train.nrow();
   int D = x_train.ncol();
@@ -453,24 +455,38 @@ List rcpp_tabm_train(NumericMatrix x_train,
     }
   }
 
-  // Adaptive batch sizing bounded for K * B workspace memory
-  int actual_B = 256;
-  if (batch_size > 0) {
-    actual_B = std::min(batch_size, N);
-  } else if (N >= 131072) {
-    actual_B = 1024;
-  } else if (N >= 16384) {
-    actual_B = 512;
-  } else if (N >= 1024) {
-    actual_B = 256;
-  } else if (N > 64) {
-    actual_B = std::min(128, std::max(16, N / 4));
-  } else {
-    actual_B = std::max(1, N);
+  // Precompute static PLE bin indices & fractions once across train and validation matrices
+  Eigen::MatrixXi B_tr, B_val;
+  Eigen::MatrixXf F_tr, F_val;
+  if (model.num_emb == "pwl" && !model.num_col_indices.empty()) {
+    model.encode_ple_matrix(X_num_tr, B_tr, F_tr);
+    if (has_x_val && N_val > 0) {
+      model.encode_ple_matrix(X_num_val, B_val, F_val);
+    }
   }
-  actual_B = std::max(1, actual_B);
+
+  // K-aware adaptive batch sizing targeting L2-resident K * B workspace rows (~2K-8K)
+  int actual_B = batch_size;
+  if (actual_B <= 0) {
+    if (N < 512) {
+      actual_B = (N >= 64) ? std::min(128, std::max(16, N / 4)) : std::max(1, N);
+    } else if (N < 4096) {
+      actual_B = 64;
+    } else if (N < 16384) {
+      actual_B = 128;
+    } else if (N < 65536) {
+      actual_B = 256;
+    } else {
+      actual_B = 512;
+    }
+    if (actual_K >= 16 && N >= 512 && N < 65536) {
+      actual_B = std::min(actual_B, 256);
+    }
+  }
+  actual_B = std::clamp(actual_B, 1, N);
   int n_batches = (N + actual_B - 1) / actual_B;
   int total_steps = std::max(1, actual_epochs * n_batches);
+  int max_epochs = (stop_epoch > 0 && stop_epoch < actual_epochs) ? stop_epoch : actual_epochs;
 
   TabMWorkspace ws;
   ws.allocate(actual_B, actual_K, model.D_in, actual_d_block, actual_n_blocks, out_dim,
@@ -499,20 +515,28 @@ List rcpp_tabm_train(NumericMatrix x_train,
   bool has_best_snapshot = false;
   int no_improve_epochs = 0;
   bool stopped_early = false;
-  int stopped_epoch = actual_epochs;
-  int best_epoch = actual_epochs;
+  int stopped_epoch = max_epochs;
+  int best_epoch = max_epochs;
   int log_interval = (verbose >= 3) ? 1 : ((verbose >= 2) ? 8 : 16);
 
   if (verbose >= 1) {
-    Rprintf("    [TabM C++ %s] Training: %d rows (%d num, %d cat) | k=%d, d_block=%d, n_blocks=%d, emb=%s, epochs=%d, batch=%d\n",
+    std::string stop_info = (max_epochs < actual_epochs) ? (" (stop=" + std::to_string(max_epochs) + ")") : "";
+    Rprintf("    [TabM C++ %s] Training: %d rows (%d num, %d cat) | k=%d, d_block=%d, n_blocks=%d, emb=%s, epochs=%d%s, batch=%d\n",
             task.c_str(), N, static_cast<int>(model.num_col_indices.size()),
             static_cast<int>(model.cat_col_indices.size()),
-            actual_K, actual_d_block, actual_n_blocks, model.num_emb.c_str(), actual_epochs, actual_B);
+            actual_K, actual_d_block, actual_n_blocks, model.num_emb.c_str(), actual_epochs,
+            stop_info.c_str(),
+            actual_B);
     R_FlushConsole();
   }
 
+  const Eigen::MatrixXi* B_tr_ptr = (B_tr.rows() == N) ? &B_tr : nullptr;
+  const Eigen::MatrixXf* F_tr_ptr = (F_tr.rows() == N) ? &F_tr : nullptr;
+  const Eigen::MatrixXi* B_val_ptr = (has_x_val && N_val > 0 && B_val.rows() == N_val) ? &B_val : nullptr;
+  const Eigen::MatrixXf* F_val_ptr = (has_x_val && N_val > 0 && F_val.rows() == N_val) ? &F_val : nullptr;
+
   int step = 0;
-  for (int epoch = 0; epoch < actual_epochs; ++epoch) {
+  for (int epoch = 0; epoch < max_epochs; ++epoch) {
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
     double epoch_loss_sum = 0.0;
 
@@ -526,7 +550,8 @@ List rcpp_tabm_train(NumericMatrix x_train,
       double cur_lr = base_lr * cosine_warmup_schedule(t_norm, lr_warmup_frac, 0.0);
       epoch_loss_sum += model.train_step(
         X_num_tr, X_cat_tr, Y_tr, perm, start, cur_B,
-        step, cur_lr, wd, beta1, beta2, eps, ws
+        step, cur_lr, wd, beta1, beta2, eps, ws,
+        B_tr_ptr, F_tr_ptr
       );
     }
 
@@ -535,7 +560,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
     bool improved = false;
 
     if (has_val && N_val > 0) {
-      model.predict_preprocessed_chunked(X_num_val, X_cat_val, N_val, val_ws);
+      model.predict_preprocessed_chunked(X_num_val, X_cat_val, N_val, val_ws, B_val_ptr, F_val_ptr);
       MetricResult m_res = compute_val_metric(val_ws.preds, y_v_ptr, task, metric, out_dim, &val_ws.auc_pairs, threads);
       val_score = m_res.score;
       val_metric_nm = m_res.name;
@@ -564,7 +589,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
     }
 
     int cur_epoch = epoch + 1;
-    if (verbose >= 1 && (cur_epoch == 1 || cur_epoch % log_interval == 0 || cur_epoch == actual_epochs || (verbose >= 2 && improved))) {
+    if (verbose >= 1 && (cur_epoch == 1 || cur_epoch % log_interval == 0 || cur_epoch == max_epochs || (verbose >= 2 && improved))) {
       if (has_val && N_val > 0) {
         Rprintf("    [TabM C++ %s] Epoch %3d/%d | Train loss: %.4f | %s: %.4f (best: %.4f%s)\n",
                 task.c_str(), cur_epoch, actual_epochs, avg_loss, val_metric_nm.c_str(),
@@ -599,7 +624,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
   Rcpp::RObject val_preds_sexp = R_NilValue;
   if (has_x_val) {
     if (N_val > 0) {
-      model.predict_preprocessed_chunked(X_num_val, X_cat_val, N_val, val_ws);
+      model.predict_preprocessed_chunked(X_num_val, X_cat_val, N_val, val_ws, B_val_ptr, F_val_ptr);
       val_preds_sexp = to_rcpp(val_ws.preds);
     } else {
       val_preds_sexp = NumericMatrix(0, out_dim);

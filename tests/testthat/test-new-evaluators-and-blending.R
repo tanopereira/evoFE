@@ -985,3 +985,105 @@ test_that("run_competition_pipeline remaps s to lm_s without falling back to see
   }
   expect_gt(stats::sd(pipe$predictions), 0.01)
 })
+
+test_that("apply_iteration_target handles tabm stop_epoch and clears early stopping", {
+  args_in <- list(
+    tabm_epochs = 50L,
+    early_stopping_rounds = 10L,
+    early_stopping_round = 10L,
+    early_stop_round = 10L,
+    early_stopping = TRUE
+  )
+  out <- evoFE:::apply_iteration_target(args_in, 12, "tabm")
+  expect_identical(out[["stop_epoch"]], 12L)
+  expect_identical(out[["tabm_epochs"]], 50L)
+  expect_identical(out[["early_stopping_rounds"]], 0L)
+  expect_null(out[["early_stopping_round"]])
+  expect_null(out[["early_stop_round"]])
+  expect_null(out[["early_stopping"]])
+})
+
+test_that("tabm stop_epoch caps training cleanly across tasks and num_emb modes", {
+  set.seed(707)
+  n_tr <- 177L
+  n_val <- 63L
+  p <- 6L
+  x_tr <- matrix(rnorm(n_tr * p), nrow = n_tr, ncol = p)
+  x_val <- matrix(rnorm(n_val * p), nrow = n_val, ncol = p)
+  colnames(x_tr) <- paste0("f", seq_len(p))
+  colnames(x_val) <- paste0("f", seq_len(p))
+
+  ev <- evoFE:::get_evaluator("tabm")
+
+  raw_fit <- evoFE:::rcpp_tabm_train(
+    x_train = x_tr, y_train = sin(x_tr[, 1]) + 0.4 * x_tr[, 2]^2,
+    x_val = x_val, y_val = sin(x_val[, 1]) + 0.4 * x_val[, 2]^2,
+    task = "regression", n_epochs = 10L, stop_epoch = 3L,
+    early_stopping_rounds = 0L, threads = 2L, seed = 42L
+  )
+  expect_identical(as.integer(raw_fit$stopped_epoch), 3L)
+
+  for (emb in c("pwl", "none")) {
+    y_reg_tr <- sin(x_tr[, 1]) + 0.4 * x_tr[, 2]^2
+    y_reg_val <- sin(x_val[, 1]) + 0.4 * x_val[, 2]^2
+
+    fit_noval <- evoFE:::train_model(
+      x_train = x_tr, y_train = y_reg_tr,
+      task = "regression", evaluator = "tabm",
+      tabm_epochs = 10L, stop_epoch = 3L, early_stopping_rounds = 0L,
+      num_emb = emb, threads = 2L, seed = 42L
+    )
+    expect_identical(as.integer(fit_noval$best_iteration), 3L)
+    p_noval <- as.numeric(ev$predict_func(fit_noval$model, x_val, task = "regression", threads = 2L))
+    expect_length(p_noval, n_val)
+    expect_true(all(is.finite(p_noval)))
+
+    fit_reg <- evoFE:::train_model(
+      x_train = x_tr, y_train = y_reg_tr,
+      x_val = x_val, y_val = y_reg_val,
+      task = "regression", evaluator = "tabm",
+      tabm_epochs = 10L, stop_epoch = 3L, early_stopping_rounds = 0L,
+      num_emb = emb, threads = 2L, seed = 42L
+    )
+    expect_true(fit_reg$best_iteration >= 1L && fit_reg$best_iteration <= 3L)
+    expect_length(fit_reg$predictions, n_val)
+    expect_true(all(is.finite(fit_reg$predictions)))
+    p_reg <- as.numeric(ev$predict_func(fit_reg$model, x_val, task = "regression", threads = 2L))
+    expect_length(p_reg, n_val)
+    expect_true(all(is.finite(p_reg)))
+
+    y_bin_tr <- as.integer(x_tr[, 1] + 0.5 * x_tr[, 2] > 0)
+    y_bin_val <- as.integer(x_val[, 1] + 0.5 * x_val[, 2] > 0)
+    fit_bin <- evoFE:::train_model(
+      x_train = x_tr, y_train = y_bin_tr,
+      x_val = x_val, y_val = y_bin_val,
+      task = "classification", evaluator = "tabm",
+      tabm_epochs = 10L, stop_epoch = 3L, early_stopping_rounds = 0L,
+      num_emb = emb, threads = 2L, seed = 42L
+    )
+    expect_true(fit_bin$best_iteration >= 1L && fit_bin$best_iteration <= 3L)
+    expect_length(fit_bin$predictions, n_val)
+    expect_true(all(is.finite(fit_bin$predictions)))
+    p_bin <- as.numeric(ev$predict_func(fit_bin$model, x_val, task = "classification", threads = 2L))
+    expect_length(p_bin, n_val)
+    expect_true(all(is.finite(p_bin)))
+
+    y_mc_tr <- as.integer(cut(x_tr[, 1] + 0.4 * x_tr[, 3], breaks = c(-Inf, -0.4, 0.4, Inf), labels = FALSE)) - 1L
+    y_mc_val <- as.integer(cut(x_val[, 1] + 0.4 * x_val[, 3], breaks = c(-Inf, -0.4, 0.4, Inf), labels = FALSE)) - 1L
+    fit_mc <- evoFE:::train_model(
+      x_train = x_tr, y_train = y_mc_tr,
+      x_val = x_val, y_val = y_mc_val,
+      task = "multiclass", num_class = 3L, evaluator = "tabm",
+      tabm_epochs = 10L, stop_epoch = 3L, early_stopping_rounds = 0L,
+      num_emb = emb, threads = 2L, seed = 42L
+    )
+    expect_true(fit_mc$best_iteration >= 1L && fit_mc$best_iteration <= 3L)
+    expect_true(is.matrix(fit_mc$predictions))
+    expect_identical(dim(fit_mc$predictions), c(n_val, 3L))
+    expect_true(all(is.finite(fit_mc$predictions)))
+    p_mc <- ev$predict_func(fit_mc$model, x_val, task = "multiclass", num_class = 3L, threads = 2L)
+    expect_true(is.matrix(p_mc))
+    expect_identical(dim(p_mc), c(n_val, 3L))
+    expect_true(all(is.finite(p_mc)))
+  }
+})

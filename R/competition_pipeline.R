@@ -273,11 +273,10 @@
     } else if (base_ev == "rff") {
       list(alpha = 0.0, s = "lambda.min", n_components = 128L)
     } else if (base_ev == "tabm") {
-      bs <- if (n_rows >= 8192L) 2048L else -1L
       list(
         epochs = cfg$s2_mlp_epochs,
         early_stopping_rounds = cfg$s2_mlp_es,
-        batch_size = bs
+        batch_size = -1L
       )
     } else {
       list(nrounds = cfg$s2_nrounds, early_stopping_rounds = cfg$s2_es)
@@ -363,11 +362,10 @@
           mbo_init_design = mbo_id
         )
       } else if (base_ev == "tabm") {
-        bs <- if (n_rows >= 8192L) 2048L else -1L
         list(
           epochs = cfg$s4_mlp_epochs,
           early_stopping_rounds = cfg$s4_mlp_es,
-          batch_size = bs,
+          batch_size = -1L,
           mbo_iters = max(2L, as.integer(ceiling(mbo_it * 0.7))),
           mbo_init_design = max(3L, as.integer(ceiling(mbo_id * 0.75)))
         )
@@ -456,11 +454,10 @@
           n_components = 256L
         )
       } else if (base_ev == "tabm") {
-        bs <- if (n_rows >= 8192L) 2048L else -1L
         list(
           epochs = cfg$s4_mlp_epochs,
           early_stopping_rounds = cfg$s4_mlp_es,
-          batch_size = bs
+          batch_size = -1L
         )
       } else {
         list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)

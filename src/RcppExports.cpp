@@ -167,8 +167,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // rcpp_tabm_train
-List rcpp_tabm_train(NumericMatrix x_train, NumericVector y_train, Nullable<NumericMatrix> x_val, Nullable<NumericVector> y_val, std::string task, int n_epochs, int batch_size, double lr, double weight_decay, int early_stopping_rounds, int seed, int verbose, int num_classes, int threads, std::string metric, int k_ensemble, int d_block, int n_blocks, double dropout, std::string num_emb, int n_bins, Nullable<IntegerVector> cat_cols, Nullable<IntegerVector> cat_cardinalities, int d_embedding, double lr_warmup_frac);
-RcppExport SEXP _evoFE_rcpp_tabm_train(SEXP x_trainSEXP, SEXP y_trainSEXP, SEXP x_valSEXP, SEXP y_valSEXP, SEXP taskSEXP, SEXP n_epochsSEXP, SEXP batch_sizeSEXP, SEXP lrSEXP, SEXP weight_decaySEXP, SEXP early_stopping_roundsSEXP, SEXP seedSEXP, SEXP verboseSEXP, SEXP num_classesSEXP, SEXP threadsSEXP, SEXP metricSEXP, SEXP k_ensembleSEXP, SEXP d_blockSEXP, SEXP n_blocksSEXP, SEXP dropoutSEXP, SEXP num_embSEXP, SEXP n_binsSEXP, SEXP cat_colsSEXP, SEXP cat_cardinalitiesSEXP, SEXP d_embeddingSEXP, SEXP lr_warmup_fracSEXP) {
+List rcpp_tabm_train(NumericMatrix x_train, NumericVector y_train, Nullable<NumericMatrix> x_val, Nullable<NumericVector> y_val, std::string task, int n_epochs, int batch_size, double lr, double weight_decay, int early_stopping_rounds, int seed, int verbose, int num_classes, int threads, std::string metric, int k_ensemble, int d_block, int n_blocks, double dropout, std::string num_emb, int n_bins, Nullable<IntegerVector> cat_cols, Nullable<IntegerVector> cat_cardinalities, int d_embedding, double lr_warmup_frac, int stop_epoch);
+RcppExport SEXP _evoFE_rcpp_tabm_train(SEXP x_trainSEXP, SEXP y_trainSEXP, SEXP x_valSEXP, SEXP y_valSEXP, SEXP taskSEXP, SEXP n_epochsSEXP, SEXP batch_sizeSEXP, SEXP lrSEXP, SEXP weight_decaySEXP, SEXP early_stopping_roundsSEXP, SEXP seedSEXP, SEXP verboseSEXP, SEXP num_classesSEXP, SEXP threadsSEXP, SEXP metricSEXP, SEXP k_ensembleSEXP, SEXP d_blockSEXP, SEXP n_blocksSEXP, SEXP dropoutSEXP, SEXP num_embSEXP, SEXP n_binsSEXP, SEXP cat_colsSEXP, SEXP cat_cardinalitiesSEXP, SEXP d_embeddingSEXP, SEXP lr_warmup_fracSEXP, SEXP stop_epochSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -197,7 +197,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Nullable<IntegerVector> >::type cat_cardinalities(cat_cardinalitiesSEXP);
     Rcpp::traits::input_parameter< int >::type d_embedding(d_embeddingSEXP);
     Rcpp::traits::input_parameter< double >::type lr_warmup_frac(lr_warmup_fracSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcpp_tabm_train(x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac));
+    Rcpp::traits::input_parameter< int >::type stop_epoch(stop_epochSEXP);
+    rcpp_result_gen = Rcpp::wrap(rcpp_tabm_train(x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac, stop_epoch));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -405,7 +406,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_evoFE_rcpp_realmlp_predict", (DL_FUNC) &_evoFE_rcpp_realmlp_predict, 3},
     {"_evoFE_rcpp_rff_train", (DL_FUNC) &_evoFE_rcpp_rff_train, 18},
     {"_evoFE_rcpp_rff_predict", (DL_FUNC) &_evoFE_rcpp_rff_predict, 4},
-    {"_evoFE_rcpp_tabm_train", (DL_FUNC) &_evoFE_rcpp_tabm_train, 25},
+    {"_evoFE_rcpp_tabm_train", (DL_FUNC) &_evoFE_rcpp_tabm_train, 26},
     {"_evoFE_rcpp_tabm_predict", (DL_FUNC) &_evoFE_rcpp_tabm_predict, 3},
     {"_evoFE_rcpp_fused_row_min", (DL_FUNC) &_evoFE_rcpp_fused_row_min, 2},
     {"_evoFE_rcpp_fused_row_max", (DL_FUNC) &_evoFE_rcpp_fused_row_max, 2},

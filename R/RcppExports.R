@@ -132,10 +132,11 @@ rcpp_rff_predict <- function(model_state, x_new, offset_new = NULL, threads = 0L
 #' @param cat_cardinalities Optional integer cardinalities aligned with `cat_cols`.
 #' @param d_embedding Embedding dimension per numeric/categorical feature (default 8).
 #' @param lr_warmup_frac Linear warmup fraction for cosine schedule (default 0.05).
+#' @param stop_epoch Optional epoch cap while preserving the full `n_epochs` cosine LR horizon (`0` = disabled).
 #' @return A List with `predictions`, `best_epoch`, `best_score`, `importances`, and `model_state`.
 #' @keywords internal
-rcpp_tabm_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 100L, batch_size = -1L, lr = 0.002, weight_decay = 1e-4, early_stopping_rounds = 16L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", k_ensemble = 16L, d_block = 128L, n_blocks = 2L, dropout = 0.1, num_emb = "pwl", n_bins = 48L, cat_cols = NULL, cat_cardinalities = NULL, d_embedding = 8L, lr_warmup_frac = 0.05) {
-    .Call(`_evoFE_rcpp_tabm_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac)
+rcpp_tabm_train <- function(x_train, y_train, x_val = NULL, y_val = NULL, task = "regression", n_epochs = 100L, batch_size = -1L, lr = 0.002, weight_decay = 1e-4, early_stopping_rounds = 16L, seed = 42L, verbose = 0L, num_classes = 0L, threads = 1L, metric = "default", k_ensemble = 16L, d_block = 128L, n_blocks = 2L, dropout = 0.1, num_emb = "pwl", n_bins = 48L, cat_cols = NULL, cat_cardinalities = NULL, d_embedding = 8L, lr_warmup_frac = 0.05, stop_epoch = 0L) {
+    .Call(`_evoFE_rcpp_tabm_train`, x_train, y_train, x_val, y_val, task, n_epochs, batch_size, lr, weight_decay, early_stopping_rounds, seed, verbose, num_classes, threads, metric, k_ensemble, d_block, n_blocks, dropout, num_emb, n_bins, cat_cols, cat_cardinalities, d_embedding, lr_warmup_frac, stop_epoch)
 }
 
 #' Predict with TabM Model in C++

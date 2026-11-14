@@ -330,7 +330,7 @@ inline void adamw_step_impl(float* __restrict__ val_ptr,
                             float b2_f, float one_m_b2,
                             float wd_step) noexcept {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (Parallel && sz >= 1024)
+#pragma omp parallel for schedule(static) if (Parallel && sz >= 32768)
 #endif
   for (int i = 0; i < sz; ++i) {
     float g = g_ptr[i];

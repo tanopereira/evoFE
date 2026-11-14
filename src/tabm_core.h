@@ -44,14 +44,16 @@ static inline uint32_t xorshift32_step(uint32_t& s) noexcept {
 }
 
 // Single numeric feature Piecewise Linear Encoding + learnable linear projection (d_emb x T_j)
-// Stores W as (d_emb x T_j) ColMajor so each bin column is unit-stride in L1 cache.
-// Uses prefix sum matrix S (d_emb x (T_j + 1)) to compute S[:, b*] + frac * W[:, b*] in O(d_emb).
+// Stores W as (d_emb x T_j) ColMajor for AdamW state compatibility and maintains transposed
+// S_T ((T_j + 1) x d_emb) and W_T (T_j x d_emb) so forward lookup over e is unit-stride in L1 cache.
 struct PLEFeature {
   std::vector<float> edges;       // length n_bins + 1, strictly increasing
   std::vector<float> inv_widths;  // length n_bins
   AdamParam W;                    // d_emb x n_bins
   AdamParam b;                    // d_emb x 1
   Eigen::MatrixXf S;              // d_emb x (n_bins + 1), prefix sums: S[:, 0] = b, S[:, r] = b + sum_{0..r-1} W[:, j]
+  Eigen::MatrixXf S_T;            // (n_bins + 1) x d_emb, S.transpose() for contiguous unit-stride lookup
+  Eigen::MatrixXf W_T;            // n_bins x d_emb, W.val.transpose() for contiguous unit-stride lookup
   int n_bins = 0;
   int d_emb = 0;
   int out_col_offset = -1;        // column offset into E_batch (-1 if constant/inactive)
@@ -66,6 +68,14 @@ struct PLEFeature {
     for (int r = 0; r < n_bins; ++r) {
       S.col(r + 1).noalias() = S.col(r) + W.val.col(r);
     }
+    if (S_T.rows() != n_bins + 1 || S_T.cols() != d_emb) {
+      S_T.resize(n_bins + 1, d_emb);
+    }
+    if (W_T.rows() != n_bins || W_T.cols() != d_emb) {
+      W_T.resize(n_bins, d_emb);
+    }
+    S_T.noalias() = S.transpose();
+    W_T.noalias() = W.val.transpose();
   }
 
   void init_from_edges(const std::vector<float>& strict_edges, int d_embedding, std::mt19937& rng) {
@@ -190,9 +200,10 @@ struct TabMWorkspace {
   Eigen::MatrixXf grad_b_out;
 
   // Per-feature PLE & categorical scratch buffers (parallel safe per feature index)
-  std::vector<Eigen::MatrixXf> ple_grad_W;
-  std::vector<Eigen::MatrixXf> ple_grad_b;
-  std::vector<Eigen::MatrixXf> ple_diff;
+  std::vector<Eigen::MatrixXf> ple_grad_W;    // d_emb x n_bins (for AdamW update matching PLEFeature::W)
+  std::vector<Eigen::MatrixXf> ple_grad_W_T;  // n_bins x d_emb (unit-stride L1-resident accumulators)
+  std::vector<Eigen::MatrixXf> ple_grad_b;    // d_emb x 1
+  std::vector<Eigen::MatrixXf> ple_diff;      // n_bins x d_emb (suffix-sum scratch per embedding coordinate)
   std::vector<Eigen::MatrixXf> cat_grad_E;
 
   void allocate(int batch_cap, int k_ens, int d_in_dim, int d_blk, int n_blks, int out_d,
@@ -251,13 +262,15 @@ struct TabMWorkspace {
     grad_b_out.resize(K, out_dim);
 
     ple_grad_W.resize(ple_feats.size());
+    ple_grad_W_T.resize(ple_feats.size());
     ple_grad_b.resize(ple_feats.size());
     ple_diff.resize(ple_feats.size());
     for (size_t j = 0; j < ple_feats.size(); ++j) {
       if (ple_feats[j].active) {
         ple_grad_W[j].resize(d_emb, ple_feats[j].n_bins);
+        ple_grad_W_T[j].resize(ple_feats[j].n_bins, d_emb);
         ple_grad_b[j].resize(d_emb, 1);
-        ple_diff[j].resize(d_emb, ple_feats[j].n_bins);
+        ple_diff[j].resize(ple_feats[j].n_bins, d_emb);
       }
     }
 
@@ -284,6 +297,8 @@ struct TabMInferWorkspace {
   Eigen::MatrixXf E_chunk;
   Eigen::MatrixXf X_num_chunk;
   Eigen::MatrixXi X_cat_chunk;
+  Eigen::MatrixXi bin_idx_chunk;
+  Eigen::MatrixXf bin_frac_chunk;
   std::vector<Eigen::MatrixXf> H;
   Eigen::MatrixXf Out;
   Eigen::MatrixXd preds;
@@ -305,7 +320,11 @@ struct TabMInferWorkspace {
 
     int max_KB = K * chunk_cap;
     E_chunk.resize(chunk_cap, D_in);
-    if (n_num > 0) X_num_chunk.resize(chunk_cap, n_num);
+    if (n_num > 0) {
+      X_num_chunk.resize(chunk_cap, n_num);
+      bin_idx_chunk.resize(chunk_cap, n_num);
+      bin_frac_chunk.resize(chunk_cap, n_num);
+    }
     if (n_cat > 0) X_cat_chunk.resize(chunk_cap, n_cat);
 
     H.resize(n_blocks + 1);
@@ -639,6 +658,44 @@ struct TabMModel {
     D_in = has_dummy_in ? 1 : (D_num_rep + D_cat_rep);
   }
 
+  // Bin a contiguous row slice [row_offset .. row_offset + cur_B) from standardized X_num
+  // into B_out (rows >= cur_B, cols == n_num) and F_out (rows >= cur_B, cols == n_num).
+  void encode_ple_chunk(const float* x_num_ptr, int x_num_lda, int row_offset, int cur_B,
+                        Eigen::MatrixXi& B_out, Eigen::MatrixXf& F_out) const {
+    if (num_emb != "pwl" || cur_B <= 0) return;
+    int n_num = static_cast<int>(num_col_indices.size());
+    if (n_num <= 0) return;
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 32)
+#endif
+    for (int j = 0; j < n_num; ++j) {
+      const PLEFeature& pf = ple_features[j];
+      if (!pf.active) continue;
+      const float* x_col = x_num_ptr + static_cast<size_t>(j) * static_cast<size_t>(x_num_lda) + row_offset;
+      int* b_col = B_out.col(j).data();
+      float* f_col = F_out.col(j).data();
+      for (int i = 0; i < cur_B; ++i) {
+        pf.lookup(x_col[i], b_col[i], f_col[i]);
+      }
+    }
+  }
+
+  // Precompute static PLE (bin_idx, bin_frac) once across an entire matrix outside epoch loops.
+  void encode_ple_matrix(const Eigen::MatrixXf& X_num,
+                         Eigen::MatrixXi& B_out,
+                         Eigen::MatrixXf& F_out) const {
+    int N = static_cast<int>(X_num.rows());
+    int n_num = static_cast<int>(num_col_indices.size());
+    if (num_emb != "pwl" || n_num <= 0 || N <= 0) {
+      B_out.resize(0, 0);
+      F_out.resize(0, 0);
+      return;
+    }
+    B_out.resize(N, n_num);
+    F_out.resize(N, n_num);
+    encode_ple_chunk(X_num.data(), static_cast<int>(X_num.outerStride()), 0, N, B_out, F_out);
+  }
+
   void init_mlp(int out_dim_req, const std::string& task_req, int k_ens, int d_blk, int n_blks, double drop_rate, int seed) {
     task = task_req;
     output_dim = std::max(1, out_dim_req);
@@ -735,11 +792,14 @@ struct TabMModel {
     }
   }
 
-  // Forward feature embedding: X_num (cur_B x n_num), X_cat (cur_B x n_cat) -> E_out (rows >= cur_B, cols == D_in)
-  void forward_embeddings(const Eigen::MatrixXf& X_num, const Eigen::MatrixXi& X_cat, int cur_B,
-                          Eigen::MatrixXf& E_out,
-                          Eigen::MatrixXi* bin_idx_cache = nullptr,
-                          Eigen::MatrixXf* bin_frac_cache = nullptr) const {
+  // Evaluate feature embeddings using optional precomputed PLE (bin_idx, bin_frac) and contiguous outer-e loops.
+  // Set x_num_ptr == nullptr when num_emb != "pwl" and caller already wrote raw features into E_out[0..cur_B, 0..n_num).
+  void forward_embeddings_prebinned(const float* x_num_ptr, int x_num_lda,
+                                    const int* b_ptr, int b_lda,
+                                    const float* f_ptr, int f_lda,
+                                    const int* x_cat_ptr, int x_cat_lda,
+                                    int row_offset, int cur_B,
+                                    Eigen::MatrixXf& E_out) const {
     if (has_dummy_in) {
       E_out.block(0, 0, cur_B, 1).setZero();
       return;
@@ -750,68 +810,93 @@ struct TabMModel {
     int e_stride = static_cast<int>(E_out.outerStride());
     float* e_base = E_out.data();
 
-    if (num_emb == "pwl") {
-#if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 32)
-#endif
-      for (int j = 0; j < n_num; ++j) {
-        const PLEFeature& pf = ple_features[j];
-        if (!pf.active) continue;
-        const float* x_col = X_num.col(j).data();
-        const float* S_data = pf.S.data();
-        const float* W_data = pf.W.val.data();
-        int S_stride = static_cast<int>(pf.S.outerStride());
-        int W_stride = static_cast<int>(pf.W.val.outerStride());
-        int d_e = pf.d_emb;
-        int col_off = pf.out_col_offset;
-        int* b_cache = (bin_idx_cache != nullptr) ? bin_idx_cache->col(j).data() : nullptr;
-        float* f_cache = (bin_frac_cache != nullptr) ? bin_frac_cache->col(j).data() : nullptr;
-
-        for (int i = 0; i < cur_B; ++i) {
-          int b_star = 0;
-          float frac = 0.0f;
-          pf.lookup(x_col[i], b_star, frac);
-          if (b_cache != nullptr) {
-            b_cache[i] = b_star;
-            f_cache[i] = frac;
-          }
-          const float* s_ptr = S_data + b_star * S_stride;
-          const float* w_ptr = W_data + b_star * W_stride;
-          for (int e = 0; e < d_e; ++e) {
-            e_base[i + (col_off + e) * e_stride] = s_ptr[e] + frac * w_ptr[e];
-          }
-        }
-      }
-    } else if (n_num > 0) {
+    if (num_emb == "pwl" && n_num > 0 && b_ptr != nullptr && f_ptr != nullptr) {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 64)
 #endif
       for (int j = 0; j < n_num; ++j) {
-        std::memcpy(e_base + static_cast<size_t>(j) * e_stride,
-                    X_num.col(j).data(),
+        const PLEFeature& pf = ple_features[j];
+        if (!pf.active) continue;
+        const int* b_col = b_ptr + static_cast<size_t>(j) * static_cast<size_t>(b_lda) + row_offset;
+        const float* f_col = f_ptr + static_cast<size_t>(j) * static_cast<size_t>(f_lda) + row_offset;
+        int d_e = pf.d_emb;
+        int col_off = pf.out_col_offset;
+
+        for (int e = 0; e < d_e; ++e) {
+          const float* s_col = pf.S_T.col(e).data();
+          const float* w_col = pf.W_T.col(e).data();
+          float* e_col = e_base + static_cast<size_t>(col_off + e) * static_cast<size_t>(e_stride);
+          for (int i = 0; i < cur_B; ++i) {
+            const int b_star = b_col[i];
+            e_col[i] = s_col[b_star] + f_col[i] * w_col[b_star];
+          }
+        }
+      }
+    } else if (n_num > 0 && x_num_ptr != nullptr) {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 64)
+#endif
+      for (int j = 0; j < n_num; ++j) {
+        std::memcpy(e_base + static_cast<size_t>(j) * static_cast<size_t>(e_stride),
+                    x_num_ptr + static_cast<size_t>(j) * static_cast<size_t>(x_num_lda) + row_offset,
                     static_cast<size_t>(cur_B) * sizeof(float));
       }
     }
 
-    if (n_cat > 0) {
+    if (n_cat > 0 && x_cat_ptr != nullptr) {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (n_cat >= 2 && cur_B >= 32)
+#pragma omp parallel for schedule(static) if (n_cat >= 2 && cur_B >= 64)
 #endif
       for (int c = 0; c < n_cat; ++c) {
         const Eigen::MatrixXf& tbl = cat_tables[c].val;
         const float* t_data = tbl.data();
         int t_stride = static_cast<int>(tbl.outerStride());
-        const int* code_col = X_cat.col(c).data();
+        int card = cat_cardinalities[c];
+        const int* code_col = x_cat_ptr + static_cast<size_t>(c) * static_cast<size_t>(x_cat_lda) + row_offset;
         int col_off = D_num_rep + c * d_embedding;
         for (int i = 0; i < cur_B; ++i) {
           int code = code_col[i];
+          if (code < 0 || code > card) code = card;
           const float* emb = t_data + code * t_stride;
           for (int e = 0; e < d_embedding; ++e) {
-            e_base[i + (col_off + e) * e_stride] = emb[e];
+            e_base[i + static_cast<size_t>(col_off + e) * static_cast<size_t>(e_stride)] = emb[e];
           }
         }
       }
     }
+  }
+
+  // Forward feature embedding from dense batch X_num / X_cat (bins X_num on demand if pwl)
+  void forward_embeddings(const Eigen::MatrixXf& X_num, const Eigen::MatrixXi& X_cat, int cur_B,
+                          Eigen::MatrixXf& E_out,
+                          Eigen::MatrixXi* bin_idx_cache = nullptr,
+                          Eigen::MatrixXf* bin_frac_cache = nullptr) const {
+    if (has_dummy_in) {
+      E_out.block(0, 0, cur_B, 1).setZero();
+      return;
+    }
+    int n_num = static_cast<int>(num_col_indices.size());
+    int n_cat = static_cast<int>(cat_col_indices.size());
+    Eigen::MatrixXi tmp_b;
+    Eigen::MatrixXf tmp_f;
+    Eigen::MatrixXi* b_buf = bin_idx_cache;
+    Eigen::MatrixXf* f_buf = bin_frac_cache;
+    if (num_emb == "pwl" && n_num > 0) {
+      if (b_buf == nullptr || f_buf == nullptr) {
+        tmp_b.resize(cur_B, n_num);
+        tmp_f.resize(cur_B, n_num);
+        b_buf = &tmp_b;
+        f_buf = &tmp_f;
+      }
+      encode_ple_chunk(X_num.data(), static_cast<int>(X_num.outerStride()), 0, cur_B, *b_buf, *f_buf);
+    }
+    forward_embeddings_prebinned(
+      (n_num > 0) ? X_num.data() : nullptr, (n_num > 0) ? static_cast<int>(X_num.outerStride()) : 0,
+      (b_buf != nullptr && n_num > 0) ? b_buf->data() : nullptr, (b_buf != nullptr && n_num > 0) ? static_cast<int>(b_buf->outerStride()) : 0,
+      (f_buf != nullptr && n_num > 0) ? f_buf->data() : nullptr, (f_buf != nullptr && n_num > 0) ? static_cast<int>(f_buf->outerStride()) : 0,
+      (n_cat > 0) ? X_cat.data() : nullptr, (n_cat > 0) ? static_cast<int>(X_cat.outerStride()) : 0,
+      0, cur_B, E_out
+    );
   }
 
   // Forward MLP from shared E (cur_B x D_in) -> Out ((K * cur_B) x out_dim)
@@ -843,11 +928,11 @@ struct TabMModel {
       }
     }
 
-    // 2. Shared MLP blocks with per-member biases + ReLU + optional Dropout
+    // 2. Shared MLP blocks with per-member biases + ReLU + optional branchless 4-lane Dropout
     bool do_drop = (is_train && dropout > 0.0);
     float keep_prob = static_cast<float>(1.0 - dropout);
     float inv_keep = do_drop ? (1.0f / keep_prob) : 1.0f;
-    uint32_t drop_thresh = static_cast<uint32_t>(std::clamp(1.0 - dropout, 0.0, 1.0) * 16777216.0);
+    uint32_t drop_thresh8 = static_cast<uint32_t>(std::clamp(1.0 - dropout, 0.0, 1.0) * 256.0);
 
     for (int l = 0; l < n_blocks; ++l) {
       const TabMBlock& blk = blocks[l];
@@ -876,17 +961,35 @@ struct TabMModel {
                                         static_cast<uint32_t>(l + 1),
                                         static_cast<uint32_t>(c + 1),
                                         0x9e3779b9u);
+          if (rng_st == 0u) rng_st = 0x9e3779b9u;
           for (int k = 0; k < K; ++k) {
             float bk = b_col[k];
             float* dst = h_col + k * cur_B;
-            for (int i = 0; i < cur_B; ++i) {
-              float v = dst[i] + bk;
-              if (v <= 0.0f) {
-                dst[i] = 0.0f;
-              } else {
-                uint32_t u = xorshift32_step(rng_st) >> 8;
-                dst[i] = (u < drop_thresh) ? (v * inv_keep) : 0.0f;
-              }
+            int i = 0;
+            for (; i + 3 < cur_B; i += 4) {
+              uint32_t r = xorshift32_step(rng_st);
+              uint32_t u0 = r & 0xFFu;
+              uint32_t u1 = (r >> 8) & 0xFFu;
+              uint32_t u2 = (r >> 16) & 0xFFu;
+              uint32_t u3 = r >> 24;
+              float z0 = dst[i]     + bk;
+              float z1 = dst[i + 1] + bk;
+              float z2 = dst[i + 2] + bk;
+              float z3 = dst[i + 3] + bk;
+              float v0 = (z0 > 0.0f) ? z0 : 0.0f;
+              float v1 = (z1 > 0.0f) ? z1 : 0.0f;
+              float v2 = (z2 > 0.0f) ? z2 : 0.0f;
+              float v3 = (z3 > 0.0f) ? z3 : 0.0f;
+              dst[i]     = (u0 < drop_thresh8) ? (v0 * inv_keep) : 0.0f;
+              dst[i + 1] = (u1 < drop_thresh8) ? (v1 * inv_keep) : 0.0f;
+              dst[i + 2] = (u2 < drop_thresh8) ? (v2 * inv_keep) : 0.0f;
+              dst[i + 3] = (u3 < drop_thresh8) ? (v3 * inv_keep) : 0.0f;
+            }
+            for (; i < cur_B; ++i) {
+              uint32_t u = xorshift32_step(rng_st) >> 24;
+              float z = dst[i] + bk;
+              float v = (z > 0.0f) ? z : 0.0f;
+              dst[i] = (u < drop_thresh8) ? (v * inv_keep) : 0.0f;
             }
           }
         } else {
@@ -909,17 +1012,39 @@ struct TabMModel {
     const float* hlast_data = H_last.data();
     float* out_data = Out_buf.data();
 
-    for (int k = 0; k < K; ++k) {
-      gemm_f32_raw(false, false, cur_B, output_dim, d_block,
-                   hlast_data + k * cur_B, hlast_stride,
-                   W_out[k].val.data(), static_cast<int>(W_out[k].val.outerStride()),
-                   out_data + k * cur_B, out_stride,
-                   1.0f, 0.0f);
-      for (int c = 0; c < output_dim; ++c) {
-        float bk = b_out.val(k, c);
-        float* dst = out_data + c * out_stride + k * cur_B;
+    if (output_dim == 1) {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (K >= 2 && cur_KB >= 1024)
+#endif
+      for (int k = 0; k < K; ++k) {
+        float* dst = out_data + k * cur_B;
+        float bk = b_out.val(k, 0);
         for (int i = 0; i < cur_B; ++i) {
-          dst[i] += bk;
+          dst[i] = bk;
+        }
+        const float* w_k = W_out[k].val.data();
+        const float* hk_base = hlast_data + k * cur_B;
+        for (int d = 0; d < d_block; ++d) {
+          float wd = w_k[d];
+          const float* h_col = hk_base + static_cast<size_t>(d) * static_cast<size_t>(hlast_stride);
+          for (int i = 0; i < cur_B; ++i) {
+            dst[i] += h_col[i] * wd;
+          }
+        }
+      }
+    } else {
+      for (int k = 0; k < K; ++k) {
+        gemm_f32_raw(false, false, cur_B, output_dim, d_block,
+                     hlast_data + k * cur_B, hlast_stride,
+                     W_out[k].val.data(), static_cast<int>(W_out[k].val.outerStride()),
+                     out_data + k * cur_B, out_stride,
+                     1.0f, 0.0f);
+        for (int c = 0; c < output_dim; ++c) {
+          float bk = b_out.val(k, c);
+          float* dst = out_data + c * out_stride + k * cur_B;
+          for (int i = 0; i < cur_B; ++i) {
+            dst[i] += bk;
+          }
         }
       }
     }
@@ -936,48 +1061,72 @@ struct TabMModel {
     if (task == "regression") {
       double ys = (std::isfinite(y_std) && y_std > 1e-8) ? y_std : 1.0;
       double ym = std::isfinite(y_mean) ? y_mean : 0.0;
-      for (int i = 0; i < cur_B; ++i) {
-        double sum_p = 0.0;
-        for (int k = 0; k < K; ++k) {
-          double z = std::clamp(static_cast<double>(out_data[k * cur_B + i]), -50.0, 50.0);
-          sum_p += z;
+      double* dst = preds_dst.col(0).data() + start_row;
+      std::fill(dst, dst + cur_B, 0.0);
+      for (int k = 0; k < K; ++k) {
+        const float* src = out_data + k * cur_B;
+        for (int i = 0; i < cur_B; ++i) {
+          float z = std::clamp(src[i], -50.0f, 50.0f);
+          dst[i] += static_cast<double>(z);
         }
-        preds_dst(start_row + i, 0) = (sum_p * inv_K) * ys + ym;
+      }
+      double scale = inv_K * ys;
+      for (int i = 0; i < cur_B; ++i) {
+        dst[i] = dst[i] * scale + ym;
       }
     } else if (task == "classification") {
-      for (int i = 0; i < cur_B; ++i) {
-        double sum_p = 0.0;
-        for (int k = 0; k < K; ++k) {
-          double z = std::clamp(static_cast<double>(out_data[k * cur_B + i]), -30.0, 30.0);
-          sum_p += 1.0 / (1.0 + std::exp(-z));
+      double* dst = preds_dst.col(0).data() + start_row;
+      std::fill(dst, dst + cur_B, 0.0);
+      for (int k = 0; k < K; ++k) {
+        const float* src = out_data + k * cur_B;
+        for (int i = 0; i < cur_B; ++i) {
+          float z = std::clamp(src[i], -30.0f, 30.0f);
+          dst[i] += static_cast<double>(1.0f / (1.0f + evofe::nn::fast_expf(-z)));
         }
-        preds_dst(start_row + i, 0) = sum_p * inv_K;
+      }
+      for (int i = 0; i < cur_B; ++i) {
+        dst[i] *= inv_K;
       }
     } else {
-      for (int i = 0; i < cur_B; ++i) {
-        for (int c = 0; c < output_dim; ++c) {
-          preds_dst(start_row + i, c) = 0.0;
-        }
-        for (int k = 0; k < K; ++k) {
-          int r = k * cur_B + i;
-          double max_v = static_cast<double>(out_data[r]);
-          for (int c = 1; c < output_dim; ++c) {
-            double v = static_cast<double>(out_data[r + c * out_stride]);
-            if (v > max_v) max_v = v;
-          }
-          double sum_e = 0.0;
+      double* p_data = preds_dst.data();
+      int p_stride = static_cast<int>(preds_dst.outerStride());
+#if defined(_OPENMP)
+#pragma omp parallel if (cur_B * K * output_dim >= 2048)
+#endif
+      {
+        float stack_exps[64];
+        std::vector<float> heap_exps;
+        float* exps = (output_dim <= 64) ? stack_exps : (heap_exps.resize(output_dim), heap_exps.data());
+#if defined(_OPENMP)
+#pragma omp for schedule(static)
+#endif
+        for (int i = 0; i < cur_B; ++i) {
           for (int c = 0; c < output_dim; ++c) {
-            sum_e += std::exp(static_cast<double>(out_data[r + c * out_stride]) - max_v);
+            p_data[start_row + i + static_cast<size_t>(c) * static_cast<size_t>(p_stride)] = 0.0;
           }
-          if (sum_e > 0.0) {
-            double inv_sum = inv_K / sum_e;
-            for (int c = 0; c < output_dim; ++c) {
-              preds_dst(start_row + i, c) += std::exp(static_cast<double>(out_data[r + c * out_stride]) - max_v) * inv_sum;
+          for (int k = 0; k < K; ++k) {
+            int r = k * cur_B + i;
+            float max_v = out_data[r];
+            for (int c = 1; c < output_dim; ++c) {
+              float v = out_data[r + static_cast<size_t>(c) * static_cast<size_t>(out_stride)];
+              if (v > max_v) max_v = v;
             }
-          } else {
-            double unif = inv_K / static_cast<double>(output_dim);
+            float sum_e = 0.0f;
             for (int c = 0; c < output_dim; ++c) {
-              preds_dst(start_row + i, c) += unif;
+              float ep = evofe::nn::fast_expf(out_data[r + static_cast<size_t>(c) * static_cast<size_t>(out_stride)] - max_v);
+              exps[c] = ep;
+              sum_e += ep;
+            }
+            if (sum_e > 0.0f) {
+              double inv_sum = inv_K / static_cast<double>(sum_e);
+              for (int c = 0; c < output_dim; ++c) {
+                p_data[start_row + i + static_cast<size_t>(c) * static_cast<size_t>(p_stride)] += static_cast<double>(exps[c]) * inv_sum;
+              }
+            } else {
+              double unif = inv_K / static_cast<double>(output_dim);
+              for (int c = 0; c < output_dim; ++c) {
+                p_data[start_row + i + static_cast<size_t>(c) * static_cast<size_t>(p_stride)] += unif;
+              }
             }
           }
         }
@@ -994,53 +1143,86 @@ struct TabMModel {
       ws.preds.resize(0, output_dim);
       return;
     }
+    int n_num = static_cast<int>(num_col_indices.size());
+    int n_cat = static_cast<int>(cat_col_indices.size());
     if (ws.chunk_cap <= 0 || ws.K != k_ensemble || ws.D_in != D_in ||
         ws.d_block != d_block || ws.n_blocks != n_blocks || ws.out_dim != output_dim ||
         ws.preds.rows() != N_total || ws.preds.cols() != output_dim) {
-      ws.allocate(N_total, k_ensemble, D_in, d_block, n_blocks, output_dim,
-                  static_cast<int>(num_col_indices.size()), static_cast<int>(cat_col_indices.size()));
+      ws.allocate(N_total, k_ensemble, D_in, d_block, n_blocks, output_dim, n_num, n_cat);
     }
 
     for (int start = 0; start < N_total; start += ws.chunk_cap) {
       int cur_B = std::min(ws.chunk_cap, N_total - start);
       extract_raw_chunk(x_raw_ptr, N_total, start, cur_B, ws.X_num_chunk, ws.X_cat_chunk);
-      forward_embeddings(ws.X_num_chunk, ws.X_cat_chunk, cur_B, ws.E_chunk, nullptr, nullptr);
+      if (num_emb == "pwl" && n_num > 0) {
+        encode_ple_chunk(ws.X_num_chunk.data(), static_cast<int>(ws.X_num_chunk.outerStride()),
+                         0, cur_B, ws.bin_idx_chunk, ws.bin_frac_chunk);
+      }
+      forward_embeddings_prebinned(
+        n_num > 0 ? ws.X_num_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.X_num_chunk.outerStride()) : 0,
+        n_num > 0 ? ws.bin_idx_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.bin_idx_chunk.outerStride()) : 0,
+        n_num > 0 ? ws.bin_frac_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.bin_frac_chunk.outerStride()) : 0,
+        n_cat > 0 ? ws.X_cat_chunk.data() : nullptr, n_cat > 0 ? static_cast<int>(ws.X_cat_chunk.outerStride()) : 0,
+        0, cur_B, ws.E_chunk
+      );
       forward_mlp_from_emb(ws.E_chunk, cur_B, false, 0, ws.H, ws.Out);
       ensemble_reduce_chunk(ws.Out, cur_B, start, ws.preds);
     }
   }
 
-  // Evaluate pre-standardized X_num / X_cat (already extracted once for validation) using chunked workspace
+  // Evaluate pre-standardized X_num / X_cat (and optional precomputed PLE bins) zero-copy across chunks
   void predict_preprocessed_chunked(const Eigen::MatrixXf& X_num, const Eigen::MatrixXi& X_cat,
-                                    int N_total, TabMInferWorkspace& ws) const {
+                                    int N_total, TabMInferWorkspace& ws,
+                                    const Eigen::MatrixXi* B_pre = nullptr,
+                                    const Eigen::MatrixXf* F_pre = nullptr) const {
     if (N_total <= 0) {
       ws.preds.resize(0, output_dim);
       return;
     }
+    int n_num = static_cast<int>(num_col_indices.size());
+    int n_cat = static_cast<int>(cat_col_indices.size());
     if (ws.chunk_cap <= 0 || ws.K != k_ensemble || ws.D_in != D_in ||
         ws.d_block != d_block || ws.n_blocks != n_blocks || ws.out_dim != output_dim ||
         ws.preds.rows() != N_total || ws.preds.cols() != output_dim) {
-      ws.allocate(N_total, k_ensemble, D_in, d_block, n_blocks, output_dim,
-                  static_cast<int>(num_col_indices.size()), static_cast<int>(cat_col_indices.size()));
+      ws.allocate(N_total, k_ensemble, D_in, d_block, n_blocks, output_dim, n_num, n_cat);
     }
 
-    int n_num = static_cast<int>(num_col_indices.size());
-    int n_cat = static_cast<int>(cat_col_indices.size());
+    const bool has_pre = (num_emb == "pwl" && B_pre != nullptr && F_pre != nullptr &&
+                          B_pre->rows() == N_total && F_pre->rows() == N_total);
+    const int x_num_lda = (n_num > 0) ? static_cast<int>(X_num.outerStride()) : 0;
+    const float* x_num_ptr = (n_num > 0) ? X_num.data() : nullptr;
+    const int x_cat_lda = (n_cat > 0) ? static_cast<int>(X_cat.outerStride()) : 0;
+    const int* x_cat_ptr = (n_cat > 0) ? X_cat.data() : nullptr;
+
     for (int start = 0; start < N_total; start += ws.chunk_cap) {
       int cur_B = std::min(ws.chunk_cap, N_total - start);
-      if (n_num > 0) {
-        ws.X_num_chunk.topRows(cur_B) = X_num.middleRows(start, cur_B);
+      if (has_pre) {
+        forward_embeddings_prebinned(
+          x_num_ptr, x_num_lda,
+          n_num > 0 ? B_pre->data() : nullptr, n_num > 0 ? static_cast<int>(B_pre->outerStride()) : 0,
+          n_num > 0 ? F_pre->data() : nullptr, n_num > 0 ? static_cast<int>(F_pre->outerStride()) : 0,
+          x_cat_ptr, x_cat_lda,
+          start, cur_B, ws.E_chunk
+        );
+      } else {
+        if (num_emb == "pwl" && n_num > 0) {
+          encode_ple_chunk(x_num_ptr, x_num_lda, start, cur_B, ws.bin_idx_chunk, ws.bin_frac_chunk);
+        }
+        forward_embeddings_prebinned(
+          x_num_ptr, x_num_lda,
+          n_num > 0 ? ws.bin_idx_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.bin_idx_chunk.outerStride()) : 0,
+          n_num > 0 ? ws.bin_frac_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.bin_frac_chunk.outerStride()) : 0,
+          x_cat_ptr, x_cat_lda,
+          start, cur_B, ws.E_chunk
+        );
       }
-      if (n_cat > 0) {
-        ws.X_cat_chunk.topRows(cur_B) = X_cat.middleRows(start, cur_B);
-      }
-      forward_embeddings(ws.X_num_chunk, ws.X_cat_chunk, cur_B, ws.E_chunk, nullptr, nullptr);
       forward_mlp_from_emb(ws.E_chunk, cur_B, false, 0, ws.H, ws.Out);
       ensemble_reduce_chunk(ws.Out, cur_B, start, ws.preds);
     }
   }
 
   // Single minibatch training step: gather perm[start..start+cur_B), forward, loss, backward, AdamW update.
+  // Accepts optional precomputed training PLE bin matrices B_tr, F_tr to avoid repeated binary search per epoch.
   double train_step(const Eigen::MatrixXf& X_num_tr,
                     const Eigen::MatrixXi& X_cat_tr,
                     const Eigen::MatrixXf& Y_tr,
@@ -1053,32 +1235,73 @@ struct TabMModel {
                     double beta1,
                     double beta2,
                     double eps,
-                    TabMWorkspace& ws) {
+                    TabMWorkspace& ws,
+                    const Eigen::MatrixXi* B_tr = nullptr,
+                    const Eigen::MatrixXf* F_tr = nullptr) {
     int K = k_ensemble;
     int cur_KB = K * cur_B;
     int n_num = static_cast<int>(num_col_indices.size());
     int n_cat = static_cast<int>(cat_col_indices.size());
+    const int* p_idx = perm.data() + start;
+    const bool has_pre_pwl = (num_emb == "pwl" && B_tr != nullptr && F_tr != nullptr &&
+                              B_tr->rows() == X_num_tr.rows() && F_tr->rows() == X_num_tr.rows());
 
-    // 1. Gather only current minibatch cur_B rows (saves duplicating 650K x p every epoch)
+    // 1. Gather only current minibatch cur_B rows directly into prebinned or embedding buffers
+    if (n_num > 0) {
+      if (has_pre_pwl) {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 64)
 #endif
-    for (int j = 0; j < n_num; ++j) {
-      const float* src = X_num_tr.col(j).data();
-      float* dst = ws.batch_X_num.col(j).data();
-      for (int i = 0; i < cur_B; ++i) {
-        dst[i] = src[perm[start + i]];
+        for (int j = 0; j < n_num; ++j) {
+          if (!ple_features[j].active) continue;
+          const int* b_src = B_tr->col(j).data();
+          const float* f_src = F_tr->col(j).data();
+          int* b_dst = ws.bin_idx.col(j).data();
+          float* f_dst = ws.bin_frac.col(j).data();
+          for (int i = 0; i < cur_B; ++i) {
+            int row = p_idx[i];
+            b_dst[i] = b_src[row];
+            f_dst[i] = f_src[row];
+          }
+        }
+      } else if (num_emb == "pwl") {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 64)
+#endif
+        for (int j = 0; j < n_num; ++j) {
+          if (!ple_features[j].active) continue;
+          const float* src = X_num_tr.col(j).data();
+          float* dst = ws.batch_X_num.col(j).data();
+          for (int i = 0; i < cur_B; ++i) {
+            dst[i] = src[p_idx[i]];
+          }
+        }
+        encode_ple_chunk(ws.batch_X_num.data(), static_cast<int>(ws.batch_X_num.outerStride()),
+                         0, cur_B, ws.bin_idx, ws.bin_frac);
+      } else {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (n_num >= 2 && cur_B >= 64)
+#endif
+        for (int j = 0; j < n_num; ++j) {
+          const float* src = X_num_tr.col(j).data();
+          float* dst = ws.E_batch.col(j).data();
+          for (int i = 0; i < cur_B; ++i) {
+            dst[i] = src[p_idx[i]];
+          }
+        }
       }
     }
 
+    if (n_cat > 0) {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (n_cat >= 2 && cur_B >= 64)
 #endif
-    for (int c = 0; c < n_cat; ++c) {
-      const int* src = X_cat_tr.col(c).data();
-      int* dst = ws.batch_X_cat.col(c).data();
-      for (int i = 0; i < cur_B; ++i) {
-        dst[i] = src[perm[start + i]];
+      for (int c = 0; c < n_cat; ++c) {
+        const int* src = X_cat_tr.col(c).data();
+        int* dst = ws.batch_X_cat.col(c).data();
+        for (int i = 0; i < cur_B; ++i) {
+          dst[i] = src[p_idx[i]];
+        }
       }
     }
 
@@ -1086,15 +1309,23 @@ struct TabMModel {
       const float* src = Y_tr.col(c).data();
       float* dst = ws.batch_Y.col(c).data();
       for (int i = 0; i < cur_B; ++i) {
-        dst[i] = src[perm[start + i]];
+        dst[i] = src[p_idx[i]];
       }
     }
 
-    // 2. Forward embeddings + BatchEnsemble MLP
-    forward_embeddings(ws.batch_X_num, ws.batch_X_cat, cur_B, ws.E_batch, &ws.bin_idx, &ws.bin_frac);
+    // 2. Forward embeddings (skip raw numeric copy when num_emb != "pwl" since gathered straight into E_batch) + MLP
+    forward_embeddings_prebinned(
+      nullptr, 0,
+      (num_emb == "pwl" && n_num > 0) ? ws.bin_idx.data() : nullptr,
+      (num_emb == "pwl" && n_num > 0) ? static_cast<int>(ws.bin_idx.outerStride()) : 0,
+      (num_emb == "pwl" && n_num > 0) ? ws.bin_frac.data() : nullptr,
+      (num_emb == "pwl" && n_num > 0) ? static_cast<int>(ws.bin_frac.outerStride()) : 0,
+      n_cat > 0 ? ws.batch_X_cat.data() : nullptr, n_cat > 0 ? static_cast<int>(ws.batch_X_cat.outerStride()) : 0,
+      0, cur_B, ws.E_batch
+    );
     forward_mlp_from_emb(ws.E_batch, cur_B, true, step_id, ws.H, ws.Out);
 
-    // 3. Per-member TabM training loss & output gradient (critical: average K member losses!)
+    // 3. Per-member TabM training loss, output gradient & in-loop gradient norm tracking
     double batch_loss = 0.0;
     double inv_KB = 1.0 / static_cast<double>(cur_KB);
     float inv_KB_f = static_cast<float>(inv_KB);
@@ -1102,33 +1333,55 @@ struct TabMModel {
     int g_stride = static_cast<int>(ws.grad_Out.outerStride());
     const float* out_ptr = ws.Out.data();
     float* g_ptr = ws.grad_Out.data();
+    std::vector<float> max_g_k(K, 0.0f);
 
     if (task == "regression") {
       double loss_sum = 0.0;
       const float* y_ptr = ws.batch_Y.data();
       float two_inv_KB = 2.0f * inv_KB_f;
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) reduction(+:loss_sum) if (K >= 2 && cur_KB >= 2048)
+#endif
       for (int k = 0; k < K; ++k) {
         int r0 = k * cur_B;
+        double k_loss = 0.0;
+        float k_max_g = 0.0f;
         for (int i = 0; i < cur_B; ++i) {
           float diff = out_ptr[r0 + i] - y_ptr[i];
-          loss_sum += static_cast<double>(diff) * static_cast<double>(diff);
-          g_ptr[r0 + i] = two_inv_KB * diff;
+          k_loss += static_cast<double>(diff) * static_cast<double>(diff);
+          float gv = two_inv_KB * diff;
+          g_ptr[r0 + i] = gv;
+          float ag = std::abs(gv);
+          if (ag > k_max_g) k_max_g = ag;
         }
+        loss_sum += k_loss;
+        max_g_k[k] = k_max_g;
       }
       batch_loss = loss_sum * inv_KB;
     } else if (task == "classification") {
       double loss_sum = 0.0;
       const float* y_ptr = ws.batch_Y.data();
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) reduction(+:loss_sum) if (K >= 2 && cur_KB >= 2048)
+#endif
       for (int k = 0; k < K; ++k) {
         int r0 = k * cur_B;
+        double k_loss = 0.0;
+        float k_max_g = 0.0f;
         for (int i = 0; i < cur_B; ++i) {
-          double z = std::clamp(static_cast<double>(out_ptr[r0 + i]), -30.0, 30.0);
-          double p = 1.0 / (1.0 + std::exp(-z));
-          double y = static_cast<double>(y_ptr[i]);
-          g_ptr[r0 + i] = inv_KB_f * static_cast<float>(p - y);
-          double pc = std::clamp(p, 1e-15, 1.0 - 1e-15);
-          loss_sum -= (y * std::log(pc) + (1.0 - y) * std::log(1.0 - pc));
+          float z = std::clamp(out_ptr[r0 + i], -30.0f, 30.0f);
+          float p = 1.0f / (1.0f + evofe::nn::fast_expf(-z));
+          float y = y_ptr[i];
+          float gv = inv_KB_f * (p - y);
+          g_ptr[r0 + i] = gv;
+          float ag = std::abs(gv);
+          if (ag > k_max_g) k_max_g = ag;
+          float az = (z >= 0.0f) ? z : -z;
+          float pos_z = (z > 0.0f) ? z : 0.0f;
+          k_loss += static_cast<double>(pos_z - y * z + std::log1pf(evofe::nn::fast_expf(-az)));
         }
+        loss_sum += k_loss;
+        max_g_k[k] = k_max_g;
       }
       batch_loss = loss_sum * inv_KB;
     } else {
@@ -1138,39 +1391,52 @@ struct TabMModel {
       int y_stride = static_cast<int>(ws.batch_Y.outerStride());
       const float* y_ptr = ws.batch_Y.data();
 
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) reduction(+:loss_sum) if (K >= 2 && cur_KB * output_dim >= 2048)
+#endif
       for (int k = 0; k < K; ++k) {
         int r0 = k * cur_B;
+        double k_loss = 0.0;
+        float k_max_g = 0.0f;
         for (int i = 0; i < cur_B; ++i) {
           int r = r0 + i;
-          double max_v = static_cast<double>(out_ptr[r]);
+          float max_v = out_ptr[r];
           for (int c = 1; c < output_dim; ++c) {
-            double v = static_cast<double>(out_ptr[r + c * out_stride]);
+            float v = out_ptr[r + static_cast<size_t>(c) * static_cast<size_t>(out_stride)];
             if (v > max_v) max_v = v;
           }
-          double sum_e = 0.0;
+          float sum_e = 0.0f;
           for (int c = 0; c < output_dim; ++c) {
-            double ep = std::exp(static_cast<double>(out_ptr[r + c * out_stride]) - max_v);
-            p_ptr[r + c * p_stride] = static_cast<float>(ep);
+            float ep = evofe::nn::fast_expf(out_ptr[r + static_cast<size_t>(c) * static_cast<size_t>(out_stride)] - max_v);
+            p_ptr[r + static_cast<size_t>(c) * static_cast<size_t>(p_stride)] = ep;
             sum_e += ep;
           }
-          float inv_sum = (sum_e > 0.0) ? static_cast<float>(1.0 / sum_e) : 0.0f;
+          float inv_sum = (sum_e > 0.0f) ? (1.0f / sum_e) : 0.0f;
+          float unif = 1.0f / static_cast<float>(output_dim);
           for (int c = 0; c < output_dim; ++c) {
-            float pr = (sum_e > 0.0) ? (p_ptr[r + c * p_stride] * inv_sum) : (1.0f / static_cast<float>(output_dim));
-            float yc = y_ptr[i + c * y_stride];
+            float pr = (sum_e > 0.0f) ? (p_ptr[r + static_cast<size_t>(c) * static_cast<size_t>(p_stride)] * inv_sum) : unif;
+            float yc = y_ptr[i + static_cast<size_t>(c) * static_cast<size_t>(y_stride)];
             if (yc > 0.0f) {
-              loss_sum -= static_cast<double>(yc) * std::log(std::max(1e-15, static_cast<double>(pr)));
+              k_loss -= static_cast<double>(yc) * std::log(std::max(1e-15, static_cast<double>(pr)));
             }
-            g_ptr[r + c * g_stride] = inv_KB_f * (pr - yc);
+            float gv = inv_KB_f * (pr - yc);
+            g_ptr[r + static_cast<size_t>(c) * static_cast<size_t>(g_stride)] = gv;
+            float ag = std::abs(gv);
+            if (ag > k_max_g) k_max_g = ag;
           }
         }
+        loss_sum += k_loss;
+        max_g_k[k] = k_max_g;
       }
       batch_loss = loss_sum * inv_KB;
     }
 
-    auto grad_Out_b = ws.grad_Out.topRows(cur_KB);
-    float max_g = grad_Out_b.array().abs().maxCoeff();
+    float max_g = 0.0f;
+    for (int k = 0; k < K; ++k) {
+      if (max_g_k[k] > max_g) max_g = max_g_k[k];
+    }
     if (std::isfinite(max_g) && max_g > 10.0f) {
-      grad_Out_b *= (10.0f / max_g);
+      ws.grad_Out.topRows(cur_KB) *= (10.0f / max_g);
     }
 
     // 4. Backward through K output heads
@@ -1183,26 +1449,57 @@ struct TabMModel {
     const float* hlast_data = H_last.data();
     float* dcur_data = delta_cur->data();
 
-    for (int k = 0; k < K; ++k) {
-      gemm_f32_raw(true, false, d_block, output_dim, cur_B,
-                   hlast_data + k * cur_B, hlast_stride,
-                   g_ptr + k * cur_B, g_stride,
-                   ws.grad_W_out[k].data(), static_cast<int>(ws.grad_W_out[k].outerStride()),
-                   1.0f, 0.0f);
-      for (int c = 0; c < output_dim; ++c) {
-        const float* gc = g_ptr + c * g_stride + k * cur_B;
-        float sum = 0.0f;
-        for (int i = 0; i < cur_B; ++i) sum += gc[i];
-        ws.grad_b_out(k, c) = sum;
+    if (output_dim == 1) {
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if (K >= 2 && cur_KB >= 1024)
+#endif
+      for (int k = 0; k < K; ++k) {
+        const float* gk = g_ptr + k * cur_B;
+        float bsum = 0.0f;
+        for (int i = 0; i < cur_B; ++i) {
+          bsum += gk[i];
+        }
+        ws.grad_b_out(k, 0) = bsum;
+
+        const float* hk_base = hlast_data + k * cur_B;
+        float* dk_base = dcur_data + k * cur_B;
+        const float* w_k = W_out[k].val.data();
+        float* gw_k = ws.grad_W_out[k].data();
+        for (int d = 0; d < d_block; ++d) {
+          float wd = w_k[d];
+          const float* h_col = hk_base + static_cast<size_t>(d) * static_cast<size_t>(hlast_stride);
+          float* d_col = dk_base + static_cast<size_t>(d) * static_cast<size_t>(dcur_stride);
+          float gsum = 0.0f;
+          for (int i = 0; i < cur_B; ++i) {
+            float gi = gk[i];
+            gsum += h_col[i] * gi;
+            d_col[i] = gi * wd;
+          }
+          gw_k[d] = gsum;
+        }
       }
-      gemm_f32_raw(false, true, cur_B, d_block, output_dim,
-                   g_ptr + k * cur_B, g_stride,
-                   W_out[k].val.data(), static_cast<int>(W_out[k].val.outerStride()),
-                   dcur_data + k * cur_B, dcur_stride,
-                   1.0f, 0.0f);
+    } else {
+      for (int k = 0; k < K; ++k) {
+        gemm_f32_raw(true, false, d_block, output_dim, cur_B,
+                     hlast_data + k * cur_B, hlast_stride,
+                     g_ptr + k * cur_B, g_stride,
+                     ws.grad_W_out[k].data(), static_cast<int>(ws.grad_W_out[k].outerStride()),
+                     1.0f, 0.0f);
+        for (int c = 0; c < output_dim; ++c) {
+          const float* gc = g_ptr + c * g_stride + k * cur_B;
+          float sum = 0.0f;
+          for (int i = 0; i < cur_B; ++i) sum += gc[i];
+          ws.grad_b_out(k, c) = sum;
+        }
+        gemm_f32_raw(false, true, cur_B, d_block, output_dim,
+                     g_ptr + k * cur_B, g_stride,
+                     W_out[k].val.data(), static_cast<int>(W_out[k].val.outerStride()),
+                     dcur_data + k * cur_B, dcur_stride,
+                     1.0f, 0.0f);
+      }
     }
 
-    // 5. Backward through shared MLP blocks (fusing ReLU + Dropout mask from post-act H[l+1] > 0)
+    // 5. Backward through shared MLP blocks (branchless mask reconstruction from post-act H[l+1] > 0)
     float inv_keep = (dropout > 0.0) ? static_cast<float>(1.0 / (1.0 - dropout)) : 1.0f;
 
     for (int l = n_blocks - 1; l >= 0; --l) {
@@ -1223,15 +1520,13 @@ struct TabMModel {
         for (int k = 0; k < K; ++k) {
           float bsum = 0.0f;
           int off = k * cur_B;
+          const float* hk = h_col + off;
+          float* dk = d_col + off;
           for (int i = 0; i < cur_B; ++i) {
-            int r = off + i;
-            if (h_col[r] <= 0.0f) {
-              d_col[r] = 0.0f;
-            } else {
-              float d = d_col[r] * inv_keep;
-              d_col[r] = d;
-              bsum += d;
-            }
+            float keep = (hk[i] > 0.0f) ? inv_keep : 0.0f;
+            float d = dk[i] * keep;
+            dk[i] = d;
+            bsum += d;
           }
           ws.grad_b_blocks[l](k, c) = bsum;
         }
@@ -1298,7 +1593,7 @@ struct TabMModel {
     }
     b_out.update_serial(ws.grad_b_out, cur_lr, beta1, beta2, eps, b1_corr, b2_corr, 0.0);
 
-    // 8. Backward & AdamW for PLE features (suffix-sum exact gradient) + Categorical tables
+    // 8. Backward & AdamW for PLE features (unit-stride outer-e suffix-sum gradient) + Categorical tables
     if (!has_dummy_in) {
       if (num_emb == "pwl" && n_num > 0) {
 #if defined(_OPENMP)
@@ -1308,38 +1603,39 @@ struct TabMModel {
           PLEFeature& pf = ple_features[j];
           if (!pf.active) continue;
           Eigen::MatrixXf& gW = ws.ple_grad_W[j];
+          Eigen::MatrixXf& gW_T = ws.ple_grad_W_T[j];
           Eigen::MatrixXf& gb = ws.ple_grad_b[j];
           Eigen::MatrixXf& diff = ws.ple_diff[j];
-          gW.setZero();
-          gb.setZero();
+          gW_T.setZero();
           diff.setZero();
 
           const int* b_col = ws.bin_idx.col(j).data();
           const float* f_col = ws.bin_frac.col(j).data();
           int d_e = pf.d_emb;
           int col_off = pf.out_col_offset;
+          float* gW_T_data = gW_T.data();
+          int gWT_stride = static_cast<int>(gW_T.outerStride());
+          float* diff_data = diff.data();
+          int diff_stride = static_cast<int>(diff.outerStride());
 
-          for (int i = 0; i < cur_B; ++i) {
-            int b_star = b_col[i];
-            float frac = f_col[i];
-            for (int e = 0; e < d_e; ++e) {
-              float g = ge_data[i + (col_off + e) * ge_stride];
-              gb(e, 0) += g;
-              gW(e, b_star) += frac * g;
-              if (b_star > 0) {
-                diff(e, b_star - 1) += g;
-              }
+          for (int e = 0; e < d_e; ++e) {
+            const float* ge_col = ge_data + static_cast<size_t>(col_off + e) * static_cast<size_t>(ge_stride);
+            float* gw_col = gW_T_data + static_cast<size_t>(e) * static_cast<size_t>(gWT_stride);
+            float* df_col = diff_data + static_cast<size_t>(e) * static_cast<size_t>(diff_stride);
+            for (int i = 0; i < cur_B; ++i) {
+              int b_star = b_col[i];
+              float g = ge_col[i];
+              gw_col[b_star] += f_col[i] * g;
+              df_col[b_star] += g;
             }
-          }
-          if (pf.n_bins >= 2) {
-            for (int e = 0; e < d_e; ++e) {
-              float acc = 0.0f;
-              for (int r = pf.n_bins - 2; r >= 0; --r) {
-                acc += diff(e, r);
-                gW(e, r) += acc;
-              }
+            float acc = 0.0f;
+            for (int r = pf.n_bins - 1; r >= 1; --r) {
+              acc += df_col[r];
+              gw_col[r - 1] += acc;
             }
+            gb(e, 0) = acc + df_col[0];
           }
+          gW.noalias() = gW_T.transpose();
           pf.W.update_serial(gW, cur_lr, beta1, beta2, eps, b1_corr, b2_corr, weight_decay);
           pf.b.update_serial(gb, cur_lr, beta1, beta2, eps, b1_corr, b2_corr, 0.0);
           pf.rebuild_prefix();
@@ -1391,11 +1687,19 @@ struct TabMModel {
 
     // Base embeddings for all N_eval rows (capped <= 1000 so single chunk!)
     Eigen::MatrixXf E_base(N_eval, D_in);
-    Eigen::MatrixXf Xn_sub;
-    Eigen::MatrixXi Xc_sub;
-    if (n_num > 0) Xn_sub = X_num_src.topRows(N_eval);
-    if (n_cat > 0) Xc_sub = X_cat_src.topRows(N_eval);
-    forward_embeddings(Xn_sub, Xc_sub, N_eval, E_base, nullptr, nullptr);
+    const float* xn_ptr = (n_num > 0) ? X_num_src.data() : nullptr;
+    const int xn_lda = (n_num > 0) ? static_cast<int>(X_num_src.outerStride()) : 0;
+    const int* xc_ptr = (n_cat > 0) ? X_cat_src.data() : nullptr;
+    const int xc_lda = (n_cat > 0) ? static_cast<int>(X_cat_src.outerStride()) : 0;
+    if (num_emb == "pwl" && n_num > 0) {
+      encode_ple_chunk(xn_ptr, xn_lda, 0, N_eval, ws.bin_idx_chunk, ws.bin_frac_chunk);
+    }
+    forward_embeddings_prebinned(
+      xn_ptr, xn_lda,
+      n_num > 0 ? ws.bin_idx_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.bin_idx_chunk.outerStride()) : 0,
+      n_num > 0 ? ws.bin_frac_chunk.data() : nullptr, n_num > 0 ? static_cast<int>(ws.bin_frac_chunk.outerStride()) : 0,
+      xc_ptr, xc_lda, 0, N_eval, E_base
+    );
 
     Eigen::MatrixXf E_occ = E_base;
     Eigen::MatrixXd base_preds(N_eval, output_dim);

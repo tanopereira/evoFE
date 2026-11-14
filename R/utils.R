@@ -638,14 +638,10 @@ apply_iteration_target <- function(args, target_iters, evaluator) {
   if (identical(unwrapped, "tabm")) {
     args$early_stopping_rounds <- 0L
     args$early_stopping_round <- NULL
+    args$early_stop_round <- NULL
+    args$early_stopping <- NULL
     if (!is.null(target_iters) && is.numeric(target_iters) && !is.na(target_iters) && target_iters > 0) {
-      t_int <- as.integer(target_iters)
-      for (alias in c("epochs", "n_epochs")) {
-        if (alias %in% names(args)) args[[alias]] <- t_int
-      }
-      if (!any(c("epochs", "n_epochs") %in% names(args))) {
-        args$epochs <- t_int
-      }
+      args$stop_epoch <- as.integer(target_iters)
     }
     return(args)
   }

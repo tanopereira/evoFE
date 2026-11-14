@@ -12,8 +12,19 @@ OPT_FLAGS = -O3 $(ARCH_FLAGS) -ffp-contract=fast -funroll-loops -fno-math-errno 
 override CXXFLAGS := $(OPT_FLAGS)
 override CXX17FLAGS := $(OPT_FLAGS)
 ifeq ($(UNAME_S),Darwin)
-PKG_CXXFLAGS = $(OPT_FLAGS) -DACCELERATE_NEW_LAPACK -DEIGEN_NO_DEBUG -DEIGEN_PERMANENTLY_DISABLE_STUPID_WARNINGS -DEIGEN_USE_BLAS $(SHLIB_OPENMP_CXXFLAGS)
-PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) -framework Accelerate
+OMP_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
+OMP_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
+ifeq ($(strip $(OMP_CXXFLAGS)),)
+ifneq ($(wildcard /opt/homebrew/opt/libomp/include/omp.h),)
+OMP_CXXFLAGS = -Xclang -fopenmp -I/opt/homebrew/opt/libomp/include
+OMP_LIBS = -L/opt/homebrew/opt/libomp/lib -lomp
+else ifneq ($(wildcard /usr/local/opt/libomp/include/omp.h),)
+OMP_CXXFLAGS = -Xclang -fopenmp -I/usr/local/opt/libomp/include
+OMP_LIBS = -L/usr/local/opt/libomp/lib -lomp
+endif
+endif
+PKG_CXXFLAGS = $(OPT_FLAGS) -DACCELERATE_NEW_LAPACK -DEIGEN_NO_DEBUG -DEIGEN_PERMANENTLY_DISABLE_STUPID_WARNINGS -DEIGEN_USE_BLAS $(OMP_CXXFLAGS)
+PKG_LIBS = $(OMP_LIBS) -framework Accelerate
 else
 PKG_CXXFLAGS = $(OPT_FLAGS) -DEIGEN_NO_DEBUG -DEIGEN_PERMANENTLY_DISABLE_STUPID_WARNINGS -DEIGEN_USE_BLAS $(SHLIB_OPENMP_CXXFLAGS)
 PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(LAPACK_LIBS) $(BLAS_LIBS)

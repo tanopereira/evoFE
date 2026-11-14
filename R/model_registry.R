@@ -2814,6 +2814,7 @@ register_evaluator(
     d_embedding <- max(1L, as.integer(.pick_first_param(extra_params, c("d_embedding", "d_cat"), 8L)))
     batch_size <- as.integer(.pick_first_param(extra_params, "batch_size", -1L))
     lr_warmup_frac <- min(0.5, max(0.0, as.numeric(.pick_first_param(extra_params, "lr_warmup_frac", 0.05))))
+    stop_epoch_val <- max(0L, as.integer(.pick_first_param(extra_params, "stop_epoch", 0L)))
     seed_val <- as.integer(.pick_first_param(extra_params, c("tabm_seed", "seed"), 42L))
     metric_arg <- as.character(.pick_first_param(extra_params, "metric", "default"))
 
@@ -2872,7 +2873,8 @@ register_evaluator(
       cat_cols = cat_cols_arg,
       cat_cardinalities = cat_cards_arg,
       d_embedding = d_embedding,
-      lr_warmup_frac = lr_warmup_frac
+      lr_warmup_frac = lr_warmup_frac,
+      stop_epoch = stop_epoch_val
     )
 
     preds <- NULL
