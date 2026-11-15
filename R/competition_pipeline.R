@@ -1218,7 +1218,7 @@ run_competition_pipeline <- function(
     migration_config(
       topology = topology_complete(islands = total_s2_islands),
       policy = policy_gibbs_pull(stagnation_threshold = 2L, temperature = 1.0),
-      payload = "full_individual"
+      payload = "gene_only"
     )
   } else {
     NULL
