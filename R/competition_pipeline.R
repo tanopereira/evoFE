@@ -1,9 +1,9 @@
 # High-level competition pipeline orchestrating the Two-Phase Decoupled Strategy
 # documented in ML_STRATEGY.md:
 #   Stage 0: Recon, Drift Check & Target/Metric Setup
-#   Stage 2: Leak-Free Unsupervised Feature Discovery (on subsampled rows when N > max_search_rows)
-#   Stage 3: Mega-Matrix Synthesis onto 100% of train and test
-#   Stage 4: High-Capacity 1-Gen Retraining with K-Fold Model Bagging
+#   Stage 2: Leak-Free Multi-Evaluator Discovery (on subsampled rows when N > max_search_rows)
+#   Stage 3: Unsupervised Mega-Matrix Synthesis onto 100% of train and test + View Tournament
+#   Stage 4: High-Capacity 1-Gen Retraining with K-Fold Model Bagging (& Fold-Local Supervised Seeds)
 #   Stage 5: Stacked Ensembling & Submission Export
 
 #' Preset hyperparameter and budget configurations for run_competition_pipeline
@@ -546,6 +546,61 @@
   recipes
 }
 
+#' Split an individual's genes into untainted unsupervised genes and unfitted supervised seed genes
+#' @keywords internal
+#' @noRd
+.split_individual_tainted_genes <- function(ind) {
+  if (is.null(ind) || length(ind$genes) == 0L) {
+    return(list(
+      unsup_ind = ind,
+      sup_genes = list(),
+      sup_output_cols = character(0),
+      sup_input_cols = character(0)
+    ))
+  }
+  tainted_cols <- character(0)
+  unsup_genes <- list()
+  sup_genes <- list()
+  sup_input_cols <- character(0)
+
+  for (g in ind$genes) {
+    is_tainted <- is_supervised_transformer(g) || any(g$input_cols %in% tainted_cols)
+    if (is_tainted) {
+      if (!is.null(g$output_col) && nzchar(g$output_col)) {
+        tainted_cols <- c(tainted_cols, g$output_col)
+      }
+      sup_input_cols <- c(sup_input_cols, setdiff(g$input_cols, tainted_cols))
+      g_clean <- g
+      g_clean$state <- NULL
+      sup_genes <- c(sup_genes, list(g_clean))
+    } else {
+      unsup_genes <- c(unsup_genes, list(g))
+    }
+  }
+
+  sup_input_cols <- unique(sup_input_cols)
+  unsup_ind <- ind
+  unsup_ind$genes <- unsup_genes
+  if (length(sup_input_cols) > 0L) {
+    if (!is.null(unsup_ind$all_numeric_cols)) {
+      unsup_ind$numeric_cols <- unique(c(unsup_ind$numeric_cols, intersect(sup_input_cols, unsup_ind$all_numeric_cols)))
+    }
+    if (!is.null(unsup_ind$all_categorical_cols)) {
+      unsup_ind$categorical_cols <- unique(c(unsup_ind$categorical_cols, intersect(sup_input_cols, unsup_ind$all_categorical_cols)))
+    }
+    if (!is.null(unsup_ind$all_datetime_cols)) {
+      unsup_ind$datetime_cols <- unique(c(unsup_ind$datetime_cols, intersect(sup_input_cols, unsup_ind$all_datetime_cols)))
+    }
+  }
+
+  list(
+    unsup_ind = unsup_ind,
+    sup_genes = sup_genes,
+    sup_output_cols = unique(tainted_cols),
+    sup_input_cols = sup_input_cols
+  )
+}
+
 #' Extract Stage 3 feature columns originating from a given Stage 2 recipe
 #' @keywords internal
 #' @noRd
@@ -581,7 +636,7 @@
                                  target_col, task, metric, cv_folds, cv_strategy,
                                  group_col, time_col, max_search_rows, adv_weights,
                                  target_transform, cfg, evaluator_args, threads, seed,
-                                 verbose) {
+                                 verbose, sup_seed_genes = NULL, sup_input_cols = NULL) {
   show_msg <- isTRUE(verbose) || (is.numeric(verbose) && verbose >= 1L)
   view_dt <- subsample_for_discovery(
     data = train_mega,
@@ -608,9 +663,14 @@
   all_num_cols <- setdiff(available_cols[vapply(view_dt[, available_cols, with = FALSE], is.numeric, logical(1L))], all_dt_cols)
   all_cat_cols <- setdiff(available_cols, c(all_num_cols, all_dt_cols))
 
-  .eval_view_cols <- function(cols, base_ev, ev_fast_evolve_args, need_imp = FALSE) {
+  .eval_view_cols <- function(cols, base_ev, ev_fast_evolve_args, seed_genes_ev = NULL, need_imp = FALSE) {
+    active_seed_genes <- if (!is.null(seed_genes_ev) && length(seed_genes_ev) > 0L) {
+      normalize_seed_genes(seed_genes_ev, cols)
+    } else {
+      list()
+    }
     ind <- create_individual(
-      genes = list(),
+      genes = active_seed_genes,
       numeric_cols = intersect(cols, all_num_cols),
       categorical_cols = intersect(cols, all_cat_cols),
       datetime_cols = intersect(cols, all_dt_cols),
@@ -667,14 +727,16 @@
       custom_evaluator_args = evaluator_args
     )
     ev_fast_evolve_args <- .map_evaluator_args_for_evolve(ev_fast_args)
+    ev_seed_genes <- if (!is.null(sup_seed_genes)) sup_seed_genes[[ev]] else NULL
+    ev_req_cols <- if (!is.null(sup_input_cols)) intersect(sup_input_cols[[ev]], available_cols) else character(0)
 
-    res_mega <- .eval_view_cols(available_cols, base_ev, ev_fast_evolve_args, need_imp = TRUE)
+    res_mega <- .eval_view_cols(available_cols, base_ev, ev_fast_evolve_args, seed_genes_ev = ev_seed_genes, need_imp = TRUE)
 
-    own_cols <- .extract_recipe_view_cols(ev, stage2_recipes, scout_ens, available_cols)
+    own_cols <- unique(c(.extract_recipe_view_cols(ev, stage2_recipes, scout_ens, available_cols), ev_req_cols))
     res_own <- if (setequal(own_cols, available_cols)) {
       list(cols = available_cols, score = res_mega$score, n_cols = length(available_cols))
     } else {
-      .eval_view_cols(own_cols, base_ev, ev_fast_evolve_args, need_imp = FALSE)
+      .eval_view_cols(own_cols, base_ev, ev_fast_evolve_args, seed_genes_ev = ev_seed_genes, need_imp = FALSE)
     }
 
     res_pruned <- NULL
@@ -694,12 +756,12 @@
           ord <- names(sort(rel_imp, decreasing = TRUE))
           pruned_cols <- ord[seq_len(min(min_keep, length(ord)))]
         }
-        pruned_cols <- intersect(available_cols, pruned_cols)
+        pruned_cols <- intersect(available_cols, unique(c(pruned_cols, ev_req_cols)))
         if (length(pruned_cols) > 0L && length(pruned_cols) < length(available_cols)) {
           if (setequal(pruned_cols, own_cols)) {
             res_pruned <- list(cols = own_cols, score = res_own$score, n_cols = length(own_cols))
           } else {
-            res_pruned <- .eval_view_cols(pruned_cols, base_ev, ev_fast_evolve_args, need_imp = FALSE)
+            res_pruned <- .eval_view_cols(pruned_cols, base_ev, ev_fast_evolve_args, seed_genes_ev = ev_seed_genes, need_imp = FALSE)
           }
         }
       }
@@ -830,16 +892,22 @@
 #'     \code{\link{subsample_for_discovery}} (preserving groups, temporal contiguity,
 #'     rare-event counts, and test propensity weights) while keeping 100\% of \code{train}
 #'     for Stage 3--5 retraining.
-#'   \item \strong{Stage 2 (Multi-Evaluator Leak-Free Discovery)}: Evolves features
-#'     independently for each active evaluator using strictly unsupervised transformers
-#'     so no target encoding leaks into Stage 4 cross-validation.
-#'   \item \strong{Stage 3 (Mega-Matrix Synthesis)}: Combines all Stage 2 scout recipes via
-#'     \code{ensemble_islands(..., method = "equal")} and projects learned states onto
-#'     100\% of \code{train} and \code{test}.
-#'   \item \strong{Stage 4 (High-Capacity Retraining)}: Trains each model family on full
-#'     \code{train_mega} with low learning rates, deep early-stopping ceilings, and
-#'     \code{bag_folds = TRUE} (optionally adding fold-local supervised target encoders
-#'     when \code{supervised_stage4 = TRUE}).
+#'   \item \strong{Stage 2 (Unified Multi-Evaluator Discovery)}: Evolves features
+#'     in a unified multi-evaluator island topology (\code{evaluation_strategy = "metacv"}
+#'     when \code{nrow >= 1000}, non-time splits, and \code{islands >= 2}, else \code{"cv"})
+#'     allowing cross-pollination across models and islands. When
+#'     \code{supervised_stage4 = FALSE}, only unsupervised transformers run; when
+#'     \code{supervised_stage4 = TRUE}, supervised transformers also participate in
+#'     Stage 2 and are stripped to unfitted symbolic \code{seed_genes} before Stage 3
+#'     so zero target encoding leaks into Stage 3/4.
+#'   \item \strong{Stage 3 (Mega-Matrix Synthesis & View Tournament)}: Combines all
+#'     unsupervised Stage 2 scout recipes via \code{ensemble_islands(..., method = "equal")},
+#'     projects learned states onto 100\% of \code{train} and \code{test}, and selects the
+#'     best feature view per evaluator via a fast CV View Tournament.
+#'   \item \strong{Stage 4 (High-Capacity Retraining)}: Trains each model family on 100\%
+#'     of its winning \code{train_mega} view with low learning rates, deep early-stopping
+#'     ceilings (or \code{_mbo} / \code{_tabarena} tuning), and \code{bag_folds = TRUE},
+#'     refitting any extracted \code{supervised_stage4} seed genes strictly inside each fold.
 #'   \item \strong{Stage 5 (Stacking & Submission)}: Blends Stage 4 models via nested
 #'     out-of-fold elastic-net stacking (\code{ensemble_islands(..., method = "stack")})
 #'     and builds a ready-to-submit \code{data.table} (writing \code{submission_file} if given).
@@ -897,11 +965,12 @@
 #' @param drop_drifting Logical (default \code{FALSE}). If \code{TRUE}, drops raw columns whose
 #'   single-feature train-vs-test AUC exceeds \code{drift_auc_threshold}.
 #' @param drift_auc_threshold Single-feature adversarial AUC cutoff (default \code{0.85}).
-#' @param supervised_stage4 Logical (default \code{FALSE}). If \code{TRUE}, runs a fast
-#'   surrogate search over supervised encoders on \code{train_mega} (subsampled to
-#'   \code{max_search_rows} if huge) and passes only the \strong{unfitted} winning gene
-#'   formulas via \code{seed_genes} into Stage 4's \code{generations = 1, pop_size = 1}
-#'   deep fold-bagged refit (zero target leakage and zero deep-schedule search overhead).
+#' @param supervised_stage4 Logical (default \code{FALSE}). If \code{TRUE}, enables
+#'   supervised encoders directly inside Stage 2 discovery, strips supervised (and
+#'   downstream) genes before Stage 3 Mega-Matrix synthesis so \code{train_mega} contains
+#'   zero target leakage, and passes those \strong{unfitted} symbolic gene formulas via
+#'   \code{seed_genes} into Stage 3 View Tournament and Stage 4's
+#'   \code{generations = 1, pop_size = 1} deep fold-bagged refit.
 #' @param bag_folds Logical (default \code{TRUE}). Retains and averages all \code{cv_folds}
 #'   fold models during test prediction.
 #' @param rank_average Logical or NULL. If \code{TRUE}, ranks predictions to uniform
@@ -1144,8 +1213,7 @@ run_competition_pipeline <- function(
   base_evals <- vapply(active_evaluators, get_base_evaluator, character(1L))
   all_mlp <- all(base_evals %in% c("realmlp", "tabm"))
 
-  use_metacv <- (length(unique(s2_island_evaluators)) == 1L) &&
-    (n_discovery >= 1000L) && (cv_strategy != "time") && (total_s2_islands >= 2L)
+  use_metacv <- (n_discovery >= 1000L) && (cv_strategy != "time") && (total_s2_islands >= 2L)
   mig_cfg <- if (total_s2_islands >= 2L) {
     migration_config(
       topology = topology_complete(islands = total_s2_islands),
@@ -1175,7 +1243,7 @@ run_competition_pipeline <- function(
     task = resolved_task,
     evaluator = s2_island_evaluators,
     metric = resolved_metric,
-    allowed_transformers = unsup_t,
+    allowed_transformers = if (isTRUE(supervised_stage4)) all_t else unsup_t,
     evaluation_strategy = if (use_metacv) "metacv" else "cv",
     metacv_selection = "tournament",
     cv_folds = if (use_metacv) total_s2_islands else min(cv_folds, 5L),
@@ -1211,6 +1279,8 @@ run_competition_pipeline <- function(
 
   stage2_recipes <- vector("list", length(active_evaluators))
   names(stage2_recipes) <- active_evaluators
+  sup_seed_genes <- stats::setNames(vector("list", length(active_evaluators)), active_evaluators)
+  sup_input_cols <- stats::setNames(vector("list", length(active_evaluators)), active_evaluators)
   for (ev in active_evaluators) {
     idx_j <- which(s2_island_evaluators == ev)
     ev_extra <- s2_ev_args_map[[ev]]
@@ -1226,7 +1296,6 @@ run_competition_pipeline <- function(
           rec_ev$island_bests[[k]]$extra_args <- ev_extra
         }
       }
-      stage2_recipes[[ev]] <- rec_ev
     } else {
       ev_inds <- stage2_unified_recipe$island_bests[idx_j]
       for (k in seq_along(ev_inds)) {
@@ -1260,8 +1329,33 @@ run_competition_pipeline <- function(
         rec_ev$best_model <- NULL
         rec_ev$fold_models <- NULL
       }
-      stage2_recipes[[ev]] <- rec_ev
     }
+
+    ev_sup_raw <- list()
+    ev_req_inputs <- character(0)
+    if (!is.null(rec_ev$best_individual)) {
+      split_best <- .split_individual_tainted_genes(rec_ev$best_individual)
+      rec_ev$best_individual <- split_best$unsup_ind
+      if (length(split_best$sup_genes) > 0L) {
+        ev_sup_raw <- c(ev_sup_raw, split_best$sup_genes)
+        ev_req_inputs <- c(ev_req_inputs, split_best$sup_input_cols)
+        rec_ev$best_model <- NULL
+        rec_ev$fold_models <- NULL
+      }
+    }
+    if (!is.null(rec_ev$island_bests) && is.list(rec_ev$island_bests)) {
+      for (k in seq_along(rec_ev$island_bests)) {
+        split_k <- .split_individual_tainted_genes(rec_ev$island_bests[[k]])
+        rec_ev$island_bests[[k]] <- split_k$unsup_ind
+        if (length(split_k$sup_genes) > 0L) {
+          ev_sup_raw <- c(ev_sup_raw, split_k$sup_genes)
+          ev_req_inputs <- c(ev_req_inputs, split_k$sup_input_cols)
+        }
+      }
+    }
+    sup_seed_genes[[ev]] <- if (length(ev_sup_raw) > 0L) normalize_seed_genes(ev_sup_raw, available_cols = NULL) else list()
+    sup_input_cols[[ev]] <- unique(ev_req_inputs)
+    stage2_recipes[[ev]] <- rec_ev
   }
 
   # Stage 3: Mega-Matrix Synthesis onto 100% of train_dt and test_dt
@@ -1346,7 +1440,9 @@ run_competition_pipeline <- function(
     evaluator_args = evaluator_args,
     threads = threads,
     seed = base_seed,
-    verbose = verbose
+    verbose = verbose,
+    sup_seed_genes = sup_seed_genes,
+    sup_input_cols = sup_input_cols
   )
   stage3_views <- stage3_view_res$views
   stage3_view_types <- stage3_view_res$view_types
@@ -1356,79 +1452,9 @@ run_competition_pipeline <- function(
     gc(verbose = FALSE)
   }
 
-  # Optional Stage 3.5: Fast decoupled supervised discovery on train_mega
-  # Searches at fast Stage-2 surrogate speeds (subsampled if > max_search_rows),
-  # then extracts ONLY unfitted symbolic gene formulas (state = NULL) for Stage 4!
-  stage3_sup_recipes <- NULL
-  sup_seed_genes <- stats::setNames(vector("list", length(active_evaluators)), active_evaluators)
-
-  if (isTRUE(supervised_stage4) && length(sup_t) > 0L) {
-    sup_search_dt <- subsample_for_discovery(
-      data = train_mega,
-      target_col = target_col,
-      max_rows = max_search_rows,
-      task = resolved_task,
-      cv_strategy = cv_strategy,
-      group_col = group_col,
-      time_col = time_col,
-      adv_weights = eff_adv_w,
-      seed = base_seed + 500L
-    )
-    stage3_sup_recipes <- vector("list", length(active_evaluators))
-    names(stage3_sup_recipes) <- active_evaluators
-    sup_gens <- if (preset == "fast") 2L else 3L
-    sup_pop <- if (preset == "fast") 4L else 6L
-
-    for (idx in seq_along(active_evaluators)) {
-      ev <- active_evaluators[idx]
-      base_ev <- get_base_evaluator(ev)
-      s35_cols_ev <- unique(c(
-        stage3_views[[ev]]$cols,
-        intersect(c(group_col, time_col), names(sup_search_dt)),
-        target_col
-      ))
-      sup_search_ev <- sup_search_dt[, s35_cols_ev, with = FALSE]
-      if (show_msg) {
-        message(sprintf(
-          "[Stage 3.5] Fast supervised encoder search on %d rows (%d cols) for '%s'...",
-          nrow(sup_search_ev), ncol(sup_search_ev) - 1L, base_ev
-        ))
-      }
-      s35_common <- list(
-        data = sup_search_ev,
-        target_col = target_col,
-        task = resolved_task,
-        evaluator = base_ev,
-        metric = resolved_metric,
-        generations = sup_gens,
-        pop_size = sup_pop,
-        islands = 1L,
-        allowed_transformers = sup_t,
-        evaluation_strategy = "cv",
-        cv_folds = min(cv_folds, 5L),
-        cv_strategy = cv_strategy,
-        group_col = group_col,
-        time_col = time_col,
-        split_ratio = NULL,
-        split_ids = NULL,
-        sd_penalty = cfg$s2_sd_penalty,
-        confirm_top_k = if (preset != "fast" && cv_strategy != "time") 2L else 0L,
-        seed_genes = NULL,
-        raw_toggle_prob = 0.0,
-        bag_folds = FALSE,
-        target_transform = resolved_tt,
-        threads = threads,
-        seed = base_seed + 500L + idx,
-        verbose = verbose
-      )
-      ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_ev), custom_evaluator_args = evaluator_args)
-      ev_fast_evolve_args <- .map_evaluator_args_for_evolve(ev_fast_args)
-      for (k in names(ev_fast_evolve_args)) s35_common[[k]] <- ev_fast_evolve_args[[k]]
-      rec_sup <- do.call(evolve_features, s35_common)
-      stage3_sup_recipes[[ev]] <- rec_sup
-      sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, setdiff(names(sup_search_ev), target_col))
-    }
-  }
+  # Supervised genes discovered directly in Stage 2 were already split to unfitted
+  # symbolic seed_genes before Stage 3 Mega-Matrix synthesis (zero target leakage).
+  stage3_sup_recipes <- if (isTRUE(supervised_stage4)) sup_seed_genes else NULL
 
   # Stage 4: High-capacity 1-Gen retraining on 100% of winning Stage 3 feature view
   stage4_recipes <- vector("list", length(active_evaluators))
@@ -1441,10 +1467,16 @@ run_competition_pipeline <- function(
     base_ev <- get_base_evaluator(ev)
     s4_cols_ev <- unique(c(
       stage3_views[[ev]]$cols,
+      intersect(sup_input_cols[[ev]], names(train_mega)),
       intersect(c(group_col, time_col), names(train_mega)),
       target_col
     ))
     train_mega_ev <- train_mega[, s4_cols_ev, with = FALSE]
+    s4_seed_genes <- if (length(sup_seed_genes[[ev]]) > 0L) {
+      normalize_seed_genes(sup_seed_genes[[ev]], setdiff(names(train_mega_ev), target_col))
+    } else {
+      NULL
+    }
 
     ev_args <- .evaluator_stage_args(s4_ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega_ev), custom_evaluator_args = evaluator_args)
 
@@ -1467,7 +1499,7 @@ run_competition_pipeline <- function(
       metric = resolved_metric,
       generations = 1L,
       pop_size = 1L,
-      seed_genes = sup_seed_genes[[ev]],
+      seed_genes = if (length(s4_seed_genes) > 0L) s4_seed_genes else NULL,
       evaluation_strategy = "cv",
       cv_folds = cv_folds,
       cv_strategy = cv_strategy,

@@ -201,9 +201,31 @@ test_that("seed_genes and decoupled supervised_stage4 search fast and refit 1-ge
     cohort = te_cat
   )
 
-  # Direct seed_genes test: strip state and refit per-fold in 1-gen mode
+  # Direct .split_individual_tainted_genes unit test
+  g_unsup <- create_gene("pca", c("x1", "x2"))
+  g_unsup$state <- list(center = c(0, 0))
   g_sup <- create_gene("pooled_target_encode", "cohort")
   g_sup$state <- list(fake_leaked_state = 999)
+  g_down <- create_gene("log", g_sup$output_col)
+  g_down$state <- list(offset = 1)
+  ind_mixed <- create_individual(
+    genes = list(g_unsup, g_sup, g_down),
+    numeric_cols = c("x1", "x2"),
+    categorical_cols = character(0),
+    all_numeric_cols = c("x1", "x2"),
+    all_categorical_cols = "cohort"
+  )
+  split_res <- .split_individual_tainted_genes(ind_mixed)
+  expect_length(split_res$unsup_ind$genes, 1L)
+  expect_equal(split_res$unsup_ind$genes[[1L]]$output_col, g_unsup$output_col)
+  expect_equal(split_res$unsup_ind$genes[[1L]]$state, list(center = c(0, 0)))
+  expect_true("cohort" %in% split_res$unsup_ind$categorical_cols)
+  expect_true("cohort" %in% split_res$sup_input_cols)
+  expect_length(split_res$sup_genes, 2L)
+  expect_null(split_res$sup_genes[[1L]]$state)
+  expect_null(split_res$sup_genes[[2L]]$state)
+
+  # Direct seed_genes test: strip state and refit per-fold in 1-gen mode
   cleaned <- normalize_seed_genes(list(g_sup), c("x1", "x2", "cohort"))
   expect_length(cleaned, 1L)
   expect_null(cleaned[[1L]]$state)
@@ -849,6 +871,65 @@ test_that("run_competition_pipeline supports islands_per_evaluator for intra- an
   expect_equal(res$stage4_evaluators, c(lm_mbo = "lm_tabarena", realmlp = "realmlp_tabarena"))
   expect_length(res$predictions, n_te)
   expect_true(all(is.finite(res$predictions)))
+})
+
+test_that("run_competition_pipeline uses MetaCV across multi-evaluator islands for n >= 1000 and keeps Stage 3 mega-matrix leak-free under supervised_stage4 = TRUE", {
+  skip_if_not_installed("glmnet")
+  skip_if_not_installed("lightgbm")
+
+  set.seed(505)
+  n_tr <- 1020L
+  n_te <- 25L
+  cats <- paste0("grp_", seq_len(6L))
+  cat_eff <- stats::setNames(seq(-1.5, 1.5, length.out = 6L), cats)
+  mk_df <- function(n) {
+    c1 <- sample(cats, n, replace = TRUE)
+    x1 <- stats::rnorm(n)
+    x2 <- stats::rnorm(n)
+    data.frame(
+      x1 = x1,
+      x2 = x2,
+      grp = c1,
+      y = as.integer(stats::rbinom(n, 1L, stats::plogis(cat_eff[c1] + 0.8 * x1 - 0.5 * x2)))
+    )
+  }
+  tr <- mk_df(n_tr)
+  te <- mk_df(n_te)
+  te$y <- NULL
+
+  res_mc <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "y",
+    task = "classification",
+    metric = "auc",
+    evaluators = c("lm", "lightgbm"),
+    islands_per_evaluator = 1L,
+    preset = "fast",
+    preset_overrides = list(s2_gen = 1L, s2_pop = 3L),
+    supervised_stage4 = TRUE,
+    cv_folds = 3L,
+    threads = 1L,
+    seed = 505L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res_mc, "evo_competition_run")
+  expect_equal(res_mc$stage2_recipes[["lm"]]$evaluation_strategy, "metacv")
+  expect_equal(res_mc$stage2_recipes[["lightgbm"]]$evaluation_strategy, "metacv")
+  expect_true(is.list(res_mc$stage3_supervised_recipes))
+  expect_equal(names(res_mc$stage3_supervised_recipes), c("lm", "lightgbm"))
+
+  # Any discovered supervised genes must never be materialized statically in train_mega or test_mega
+  all_sup_outs <- unlist(lapply(res_mc$stage3_supervised_recipes, function(gl) {
+    vapply(gl, function(g) g$output_col, character(1L))
+  }))
+  if (length(all_sup_outs) > 0L) {
+    expect_false(any(all_sup_outs %in% names(res_mc$train_mega)))
+    expect_false(any(all_sup_outs %in% names(res_mc$test_mega)))
+  }
+  expect_length(res_mc$predictions, n_te)
+  expect_true(all(is.finite(res_mc$predictions)))
 })
 
 

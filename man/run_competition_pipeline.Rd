@@ -111,11 +111,12 @@ single-feature train-vs-test AUC exceeds \code{drift_auc_threshold}.}
 
 \item{drift_auc_threshold}{Single-feature adversarial AUC cutoff (default \code{0.85}).}
 
-\item{supervised_stage4}{Logical (default \code{FALSE}). If \code{TRUE}, runs a fast
-surrogate search over supervised encoders on \code{train_mega} (subsampled to
-\code{max_search_rows} if huge) and passes only the \strong{unfitted} winning gene
-formulas via \code{seed_genes} into Stage 4's \code{generations = 1, pop_size = 1}
-deep fold-bagged refit (zero target leakage and zero deep-schedule search overhead).}
+\item{supervised_stage4}{Logical (default \code{FALSE}). If \code{TRUE}, enables
+supervised encoders directly inside Stage 2 discovery, strips supervised (and
+downstream) genes before Stage 3 Mega-Matrix synthesis so \code{train_mega} contains
+zero target leakage, and passes those \strong{unfitted} symbolic gene formulas via
+\code{seed_genes} into Stage 3 View Tournament and Stage 4's
+\code{generations = 1, pop_size = 1} deep fold-bagged refit.}
 
 \item{bag_folds}{Logical (default \code{TRUE}). Retains and averages all \code{cv_folds}
 fold models during test prediction.}
@@ -166,16 +167,22 @@ Executes the complete high-capacity tabular competition workflow from
     \code{\link{subsample_for_discovery}} (preserving groups, temporal contiguity,
     rare-event counts, and test propensity weights) while keeping 100\% of \code{train}
     for Stage 3--5 retraining.
-  \item \strong{Stage 2 (Multi-Evaluator Leak-Free Discovery)}: Evolves features
-    independently for each active evaluator using strictly unsupervised transformers
-    so no target encoding leaks into Stage 4 cross-validation.
-  \item \strong{Stage 3 (Mega-Matrix Synthesis)}: Combines all Stage 2 scout recipes via
-    \code{ensemble_islands(..., method = "equal")} and projects learned states onto
-    100\% of \code{train} and \code{test}.
-  \item \strong{Stage 4 (High-Capacity Retraining)}: Trains each model family on full
-    \code{train_mega} with low learning rates, deep early-stopping ceilings, and
-    \code{bag_folds = TRUE} (optionally adding fold-local supervised target encoders
-    when \code{supervised_stage4 = TRUE}).
+  \item \strong{Stage 2 (Unified Multi-Evaluator Discovery)}: Evolves features
+    in a unified multi-evaluator island topology (\code{evaluation_strategy = "metacv"}
+    when \code{nrow >= 1000}, non-time splits, and \code{islands >= 2}, else \code{"cv"})
+    allowing cross-pollination across models and islands. When
+    \code{supervised_stage4 = FALSE}, only unsupervised transformers run; when
+    \code{supervised_stage4 = TRUE}, supervised transformers also participate in
+    Stage 2 and are stripped to unfitted symbolic \code{seed_genes} before Stage 3
+    so zero target encoding leaks into Stage 3/4.
+  \item \strong{Stage 3 (Mega-Matrix Synthesis & View Tournament)}: Combines all
+    unsupervised Stage 2 scout recipes via \code{ensemble_islands(..., method = "equal")},
+    projects learned states onto 100\% of \code{train} and \code{test}, and selects the
+    best feature view per evaluator via a fast CV View Tournament.
+  \item \strong{Stage 4 (High-Capacity Retraining)}: Trains each model family on 100\%
+    of its winning \code{train_mega} view with low learning rates, deep early-stopping
+    ceilings (or \code{_mbo} / \code{_tabarena} tuning), and \code{bag_folds = TRUE},
+    refitting any extracted \code{supervised_stage4} seed genes strictly inside each fold.
   \item \strong{Stage 5 (Stacking & Submission)}: Blends Stage 4 models via nested
     out-of-fold elastic-net stacking (\code{ensemble_islands(..., method = "stack")})
     and builds a ready-to-submit \code{data.table} (writing \code{submission_file} if given).
