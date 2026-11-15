@@ -220,6 +220,31 @@ resolve_tuned_evaluator <- function(evaluator, best_params = NULL, extra_args = 
   )
 }
 
+#' Resolve Tuned Counterpart for a Base or Tuned Evaluator
+#' @param ev Character evaluator or tuner name.
+#' @param tune Character tuning tier: \code{"none"}, \code{"tabarena"}, or \code{"mbo"}.
+#' @return Character evaluator name.
+#' @keywords internal
+#' @noRd
+.resolve_tuned_counterpart <- function(ev, tune = c("none", "tabarena", "mbo")) {
+  tune <- match.arg(tune)
+  if (tune == "none") return(ev)
+  base_ev <- get_base_evaluator(ev)
+  if (tune == "tabarena") {
+    cand <- paste0(base_ev, "_tabarena")
+    if (has_evaluator(cand)) cand else {
+      warning(sprintf("TabArena tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
+      base_ev
+    }
+  } else {
+    cand <- paste0(base_ev, "_mbo")
+    if (has_evaluator(cand)) cand else {
+      warning(sprintf("MBO tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
+      base_ev
+    }
+  }
+}
+
 #' Check if an Evaluator is Tree-Based
 #'
 #' Inspects the traits of the evaluator (or its unwrapped base evaluator) to determine

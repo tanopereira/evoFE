@@ -128,6 +128,7 @@
 #' @param confirm_top_k Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.
 #' @param seed_genes Optional list of gene definitions, an \code{evo_individual}, or an \code{evo_recipe} whose symbolic gene formulas (with all fitted \code{$state} entries stripped) seed Individual 1 and initial island populations. Ideal for searching supervised encoders fast and refitting the winning formulas per fold in 1-gen (\code{generations = 1, pop_size = 1}) deep training without target leakage.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
+#' @param tune_final Optional post-evolution Bayesian optimization pass applied once to each winning island recipe after feature evolution completes: \code{"none"} (default), \code{"mbo"}, or \code{"tabarena"}. Useful for discovering features fast with untuned (or \code{"_mbo"}) evaluators across multi-evaluator CV islands and then tuning each island winner with \code{"_mbo"} or \code{"_tabarena"} on its own evolved feature view before final refit or \code{\link{ensemble_islands}} stacking.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @importFrom utils tail head
@@ -203,10 +204,26 @@ evolve_features <- function(data, target_col, task = "classification",
                             sd_penalty = 0,
                             confirm_top_k = 0L,
                             seed_genes = NULL,
-                            global_unsupervised = getOption("evoFE.global_unsupervised", TRUE), ...) {
+                            global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
+                            tune_final = c("none", "mbo", "tabarena"), ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
   threads <- resolve_thread_count(threads, extra_args_top)
+  tune_final <- match.arg(tune_final, c("none", "mbo", "tabarena"))
+  if (tune_final %in% c("mbo", "tabarena")) {
+    missing_tuner_pkgs <- character(0)
+    for (pkg in c("mlr3mbo", "paradox", "bbotk")) {
+      if (!requireNamespace(pkg, quietly = TRUE)) {
+        missing_tuner_pkgs <- c(missing_tuner_pkgs, pkg)
+      }
+    }
+    if (length(missing_tuner_pkgs) > 0L) {
+      stop(sprintf(
+        "tune_final = '%s' requires packages: %s. Please install them.",
+        tune_final, paste(missing_tuner_pkgs, collapse = ", ")
+      ))
+    }
+  }
   target_transform <- match.arg(target_transform, c("none", "log1p", "yeo_johnson", "rank_gauss"))
   if (!is.numeric(sd_penalty) || length(sd_penalty) != 1L || is.na(sd_penalty) || sd_penalty < 0) {
     stop("'sd_penalty' must be a non-negative number.")
@@ -1176,6 +1193,48 @@ evolve_features <- function(data, target_col, task = "classification",
 
   # Final feature pooling
   if (model_all_final_genes) {
+    if (islands > 1L && length(unique(island_evaluators)) > 1L &&
+        exists("pop_list") && !is.null(pop_list) &&
+        exists("island_best_individual") && length(island_best_individual) == islands) {
+      for (j in seq_len(islands)) {
+        isl_ind_j <- island_best_individual[[j]]
+        isl_eval_j <- if (!is.null(isl_ind_j$evaluator)) isl_ind_j$evaluator else island_evaluators[j]
+        isl_base_j <- if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]]$fitness)) {
+          island_baseline_inds[[j]]$fitness
+        } else {
+          baseline_ind$fitness
+        }
+        isl_pool_res <- pool_final_genes(
+          pop = pop_list[[j]], best_ind = isl_ind_j, data = data, target_col = target_col,
+          task = task, cv_folds = cv_folds,
+          evaluation_strategy = evaluation_strategy,
+          split_ids_val = split_ids_val, shared_splits = shared_splits,
+          evaluator_main = isl_eval_j, fold_ids = fold_ids,
+          island_shared_splits = island_shared_splits, shared_folds = shared_folds,
+          shared_full = shared_full, state_cache = state_cache,
+          threads = threads, metric = metric, verbose = FALSE,
+          complexity_penalty = complexity_penalty,
+          complexity_mode = complexity_mode,
+          complexity_floor = complexity_floor,
+          complexity_target = complexity_target,
+          baseline_fitness = isl_base_j, islands = islands,
+          record = FALSE, evolution_log = NULL, viewer = NULL,
+          best_ind_source = paste0("Island ", j),
+          oof_preds = isl_ind_j$val_preds, ...
+        )
+        if (isTRUE(isl_pool_res$adopted_pooled)) {
+          island_best_individual[[j]] <- isl_pool_res$best_ind
+          if (exists("island_best_fitness") && length(island_best_fitness) >= j) {
+            island_best_fitness[j] <- isl_pool_res$best_ind$fitness
+          }
+          if (!is.na(isl_pool_res$best_ind$fitness) && (is.na(best_ind$fitness) || isl_pool_res$best_ind$fitness > best_ind$fitness)) {
+            best_ind <- isl_pool_res$best_ind
+            best_ind_source <- paste0("Island ", j, " (Pooled)")
+            oof_preds <- isl_pool_res$oof_preds
+          }
+        }
+      }
+    }
     pool_res <- pool_final_genes(
       pop = pop, best_ind = best_ind, data = data, target_col = target_col,
       task = task, cv_folds = cv_folds,
@@ -1262,6 +1321,41 @@ evolve_features <- function(data, target_col, task = "classification",
       confirm_fitness_val <- conf_res$confirm_fitness
       mean_cv_fitness_val <- conf_res$mean_cv_fitness
     }
+  }
+
+  if (!identical(tune_final, "none")) {
+    tune_res <- tune_final_island_winners(
+      tune_final = tune_final,
+      best_ind = best_ind,
+      island_best_individual = if (exists("island_best_individual")) island_best_individual else NULL,
+      island_best_fitness = if (exists("island_best_fitness")) island_best_fitness else NULL,
+      islands = islands,
+      island_evaluators = island_evaluators,
+      evaluator_main = evaluator_main,
+      data = data, target_col = target_col, task = task,
+      cv_folds = cv_folds, evaluation_strategy = evaluation_strategy,
+      split_ids_val = split_ids_val, shared_splits = shared_splits,
+      fold_ids = fold_ids, island_shared_splits = island_shared_splits,
+      shared_folds = shared_folds, shared_full = shared_full,
+      state_cache = state_cache, threads = threads, metric = metric,
+      verbose = verbose, complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode, complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      baseline_fitness = baseline_ind$fitness,
+      island_baseline_inds = island_baseline_inds,
+      best_ind_source = best_ind_source, oof_preds = oof_preds,
+      seed = seed, ...
+    )
+    best_ind <- tune_res$best_ind
+    if (!is.null(tune_res$island_best_individual)) {
+      island_best_individual <- tune_res$island_best_individual
+    }
+    if (!is.null(tune_res$island_best_fitness)) {
+      island_best_fitness <- tune_res$island_best_fitness
+    }
+    best_ind_source <- tune_res$best_ind_source
+    oof_preds <- tune_res$oof_preds
+    evaluator_main <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
   }
 
   # Holdout evaluation for split strategy

@@ -715,6 +715,73 @@ test_that("run_competition_pipeline runs end-to-end with lm evaluator and tune_s
   expect_true(any(grepl("lm_tabarena", out_s)))
 })
 
+test_that("run_competition_pipeline preserves _mbo in Stage 2, selects Stage 3 views, and upgrades to _tabarena in Stage 4", {
+  skip_if_not_installed("mlr3mbo")
+  skip_if_not_installed("paradox")
+  skip_if_not_installed("bbotk")
+  skip_if_not_installed("glmnet")
+
+  set.seed(303)
+  n_tr <- 80L
+  n_te <- 25L
+  mk_df <- function(n) {
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+    x3 <- rnorm(n)
+    data.frame(
+      x1 = x1,
+      x2 = x2,
+      x3 = x3,
+      noise = rnorm(n),
+      y = 2.5 * x1 - 1.5 * x2 + 0.4 * x1 * x2 + rnorm(n, sd = 0.2)
+    )
+  }
+  tr <- mk_df(n_tr)
+  te <- mk_df(n_te)
+  te$y <- NULL
+
+  res <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "y",
+    task = "regression",
+    metric = "rmse",
+    evaluators = c("lm_mbo", "realmlp"),
+    tune_stage4 = "tabarena",
+    preset = "fast",
+    preset_overrides = list(
+      s2_mbo_iters = 1L,
+      s2_mbo_init_design = 2L,
+      mbo_iters = 1L,
+      mbo_init_design = 2L,
+      s2_mlp_epochs = 8L,
+      s4_mlp_epochs = 12L
+    ),
+    supervised_stage4 = FALSE,
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 303L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_competition_run")
+  expect_equal(res$stage2_recipes[["lm_mbo"]]$evaluator, "lm_mbo")
+  expect_equal(res$stage2_recipes[["realmlp"]]$evaluator, "realmlp")
+  expect_true(is.list(res$stage3_views))
+  expect_equal(names(res$stage3_views), c("lm_mbo", "realmlp"))
+  expect_equal(names(res$stage3_view_types), c("lm_mbo", "realmlp"))
+  expect_true(all(res$stage3_view_types %in% c("own", "mega", "mega_pruned")))
+  for (ev in c("lm_mbo", "realmlp")) {
+    s4_feats <- extract_individual_features(res$stage4_recipes[[ev]]$best_individual, target_col = "y", unique = TRUE)
+    expect_true(all(s4_feats %in% res$stage3_views[[ev]]$cols))
+  }
+  expect_equal(res$stage4_evaluators, c(lm_mbo = "lm_tabarena", realmlp = "realmlp_tabarena"))
+  expect_s3_class(res$final_model, "evo_ensemble")
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions)))
+})
+
+
 
 
 

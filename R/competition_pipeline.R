@@ -26,6 +26,8 @@
       s2_sd_penalty = 0.10,
       s2_confirm_k = 0L,
       clust_cap = 2000L,
+      s2_mbo_iters = 1L,
+      s2_mbo_init_design = 2L,
       mbo_iters = 3L,
       mbo_init_design = 4L,
       s4_lgb_lr = 0.05,
@@ -53,6 +55,8 @@
       s2_sd_penalty = 0.15,
       s2_confirm_k = 3L,
       clust_cap = 25000L,
+      s2_mbo_iters = 3L,
+      s2_mbo_init_design = 4L,
       mbo_iters = 10L,
       mbo_init_design = 8L,
       s4_lgb_lr = 0.005,
@@ -80,6 +84,8 @@
       s2_sd_penalty = 0.20,
       s2_confirm_k = 3L,
       clust_cap = 50000L,
+      s2_mbo_iters = 5L,
+      s2_mbo_init_design = 6L,
       mbo_iters = 25L,
       mbo_init_design = 12L,
       s4_lgb_lr = 0.003,
@@ -181,23 +187,7 @@
 #' @keywords internal
 #' @noRd
 .resolve_stage4_evaluator <- function(ev, tune_stage4 = c("none", "tabarena", "mbo")) {
-  tune_stage4 <- match.arg(tune_stage4)
-  base_ev <- get_base_evaluator(ev)
-  if (tune_stage4 == "tabarena") {
-    cand <- paste0(base_ev, "_tabarena")
-    if (has_evaluator(cand)) cand else {
-      warning(sprintf("TabArena tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
-      base_ev
-    }
-  } else if (tune_stage4 == "mbo") {
-    cand <- paste0(base_ev, "_mbo")
-    if (has_evaluator(cand)) cand else {
-      warning(sprintf("MBO tuner '%s' not registered; falling back to '%s'.", cand, base_ev))
-      base_ev
-    }
-  } else {
-    ev
-  }
+  .resolve_tuned_counterpart(ev, tune = tune_stage4)
 }
 
 #' Auto-select regression target transformation based on skewness and positivity
@@ -465,6 +455,18 @@
     }
   }
 
+  if (stage == 2L && is_tuned) {
+    s2_it <- if (!is.null(cfg$s2_mbo_iters)) as.integer(cfg$s2_mbo_iters) else 2L
+    s2_id <- if (!is.null(cfg$s2_mbo_init_design)) as.integer(cfg$s2_mbo_init_design) else 3L
+    if (base_ev %in% c("realmlp", "tabm")) {
+      args$mbo_iters <- max(1L, as.integer(ceiling(s2_it * 0.7)))
+      args$mbo_init_design <- max(2L, as.integer(ceiling(s2_id * 0.75)))
+    } else {
+      args$mbo_iters <- s2_it
+      args$mbo_init_design <- s2_id
+    }
+  }
+
   if (!is.null(custom_evaluator_args) && is.list(custom_evaluator_args) && length(custom_evaluator_args) > 0L) {
     stage_key <- paste0("stage", stage)
 
@@ -539,6 +541,223 @@
     }
   }
   recipes
+}
+
+#' Extract Stage 3 feature columns originating from a given Stage 2 recipe
+#' @keywords internal
+#' @noRd
+.extract_recipe_view_cols <- function(ev, stage2_recipes, scout_ens, available_cols) {
+  cols <- character(0)
+  rec <- stage2_recipes[[ev]]
+  if (!is.null(rec) && !is.null(rec$best_individual)) {
+    cols <- c(cols, extract_individual_features(rec$best_individual, target_col = rec$target_col, unique = TRUE))
+  }
+  if (!is.null(scout_ens) && is.list(scout_ens$active_recipes)) {
+    prefix <- paste0(ev, "_island_")
+    for (nm in names(scout_ens$active_recipes)) {
+      if (identical(nm, ev) || startsWith(nm, prefix)) {
+        cols <- c(cols, extract_individual_features(scout_ens$active_recipes[[nm]], target_col = scout_ens$target_col, unique = TRUE))
+      }
+    }
+  }
+  cols <- intersect(available_cols, unique(cols))
+  if (length(cols) == 0L) available_cols else cols
+}
+
+#' Run a fast CV view tournament per evaluator across own, full, and pruned mega-matrix views
+#' @keywords internal
+#' @noRd
+.select_stage3_views <- function(train_mega, stage2_recipes, scout_ens, active_evaluators,
+                                 target_col, task, metric, cv_folds, cv_strategy,
+                                 group_col, time_col, max_search_rows, adv_weights,
+                                 target_transform, cfg, evaluator_args, threads, seed,
+                                 verbose) {
+  show_msg <- isTRUE(verbose) || (is.numeric(verbose) && verbose >= 1L)
+  view_dt <- subsample_for_discovery(
+    data = train_mega,
+    target_col = target_col,
+    max_rows = max_search_rows,
+    task = task,
+    cv_strategy = cv_strategy,
+    group_col = group_col,
+    time_col = time_col,
+    adv_weights = adv_weights,
+    seed = seed + 300L
+  )
+
+  v_folds <- max(2L, min(as.integer(cv_folds), 5L, nrow(view_dt)))
+  fold_ids <- .build_cv_folds(
+    view_dt, v_folds, cv_strategy, time_col, group_col,
+    target_col = target_col, task = task
+  )
+  shared_folds <- .build_shared_folds(view_dt, fold_ids)
+  shared_full <- shallow_copy_dt(data.table::as.data.table(view_dt))
+
+  available_cols <- setdiff(names(view_dt), target_col)
+  all_dt_cols <- available_cols[vapply(view_dt[, available_cols, with = FALSE], .is_datetime_col, logical(1L))]
+  all_num_cols <- setdiff(available_cols[vapply(view_dt[, available_cols, with = FALSE], is.numeric, logical(1L))], all_dt_cols)
+  all_cat_cols <- setdiff(available_cols, c(all_num_cols, all_dt_cols))
+
+  .eval_view_cols <- function(cols, base_ev, ev_fast_evolve_args, need_imp = FALSE) {
+    ind <- create_individual(
+      genes = list(),
+      numeric_cols = intersect(cols, all_num_cols),
+      categorical_cols = intersect(cols, all_cat_cols),
+      datetime_cols = intersect(cols, all_dt_cols),
+      all_numeric_cols = all_num_cols,
+      all_categorical_cols = all_cat_cols,
+      all_datetime_cols = all_dt_cols
+    )
+    call_args <- list(
+      ind = ind,
+      data = view_dt,
+      target_col = target_col,
+      task = task,
+      cv_folds = v_folds,
+      evaluation_strategy = "cv",
+      evaluator = base_ev,
+      fold_ids = fold_ids,
+      shared_folds = shared_folds,
+      shared_full = shared_full,
+      state_cache = NULL,
+      threads = threads,
+      metric = metric,
+      verbose = FALSE,
+      allow_prune = FALSE,
+      complexity_penalty = 0,
+      sd_penalty = 0,
+      cv_strategy = cv_strategy,
+      time_col = time_col,
+      group_col = group_col,
+      target_transform = target_transform,
+      n_samples = nrow(view_dt)
+    )
+    for (k in names(ev_fast_evolve_args)) {
+      call_args[[k]] <- ev_fast_evolve_args[[k]]
+    }
+    call_args$compute_importances <- isTRUE(need_imp)
+    evaluated <- tryCatch(do.call(evaluate_fitness, call_args), error = function(e) ind)
+    score <- if (!is.null(evaluated$raw_fitness) && is.finite(evaluated$raw_fitness)) {
+      evaluated$raw_fitness
+    } else {
+      evaluated$fitness
+    }
+    if (!is.finite(score)) score <- -Inf
+    list(cols = cols, score = score, importances = evaluated$importances, n_cols = length(cols))
+  }
+
+  views_list <- vector("list", length(active_evaluators))
+  names(views_list) <- active_evaluators
+  view_types_vec <- stats::setNames(character(length(active_evaluators)), active_evaluators)
+
+  for (ev in active_evaluators) {
+    base_ev <- get_base_evaluator(ev)
+    ev_fast_args <- .evaluator_stage_args(
+      base_ev, stage = 2L, cfg = cfg, n_rows = nrow(view_dt),
+      custom_evaluator_args = evaluator_args
+    )
+    ev_fast_evolve_args <- .map_evaluator_args_for_evolve(ev_fast_args)
+
+    res_mega <- .eval_view_cols(available_cols, base_ev, ev_fast_evolve_args, need_imp = TRUE)
+
+    own_cols <- .extract_recipe_view_cols(ev, stage2_recipes, scout_ens, available_cols)
+    res_own <- if (setequal(own_cols, available_cols)) {
+      list(cols = available_cols, score = res_mega$score, n_cols = length(available_cols))
+    } else {
+      .eval_view_cols(own_cols, base_ev, ev_fast_evolve_args, need_imp = FALSE)
+    }
+
+    res_pruned <- NULL
+    imp <- res_mega$importances
+    if (!is.null(imp) && length(imp) > 0L) {
+      imp <- imp[intersect(names(imp), available_cols)]
+      imp <- imp[is.finite(imp)]
+      if (length(imp) > 0L) {
+        imp_pos <- pmax(imp, 0)
+        imp_sum <- sum(imp_pos)
+        rel_imp <- if (imp_sum > 0) imp_pos / imp_sum else imp
+        imp_thresh <- getOption("evoFE.importance_threshold", 0.002)
+        eff_thresh <- max(imp_thresh, 0.10 / length(available_cols))
+        pruned_cols <- names(rel_imp)[rel_imp >= eff_thresh]
+        min_keep <- min(length(own_cols), length(available_cols))
+        if (length(pruned_cols) < min_keep) {
+          ord <- names(sort(rel_imp, decreasing = TRUE))
+          pruned_cols <- ord[seq_len(min(min_keep, length(ord)))]
+        }
+        pruned_cols <- intersect(available_cols, pruned_cols)
+        if (length(pruned_cols) > 0L && length(pruned_cols) < length(available_cols)) {
+          if (setequal(pruned_cols, own_cols)) {
+            res_pruned <- list(cols = own_cols, score = res_own$score, n_cols = length(own_cols))
+          } else {
+            res_pruned <- .eval_view_cols(pruned_cols, base_ev, ev_fast_evolve_args, need_imp = FALSE)
+          }
+        }
+      }
+    }
+
+    candidates <- list(
+      own = list(type = "own", cols = own_cols, score = res_own$score, n_cols = length(own_cols)),
+      mega = list(type = "mega", cols = available_cols, score = res_mega$score, n_cols = length(available_cols))
+    )
+    if (!is.null(res_pruned)) {
+      candidates$mega_pruned <- list(
+        type = "mega_pruned",
+        cols = res_pruned$cols,
+        score = res_pruned$score,
+        n_cols = res_pruned$n_cols
+      )
+    }
+
+    best_cand <- candidates[[1L]]
+    for (nm in names(candidates)[-1L]) {
+      cand <- candidates[[nm]]
+      is_better <- if (!is.finite(best_cand$score)) {
+        is.finite(cand$score) || cand$n_cols < best_cand$n_cols
+      } else if (!is.finite(cand$score)) {
+        FALSE
+      } else if (cand$score > best_cand$score + 1e-12) {
+        TRUE
+      } else if (abs(cand$score - best_cand$score) <= 1e-12 && cand$n_cols < best_cand$n_cols) {
+        TRUE
+      } else {
+        FALSE
+      }
+      if (is_better) {
+        best_cand <- cand
+      }
+    }
+
+    views_list[[ev]] <- list(
+      evaluator = ev,
+      base_evaluator = base_ev,
+      selected = best_cand$type,
+      cols = best_cand$cols,
+      scores = list(
+        own = res_own$score,
+        mega = res_mega$score,
+        mega_pruned = if (!is.null(res_pruned)) res_pruned$score else NA_real_
+      ),
+      n_cols = list(
+        own = length(own_cols),
+        mega = length(available_cols),
+        mega_pruned = if (!is.null(res_pruned)) res_pruned$n_cols else NA_integer_
+      )
+    )
+    view_types_vec[ev] <- best_cand$type
+
+    if (show_msg) {
+      pr_str <- if (!is.null(res_pruned)) sprintf(" | mega_pruned(%d): %.5f", res_pruned$n_cols, res_pruned$score) else ""
+      message(sprintf(
+        "[Stage 3 View Tournament] '%s': selected '%s' (%d cols) [own(%d): %.5f | mega(%d): %.5f%s]",
+        ev, best_cand$type, length(best_cand$cols),
+        length(own_cols), res_own$score,
+        length(available_cols), res_mega$score,
+        pr_str
+      ))
+    }
+  }
+
+  list(views = views_list, view_types = view_types_vec)
 }
 
 #' Harmonize column data types and categorical levels between train and test
@@ -687,9 +906,10 @@
 #' @param verbose Logical or integer verbosity level.
 #' @return An S3 object of class \code{"evo_competition_run"} containing:
 #'   \code{predictions}, \code{submission}, \code{final_model} (\code{evo_ensemble} or
-#'   \code{evo_recipe}), \code{stage2_recipes}, \code{stage4_recipes}, \code{scout_ensemble},
-#'   \code{train_mega}, \code{test_mega}, \code{adversarial}, \code{task}, \code{metric},
-#'   \code{target_transform}, \code{discovery_rows}, \code{train_rows}, and \code{stage4_fitness}.
+#'   \code{evo_recipe}), \code{stage2_recipes}, \code{stage3_views}, \code{stage3_view_types},
+#'   \code{stage4_recipes}, \code{scout_ensemble}, \code{train_mega}, \code{test_mega},
+#'   \code{adversarial}, \code{task}, \code{metric}, \code{target_transform},
+#'   \code{discovery_rows}, \code{train_rows}, and \code{stage4_fitness}.
 #' @export
 run_competition_pipeline <- function(
   train,
@@ -744,7 +964,10 @@ run_competition_pipeline <- function(
   tune_stage4 <- match.arg(tune_stage4)
   stage5_stack_space <- match.arg(stage5_stack_space)
   stage5_residual_blender <- match.arg(stage5_residual_blender)
-  if (tune_stage4 %in% c("tabarena", "mbo")) {
+  any_tuned_input <- any(vapply(evaluators, function(e) {
+    is.character(e) && length(e) == 1L && has_evaluator(e) && is_tuned_evaluator(e)
+  }, logical(1L)))
+  if (tune_stage4 %in% c("tabarena", "mbo") || any_tuned_input) {
     missing_pkgs <- character(0)
     for (pkg in c("mlr3mbo", "paradox", "bbotk")) {
       if (!requireNamespace(pkg, quietly = TRUE)) {
@@ -753,7 +976,7 @@ run_competition_pipeline <- function(
     }
     if (length(missing_pkgs) > 0L) {
       stop(sprintf(
-        "tune_stage4 = '%s' requires packages: %s. Please install them.",
+        "Tuned evaluation (tune_stage4 = '%s') requires packages: %s. Please install them.",
         tune_stage4,
         paste(missing_pkgs, collapse = ", ")
       ))
@@ -894,14 +1117,14 @@ run_competition_pipeline <- function(
     base_ev <- get_base_evaluator(ev)
     is_mlp <- base_ev %in% c("realmlp", "tabm")
     if (show_msg) {
-      message(sprintf("[Stage 2] Discovering features with '%s' (%d/%d)...", base_ev, idx, length(active_evaluators)))
+      message(sprintf("[Stage 2] Discovering features with '%s' (%d/%d)...", ev, idx, length(active_evaluators)))
     }
 
     s2_common <- list(
       data = search_dt,
       target_col = target_col,
       task = resolved_task,
-      evaluator = base_ev,
+      evaluator = ev,
       metric = resolved_metric,
       allowed_transformers = unsup_t,
       evaluation_strategy = if (use_metacv) "metacv" else "cv",
@@ -933,7 +1156,7 @@ run_competition_pipeline <- function(
       seed = base_seed + 100L * idx,
       verbose = verbose
     )
-    ev_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
+    ev_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
     ev_evolve_args <- .map_evaluator_args_for_evolve(ev_args)
     for (k in names(ev_evolve_args)) s2_common[[k]] <- ev_evolve_args[[k]]
     stage2_recipes[[ev]] <- do.call(evolve_features, s2_common)
@@ -1002,6 +1225,30 @@ run_competition_pipeline <- function(
     ))
   }
 
+  stage3_view_res <- .select_stage3_views(
+    train_mega = train_mega,
+    stage2_recipes = stage2_recipes,
+    scout_ens = scout_ens,
+    active_evaluators = active_evaluators,
+    target_col = target_col,
+    task = resolved_task,
+    metric = resolved_metric,
+    cv_folds = cv_folds,
+    cv_strategy = cv_strategy,
+    group_col = group_col,
+    time_col = time_col,
+    max_search_rows = max_search_rows,
+    adv_weights = eff_adv_w,
+    target_transform = resolved_tt,
+    cfg = cfg,
+    evaluator_args = evaluator_args,
+    threads = threads,
+    seed = base_seed,
+    verbose = verbose
+  )
+  stage3_views <- stage3_view_res$views
+  stage3_view_types <- stage3_view_res$view_types
+
   if (nrow(train_dt) >= 10000L) {
     stage2_recipes <- .prune_stage_recipes(stage2_recipes)
     gc(verbose = FALSE)
@@ -1012,7 +1259,6 @@ run_competition_pipeline <- function(
   # then extracts ONLY unfitted symbolic gene formulas (state = NULL) for Stage 4!
   stage3_sup_recipes <- NULL
   sup_seed_genes <- stats::setNames(vector("list", length(active_evaluators)), active_evaluators)
-  mega_feature_names <- setdiff(names(train_mega), target_col)
 
   if (isTRUE(supervised_stage4) && length(sup_t) > 0L) {
     sup_search_dt <- subsample_for_discovery(
@@ -1034,14 +1280,20 @@ run_competition_pipeline <- function(
     for (idx in seq_along(active_evaluators)) {
       ev <- active_evaluators[idx]
       base_ev <- get_base_evaluator(ev)
+      s35_cols_ev <- unique(c(
+        stage3_views[[ev]]$cols,
+        intersect(c(group_col, time_col), names(sup_search_dt)),
+        target_col
+      ))
+      sup_search_ev <- sup_search_dt[, s35_cols_ev, with = FALSE]
       if (show_msg) {
         message(sprintf(
-          "[Stage 3.5] Fast supervised encoder search on %d rows for '%s'...",
-          nrow(sup_search_dt), base_ev
+          "[Stage 3.5] Fast supervised encoder search on %d rows (%d cols) for '%s'...",
+          nrow(sup_search_ev), ncol(sup_search_ev) - 1L, base_ev
         ))
       }
       s35_common <- list(
-        data = sup_search_dt,
+        data = sup_search_ev,
         target_col = target_col,
         task = resolved_task,
         evaluator = base_ev,
@@ -1067,16 +1319,16 @@ run_competition_pipeline <- function(
         seed = base_seed + 500L + idx,
         verbose = verbose
       )
-      ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_dt), custom_evaluator_args = evaluator_args)
+      ev_fast_args <- .evaluator_stage_args(base_ev, stage = 2L, cfg = cfg, n_rows = nrow(sup_search_ev), custom_evaluator_args = evaluator_args)
       ev_fast_evolve_args <- .map_evaluator_args_for_evolve(ev_fast_args)
       for (k in names(ev_fast_evolve_args)) s35_common[[k]] <- ev_fast_evolve_args[[k]]
       rec_sup <- do.call(evolve_features, s35_common)
       stage3_sup_recipes[[ev]] <- rec_sup
-      sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, mega_feature_names)
+      sup_seed_genes[[ev]] <- normalize_seed_genes(rec_sup, setdiff(names(sup_search_ev), target_col))
     }
   }
 
-  # Stage 4: High-capacity 1-Gen retraining on 100% of train_mega
+  # Stage 4: High-capacity 1-Gen retraining on 100% of winning Stage 3 feature view
   stage4_recipes <- vector("list", length(active_evaluators))
   names(stage4_recipes) <- active_evaluators
   s4_seed <- base_seed + 1000L
@@ -1085,21 +1337,28 @@ run_competition_pipeline <- function(
     ev <- active_evaluators[idx]
     s4_ev <- .resolve_stage4_evaluator(ev, tune_stage4)
     base_ev <- get_base_evaluator(ev)
+    s4_cols_ev <- unique(c(
+      stage3_views[[ev]]$cols,
+      intersect(c(group_col, time_col), names(train_mega)),
+      target_col
+    ))
+    train_mega_ev <- train_mega[, s4_cols_ev, with = FALSE]
 
-    ev_args <- .evaluator_stage_args(s4_ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega), custom_evaluator_args = evaluator_args)
+    ev_args <- .evaluator_stage_args(s4_ev, stage = 4L, cfg = cfg, n_rows = nrow(train_mega_ev), custom_evaluator_args = evaluator_args)
 
     if (show_msg) {
       if (is_tuned_evaluator(s4_ev)) {
         mbo_trials <- if (!is.null(ev_args$mbo_iters)) ev_args$mbo_iters else cfg$mbo_iters
         tune_tag <- if (grepl("tabarena", s4_ev)) "TabArena" else "MBO"
-        message(sprintf("[Stage 4] High-capacity %d-fold %s Bayesian optimization retraining for '%s' (iters: %d)...",
-                        cv_folds, tune_tag, s4_ev, mbo_trials))
+        message(sprintf("[Stage 4] High-capacity %d-fold %s Bayesian optimization retraining for '%s' (%s view, %d cols, iters: %d)...",
+                        cv_folds, tune_tag, s4_ev, stage3_view_types[[ev]], ncol(train_mega_ev) - 1L, mbo_trials))
       } else {
-        message(sprintf("[Stage 4] High-capacity %d-fold retraining for '%s'...", cv_folds, s4_ev))
+        message(sprintf("[Stage 4] High-capacity %d-fold retraining for '%s' (%s view, %d cols)...",
+                        cv_folds, s4_ev, stage3_view_types[[ev]], ncol(train_mega_ev) - 1L))
       }
     }
     s4_common <- list(
-      data = train_mega,
+      data = train_mega_ev,
       target_col = target_col,
       task = resolved_task,
       evaluator = s4_ev,
@@ -1212,6 +1471,8 @@ run_competition_pipeline <- function(
       submission = sub_dt,
       final_model = final_model,
       stage2_recipes = stage2_recipes,
+      stage3_views = stage3_views,
+      stage3_view_types = stage3_view_types,
       stage3_supervised_recipes = stage3_sup_recipes,
       stage4_recipes = stage4_recipes,
       scout_ensemble = scout_ens,

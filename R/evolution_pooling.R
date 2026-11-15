@@ -569,3 +569,206 @@ confirm_top_k_candidates <- function(confirm_top_k, best_ind, pop = NULL,
     mean_cv_fitness = winner$mean_cv_fitness
   )
 }
+
+#' Tune a single winning individual with its target tuned evaluator (with caching)
+#' @keywords internal
+#' @noRd
+.tune_single_winner <- function(ind, target_ev, curr_ev, tune_cache,
+                                data, target_col, task, eval_strat, eff_folds,
+                                split_ids_val, eff_shared_splits, fold_ids,
+                                eff_shared_folds, shared_full, state_cache,
+                                threads, metric, complexity_penalty,
+                                complexity_mode, complexity_floor,
+                                complexity_target, base_fit, running_best,
+                                extra_args) {
+  cache_key <- paste0(target_ev, "::", individual_to_cache_key(ind))
+  if (!is.null(tune_cache[[cache_key]])) {
+    return(tune_cache[[cache_key]])
+  }
+
+  has_params <- !is.null(ind$best_params) && length(ind$best_params) > 0L
+  if (identical(target_ev, curr_ev) && has_params) {
+    ind$evaluator <- target_ev
+    tune_cache[[cache_key]] <- ind
+    return(ind)
+  }
+
+  ind_clean <- strip_individual_state(ind, keep_unsupervised = getOption("evoFE.global_unsupervised", TRUE))
+  ind_clean$best_params <- NULL
+  ind_clean$best_iteration <- NULL
+  ind_clean$fitness <- NA_real_
+  ind_clean$raw_fitness <- NA_real_
+  ind_clean$val_preds <- NULL
+  ind_clean$val_preds_trans <- NULL
+  ind_clean$y_val <- NULL
+
+  ind_tuned <- do.call(evaluate_fitness, c(
+    list(
+      ind_clean, data = data, target_col = target_col,
+      task = task, cv_folds = eff_folds,
+      evaluation_strategy = eval_strat,
+      split_ids = split_ids_val,
+      shared_splits = eff_shared_splits,
+      evaluator = target_ev,
+      fold_ids = fold_ids,
+      shared_folds = eff_shared_folds,
+      shared_full = shared_full,
+      state_cache = state_cache,
+      threads = threads, metric = metric, verbose = FALSE,
+      allow_prune = FALSE,
+      complexity_penalty = complexity_penalty,
+      complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor,
+      complexity_target = complexity_target,
+      baseline_fitness = base_fit,
+      running_best_fitness = running_best,
+      n_samples = nrow(data)
+    ),
+    extra_args
+  ))
+  ind_tuned$evaluator <- target_ev
+  tune_cache[[cache_key]] <- ind_tuned
+  ind_tuned
+}
+
+#' Post-evolution Bayesian tuning pass over island winners
+#'
+#' Tunes each winning island recipe once with its \code{_mbo} or \code{_tabarena}
+#' counterpart after feature discovery completes, populating tuned
+#' \code{best_params} and out-of-fold predictions for downstream stacking.
+#'
+#' @keywords internal
+#' @noRd
+tune_final_island_winners <- function(tune_final, best_ind, island_best_individual = NULL,
+                                      island_best_fitness = NULL, islands = 1L,
+                                      island_evaluators = NULL, evaluator_main = "lightgbm",
+                                      data, target_col, task = "classification",
+                                      cv_folds = 3L, evaluation_strategy = "cv",
+                                      split_ids_val = NULL, shared_splits = NULL,
+                                      fold_ids = NULL, island_shared_splits = NULL,
+                                      shared_folds = NULL, shared_full = NULL,
+                                      state_cache = NULL, threads = default_threads(),
+                                      metric = "default", verbose = FALSE,
+                                      complexity_penalty = 0, complexity_mode = "bic_dynamic",
+                                      complexity_floor = 0.20, complexity_target = "all_features",
+                                      baseline_fitness = NULL, island_baseline_inds = NULL,
+                                      best_ind_source = "Island 1", oof_preds = NULL,
+                                      seed = NULL, ...) {
+  if (identical(tune_final, "none")) {
+    return(list(
+      best_ind = best_ind,
+      island_best_individual = island_best_individual,
+      island_best_fitness = island_best_fitness,
+      best_ind_source = best_ind_source,
+      oof_preds = oof_preds
+    ))
+  }
+
+  if (verbose) {
+    message(sprintf("\nRunning post-evolution '%s' hyperparameter tuning on winning recipe(s)...", tune_final))
+  }
+
+  eval_strat <- if (evaluation_strategy == "metacv") "cv" else evaluation_strategy
+  eff_folds <- if (evaluation_strategy == "metacv") islands else cv_folds
+  eff_shared_folds <- if (evaluation_strategy == "metacv") island_shared_splits else shared_folds
+  eff_shared_splits <- if (evaluation_strategy == "metacv") NULL else shared_splits
+
+  extra_args <- list(...)
+  if (!is.null(seed) && !"seed" %in% names(extra_args)) {
+    extra_args$seed <- seed
+  }
+
+  tune_cache <- new.env(hash = TRUE, parent = emptyenv())
+  tuned_best <- NULL
+
+  if (islands > 1L && !is.null(island_best_individual) && length(island_best_individual) == islands) {
+    tuned_islands <- vector("list", islands)
+    tuned_fits <- numeric(islands)
+    for (j in seq_len(islands)) {
+      ind_j <- island_best_individual[[j]]
+      curr_ev <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
+      target_ev <- .resolve_tuned_counterpart(curr_ev, tune_final)
+      base_j <- if (!is.null(island_baseline_inds) && length(island_baseline_inds) >= j &&
+                    !is.null(island_baseline_inds[[j]]$fitness)) {
+        island_baseline_inds[[j]]$fitness
+      } else {
+        baseline_fitness
+      }
+      ind_j_tuned <- .tune_single_winner(
+        ind = ind_j, target_ev = target_ev, curr_ev = curr_ev, tune_cache = tune_cache,
+        data = data, target_col = target_col, task = task, eval_strat = eval_strat,
+        eff_folds = eff_folds, split_ids_val = split_ids_val,
+        eff_shared_splits = eff_shared_splits, fold_ids = fold_ids,
+        eff_shared_folds = eff_shared_folds, shared_full = shared_full,
+        state_cache = state_cache, threads = threads, metric = metric,
+        complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor, complexity_target = complexity_target,
+        base_fit = base_j, running_best = ind_j$fitness, extra_args = extra_args
+      )
+      tuned_islands[[j]] <- ind_j_tuned
+      tuned_fits[j] <- if (!is.null(ind_j_tuned$fitness) && is.finite(ind_j_tuned$fitness)) ind_j_tuned$fitness else -Inf
+      if (verbose) {
+        message(sprintf("  [Island %d | %s -> %s] Tuned fitness: %.4f  Recipe: %s",
+                        j, curr_ev, target_ev, tuned_fits[j], individual_to_recipe_string(ind_j_tuned)))
+      }
+    }
+    island_best_individual <- tuned_islands
+    island_best_fitness <- tuned_fits
+
+    best_curr_ev <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+    best_target_ev <- .resolve_tuned_counterpart(best_curr_ev, tune_final)
+    tuned_global <- .tune_single_winner(
+      ind = best_ind, target_ev = best_target_ev, curr_ev = best_curr_ev, tune_cache = tune_cache,
+      data = data, target_col = target_col, task = task, eval_strat = eval_strat,
+      eff_folds = eff_folds, split_ids_val = split_ids_val,
+      eff_shared_splits = eff_shared_splits, fold_ids = fold_ids,
+      eff_shared_folds = eff_shared_folds, shared_full = shared_full,
+      state_cache = state_cache, threads = threads, metric = metric,
+      complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor, complexity_target = complexity_target,
+      base_fit = baseline_fitness, running_best = best_ind$fitness, extra_args = extra_args
+    )
+
+    win_isl_idx <- which.max(tuned_fits)
+    win_isl_fit <- if (length(win_isl_idx) > 0L) tuned_fits[win_isl_idx] else -Inf
+    global_fit <- if (!is.null(tuned_global$fitness) && is.finite(tuned_global$fitness)) tuned_global$fitness else -Inf
+    if (win_isl_fit > global_fit) {
+      tuned_best <- island_best_individual[[win_isl_idx]]
+      best_ind_source <- paste0("Island ", win_isl_idx)
+    } else {
+      tuned_best <- tuned_global
+    }
+  } else {
+    curr_ev <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+    target_ev <- .resolve_tuned_counterpart(curr_ev, tune_final)
+    tuned_best <- .tune_single_winner(
+      ind = best_ind, target_ev = target_ev, curr_ev = curr_ev, tune_cache = tune_cache,
+      data = data, target_col = target_col, task = task, eval_strat = eval_strat,
+      eff_folds = eff_folds, split_ids_val = split_ids_val,
+      eff_shared_splits = eff_shared_splits, fold_ids = fold_ids,
+      eff_shared_folds = eff_shared_folds, shared_full = shared_full,
+      state_cache = state_cache, threads = threads, metric = metric,
+      complexity_penalty = complexity_penalty, complexity_mode = complexity_mode,
+      complexity_floor = complexity_floor, complexity_target = complexity_target,
+      base_fit = baseline_fitness, running_best = best_ind$fitness, extra_args = extra_args
+    )
+    if (!is.null(island_best_individual) && length(island_best_individual) == 1L) {
+      island_best_individual[[1L]] <- tuned_best
+      island_best_fitness <- tuned_best$fitness
+    }
+    if (verbose) {
+      message(sprintf("  [%s -> %s] Tuned fitness: %.4f  Recipe: %s",
+                      curr_ev, target_ev, tuned_best$fitness, individual_to_recipe_string(tuned_best)))
+    }
+  }
+
+  oof_preds <- if (!is.null(tuned_best$val_preds)) tuned_best$val_preds else oof_preds
+
+  list(
+    best_ind = tuned_best,
+    island_best_individual = island_best_individual,
+    island_best_fitness = island_best_fitness,
+    best_ind_source = best_ind_source,
+    oof_preds = oof_preds
+  )
+}

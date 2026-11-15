@@ -606,5 +606,111 @@ test_that("make_tunable skips importances in MBO trials but preserves them on st
   expect_equal(names(fit$importances), colnames(x))
 })
 
+test_that("evolve_features with heterogeneous islands pools per island, tunes final winners, and stacks cleanly", {
+  skip_if_not_installed("mlr3mbo")
+  skip_if_not_installed("paradox")
+  skip_if_not_installed("bbotk")
+  skip_if_not_installed("lightgbm")
+  skip_if_not_installed("glmnet")
+
+  set.seed(2026)
+  n <- 90L
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  x3 <- rnorm(n)
+  df <- data.frame(
+    x1 = x1,
+    x2 = x2,
+    x3 = x3,
+    y = 2.0 * x1 - 1.2 * x2 + 0.5 * x1 * x2 + rnorm(n, sd = 0.2)
+  )
+
+  rec <- evolve_features(
+    data = df,
+    target_col = "y",
+    task = "regression",
+    evaluator = c("lightgbm", "lm"),
+    metric = "rmse",
+    generations = 1L,
+    pop_size = 3L,
+    islands = 2L,
+    migration_interval = 1L,
+    migration_rate = 1L,
+    cv_folds = 2L,
+    model_all_final_genes = TRUE,
+    tune_final = "tabarena",
+    mbo_iters = 1L,
+    mbo_init_design = 2L,
+    nrounds = 25L,
+    learning_rate = 0.1,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(rec, "evo_recipe")
+  expect_equal(rec$island_bests[[1L]]$evaluator, "lightgbm_tabarena")
+  expect_equal(rec$island_bests[[2L]]$evaluator, "lm_tabarena")
+  expect_true(!is.null(rec$island_bests[[1L]]$best_params))
+  expect_true(!is.null(rec$island_bests[[2L]]$best_params))
+  expect_true(rec$evaluator %in% c("lightgbm_tabarena", "lm_tabarena"))
+  expect_equal(rec$evaluator, rec$best_individual$evaluator)
+
+  ens <- ensemble_islands(
+    rec,
+    data = df,
+    target_col = "y",
+    method = "stack",
+    stack_folds = 2L,
+    threads = 1L,
+    seed = 42L,
+    verbose = FALSE
+  )
+  expect_s3_class(ens, "evo_ensemble")
+  preds <- predict_model(ens, df)
+  expect_length(preds, n)
+  expect_true(all(is.finite(preds)))
+})
+
+test_that("evolve_features upgrades _mbo discovery evaluator to _tabarena when tune_final = 'tabarena'", {
+  skip_if_not_installed("mlr3mbo")
+  skip_if_not_installed("paradox")
+  skip_if_not_installed("bbotk")
+  skip_if_not_installed("glmnet")
+
+  set.seed(99)
+  n <- 80L
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  df <- data.frame(
+    x1 = x1,
+    x2 = x2,
+    y = 1.5 * x1 + 0.8 * x2 + rnorm(n, sd = 0.15)
+  )
+
+  rec <- evolve_features(
+    data = df,
+    target_col = "y",
+    task = "regression",
+    evaluator = "lm_mbo",
+    metric = "rmse",
+    generations = 1L,
+    pop_size = 2L,
+    cv_folds = 2L,
+    tune_final = "tabarena",
+    mbo_iters = 1L,
+    mbo_init_design = 2L,
+    threads = 1L,
+    seed = 77L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(rec, "evo_recipe")
+  expect_equal(rec$evaluator, "lm_tabarena")
+  expect_equal(rec$best_individual$evaluator, "lm_tabarena")
+  expect_true(!is.null(rec$best_individual$best_params))
+})
+
+
 
 

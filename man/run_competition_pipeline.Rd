@@ -138,9 +138,10 @@ fit on top of Stage 5 ensemble margins: \code{"none"} (default), \code{"lm"}, or
 \value{
 An S3 object of class \code{"evo_competition_run"} containing:
   \code{predictions}, \code{submission}, \code{final_model} (\code{evo_ensemble} or
-  \code{evo_recipe}), \code{stage2_recipes}, \code{stage4_recipes}, \code{scout_ensemble},
-  \code{train_mega}, \code{test_mega}, \code{adversarial}, \code{task}, \code{metric},
-  \code{target_transform}, \code{discovery_rows}, \code{train_rows}, and \code{stage4_fitness}.
+  \code{evo_recipe}), \code{stage2_recipes}, \code{stage3_views}, \code{stage3_view_types},
+  \code{stage4_recipes}, \code{scout_ensemble}, \code{train_mega}, \code{test_mega},
+  \code{adversarial}, \code{task}, \code{metric}, \code{target_transform},
+  \code{discovery_rows}, \code{train_rows}, and \code{stage4_fitness}.
 }
 \description{
 Executes the complete high-capacity tabular competition workflow from

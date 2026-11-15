@@ -61,6 +61,7 @@ evolve_features(
   confirm_top_k = 0L,
   seed_genes = NULL,
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
+  tune_final = c("none", "mbo", "tabarena"),
   ...
 )
 }
@@ -248,6 +249,8 @@ the highest normalized headroom closed).}
 \item{seed_genes}{Optional list of gene definitions, an \code{evo_individual}, or an \code{evo_recipe} whose symbolic gene formulas (with all fitted \code{$state} entries stripped) seed Individual 1 and initial island populations. Ideal for searching supervised encoders fast and refitting the winning formulas per fold in 1-gen (\code{generations = 1, pop_size = 1}) deep training without target leakage.}
 
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
+
+\item{tune_final}{Optional post-evolution Bayesian optimization pass applied once to each winning island recipe after feature evolution completes: \code{"none"} (default), \code{"mbo"}, or \code{"tabarena"}. Useful for discovering features fast with untuned (or \code{"_mbo"}) evaluators across multi-evaluator CV islands and then tuning each island winner with \code{"_mbo"} or \code{"_tabarena"} on its own evolved feature view before final refit or \code{\link{ensemble_islands}} stacking.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training
 functions.}

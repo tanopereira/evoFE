@@ -498,7 +498,7 @@ step_generation_multi <- function(g, pop_list, islands, data, target_col, task, 
       island_gens_without_improvement = island_gens_without_improvement
     )
 
-    use_rel_fits <- per_island_validation || evaluation_strategy == "metacv"
+    use_rel_fits <- per_island_validation || evaluation_strategy == "metacv" || length(unique(island_evaluators)) > 1L
     effective_island_fits <- compute_effective_island_fitness(island_best_fitness, island_baseline_inds, task, use_rel_fits = use_rel_fits, metric = metric)
 
     if (verbose && use_rel_fits) {
