@@ -174,7 +174,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
       extra_args
     }
 
-    res_model <- do.call(train_model, c(
+    res_model <- do.call(train_model, .merge_call_args(
       list(
         x_train, y_train, x_val,
         y_val = y_val, task = task,
@@ -406,7 +406,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         } else {
           extra_args
         }
-        res_model <- do.call(train_model, c(
+        res_model <- do.call(train_model, .merge_call_args(
           list(
             x_train, y_train, x_val,
             y_val = y_val, task = task,

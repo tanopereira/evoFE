@@ -196,6 +196,88 @@ is_tuned_evaluator <- function(evaluator) {
   FALSE
 }
 
+#' Expand Per-Evaluator Extra Arguments Map for Multi-Evaluator Runs
+#'
+#' @param evaluator Character name of the active evaluator for the current island/model.
+#' @param extra_args Named list of extra arguments (may contain \code{evaluator_extra_args}).
+#' @return Updated \code{extra_args} with \code{evaluator_extra_args} stripped and matching entries merged.
+#' @keywords internal
+#' @noRd
+.expand_evaluator_extra_args <- function(evaluator, extra_args) {
+  if (is.null(extra_args) || !is.list(extra_args) || is.null(extra_args$evaluator_extra_args)) {
+    return(extra_args)
+  }
+  ev_map <- extra_args$evaluator_extra_args
+  extra_args$evaluator_extra_args <- NULL
+  if (!is.list(ev_map) || length(ev_map) == 0L) {
+    return(extra_args)
+  }
+  ev_spec <- if (is.character(evaluator) && length(evaluator) == 1L && evaluator %in% names(ev_map)) {
+    ev_map[[evaluator]]
+  } else if (is.character(evaluator) && length(evaluator) == 1L) {
+    base_ev <- get_base_evaluator(evaluator)
+    if (base_ev %in% names(ev_map)) {
+      ev_map[[base_ev]]
+    } else if (!is.null(names(ev_map))) {
+      map_bases <- vapply(names(ev_map), get_base_evaluator, character(1L))
+      match_idx <- which(map_bases == base_ev)
+      if (length(match_idx) > 0L) ev_map[[match_idx[1L]]] else NULL
+    } else {
+      NULL
+    }
+  } else {
+    NULL
+  }
+  if (is.list(ev_spec) && length(ev_spec) > 0L) {
+    for (k in names(ev_spec)) {
+      if (is.null(extra_args[[k]]) || identical(k, "verbose")) {
+        extra_args[[k]] <- ev_spec[[k]]
+      }
+    }
+  }
+  extra_args
+}
+
+#' Merge Base and Extra Argument Lists for do.call Without Duplicate Formals
+#'
+#' Preserves unnamed positional arguments in \code{base_args} while appending
+#' named arguments from \code{extra_args} that are not already present in
+#' \code{names(base_args)} (and allowing \code{verbose = FALSE} in
+#' \code{extra_args} to silence \code{base_args$verbose}).
+#'
+#' @param base_args List of explicit positional and named arguments.
+#' @param extra_args List of additional named arguments.
+#' @return Combined argument list free of duplicate argument names.
+#' @keywords internal
+#' @noRd
+.merge_call_args <- function(base_args, extra_args) {
+  if (is.null(extra_args) || length(extra_args) == 0L) {
+    return(base_args)
+  }
+  base_names <- names(base_args)
+  if (is.null(base_names)) {
+    base_names <- rep("", length(base_args))
+  }
+  extra_names <- names(extra_args)
+  for (i in seq_along(extra_args)) {
+    nm <- if (!is.null(extra_names)) extra_names[i] else ""
+    if (!is.na(nm) && nzchar(nm)) {
+      if (nm %in% base_names) {
+        if (identical(nm, "verbose") && isFALSE(extra_args[[i]])) {
+          base_args[[nm]] <- FALSE
+        }
+      } else {
+        base_args[[nm]] <- extra_args[[i]]
+        base_names <- c(base_names, nm)
+      }
+    } else {
+      base_args <- c(base_args, list(extra_args[[i]]))
+      base_names <- c(base_names, "")
+    }
+  }
+  base_args
+}
+
 #' Resolve Tuned Evaluator and Merge Pre-Tuned Hyperparameters
 #'
 #' When an individual has already been tuned (non-empty \code{best_params}),
@@ -213,10 +295,11 @@ is_tuned_evaluator <- function(evaluator) {
 #' @keywords internal
 #' @noRd
 resolve_tuned_evaluator <- function(evaluator, best_params = NULL, extra_args = list(), always_unwrap = FALSE) {
+  extra_args <- .expand_evaluator_extra_args(evaluator, as.list(extra_args))
   has_params <- !is.null(best_params) && length(best_params) > 0
   list(
     evaluator = if (always_unwrap || has_params) unwrap_evaluator(evaluator) else evaluator,
-    extra_args = if (has_params) utils::modifyList(as.list(extra_args), as.list(best_params)) else as.list(extra_args)
+    extra_args = if (has_params) utils::modifyList(extra_args, as.list(best_params)) else extra_args
   )
 }
 
@@ -339,7 +422,7 @@ scale_evaluator_iterations <- function(evaluator, iters, train_size = NULL, tota
   "verbose", "metric", "best_params", "y_val", "mbo_iters", "mbo_init_design",
   "mbo_folds", "mbo_infill_opt", "early_stopping_rounds", "early_stopping_round",
   "early_stop_round", "early_stopping", "od_wait", "od_type", "fold_data",
-  "bag_folds", "supervised_stage4",
+  "bag_folds", "supervised_stage4", "evaluator_extra_args",
   "realmlp_device", "n_cycles", "realmlp_n_cycles", "realmlp_lr",
   "realmlp_epochs", "realmlp_seed", "hidden_dim", "stop_epoch",
   "nthread", "nthreads", "num_threads", "n_jobs", "threads",

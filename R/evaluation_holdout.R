@@ -95,7 +95,7 @@ evaluate_holdout_fitness <- function(ind, data, split_ids, shared_splits,
   final_args <- resolved_eval$extra_args
   final_args$compute_importances <- FALSE
 
-  res_model <- do.call(train_model, c(
+  res_model <- do.call(train_model, .merge_call_args(
     list(
       x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task,
       evaluator = final_evaluator, threads = threads,

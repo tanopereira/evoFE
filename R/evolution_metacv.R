@@ -314,7 +314,7 @@ select_metacv_champion <- function(island_best_individual, metacv_selection,
         ind <- strip_individual_state(ind)
         cand_eval <- cand_evals[j]
         resolved_cand <- resolve_tuned_evaluator(cand_eval, ind$best_params, list(...))
-        ind <- do.call(evaluate_fitness, c(
+        ind <- do.call(evaluate_fitness, .merge_call_args(
           list(
             ind, data = data, target_col = target_col,
             task = task, cv_folds = islands,

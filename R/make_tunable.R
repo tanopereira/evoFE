@@ -242,7 +242,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         for (i in seq_len(mbo_folds)) {
           fd <- fold_data[[i]]
           fold_params <- .apply_offset_pair(trial_params, fd$offset_args)
-          res <- do.call(base_evaluator$train_func, c(
+          res <- do.call(base_evaluator$train_func, .merge_call_args(
             list(x_train = fd$x_train, y_train = fd$y_train,
                  x_val = fd$x_val, y_val = fd$y_val,
                  task = task, threads = threads, num_class = num_class,
@@ -277,7 +277,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
         return(mean_score)
       } else if (use_split) {
         # Train on split and compute target validation metric
-        res <- do.call(base_evaluator$train_func, c(
+        res <- do.call(base_evaluator$train_func, .merge_call_args(
           list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task, 
                threads = threads, num_class = num_class, metric = metric, verbose = FALSE),
           trial_params
@@ -311,7 +311,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
           fd <- cv_fold_data[[i]]
           fold_params <- .apply_offset_pair(trial_params, fd$offset_args)
           
-          res <- do.call(base_evaluator$train_func, c(
+          res <- do.call(base_evaluator$train_func, .merge_call_args(
             list(x_train = fd$x_train, 
                  y_train = fd$y_train, 
                  x_val = fd$x_val, 
@@ -489,7 +489,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       for (i in seq_len(mbo_folds)) {
         fd <- fold_data[[i]]
         fold_final_params <- .apply_offset_pair(final_params, fd$offset_args)
-        fold_res[[i]] <- do.call(base_evaluator$train_func, c(
+        fold_res[[i]] <- do.call(base_evaluator$train_func, .merge_call_args(
           list(x_train = fd$x_train, y_train = fd$y_train,
                x_val = fd$x_val, y_val = fd$y_val,
                task = task, threads = threads, num_class = num_class,
@@ -528,7 +528,7 @@ make_tunable <- function(base_model_name, param_ranges, tuner_name = paste0(base
       }
       final_params <- apply_iteration_target(final_params, target_iters, base_model_name)
     }
-    final_res <- do.call(base_evaluator$train_func, c(
+    final_res <- do.call(base_evaluator$train_func, .merge_call_args(
       list(x_train = x_train, y_train = y_train, x_val = x_val, y_val = y_val, task = task, 
            threads = threads, num_class = num_class, metric = metric, verbose = verbose),
       final_params

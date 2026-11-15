@@ -765,6 +765,8 @@ test_that("run_competition_pipeline preserves _mbo in Stage 2, selects Stage 3 v
   )
 
   expect_s3_class(res, "evo_competition_run")
+  expect_equal(res$islands_per_evaluator, 1L)
+  expect_equal(res$stage2_island_evaluators, c("lm_mbo", "realmlp"))
   expect_equal(res$stage2_recipes[["lm_mbo"]]$evaluator, "lm_mbo")
   expect_equal(res$stage2_recipes[["realmlp"]]$evaluator, "realmlp")
   expect_true(is.list(res$stage3_views))
@@ -780,6 +782,75 @@ test_that("run_competition_pipeline preserves _mbo in Stage 2, selects Stage 3 v
   expect_length(res$predictions, n_te)
   expect_true(all(is.finite(res$predictions)))
 })
+
+test_that("run_competition_pipeline supports islands_per_evaluator for intra- and inter-evaluator Stage 2 cross-pollination", {
+  skip_if_not_installed("mlr3mbo")
+  skip_if_not_installed("paradox")
+  skip_if_not_installed("bbotk")
+  skip_if_not_installed("glmnet")
+
+  expect_equal(.competition_preset_config("fast")$islands_per_evaluator, 1L)
+  expect_equal(.competition_preset_config("standard")$islands_per_evaluator, 2L)
+  expect_equal(.competition_preset_config("max")$islands_per_evaluator, 3L)
+
+  set.seed(404)
+  n_tr <- 70L
+  n_te <- 20L
+  mk_df <- function(n) {
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+    x3 <- rnorm(n)
+    data.frame(
+      x1 = x1,
+      x2 = x2,
+      x3 = x3,
+      y = 2.0 * x1 - 1.1 * x2 + 0.5 * x1 * x3 + rnorm(n, sd = 0.2)
+    )
+  }
+  tr <- mk_df(n_tr)
+  te <- mk_df(n_te)
+  te$y <- NULL
+
+  res <- run_competition_pipeline(
+    train = tr,
+    test = te,
+    target_col = "y",
+    task = "regression",
+    metric = "rmse",
+    evaluators = c("lm_mbo", "realmlp"),
+    islands_per_evaluator = 2L,
+    tune_stage4 = "tabarena",
+    preset = "fast",
+    preset_overrides = list(
+      s2_gen = 2L,
+      s2_pop = 3L,
+      s2_mbo_iters = 1L,
+      s2_mbo_init_design = 2L,
+      mbo_iters = 1L,
+      mbo_init_design = 2L,
+      s2_mlp_epochs = 8L,
+      s4_mlp_epochs = 10L
+    ),
+    supervised_stage4 = FALSE,
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 404L,
+    verbose = FALSE
+  )
+
+  expect_s3_class(res, "evo_competition_run")
+  expect_equal(res$islands_per_evaluator, 2L)
+  expect_equal(res$stage2_island_evaluators, c("lm_mbo", "lm_mbo", "realmlp", "realmlp"))
+  expect_length(res$stage2_recipes[["lm_mbo"]]$island_bests, 2L)
+  expect_length(res$stage2_recipes[["realmlp"]]$island_bests, 2L)
+  expect_true(all(vapply(res$stage2_recipes[["lm_mbo"]]$island_bests, function(ind) ind$evaluator == "lm_mbo", logical(1L))))
+  expect_true(all(vapply(res$stage2_recipes[["realmlp"]]$island_bests, function(ind) ind$evaluator == "realmlp", logical(1L))))
+  expect_s3_class(res$scout_ensemble, "evo_ensemble")
+  expect_equal(res$stage4_evaluators, c(lm_mbo = "lm_tabarena", realmlp = "realmlp_tabarena"))
+  expect_length(res$predictions, n_te)
+  expect_true(all(is.finite(res$predictions)))
+})
+
 
 
 

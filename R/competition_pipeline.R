@@ -14,6 +14,7 @@
   cfg <- switch(preset,
     fast = list(
       islands = 2L,
+      islands_per_evaluator = 1L,
       s2_gen = 2L,
       s2_pop = 4L,
       s2_mlp_gen = 2L,
@@ -43,6 +44,7 @@
     ),
     standard = list(
       islands = 4L,
+      islands_per_evaluator = 2L,
       s2_gen = 10L,
       s2_pop = 8L,
       s2_mlp_gen = 8L,
@@ -72,6 +74,7 @@
     ),
     max = list(
       islands = 6L,
+      islands_per_evaluator = 3L,
       s2_gen = 12L,
       s2_pop = 10L,
       s2_mlp_gen = 10L,
@@ -552,6 +555,13 @@
   if (!is.null(rec) && !is.null(rec$best_individual)) {
     cols <- c(cols, extract_individual_features(rec$best_individual, target_col = rec$target_col, unique = TRUE))
   }
+  if (!is.null(rec) && !is.null(rec$island_bests) && is.list(rec$island_bests)) {
+    for (ind_i in rec$island_bests) {
+      if (!is.null(ind_i)) {
+        cols <- c(cols, extract_individual_features(ind_i, target_col = rec$target_col, unique = TRUE))
+      }
+    }
+  }
   if (!is.null(scout_ens) && is.list(scout_ens$active_recipes)) {
     prefix <- paste0(ev, "_island_")
     for (nm in names(scout_ens$active_recipes)) {
@@ -859,6 +869,12 @@
 #'   phases complete while retaining optimal validation checkpointing.
 #' @param evaluators Character vector of model families to run (default
 #'   \code{c("lightgbm", "xgboost", "realmlp")}). Unavailable packages are skipped with a warning.
+#' @param islands_per_evaluator Optional integer specifying the number of Stage 2 discovery
+#'   islands to spawn per evaluator in the shared multi-evaluator island topology. When
+#'   \code{NULL} (default), uses the preset default (\code{1L} for \code{"fast"}, \code{2L}
+#'   for \code{"standard"}, \code{3L} for \code{"max"}; single-evaluator runs use at least
+#'   \code{cfg$islands} islands). Setting \code{islands_per_evaluator >= 2L} enables simultaneous
+#'   intra-evaluator and inter-evaluator gene cross-pollination.
 #' @param tune_stage4 Optional Stage 4 hyperparameter optimization strategy:
 #'   \code{"none"} (default, uses high-capacity fixed schedules), \code{"tabarena"} (tunes
 #'   each model family using its TabArena parameter space via \pkg{mlr3mbo} Bayesian
@@ -906,7 +922,8 @@
 #' @param verbose Logical or integer verbosity level.
 #' @return An S3 object of class \code{"evo_competition_run"} containing:
 #'   \code{predictions}, \code{submission}, \code{final_model} (\code{evo_ensemble} or
-#'   \code{evo_recipe}), \code{stage2_recipes}, \code{stage3_views}, \code{stage3_view_types},
+#'   \code{evo_recipe}), \code{islands_per_evaluator}, \code{stage2_island_evaluators},
+#'   \code{stage2_recipes}, \code{stage3_views}, \code{stage3_view_types},
 #'   \code{stage4_recipes}, \code{scout_ensemble}, \code{train_mega}, \code{test_mega},
 #'   \code{adversarial}, \code{task}, \code{metric}, \code{target_transform},
 #'   \code{discovery_rows}, \code{train_rows}, and \code{stage4_fitness}.
@@ -922,6 +939,7 @@ run_competition_pipeline <- function(
   preset = c("standard", "fast", "max"),
   preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
+  islands_per_evaluator = NULL,
   tune_stage4 = c("none", "tabarena", "mbo"),
   evaluator_args = list(),
   cv_folds = 5L,
@@ -985,6 +1003,13 @@ run_competition_pipeline <- function(
   cv_strategy <- match.arg(cv_strategy)
   cv_folds <- as.integer(cv_folds)
   if (is.na(cv_folds) || cv_folds < 2L) stop("'cv_folds' must be an integer >= 2.")
+  if (!is.null(islands_per_evaluator)) {
+    if (!is.numeric(islands_per_evaluator) || length(islands_per_evaluator) != 1L ||
+        is.na(islands_per_evaluator) || !is.finite(islands_per_evaluator) ||
+        islands_per_evaluator < 1) {
+      stop("'islands_per_evaluator' must be NULL or a positive integer >= 1.")
+    }
+  }
   cfg <- .competition_preset_config(preset, overrides = preset_overrides)
   active_evaluators <- .resolve_competition_evaluators(evaluators)
 
@@ -1092,15 +1117,38 @@ run_competition_pipeline <- function(
     ))
   }
 
-  # Stage 2: Leak-free unsupervised exploration per model family
+  # Stage 2: Unified multi-evaluator island discovery
   all_t <- names(evo_transformers)
   unsup_t <- all_t[!vapply(all_t, is_supervised_transformer, logical(1L))]
   sup_t <- all_t[vapply(all_t, is_supervised_transformer, logical(1L))]
 
-  use_metacv <- (n_discovery >= 1000L) && (cv_strategy != "time") && (cfg$islands >= 2L)
-  mig_cfg <- if (cfg$islands >= 2L) {
+  if (!is.null(islands_per_evaluator)) {
+    eff_ipe <- as.integer(islands_per_evaluator)
+    s2_island_evaluators <- rep(active_evaluators, each = eff_ipe)
+  } else if ("islands_per_evaluator" %in% names(preset_overrides)) {
+    eff_ipe <- max(1L, as.integer(cfg$islands_per_evaluator))
+    s2_island_evaluators <- rep(active_evaluators, each = eff_ipe)
+  } else if ("islands" %in% names(preset_overrides)) {
+    total_req <- max(1L, as.integer(cfg$islands))
+    s2_island_evaluators <- rep(active_evaluators, length.out = total_req)
+    eff_ipe <- as.integer(ceiling(total_req / length(active_evaluators)))
+  } else {
+    eff_ipe <- max(1L, as.integer(cfg$islands_per_evaluator))
+    if (length(active_evaluators) == 1L && eff_ipe < as.integer(cfg$islands)) {
+      eff_ipe <- as.integer(cfg$islands)
+    }
+    s2_island_evaluators <- rep(active_evaluators, each = eff_ipe)
+  }
+  total_s2_islands <- length(s2_island_evaluators)
+
+  base_evals <- vapply(active_evaluators, get_base_evaluator, character(1L))
+  all_mlp <- all(base_evals %in% c("realmlp", "tabm"))
+
+  use_metacv <- (length(unique(s2_island_evaluators)) == 1L) &&
+    (n_discovery >= 1000L) && (cv_strategy != "time") && (total_s2_islands >= 2L)
+  mig_cfg <- if (total_s2_islands >= 2L) {
     migration_config(
-      topology = topology_complete(islands = cfg$islands),
+      topology = topology_complete(islands = total_s2_islands),
       policy = policy_gibbs_pull(stagnation_threshold = 2L, temperature = 1.0),
       payload = "full_individual"
     )
@@ -1108,62 +1156,116 @@ run_competition_pipeline <- function(
     NULL
   }
 
+  base_seed <- if (!is.null(seed)) as.integer(seed) else 42L
+  s2_ev_args_map <- stats::setNames(lapply(active_evaluators, function(ev) {
+    ev_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
+    .map_evaluator_args_for_evolve(ev_args)
+  }), active_evaluators)
+
+  if (show_msg) {
+    message(sprintf(
+      "[Stage 2] Discovering features in unified %d-island topology (%d/evaluator): %s...",
+      total_s2_islands, eff_ipe, paste(s2_island_evaluators, collapse = ", ")
+    ))
+  }
+
+  s2_common <- list(
+    data = search_dt,
+    target_col = target_col,
+    task = resolved_task,
+    evaluator = s2_island_evaluators,
+    metric = resolved_metric,
+    allowed_transformers = unsup_t,
+    evaluation_strategy = if (use_metacv) "metacv" else "cv",
+    metacv_selection = "tournament",
+    cv_folds = if (use_metacv) total_s2_islands else min(cv_folds, 5L),
+    cv_strategy = cv_strategy,
+    group_col = group_col,
+    time_col = time_col,
+    split_ratio = NULL,
+    split_ids = NULL,
+    holdout_frac = if (n_discovery >= 500L) cfg$s2_holdout else 0.0,
+    test_data = if (n_discovery >= 500L && cfg$s2_holdout > 0) test_dt else NULL,
+    sd_penalty = cfg$s2_sd_penalty,
+    confirm_top_k = if (length(unique(s2_island_evaluators)) == 1L && !use_metacv && cv_strategy != "time") cfg$s2_confirm_k else 0L,
+    seed_genes = NULL,
+    model_all_final_genes = TRUE,
+    migration = mig_cfg,
+    islands = total_s2_islands,
+    migration_interval = 1L,
+    migration_rate = 1L,
+    gene_migration_prob = 0.25,
+    generations = if (all_mlp) cfg$s2_mlp_gen else cfg$s2_gen,
+    pop_size = if (all_mlp) cfg$s2_mlp_pop else cfg$s2_pop,
+    complexity_penalty = if (all_mlp) 0.30 else 0.25,
+    complexity_mode = if (n_discovery < 10000L) "pac_bayes_dynamic" else "bic_dynamic",
+    complexity_target = "all_features",
+    target_transform = resolved_tt,
+    threads = threads,
+    max_clustering_size = min(cfg$clust_cap, n_discovery),
+    seed = base_seed + 100L,
+    evaluator_extra_args = s2_ev_args_map,
+    verbose = verbose
+  )
+  stage2_unified_recipe <- do.call(evolve_features, s2_common)
+
   stage2_recipes <- vector("list", length(active_evaluators))
   names(stage2_recipes) <- active_evaluators
-  base_seed <- if (!is.null(seed)) as.integer(seed) else 42L
-
-  for (idx in seq_along(active_evaluators)) {
-    ev <- active_evaluators[idx]
-    base_ev <- get_base_evaluator(ev)
-    is_mlp <- base_ev %in% c("realmlp", "tabm")
-    if (show_msg) {
-      message(sprintf("[Stage 2] Discovering features with '%s' (%d/%d)...", ev, idx, length(active_evaluators)))
+  for (ev in active_evaluators) {
+    idx_j <- which(s2_island_evaluators == ev)
+    ev_extra <- s2_ev_args_map[[ev]]
+    if (length(active_evaluators) == 1L) {
+      rec_ev <- stage2_unified_recipe
+      rec_ev$evaluator <- ev
+      rec_ev$extra_args <- ev_extra
+      if (!is.null(rec_ev$best_individual)) {
+        rec_ev$best_individual$extra_args <- ev_extra
+      }
+      if (!is.null(rec_ev$island_bests)) {
+        for (k in seq_along(rec_ev$island_bests)) {
+          rec_ev$island_bests[[k]]$extra_args <- ev_extra
+        }
+      }
+      stage2_recipes[[ev]] <- rec_ev
+    } else {
+      ev_inds <- stage2_unified_recipe$island_bests[idx_j]
+      for (k in seq_along(ev_inds)) {
+        ev_inds[[k]]$extra_args <- ev_extra
+      }
+      ev_fits <- vapply(ev_inds, function(ind) {
+        if (!is.null(ind$fitness) && is.finite(ind$fitness)) ind$fitness else -Inf
+      }, numeric(1L))
+      best_ev_ind <- ev_inds[[which.max(ev_fits)]]
+      u_best <- stage2_unified_recipe$best_individual
+      u_matches <- !is.null(u_best) &&
+        identical(u_best$evaluator, ev) &&
+        is.finite(u_best$fitness) &&
+        (!is.finite(best_ev_ind$fitness) || u_best$fitness >= best_ev_ind$fitness)
+      if (u_matches) {
+        best_ev_ind <- u_best
+        best_ev_ind$extra_args <- ev_extra
+      }
+      rec_ev <- stage2_unified_recipe
+      rec_ev$evaluator <- ev
+      rec_ev$best_individual <- best_ev_ind
+      rec_ev$island_bests <- ev_inds
+      rec_ev$island_baselines <- stage2_unified_recipe$island_baselines[idx_j]
+      rec_ev$island_best_fitness <- ev_fits
+      rec_ev$island_improvements <- stage2_unified_recipe$island_improvements[idx_j]
+      rec_ev$island_headroom_closed <- stage2_unified_recipe$island_headroom_closed[idx_j]
+      rec_ev$oof_preds <- best_ev_ind$val_preds
+      rec_ev$extra_args <- ev_extra
+      rec_ev$alignment_cache <- new.env(hash = TRUE, parent = emptyenv())
+      if (!u_matches) {
+        rec_ev$best_model <- NULL
+        rec_ev$fold_models <- NULL
+      }
+      stage2_recipes[[ev]] <- rec_ev
     }
-
-    s2_common <- list(
-      data = search_dt,
-      target_col = target_col,
-      task = resolved_task,
-      evaluator = ev,
-      metric = resolved_metric,
-      allowed_transformers = unsup_t,
-      evaluation_strategy = if (use_metacv) "metacv" else "cv",
-      metacv_selection = "tournament",
-      cv_folds = if (use_metacv) cfg$islands else min(cv_folds, 5L),
-      cv_strategy = cv_strategy,
-      group_col = group_col,
-      time_col = time_col,
-      split_ratio = NULL,
-      split_ids = NULL,
-      holdout_frac = if (n_discovery >= 500L) cfg$s2_holdout else 0.0,
-      test_data = if (n_discovery >= 500L && cfg$s2_holdout > 0) test_dt else NULL,
-      sd_penalty = cfg$s2_sd_penalty,
-      confirm_top_k = if (!use_metacv && cv_strategy != "time") cfg$s2_confirm_k else 0L,
-      seed_genes = NULL,
-      migration = mig_cfg,
-      islands = cfg$islands,
-      migration_interval = 1L,
-      migration_rate = 1L,
-      gene_migration_prob = 0.25,
-      generations = if (is_mlp) cfg$s2_mlp_gen else cfg$s2_gen,
-      pop_size = if (is_mlp) cfg$s2_mlp_pop else cfg$s2_pop,
-      complexity_penalty = if (is_mlp) 0.30 else 0.25,
-      complexity_mode = if (n_discovery < 10000L) "pac_bayes_dynamic" else "bic_dynamic",
-      complexity_target = "all_features",
-      target_transform = resolved_tt,
-      threads = threads,
-      max_clustering_size = min(cfg$clust_cap, n_discovery),
-      seed = base_seed + 100L * idx,
-      verbose = verbose
-    )
-    ev_args <- .evaluator_stage_args(ev, stage = 2L, cfg = cfg, n_rows = n_discovery, custom_evaluator_args = evaluator_args)
-    ev_evolve_args <- .map_evaluator_args_for_evolve(ev_args)
-    for (k in names(ev_evolve_args)) s2_common[[k]] <- ev_evolve_args[[k]]
-    stage2_recipes[[ev]] <- do.call(evolve_features, s2_common)
   }
 
   # Stage 3: Mega-Matrix Synthesis onto 100% of train_dt and test_dt
-  if (length(stage2_recipes) >= 2L) {
+  if (length(stage2_recipes) >= 2L || total_s2_islands >= 2L) {
     scout_ens <- ensemble_islands(
       recipe = stage2_recipes,
       data = search_dt,
@@ -1470,6 +1572,8 @@ run_competition_pipeline <- function(
       predictions = preds,
       submission = sub_dt,
       final_model = final_model,
+      islands_per_evaluator = eff_ipe,
+      stage2_island_evaluators = s2_island_evaluators,
       stage2_recipes = stage2_recipes,
       stage3_views = stage3_views,
       stage3_view_types = stage3_view_types,

@@ -24,9 +24,12 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
 
   evaluator_entry <- get_evaluator(evaluator)
 
-  resolved <- resolve_param_aliases(list(...), defaults = list(threads = threads, nrounds = nrounds))
+  dots <- .expand_evaluator_extra_args(evaluator, list(...))
+  resolved <- resolve_param_aliases(dots, defaults = list(threads = threads, nrounds = nrounds))
   threads <- resolved$threads
   nrounds <- resolved$nrounds
+  dots$nrounds <- NULL
+  dots$threads <- NULL
 
   x_train <- .sanitize_feature_matrix(x_train, threads = threads)
   x_val   <- .sanitize_feature_matrix(
@@ -35,17 +38,19 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
     cat_schema = if (!is.null(x_train)) attr(x_train, "cat_schema", exact = TRUE) else NULL
   )
 
-  evaluator_entry$train_func(
-    x_train = x_train,
-    y_train = y_train,
-    x_val = x_val,
-    y_val = y_val,
-    task = task,
-    threads = threads,
-    num_class = num_class,
-    nrounds = nrounds,
-    ...
-  )
+  do.call(evaluator_entry$train_func, .merge_call_args(
+    list(
+      x_train = x_train,
+      y_train = y_train,
+      x_val = x_val,
+      y_val = y_val,
+      task = task,
+      threads = threads,
+      num_class = num_class,
+      nrounds = nrounds
+    ),
+    dots
+  ))
 }
 
 #' Fit a K-fold bagged ensemble of fold-specific feature pipelines and models
@@ -123,7 +128,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
     fold_seed <- if (!is.null(seed) && is.finite(seed)) as.integer(seed) + as.integer(idx) else NULL
     fold_model_args <- .slice_offset_extra_args(model_args, tr_idx, va_idx, nrow(data_dt))
     fold_model_args$compute_importances <- FALSE
-    res_m <- do.call(train_model, c(
+    res_m <- do.call(train_model, .merge_call_args(
       list(
         x_train = x_tr, y_train = y_tr,
         x_val = x_va, y_val = y_va,

@@ -1050,7 +1050,7 @@ evolve_features <- function(data, target_col, task = "classification",
         ind$fitness <- NA_real_
         cand_eval <- if (!is.null(ind$evaluator)) ind$evaluator else island_evaluators[j]
         resolved_cand <- resolve_tuned_evaluator(cand_eval, ind$best_params, list(...))
-        ind <- do.call(evaluate_fitness, c(
+        ind <- do.call(evaluate_fitness, .merge_call_args(
           list(
             ind, data = data, target_col = target_col,
             task = task, cv_folds = cv_folds,
@@ -1093,7 +1093,7 @@ evolve_features <- function(data, target_col, task = "classification",
         ind_j$fitness <- NA_real_
         cand_eval <- if (!is.null(ind_j$evaluator)) ind_j$evaluator else island_evaluators[j]
         resolved_cand <- resolve_tuned_evaluator(cand_eval, ind_j$best_params, list(...))
-        do.call(evaluate_fitness, c(
+        do.call(evaluate_fitness, .merge_call_args(
           list(
             ind_j, data = data, target_col = target_col,
             task = task, cv_folds = cv_folds,
@@ -1441,7 +1441,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-  final_model_args <- list(...)
+  final_model_args <- .expand_evaluator_extra_args(best_evaluator, list(...))
   if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
     final_model_args <- .slice_offset_extra_args(final_model_args, tr_ho_idx, NULL, nrow(data))
   }
@@ -1494,7 +1494,7 @@ evolve_features <- function(data, target_col, task = "classification",
   }
 
   final_model_args$compute_importances <- FALSE
-  res_model <- do.call(train_model, c(
+  res_model <- do.call(train_model, .merge_call_args(
     list(
       x_train = x_full, y_train = y_full,
       task = task, evaluator = final_evaluator,

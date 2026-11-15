@@ -15,6 +15,7 @@ run_competition_pipeline(
   preset = c("standard", "fast", "max"),
   preset_overrides = list(),
   evaluators = c("lightgbm", "xgboost", "realmlp"),
+  islands_per_evaluator = NULL,
   tune_stage4 = c("none", "tabarena", "mbo"),
   evaluator_args = list(),
   cv_folds = 5L,
@@ -70,6 +71,13 @@ phases complete while retaining optimal validation checkpointing.}
 
 \item{evaluators}{Character vector of model families to run (default
 \code{c("lightgbm", "xgboost", "realmlp")}). Unavailable packages are skipped with a warning.}
+
+\item{islands_per_evaluator}{Optional integer specifying the number of Stage 2 discovery
+islands to spawn per evaluator in the shared multi-evaluator island topology. When
+\code{NULL} (default), uses the preset default (\code{1L} for \code{"fast"}, \code{2L}
+for \code{"standard"}, \code{3L} for \code{"max"}; single-evaluator runs use at least
+\code{cfg$islands} islands). Setting \code{islands_per_evaluator >= 2L} enables simultaneous
+intra-evaluator and inter-evaluator gene cross-pollination.}
 
 \item{tune_stage4}{Optional Stage 4 hyperparameter optimization strategy:
 \code{"none"} (default, uses high-capacity fixed schedules), \code{"tabarena"} (tunes
@@ -138,7 +146,8 @@ fit on top of Stage 5 ensemble margins: \code{"none"} (default), \code{"lm"}, or
 \value{
 An S3 object of class \code{"evo_competition_run"} containing:
   \code{predictions}, \code{submission}, \code{final_model} (\code{evo_ensemble} or
-  \code{evo_recipe}), \code{stage2_recipes}, \code{stage3_views}, \code{stage3_view_types},
+  \code{evo_recipe}), \code{islands_per_evaluator}, \code{stage2_island_evaluators},
+  \code{stage2_recipes}, \code{stage3_views}, \code{stage3_view_types},
   \code{stage4_recipes}, \code{scout_ensemble}, \code{train_mega}, \code{test_mega},
   \code{adversarial}, \code{task}, \code{metric}, \code{target_transform},
   \code{discovery_rows}, \code{train_rows}, and \code{stage4_fitness}.

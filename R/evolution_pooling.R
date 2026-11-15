@@ -87,7 +87,7 @@ pool_final_genes <- function(pop, best_ind, data, target_col, task = "classifica
     resolved_pool <- resolve_tuned_evaluator(best_eval_curr, super_ind$best_params, list(...))
 
     # 4. Evaluate the super-individual's fitness
-    super_ind <- do.call(evaluate_fitness, c(
+    super_ind <- do.call(evaluate_fitness, .merge_call_args(
       list(
         super_ind, data = data, target_col = target_col,
         task = task,
@@ -264,7 +264,7 @@ pool_historical_genes <- function(historical_best_genes, best_ind, data, target_
     }
     resolved_hist <- resolve_tuned_evaluator(best_eval_curr, super_ind_hist$best_params, list(...))
     # Evaluate the historical super-individual's fitness
-    super_ind_hist <- do.call(evaluate_fitness, c(
+    super_ind_hist <- do.call(evaluate_fitness, .merge_call_args(
       list(
         super_ind_hist, data = data, target_col = target_col,
         task = task,
@@ -483,7 +483,7 @@ confirm_top_k_candidates <- function(confirm_top_k, best_ind, pop = NULL,
       extra_j$seed <- seed_confirm
     }
 
-    cand_2 <- do.call(evaluate_fitness, c(
+    cand_2 <- do.call(evaluate_fitness, .merge_call_args(
       list(
         cand_clean, data = data, target_col = target_col,
         task = task, cv_folds = cv_folds,
@@ -602,7 +602,7 @@ confirm_top_k_candidates <- function(confirm_top_k, best_ind, pop = NULL,
   ind_clean$val_preds_trans <- NULL
   ind_clean$y_val <- NULL
 
-  ind_tuned <- do.call(evaluate_fitness, c(
+  ind_tuned <- do.call(evaluate_fitness, .merge_call_args(
     list(
       ind_clean, data = data, target_col = target_col,
       task = task, cv_folds = eff_folds,
