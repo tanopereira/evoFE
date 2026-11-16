@@ -10,7 +10,7 @@
 #' @param baseline_fitness Numeric. Generation 0 baseline fitness (raw features only).
 #' @param metric Character or function. Metric being optimized.
 #' @param task Character. "classification", "multiclass", or "regression".
-#' @param complexity_penalty Numeric. Dimensionless penalty multiplier (default 0).
+#' @param complexity_penalty Numeric or \code{"none"}. Dimensionless penalty multiplier (default 0; \code{0} or \code{"none"} disables penalty).
 #' @param complexity_mode Character. "bic_dynamic" (default), "bic", "pac_bayes_dynamic", "pac_bayes", or "none".
 #' @param complexity_floor Numeric. Minimum safety floor factor for dynamic penalties (default 0.20, representing 20\% of base penalty).
 #' @param complexity_target Character. "all_features" (default, penalizes total active features) or "genes" (penalizes only derived genes).
@@ -38,7 +38,9 @@ compute_complexity_penalty <- function(n_genes,
     if (!is.null(n_features)) n_features else n_genes
   }
 
-  if (complexity_penalty <= 0 || k <= 0 || complexity_mode == "none") {
+  if (is.null(complexity_penalty) || identical(complexity_penalty, "none") ||
+      !is.numeric(complexity_penalty) || complexity_penalty <= 0 || k <= 0 ||
+      is.null(complexity_mode) || identical(complexity_mode, "none")) {
     return(0)
   }
 

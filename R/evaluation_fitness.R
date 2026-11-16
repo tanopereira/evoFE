@@ -20,7 +20,7 @@
 #' @param metric Character string or evaluation metric.
 #' @param verbose Logical.
 #' @param allow_prune Logical.
-#' @param complexity_penalty Numeric. Dimensionless penalty multiplier (default 0).
+#' @param complexity_penalty Numeric or \code{"none"}. Dimensionless penalty multiplier (default 0; \code{0} or \code{"none"} disables penalty).
 #' @param complexity_mode Character. Complexity penalty strategy: "bic_dynamic" (default),
 #'   "bic", "pac_bayes_dynamic", "pac_bayes", or "none".
 #' @param complexity_floor Numeric in \code{[0, 1]}. Minimum safety floor factor for dynamic penalty (default \code{0.20}).
@@ -32,7 +32,7 @@
 #' @param time_col Column name used when \code{cv_strategy = "time"}.
 #' @param group_col Column name used when \code{cv_strategy = "group"}.
 #' @param target_transform Optional regression target transformation (\code{"none"}, \code{"log1p"}, \code{"yeo_johnson"}, \code{"rank_gauss"}).
-#' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}).
+#' @param sd_penalty Non-negative numeric multiplier or \code{"none"} (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}).
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param fitness_cache Optional environment mapping schema keys to cached evaluated individuals and pruned gene states across generations.
 #' @param ... Additional arguments passed to the underlying evaluator training functions.
@@ -59,6 +59,17 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
                              fitness_cache = NULL, ...) {
   if (!is.na(ind$fitness)) {
     return(ind)
+  }
+
+  if (is.null(complexity_penalty) || identical(complexity_penalty, "none")) {
+    complexity_penalty <- 0
+    complexity_mode <- "none"
+  }
+  if (is.null(complexity_mode)) {
+    complexity_mode <- "none"
+  }
+  if (is.null(sd_penalty) || identical(sd_penalty, "none")) {
+    sd_penalty <- 0
   }
 
   extra_args <- list(...)

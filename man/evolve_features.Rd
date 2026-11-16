@@ -166,9 +166,10 @@ than only the best individual's genes.}
 \item{allowed_transformers}{Character vector of allowed transformer names,
 or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.}
 
-\item{complexity_penalty}{Non-negative numeric multiplier for complexity penalty (default 0).
+\item{complexity_penalty}{Non-negative numeric multiplier for complexity penalty (default 0),
+or \code{"none"} / \code{NULL} to disable complexity penalisation.
 When set to \code{1.0}, applies standard BIC or PAC-Bayes parsimony pressure.
-A value of \code{0} disables complexity penalisation.}
+A value of \code{0} or \code{"none"} disables complexity penalisation.}
 
 \item{complexity_mode}{Character string specifying the complexity penalty strategy:
 \code{"bic_dynamic"} (default, asymptotic BIC scaling \code{ln(N) / (2N)} dynamically relaxed with progress),
@@ -242,7 +243,7 @@ the highest normalized headroom closed).}
 
 \item{target_transform}{Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.}
 
-\item{sd_penalty}{Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.}
+\item{sd_penalty}{Non-negative numeric multiplier or \code{"none"} / \code{NULL} (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.}
 
 \item{confirm_top_k}{Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.}
 

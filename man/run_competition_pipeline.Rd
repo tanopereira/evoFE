@@ -23,6 +23,10 @@ run_competition_pipeline(
   group_col = NULL,
   time_col = NULL,
   target_transform = c("auto", "none", "log1p", "yeo_johnson", "rank_gauss"),
+  complexity_penalty = NULL,
+  complexity_mode = c("auto", "bic_dynamic", "bic", "pac_bayes_dynamic", "pac_bayes",
+    "none"),
+  sd_penalty = NULL,
   max_search_rows = 200000L,
   drop_drifting = FALSE,
   drift_auc_threshold = 0.85,
@@ -102,6 +106,20 @@ arguments passed into \code{\link{evolve_features}} (e.g.
 \item{target_transform}{Regression target transform: \code{"auto"} (selects \code{"log1p"}
 when skewness > 1.5 and \code{min(y) >= 0}), \code{"none"}, \code{"log1p"},
 \code{"yeo_johnson"}, or \code{"rank_gauss"}.}
+
+\item{complexity_penalty}{Optional Stage 2 complexity penalty multiplier: \code{NULL}
+(default, uses \code{0.30} for all-neural runs or \code{0.25} otherwise, or
+\code{preset_overrides$s2_complexity_penalty}), a non-negative number, or
+\code{"none"} (disables complexity penalty).}
+
+\item{complexity_mode}{Stage 2 complexity penalty strategy: \code{"auto"} (default,
+uses \code{"pac_bayes_dynamic"} when discovery rows < 10000 and
+\code{"bic_dynamic"} otherwise), \code{"bic_dynamic"}, \code{"bic"},
+\code{"pac_bayes_dynamic"}, \code{"pac_bayes"}, or \code{"none"}.}
+
+\item{sd_penalty}{Optional Stage 2 fold standard-error penalty multiplier: \code{NULL}
+(default, uses the preset's \code{s2_sd_penalty}), a non-negative number, or
+\code{"none"} (disables fold SD penalty).}
 
 \item{max_search_rows}{Maximum rows used in Stage 2 feature discovery (default \code{200000L};
 set \code{NULL} or \code{Inf} to disable Phase-1 subsampling). Stage 4 always trains on all rows.}

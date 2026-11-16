@@ -73,9 +73,10 @@
 #'   than only the best individual's genes.
 #' @param allowed_transformers Character vector of allowed transformer names,
 #'   or \code{"all"} / \code{"basic"} / \code{"robust"} / \code{"clustering"}.
-#' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0).
+#' @param complexity_penalty Non-negative numeric multiplier for complexity penalty (default 0),
+#'   or \code{"none"} / \code{NULL} to disable complexity penalisation.
 #'   When set to \code{1.0}, applies standard BIC or PAC-Bayes parsimony pressure.
-#'   A value of \code{0} disables complexity penalisation.
+#'   A value of \code{0} or \code{"none"} disables complexity penalisation.
 #' @param complexity_mode Character string specifying the complexity penalty strategy:
 #'   \code{"bic_dynamic"} (default, asymptotic BIC scaling \code{ln(N) / (2N)} dynamically relaxed with progress),
 #'   \code{"bic"} (constant asymptotic BIC penalty \code{ln(N) / (2N)} throughout evolution),
@@ -124,7 +125,7 @@
 #' @param test_data Optional unlabeled test data.frame or data.table used to weight holdout sampling toward the test distribution when \code{holdout_frac > 0}.
 #' @param bag_folds Logical. When \code{TRUE} and \code{evaluation_strategy} is \code{"cv"} or \code{"metacv"}, trains and stores all $K$ fold-specific models so \code{\link{predict_model}} and \code{\link{ensemble_islands}} can average K-fold bagged predictions at test time.
 #' @param target_transform Character string specifying an optional forward-and-inverse target transformation for \code{task = "regression"}: \code{"none"} (default), \code{"log1p"} (with Duan's smearing correction for RMSE), \code{"yeo_johnson"}, or \code{"rank_gauss"}. Validation metrics and \code{oof_preds} are always evaluated on the original untransformed target scale.
-#' @param sd_penalty Non-negative numeric multiplier (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.
+#' @param sd_penalty Non-negative numeric multiplier or \code{"none"} / \code{NULL} (default \code{0}) penalizing cross-validation fold standard error (\code{sd(fold_scores) / sqrt(K)}). Set to \code{1.0} for 1-Standard-Error Lower Confidence Bound (LCB) selection to prevent single-fold overfitting.
 #' @param confirm_top_k Non-negative integer (default \code{0}). When greater than \code{0} with \code{evaluation_strategy = "cv"} and non-temporal \code{cv_strategy}, re-evaluates the top \code{confirm_top_k} distinct candidate recipes on a fresh independent K-fold split and selects the winner by 2-repeat mean CV fitness while blending 2x-OOF predictions.
 #' @param seed_genes Optional list of gene definitions, an \code{evo_individual}, or an \code{evo_recipe} whose symbolic gene formulas (with all fitted \code{$state} entries stripped) seed Individual 1 and initial island populations. Ideal for searching supervised encoders fast and refitting the winning formulas per fold in 1-gen (\code{generations = 1, pop_size = 1}) deep training without target leakage.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
@@ -225,8 +226,11 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
   target_transform <- match.arg(target_transform, c("none", "log1p", "yeo_johnson", "rank_gauss"))
+  if (is.null(sd_penalty) || identical(sd_penalty, "none")) {
+    sd_penalty <- 0
+  }
   if (!is.numeric(sd_penalty) || length(sd_penalty) != 1L || is.na(sd_penalty) || sd_penalty < 0) {
-    stop("'sd_penalty' must be a non-negative number.")
+    stop("'sd_penalty' must be a non-negative number or 'none'.")
   }
   if (!is.numeric(confirm_top_k) || length(confirm_top_k) != 1L || is.na(confirm_top_k) || confirm_top_k < 0) {
     stop("'confirm_top_k' must be a single non-negative integer.")
@@ -253,8 +257,12 @@ evolve_features <- function(data, target_col, task = "classification",
   }, add = TRUE)
 
   # Validate complexity arguments
-  if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1 || complexity_penalty < 0) {
-    stop("'complexity_penalty' must be a non-negative number.")
+  if (is.null(complexity_penalty) || identical(complexity_penalty, "none")) {
+    complexity_penalty <- 0
+    complexity_mode <- "none"
+  }
+  if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1 || is.na(complexity_penalty) || complexity_penalty < 0) {
+    stop("'complexity_penalty' must be a non-negative number or 'none'.")
   }
   complexity_mode <- match.arg(complexity_mode, c("bic_dynamic", "bic", "pac_bayes_dynamic", "pac_bayes", "none"))
   if (!is.numeric(complexity_floor) || length(complexity_floor) != 1 || complexity_floor < 0 || complexity_floor > 1) {

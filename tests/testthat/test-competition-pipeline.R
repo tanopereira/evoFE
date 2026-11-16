@@ -932,6 +932,127 @@ test_that("run_competition_pipeline uses MetaCV across multi-evaluator islands f
   expect_true(all(is.finite(res_mc$predictions)))
 })
 
+test_that("Stage 3 View Tournament prunes redundant supervised seed genes cleanly and supports penalty='none'", {
+  skip_if_not_installed("lightgbm")
+  skip_if_not_installed("glmnet")
+
+  set.seed(606)
+  n_tr <- 160L
+  n_te <- 30L
+  cats <- paste0("lvl_", seq_len(6L))
+  cat_eff <- stats::setNames(seq(-1.5, 1.5, length.out = 6L), cats)
+  tr_cat <- sample(cats, n_tr, replace = TRUE)
+  te_cat <- sample(cats, n_te, replace = TRUE)
+  tr_x1 <- stats::rnorm(n_tr)
+  te_x1 <- stats::rnorm(n_te)
+  tr_x2 <- stats::rnorm(n_tr)
+  te_x2 <- stats::rnorm(n_te)
+
+  train_dt <- data.table::data.table(
+    x1 = tr_x1,
+    x2 = tr_x2,
+    cat1 = tr_cat,
+    y = as.integer(stats::rbinom(n_tr, 1L, stats::plogis(cat_eff[tr_cat] + 0.6 * tr_x1 - 0.4 * tr_x2)))
+  )
+  test_dt <- data.table::data.table(x1 = te_x1, x2 = te_x2, cat1 = te_cat)
+
+  # Redundant supervised seed genes should be pruned per-fold in Stage 3 View Tournament instead of returning -Inf
+  g_te1 <- create_gene("target_encode", "cat1")
+  g_te1$params$smoothing <- 5
+  g_te1$output_col <- "te_seed_1"
+  g_te2 <- create_gene("target_encode", "cat1")
+  g_te2$params$smoothing <- 10
+  g_te2$output_col <- "te_seed_2"
+
+  cfg_fast <- .competition_preset_config("fast")
+  ind_base <- create_individual(
+    genes = list(),
+    numeric_cols = c("x1", "x2"),
+    categorical_cols = "cat1",
+    all_numeric_cols = c("x1", "x2"),
+    all_categorical_cols = "cat1"
+  )
+  mock_rec <- list(best_individual = ind_base, island_bests = list(ind_base), target_col = "y")
+  vt <- .select_stage3_views(
+    train_mega = train_dt,
+    stage2_recipes = list(lightgbm_rf = mock_rec),
+    scout_ens = NULL,
+    active_evaluators = "lightgbm_rf",
+    target_col = "y",
+    task = "classification",
+    metric = "ts_refinement",
+    cv_folds = 3L,
+    cv_strategy = "random",
+    group_col = NULL,
+    time_col = NULL,
+    max_search_rows = 200L,
+    adv_weights = NULL,
+    target_transform = "none",
+    cfg = cfg_fast,
+    evaluator_args = list(),
+    threads = 1L,
+    seed = 606L,
+    verbose = FALSE,
+    sup_seed_genes = list(lightgbm_rf = list(g_te1, g_te2)),
+    sup_input_cols = list(lightgbm_rf = "cat1")
+  )
+  expect_true(is.finite(vt$views[["lightgbm_rf"]]$scores$own))
+  expect_true(is.finite(vt$views[["lightgbm_rf"]]$scores$mega))
+
+  # complexity_penalty = "none" and sd_penalty = "none" work in evolve_features and evaluate_fitness
+  ind_pen <- evaluate_fitness(
+    ind_base, train_dt, "y",
+    task = "classification", evaluator = "lm",
+    complexity_penalty = "none", sd_penalty = "none", threads = 1L
+  )
+  expect_equal(ind_pen$penalty, 0.0)
+  expect_equal(ind_pen$sd_penalty_val, 0.0)
+  expect_equal(ind_pen$fitness, ind_pen$raw_fitness)
+
+  rec_none <- evolve_features(
+    data = train_dt,
+    target_col = "y",
+    task = "classification",
+    evaluator = "lm",
+    generations = 1L,
+    pop_size = 3L,
+    cv_folds = 2L,
+    complexity_penalty = "none",
+    sd_penalty = "none",
+    threads = 1L,
+    seed = 606L,
+    verbose = FALSE
+  )
+  expect_equal(rec_none$best_individual$penalty, 0.0)
+  expect_equal(rec_none$best_individual$fitness, rec_none$best_individual$raw_fitness)
+
+  # complexity_penalty = "none" and sd_penalty = "none" work in run_competition_pipeline
+  pipe_none <- run_competition_pipeline(
+    train = train_dt,
+    test = test_dt,
+    target_col = "y",
+    task = "classification",
+    evaluators = "lm",
+    islands_per_evaluator = 1L,
+    preset = "fast",
+    preset_overrides = list(islands = 1L, s2_gen = 1L, s2_pop = 2L),
+    complexity_penalty = "none",
+    sd_penalty = "none",
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 606L,
+    verbose = FALSE
+  )
+  expect_s3_class(pipe_none, "evo_competition_run")
+  expect_equal(pipe_none$stage2_recipes[["lm"]]$best_individual$penalty, 0.0)
+  expect_equal(
+    pipe_none$stage2_recipes[["lm"]]$best_individual$fitness,
+    pipe_none$stage2_recipes[["lm"]]$best_individual$raw_fitness
+  )
+  expect_length(pipe_none$predictions, n_te)
+  expect_true(all(is.finite(pipe_none$predictions)))
+})
+
 
 
 

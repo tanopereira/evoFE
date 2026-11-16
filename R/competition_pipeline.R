@@ -25,6 +25,8 @@
       s2_mlp_es = 12L,
       s2_holdout = 0.0,
       s2_sd_penalty = 0.10,
+      s2_complexity_penalty = NULL,
+      s2_complexity_mode = "auto",
       s2_confirm_k = 0L,
       clust_cap = 2000L,
       s2_mbo_iters = 1L,
@@ -55,6 +57,8 @@
       s2_mlp_es = 30L,
       s2_holdout = 0.08,
       s2_sd_penalty = 0.15,
+      s2_complexity_penalty = NULL,
+      s2_complexity_mode = "auto",
       s2_confirm_k = 3L,
       clust_cap = 25000L,
       s2_mbo_iters = 3L,
@@ -85,6 +89,8 @@
       s2_mlp_es = 40L,
       s2_holdout = 0.08,
       s2_sd_penalty = 0.20,
+      s2_complexity_penalty = NULL,
+      s2_complexity_mode = "auto",
       s2_confirm_k = 3L,
       clust_cap = 50000L,
       s2_mbo_iters = 5L,
@@ -693,7 +699,7 @@
       threads = threads,
       metric = metric,
       verbose = FALSE,
-      allow_prune = FALSE,
+      allow_prune = TRUE,
       complexity_penalty = 0,
       sd_penalty = 0,
       cv_strategy = cv_strategy,
@@ -960,6 +966,17 @@
 #' @param target_transform Regression target transform: \code{"auto"} (selects \code{"log1p"}
 #'   when skewness > 1.5 and \code{min(y) >= 0}), \code{"none"}, \code{"log1p"},
 #'   \code{"yeo_johnson"}, or \code{"rank_gauss"}.
+#' @param complexity_penalty Optional Stage 2 complexity penalty multiplier: \code{NULL}
+#'   (default, uses \code{0.30} for all-neural runs or \code{0.25} otherwise, or
+#'   \code{preset_overrides$s2_complexity_penalty}), a non-negative number, or
+#'   \code{"none"} (disables complexity penalty).
+#' @param complexity_mode Stage 2 complexity penalty strategy: \code{"auto"} (default,
+#'   uses \code{"pac_bayes_dynamic"} when discovery rows < 10000 and
+#'   \code{"bic_dynamic"} otherwise), \code{"bic_dynamic"}, \code{"bic"},
+#'   \code{"pac_bayes_dynamic"}, \code{"pac_bayes"}, or \code{"none"}.
+#' @param sd_penalty Optional Stage 2 fold standard-error penalty multiplier: \code{NULL}
+#'   (default, uses the preset's \code{s2_sd_penalty}), a non-negative number, or
+#'   \code{"none"} (disables fold SD penalty).
 #' @param max_search_rows Maximum rows used in Stage 2 feature discovery (default \code{200000L};
 #'   set \code{NULL} or \code{Inf} to disable Phase-1 subsampling). Stage 4 always trains on all rows.
 #' @param drop_drifting Logical (default \code{FALSE}). If \code{TRUE}, drops raw columns whose
@@ -1016,6 +1033,9 @@ run_competition_pipeline <- function(
   group_col = NULL,
   time_col = NULL,
   target_transform = c("auto", "none", "log1p", "yeo_johnson", "rank_gauss"),
+  complexity_penalty = NULL,
+  complexity_mode = c("auto", "bic_dynamic", "bic", "pac_bayes_dynamic", "pac_bayes", "none"),
+  sd_penalty = NULL,
   max_search_rows = 200000L,
   drop_drifting = FALSE,
   drift_auc_threshold = 0.85,
@@ -1049,6 +1069,19 @@ run_competition_pipeline <- function(
 
   preset <- match.arg(preset)
   tune_stage4 <- match.arg(tune_stage4)
+  complexity_mode <- match.arg(complexity_mode)
+  if (!is.null(complexity_penalty) && !identical(complexity_penalty, "none")) {
+    if (!is.numeric(complexity_penalty) || length(complexity_penalty) != 1L ||
+        is.na(complexity_penalty) || !is.finite(complexity_penalty) || complexity_penalty < 0) {
+      stop("'complexity_penalty' must be NULL, 'none', or a non-negative number.")
+    }
+  }
+  if (!is.null(sd_penalty) && !identical(sd_penalty, "none")) {
+    if (!is.numeric(sd_penalty) || length(sd_penalty) != 1L ||
+        is.na(sd_penalty) || !is.finite(sd_penalty) || sd_penalty < 0) {
+      stop("'sd_penalty' must be NULL, 'none', or a non-negative number.")
+    }
+  }
   stage5_stack_space <- match.arg(stage5_stack_space)
   stage5_residual_blender <- match.arg(stage5_residual_blender)
   any_tuned_input <- any(vapply(evaluators, function(e) {
@@ -1213,6 +1246,51 @@ run_competition_pipeline <- function(
   base_evals <- vapply(active_evaluators, get_base_evaluator, character(1L))
   all_mlp <- all(base_evals %in% c("realmlp", "tabm"))
 
+  raw_s2_comp_pen <- if (!is.null(complexity_penalty)) complexity_penalty else cfg$s2_complexity_penalty
+  raw_s2_comp_mode <- if (!identical(complexity_mode, "auto")) {
+    complexity_mode
+  } else if (!is.null(cfg$s2_complexity_mode) && !identical(cfg$s2_complexity_mode, "auto")) {
+    cfg$s2_complexity_mode
+  } else {
+    "auto"
+  }
+  raw_s2_comp_mode <- match.arg(
+    raw_s2_comp_mode,
+    c("auto", "bic_dynamic", "bic", "pac_bayes_dynamic", "pac_bayes", "none")
+  )
+  if (identical(raw_s2_comp_pen, "none") || identical(raw_s2_comp_mode, "none")) {
+    s2_comp_pen <- 0
+    s2_comp_mode <- "none"
+  } else {
+    s2_comp_pen <- if (!is.null(raw_s2_comp_pen)) {
+      if (!is.numeric(raw_s2_comp_pen) || length(raw_s2_comp_pen) != 1L ||
+          is.na(raw_s2_comp_pen) || !is.finite(raw_s2_comp_pen) || raw_s2_comp_pen < 0) {
+        stop("'complexity_penalty' / 's2_complexity_penalty' must be NULL, 'none', or a non-negative number.")
+      }
+      as.numeric(raw_s2_comp_pen)
+    } else if (all_mlp) {
+      0.30
+    } else {
+      0.25
+    }
+    s2_comp_mode <- if (identical(raw_s2_comp_mode, "auto")) {
+      if (n_discovery < 10000L) "pac_bayes_dynamic" else "bic_dynamic"
+    } else {
+      raw_s2_comp_mode
+    }
+  }
+
+  raw_s2_sd_pen <- if (!is.null(sd_penalty)) sd_penalty else cfg$s2_sd_penalty
+  if (is.null(raw_s2_sd_pen) || identical(raw_s2_sd_pen, "none")) {
+    s2_sd_pen <- 0
+  } else {
+    if (!is.numeric(raw_s2_sd_pen) || length(raw_s2_sd_pen) != 1L ||
+        is.na(raw_s2_sd_pen) || !is.finite(raw_s2_sd_pen) || raw_s2_sd_pen < 0) {
+      stop("'sd_penalty' / 's2_sd_penalty' must be NULL, 'none', or a non-negative number.")
+    }
+    s2_sd_pen <- as.numeric(raw_s2_sd_pen)
+  }
+
   use_metacv <- (n_discovery >= 1000L) && (cv_strategy != "time") && (total_s2_islands >= 2L)
   mig_cfg <- if (total_s2_islands >= 2L) {
     migration_config(
@@ -1254,7 +1332,7 @@ run_competition_pipeline <- function(
     split_ids = NULL,
     holdout_frac = if (n_discovery >= 500L) cfg$s2_holdout else 0.0,
     test_data = if (n_discovery >= 500L && cfg$s2_holdout > 0) test_dt else NULL,
-    sd_penalty = cfg$s2_sd_penalty,
+    sd_penalty = s2_sd_pen,
     confirm_top_k = if (length(unique(s2_island_evaluators)) == 1L && !use_metacv && cv_strategy != "time") cfg$s2_confirm_k else 0L,
     seed_genes = NULL,
     model_all_final_genes = TRUE,
@@ -1265,8 +1343,8 @@ run_competition_pipeline <- function(
     gene_migration_prob = 0.25,
     generations = if (all_mlp) cfg$s2_mlp_gen else cfg$s2_gen,
     pop_size = if (all_mlp) cfg$s2_mlp_pop else cfg$s2_pop,
-    complexity_penalty = if (all_mlp) 0.30 else 0.25,
-    complexity_mode = if (n_discovery < 10000L) "pac_bayes_dynamic" else "bic_dynamic",
+    complexity_penalty = s2_comp_pen,
+    complexity_mode = s2_comp_mode,
     complexity_target = "all_features",
     target_transform = resolved_tt,
     threads = threads,

@@ -32,7 +32,7 @@ compute_complexity_penalty(
 
 \item{task}{Character. "classification", "multiclass", or "regression".}
 
-\item{complexity_penalty}{Numeric. Dimensionless penalty multiplier (default 0).}
+\item{complexity_penalty}{Numeric or \code{"none"}. Dimensionless penalty multiplier (default 0; \code{0} or \code{"none"} disables penalty).}
 
 \item{complexity_mode}{Character. "bic_dynamic" (default), "bic", "pac_bayes_dynamic", "pac_bayes", or "none".}
 
