@@ -211,15 +211,61 @@ SEXP rcpp_sanitize_feature_matrix(SEXP x, int threads = 1) {
     int p = INTEGER(dims)[1];
     size_t total = static_cast<size_t>(n) * static_cast<size_t>(p);
 
+    size_t copy_prefix = 0;
+    const double* real_ro_ptr = nullptr;
+    if (type == REALSXP && !Rf_isObject(x)) {
+      // Allow zero-copy on standard REALSXP and contiguous R 4.x ALTREP wrappers (e.g. colnames<-)
+      const void* dp = (total == 0) ? nullptr : DATAPTR_OR_NULL(x);
+      if (total == 0 || dp != nullptr) {
+        const double* src = static_cast<const double*>(dp);
+        real_ro_ptr = src;
+        size_t first_bad = total;
+        bool all_clean = false;
+        if (n_threads > 1 && total >= 65536) {
+          long long bad_found = 0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:bad_found) schedule(static)
+#endif
+          for (size_t i = 0; i < total; ++i) {
+            double v = src[i];
+            if (!(std::isfinite(v) && std::abs(v) <= MAX_FLOAT) && !R_IsNA(v)) {
+              bad_found = 1;
+            }
+          }
+          all_clean = (bad_found == 0);
+          first_bad = 0;
+        } else {
+          for (size_t i = 0; i < total; ++i) {
+            double v = src[i];
+            if (!(std::isfinite(v) && std::abs(v) <= MAX_FLOAT) && !R_IsNA(v)) {
+              first_bad = i;
+              break;
+            }
+          }
+          all_clean = (first_bad == total);
+        }
+        if (all_clean) {
+          if (!MAYBE_REFERENCED(x) && !ALTREP(x)) {
+            Rf_setAttrib(x, Rf_install("sanitized"), Rf_ScalarLogical(1));
+          }
+          return x;
+        }
+        copy_prefix = first_bad;
+      }
+    }
+
     NumericMatrix out(no_init(n, p));
     double* dst = out.begin();
 
     if (type == REALSXP) {
-      const double* src = REAL(x);
+      const double* src = (real_ro_ptr != nullptr) ? real_ro_ptr : REAL_RO(x);
+      if (copy_prefix > 0) {
+        std::memcpy(dst, src, copy_prefix * sizeof(double));
+      }
 #if defined(_OPENMP)
-#pragma omp parallel for num_threads(n_threads) schedule(static) if (total >= 16384)
+#pragma omp parallel for num_threads(n_threads) schedule(static) if ((total - copy_prefix) >= 16384)
 #endif
-      for (size_t i = 0; i < total; ++i) {
+      for (size_t i = copy_prefix; i < total; ++i) {
         double v = src[i];
         dst[i] = (std::isfinite(v) && std::abs(v) <= MAX_FLOAT) ? v : NA_REAL;
       }

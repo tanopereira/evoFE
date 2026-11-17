@@ -235,9 +235,15 @@ inline void apply_activation_impl(const Eigen::Ref<const Eigen::MatrixXf>& in,
   int out_stride = static_cast<int>(out.outerStride());
   const float* in_data = in.data();
   float* out_data = out.data();
+  const size_t total = static_cast<size_t>(R) * static_cast<size_t>(C);
+  constexpr size_t omp_min_elems =
+      (Act == ActType::ReLU) ? 65536u :
+      ((Act == ActType::SELU) ? 32768u : 16384u);
+  constexpr int omp_min_cols =
+      (Act == ActType::ReLU || Act == ActType::SELU) ? 4 : 2;
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= (Act == ActType::SELU ? 4 : 2))
+#pragma omp parallel for schedule(static) if (C >= omp_min_cols && total >= omp_min_elems)
 #endif
   for (int c = 0; c < C; ++c) {
     float b = HasBias ? b_data[c] : 0.0f;
@@ -260,6 +266,7 @@ inline void apply_activation_grad_impl(const Eigen::Ref<const Eigen::MatrixXf>& 
   int C = static_cast<int>(delta.cols());
   int d_stride = static_cast<int>(delta.outerStride());
   float* d_data = delta.data();
+  const size_t total = static_cast<size_t>(R) * static_cast<size_t>(C);
 
   // SELU & ReLU derivatives depend only on forward output H, avoiding expf or pre-activation reads.
   if constexpr (Act == ActType::SELU || Act == ActType::ReLU) {
@@ -267,7 +274,7 @@ inline void apply_activation_grad_impl(const Eigen::Ref<const Eigen::MatrixXf>& 
       int h_stride = static_cast<int>(act_out->outerStride());
       const float* h_data = act_out->data();
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
+#pragma omp parallel for schedule(static) if (C >= 4 && total >= (Act == ActType::ReLU ? 65536u : 32768u))
 #endif
       for (int c = 0; c < C; ++c) {
         const float* h_col = h_data + c * h_stride;
@@ -298,7 +305,7 @@ inline void apply_activation_grad_impl(const Eigen::Ref<const Eigen::MatrixXf>& 
   int a_stride = static_cast<int>(act_in.outerStride());
   const float* a_data = act_in.data();
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (C >= 2)
+#pragma omp parallel for schedule(static) if (C >= 2 && total >= 16384u)
 #endif
   for (int c = 0; c < C; ++c) {
     float b = HasBias ? b_data[c] : 0.0f;
@@ -330,7 +337,7 @@ inline void adamw_step_impl(float* __restrict__ val_ptr,
                             float b2_f, float one_m_b2,
                             float wd_step) noexcept {
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (Parallel && sz >= 32768)
+#pragma omp parallel for schedule(static) if (Parallel && sz >= 262144)
 #endif
   for (int i = 0; i < sz; ++i) {
     float g = g_ptr[i];
@@ -451,8 +458,9 @@ struct AdamParam {
     v = Eigen::MatrixXf::Zero(rows, cols);
   }
 
-  void update(const Eigen::MatrixXf& grad, double lr, double beta1, double beta2, double eps,
-              double b1_corr, double b2_corr, double weight_decay = 0.0) {
+  template <bool Parallel>
+  inline void update_impl(const Eigen::MatrixXf& grad, double lr, double beta1, double beta2, double eps,
+                          double b1_corr, double b2_corr, double weight_decay = 0.0) {
     float alpha = static_cast<float>(lr * std::sqrt(b2_corr) / b1_corr);
     float eps_scaled = static_cast<float>(eps * std::sqrt(b2_corr));
     float b1_f = static_cast<float>(beta1);
@@ -463,32 +471,22 @@ struct AdamParam {
 
     if (weight_decay > 0.0) {
       float wd_step = static_cast<float>(lr * weight_decay);
-      detail::adamw_step_impl<true, true>(val.data(), m.data(), v.data(), grad.data(),
-                                          sz, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2, wd_step);
+      detail::adamw_step_impl<Parallel, true>(val.data(), m.data(), v.data(), grad.data(),
+                                              sz, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2, wd_step);
     } else {
-      detail::adamw_step_impl<true, false>(val.data(), m.data(), v.data(), grad.data(),
-                                           sz, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2, 0.0f);
+      detail::adamw_step_impl<Parallel, false>(val.data(), m.data(), v.data(), grad.data(),
+                                               sz, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2, 0.0f);
     }
+  }
+
+  void update(const Eigen::MatrixXf& grad, double lr, double beta1, double beta2, double eps,
+              double b1_corr, double b2_corr, double weight_decay = 0.0) {
+    update_impl<true>(grad, lr, beta1, beta2, eps, b1_corr, b2_corr, weight_decay);
   }
 
   void update_serial(const Eigen::MatrixXf& grad, double lr, double beta1, double beta2, double eps,
                      double b1_corr, double b2_corr, double weight_decay = 0.0) {
-    float alpha = static_cast<float>(lr * std::sqrt(b2_corr) / b1_corr);
-    float eps_scaled = static_cast<float>(eps * std::sqrt(b2_corr));
-    float b1_f = static_cast<float>(beta1);
-    float one_m_b1 = static_cast<float>(1.0 - beta1);
-    float b2_f = static_cast<float>(beta2);
-    float one_m_b2 = static_cast<float>(1.0 - beta2);
-    int sz = static_cast<int>(val.size());
-
-    if (weight_decay > 0.0) {
-      float wd_step = static_cast<float>(lr * weight_decay);
-      detail::adamw_step_impl<false, true>(val.data(), m.data(), v.data(), grad.data(),
-                                           sz, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2, wd_step);
-    } else {
-      detail::adamw_step_impl<false, false>(val.data(), m.data(), v.data(), grad.data(),
-                                            sz, alpha, eps_scaled, b1_f, one_m_b1, b2_f, one_m_b2, 0.0f);
-    }
+    update_impl<false>(grad, lr, beta1, beta2, eps, b1_corr, b2_corr, weight_decay);
   }
 };
 
@@ -601,7 +599,7 @@ inline void fuse_standardize_matrix_f32(
   if (N <= 0 || D <= 0) return;
 
 #if defined(_OPENMP)
-#pragma omp parallel for schedule(static) if (D >= 2)
+#pragma omp parallel for schedule(static) if (D >= 2 && static_cast<size_t>(N) * static_cast<size_t>(D) >= 131072u)
 #endif
   for (int j = 0; j < D; ++j) {
     size_t offset = static_cast<size_t>(j) * N;

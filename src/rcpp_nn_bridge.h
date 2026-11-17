@@ -64,14 +64,51 @@ static inline void set_accelerate_threading(int mode) {
 #endif
 }
 
+// RAII guard for BLAS thread counts (OpenBLAS and Apple Accelerate).
+// blas_threads <= 0 leaves BLAS threading unchanged; 1 forces single-threaded BLAS;
+// > 1 enables multi-threaded BLAS.
+struct BlasThreadGuard {
+  int old_openblas = -1;
+  int old_accelerate = -1;
+
+  explicit BlasThreadGuard(int blas_threads) {
+    if (blas_threads <= 0) return;
+    old_openblas = get_openblas_threads();
+    set_openblas_threads(blas_threads);
+
+    old_accelerate = get_accelerate_threading();
+    // BLAS_THREADING_MULTI_THREADED = 0, BLAS_THREADING_SINGLE_THREADED = 1
+    set_accelerate_threading((blas_threads == 1) ? 1 : 0);
+  }
+
+  ~BlasThreadGuard() {
+    if (old_openblas > 0) {
+      set_openblas_threads(old_openblas);
+    }
+    if (old_accelerate >= 0) {
+      set_accelerate_threading(old_accelerate);
+    }
+  }
+
+  BlasThreadGuard(const BlasThreadGuard&) = delete;
+  BlasThreadGuard& operator=(const BlasThreadGuard&) = delete;
+};
+
+// Scoped RAII guard to force single-threaded BLAS (OpenBLAS & Apple Accelerate)
+// while leaving OpenMP / Eigen thread settings untouched.
+struct BlasSingleThreadGuard : BlasThreadGuard {
+  explicit BlasSingleThreadGuard(bool active = true)
+    : BlasThreadGuard(active ? 1 : 0) {}
+};
+
 // RAII ThreadGuard to ensure CRAN-compliant thread restoration across OpenMP, Eigen, OpenBLAS, and Apple Accelerate
 struct ThreadGuard {
   int old_omp = -1;
   int old_eigen = -1;
-  int old_openblas = -1;
-  int old_accelerate = -1;
+  BlasThreadGuard blas_guard;
 
-  explicit ThreadGuard(int threads) {
+  explicit ThreadGuard(int threads, bool blas_single_thread = false)
+    : blas_guard(blas_single_thread ? 1 : threads) {
     if (threads <= 0) return;
 #ifdef _OPENMP
     old_omp = omp_get_max_threads();
@@ -79,13 +116,6 @@ struct ThreadGuard {
 #endif
     old_eigen = Eigen::nbThreads();
     Eigen::setNbThreads(threads);
-
-    old_openblas = get_openblas_threads();
-    set_openblas_threads(threads);
-
-    old_accelerate = get_accelerate_threading();
-    // BLAS_THREADING_MULTI_THREADED = 0, BLAS_THREADING_SINGLE_THREADED = 1
-    set_accelerate_threading((threads == 1) ? 1 : 0);
   }
 
   ~ThreadGuard() {
@@ -97,13 +127,10 @@ struct ThreadGuard {
     if (old_eigen > 0) {
       Eigen::setNbThreads(old_eigen);
     }
-    if (old_openblas > 0) {
-      set_openblas_threads(old_openblas);
-    }
-    if (old_accelerate >= 0) {
-      set_accelerate_threading(old_accelerate);
-    }
   }
+
+  ThreadGuard(const ThreadGuard&) = delete;
+  ThreadGuard& operator=(const ThreadGuard&) = delete;
 };
 
 // Zero-copy Eigen::Map from R NumericMatrix (column-major compatible)
@@ -121,22 +148,26 @@ inline Eigen::MatrixXf copy_eigen_fast(const Rcpp::NumericMatrix& mat) {
 inline Rcpp::NumericMatrix to_rcpp(const Eigen::MatrixXd& emat) {
   int r = static_cast<int>(emat.rows());
   int c = static_cast<int>(emat.cols());
-  Rcpp::NumericMatrix mat(r, c);
-  Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat;
+  Rcpp::NumericMatrix mat(Rcpp::no_init(r, c));
+  if (r > 0 && c > 0) {
+    Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat;
+  }
   return mat;
 }
 
 inline Rcpp::NumericMatrix to_rcpp(const Eigen::MatrixXf& emat) {
   int r = static_cast<int>(emat.rows());
   int c = static_cast<int>(emat.cols());
-  Rcpp::NumericMatrix mat(r, c);
-  Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat.cast<double>();
+  Rcpp::NumericMatrix mat(Rcpp::no_init(r, c));
+  if (r > 0 && c > 0) {
+    Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat.cast<double>();
+  }
   return mat;
 }
 
 inline Rcpp::NumericVector to_rcpp_vec(const Eigen::VectorXd& evec) {
   int n = static_cast<int>(evec.size());
-  Rcpp::NumericVector vec(n);
+  Rcpp::NumericVector vec(Rcpp::no_init(n));
   if (n > 0) {
     std::memcpy(vec.begin(), evec.data(), static_cast<size_t>(n) * sizeof(double));
   }
@@ -173,6 +204,59 @@ inline double compute_qwk_concordance_cpp(
   return 1.0 - num / den;
 }
 
+namespace detail {
+
+inline int fill_binary_auc_pairs(
+    const double* __restrict__ p0,
+    const double* __restrict__ y_v_ptr,
+    int N_val,
+    std::vector<std::pair<double, int>>& pairs,
+    int n_threads) {
+  if (static_cast<int>(pairs.size()) < N_val) {
+    pairs.resize(N_val);
+  }
+  int n_pos = 0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:n_pos) schedule(static) if (n_threads > 1 && N_val >= 65536)
+#endif
+  for (int i = 0; i < N_val; ++i) {
+    int y = (y_v_ptr[i] > 0.0) ? 1 : 0;
+    n_pos += y;
+    double pv = p0[i];
+    double p = std::isfinite(pv) ? pv : -1e300;
+    pairs[i] = { p, y };
+  }
+  return n_pos;
+}
+
+inline long long count_multiclass_correct(
+    const double* __restrict__ preds_ptr,
+    size_t stride,
+    const double* __restrict__ y_v_ptr,
+    int N_val,
+    int out_dim,
+    int n_threads) {
+  long long correct = 0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:correct) schedule(static) if (n_threads > 1 && N_val >= 65536)
+#endif
+  for (int i = 0; i < N_val; ++i) {
+    int best_c = 0;
+    double max_p = preds_ptr[i];
+    for (int c = 1; c < out_dim; ++c) {
+      double pc = preds_ptr[static_cast<size_t>(c) * stride + i];
+      if (pc > max_p) {
+        max_p = pc;
+        best_c = c;
+      }
+    }
+    if (best_c == static_cast<int>(y_v_ptr[i])) correct++;
+  }
+  return correct;
+}
+
+} // namespace detail
+
 inline MetricResult compute_val_metric(
     const Eigen::MatrixXd& val_preds,
     const double* __restrict__ y_v_ptr,
@@ -187,27 +271,39 @@ inline MetricResult compute_val_metric(
   std::string m = metric_req;
   std::transform(m.begin(), m.end(), m.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
+  int n_threads = (threads > 0) ? threads : 1;
+#if defined(_OPENMP)
+  n_threads = std::min(n_threads, omp_get_max_threads());
+#endif
+  const double* __restrict__ p0 = val_preds.data();
+
   if (task == "regression") {
     if (m == "cal_rmse" || m == "cal-rmse") {
-      double score = evofe::compute_calibrated_rmse_impl(y_v_ptr, val_preds.data(), N_val);
+      double score = evofe::compute_calibrated_rmse_impl(y_v_ptr, p0, N_val);
       return { score, "Val Cal-RMSE", false };
     }
     if (m == "cal_mae" || m == "cal-mae") {
-      double score = evofe::compute_calibrated_mae_impl(y_v_ptr, val_preds.data(), N_val);
+      double score = evofe::compute_calibrated_mae_impl(y_v_ptr, p0, N_val);
       return { score, "Val Cal-MAE", false };
     }
     if (m == "mae") {
       double sum_ae = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_ae) schedule(static) if (n_threads > 1 && N_val >= 131072)
+#endif
       for (int i = 0; i < N_val; ++i) {
-        sum_ae += std::abs(val_preds(i, 0) - y_v_ptr[i]);
+        sum_ae += std::abs(p0[i] - y_v_ptr[i]);
       }
       return { sum_ae / N_val, "Val MAE", false };
     }
     if (m == "rmsle" || m == "root_mean_squared_log_error") {
       double sum_sle = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_sle) schedule(static) if (n_threads > 1 && N_val >= 32768)
+#endif
       for (int i = 0; i < N_val; ++i) {
         double yt = std::max(0.0, y_v_ptr[i]);
-        double yp_raw = val_preds(i, 0);
+        double yp_raw = p0[i];
         double yp = std::isfinite(yp_raw) ? std::max(0.0, yp_raw) : 0.0;
         double d = std::log1p(yt) - std::log1p(yp);
         sum_sle += d * d;
@@ -216,12 +312,18 @@ inline MetricResult compute_val_metric(
     }
     if (m == "r2" || m == "rsq" || m == "r_squared" || m == "r-squared") {
       double mean_y = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:mean_y) schedule(static) if (n_threads > 1 && N_val >= 131072)
+#endif
       for (int i = 0; i < N_val; ++i) mean_y += y_v_ptr[i];
       mean_y /= N_val;
       double ss_res = 0.0, ss_tot = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:ss_tot, ss_res) schedule(static) if (n_threads > 1 && N_val >= 131072)
+#endif
       for (int i = 0; i < N_val; ++i) {
         double dy = y_v_ptr[i] - mean_y;
-        double dr = y_v_ptr[i] - val_preds(i, 0);
+        double dr = y_v_ptr[i] - p0[i];
         ss_tot += dy * dy;
         ss_res += dr * dr;
       }
@@ -230,17 +332,23 @@ inline MetricResult compute_val_metric(
     }
     if (m == "mape" || m == "mean_absolute_percentage_error") {
       double sum_ape = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_ape) schedule(static) if (n_threads > 1 && N_val >= 65536)
+#endif
       for (int i = 0; i < N_val; ++i) {
         double denom = std::max(std::abs(y_v_ptr[i]), 1e-8);
-        sum_ape += std::abs(y_v_ptr[i] - val_preds(i, 0)) / denom;
+        sum_ape += std::abs(y_v_ptr[i] - p0[i]) / denom;
       }
       return { sum_ape / N_val, "Val MAPE", false };
     }
     if (m == "smape" || m == "symmetric_mape") {
       double sum_smape = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_smape) schedule(static) if (n_threads > 1 && N_val >= 65536)
+#endif
       for (int i = 0; i < N_val; ++i) {
         double yt = y_v_ptr[i];
-        double yp = val_preds(i, 0);
+        double yp = p0[i];
         double den = std::abs(yt) + std::abs(yp);
         if (den > 1e-12) {
           sum_smape += (2.0 * std::abs(yt - yp)) / den;
@@ -251,15 +359,21 @@ inline MetricResult compute_val_metric(
     if (m == "qwk" || m == "quadratic_weighted_kappa" || m == "kappa") {
       double min_y = std::round(y_v_ptr[0]);
       double max_y = min_y;
+#if defined(_OPENMP) && _OPENMP >= 201107
+#pragma omp parallel for num_threads(n_threads) reduction(min:min_y) reduction(max:max_y) schedule(static) if (n_threads > 1 && N_val >= 65536)
+#endif
       for (int i = 1; i < N_val; ++i) {
         double yr = std::round(y_v_ptr[i]);
         if (yr < min_y) min_y = yr;
         if (yr > max_y) max_y = yr;
       }
       double sum_err2 = 0.0, sum_y = 0.0, sum_p = 0.0, sum_y2 = 0.0, sum_p2 = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_err2, sum_y, sum_p, sum_y2, sum_p2) schedule(static) if (n_threads > 1 && N_val >= 65536)
+#endif
       for (int i = 0; i < N_val; ++i) {
         double yi = std::round(y_v_ptr[i]);
-        double raw_p = std::isfinite(val_preds(i, 0)) ? val_preds(i, 0) : min_y;
+        double raw_p = std::isfinite(p0[i]) ? p0[i] : min_y;
         double pi = std::clamp(std::round(raw_p), min_y, max_y);
         double d = yi - pi;
         sum_err2 += d * d;
@@ -272,34 +386,50 @@ inline MetricResult compute_val_metric(
       return { qwk, "Val QWK", true };
     }
     double sum_se = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_se) schedule(static) if (n_threads > 1 && N_val >= 131072)
+#endif
     for (int i = 0; i < N_val; ++i) {
-      double diff = val_preds(i, 0) - y_v_ptr[i];
+      double diff = p0[i] - y_v_ptr[i];
       sum_se += diff * diff;
     }
     return { std::sqrt(sum_se / N_val), "Val RMSE", false };
   }
 
   if (task == "classification") {
-    if (m == "accuracy" || m == "acc") {
-      int correct = 0;
+    if (m == "accuracy" || m == "acc" || m == "error" || m == "err") {
+      long long correct = 0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:correct) schedule(static) if (n_threads > 1 && N_val >= 131072)
+#endif
       for (int i = 0; i < N_val; ++i) {
-        int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
+        int pred_class = (p0[i] >= 0.5) ? 1 : 0;
         int true_class = (y_v_ptr[i] > 0.0) ? 1 : 0;
-        if (pred_class == true_class) correct++;
+        correct += (pred_class == true_class);
+      }
+      if (m == "error" || m == "err") {
+        return { static_cast<double>(N_val - correct) / N_val, "Val error", false };
       }
       return { static_cast<double>(correct) / N_val, "Val accuracy", true };
     }
     if (m == "f1" || m == "mcc" || m == "balanced_accuracy" || m == "balanced-accuracy" ||
         m == "bal_acc" || m == "bal-acc" || m == "qwk" || m == "quadratic_weighted_kappa" || m == "kappa") {
-      double tp = 0.0, tn = 0.0, fp = 0.0, fn = 0.0;
+      long long tp_i = 0, tn_i = 0, fp_i = 0, fn_i = 0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:tp_i, tn_i, fp_i, fn_i) schedule(static) if (n_threads > 1 && N_val >= 131072)
+#endif
       for (int i = 0; i < N_val; ++i) {
-        int p = (val_preds(i, 0) >= 0.5) ? 1 : 0;
+        int p = (p0[i] >= 0.5) ? 1 : 0;
         int y = (y_v_ptr[i] > 0.0) ? 1 : 0;
-        if (y == 1 && p == 1) tp += 1.0;
-        else if (y == 0 && p == 0) tn += 1.0;
-        else if (y == 0 && p == 1) fp += 1.0;
-        else fn += 1.0;
+        tp_i += (y & p);
+        tn_i += ((1 ^ y) & (1 ^ p));
+        fp_i += ((1 ^ y) & p);
+        fn_i += (y & (1 ^ p));
       }
+      double tp = static_cast<double>(tp_i);
+      double tn = static_cast<double>(tn_i);
+      double fp = static_cast<double>(fp_i);
+      double fn = static_cast<double>(fn_i);
       if (m == "f1") {
         double den = 2.0 * tp + fp + fn;
         return { (den > 0.0) ? (2.0 * tp / den) : 0.0, "Val F1", true };
@@ -323,16 +453,7 @@ inline MetricResult compute_val_metric(
       std::vector<std::pair<double, int>> local_pairs;
       std::vector<std::pair<double, int>>& pairs =
           (auc_pairs_buf != nullptr) ? *auc_pairs_buf : local_pairs;
-      if (static_cast<int>(pairs.size()) < N_val) {
-        pairs.resize(N_val);
-      }
-      int n_pos = 0;
-      for (int i = 0; i < N_val; ++i) {
-        int y = (y_v_ptr[i] > 0.0) ? 1 : 0;
-        if (y == 1) n_pos++;
-        double p = std::isfinite(val_preds(i, 0)) ? val_preds(i, 0) : -1e300;
-        pairs[i] = { p, y };
-      }
+      int n_pos = detail::fill_binary_auc_pairs(p0, y_v_ptr, N_val, pairs, n_threads);
       if (n_pos == 0) return { 0.0, "Val PR-AUC", true };
       if (n_pos == N_val) return { 1.0, "Val PR-AUC", true };
       std::sort(pairs.begin(), pairs.begin() + N_val, [](const auto& a, const auto& b) {
@@ -362,16 +483,7 @@ inline MetricResult compute_val_metric(
       std::vector<std::pair<double, int>> local_pairs;
       std::vector<std::pair<double, int>>& pairs =
           (auc_pairs_buf != nullptr) ? *auc_pairs_buf : local_pairs;
-      if (static_cast<int>(pairs.size()) < N_val) {
-        pairs.resize(N_val);
-      }
-      int n_pos = 0;
-      for (int i = 0; i < N_val; ++i) {
-        int y = (y_v_ptr[i] > 0.0) ? 1 : 0;
-        if (y == 1) n_pos++;
-        double p = std::isfinite(val_preds(i, 0)) ? val_preds(i, 0) : -1e300;
-        pairs[i] = { p, y };
-      }
+      int n_pos = detail::fill_binary_auc_pairs(p0, y_v_ptr, N_val, pairs, n_threads);
       int n_neg = N_val - n_pos;
       if (n_pos == 0 || n_neg == 0) return { 0.5, "Val AUC", true };
       std::sort(pairs.begin(), pairs.begin() + N_val, [](const auto& a, const auto& b) {
@@ -396,44 +508,32 @@ inline MetricResult compute_val_metric(
       double auc = u / (static_cast<double>(n_pos) * n_neg);
       return { auc, "Val AUC", true };
     }
-    if (m == "error" || m == "err") {
-      int errors = 0;
-      for (int i = 0; i < N_val; ++i) {
-        int pred_class = (val_preds(i, 0) >= 0.5) ? 1 : 0;
-        int true_class = (y_v_ptr[i] > 0.0) ? 1 : 0;
-        if (pred_class != true_class) errors++;
-      }
-      return { static_cast<double>(errors) / N_val, "Val error", false };
-    }
     if (m == "ts_refinement" || m == "eval-ts-refinement" || m == "ts-refinement" || m == "eval_ts_refinement") {
-      double score = evofe::compute_ts_refinement_binary_impl(y_v_ptr, val_preds.data(), N_val, 1.0, false, threads);
+      double score = evofe::compute_ts_refinement_binary_impl(y_v_ptr, p0, N_val, 1.0, false, threads);
       return { score, "Val TS-Refinement", false };
     }
-    // Default for binary classification: logloss
+    // Default for binary classification: logloss (1 log call per row)
     double ll_sum = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:ll_sum) schedule(static) if (n_threads > 1 && N_val >= 32768)
+#endif
     for (int i = 0; i < N_val; ++i) {
-      double p = std::clamp(val_preds(i, 0), 1e-15, 1.0 - 1e-15);
-      double y = (y_v_ptr[i] > 0.0) ? 1.0 : 0.0;
-      ll_sum -= (y * std::log(p) + (1.0 - y) * std::log(1.0 - p));
+      double p = std::clamp(p0[i], 1e-15, 1.0 - 1e-15);
+      double p_true = (y_v_ptr[i] > 0.0) ? p : (1.0 - p);
+      ll_sum -= std::log(p_true);
     }
     return { ll_sum / N_val, "Val logloss", false };
   }
 
   // task == "multiclass"
+  const size_t stride = static_cast<size_t>(val_preds.outerStride());
   if (m == "accuracy" || m == "acc") {
-    int correct = 0;
-    for (int i = 0; i < N_val; ++i) {
-      int best_c = 0;
-      double max_p = val_preds(i, 0);
-      for (int c = 1; c < out_dim; ++c) {
-        if (val_preds(i, c) > max_p) {
-          max_p = val_preds(i, c);
-          best_c = c;
-        }
-      }
-      if (best_c == static_cast<int>(y_v_ptr[i])) correct++;
-    }
+    long long correct = detail::count_multiclass_correct(p0, stride, y_v_ptr, N_val, out_dim, n_threads);
     return { static_cast<double>(correct) / N_val, "Val accuracy", true };
+  }
+  if (m == "error" || m == "err") {
+    long long correct = detail::count_multiclass_correct(p0, stride, y_v_ptr, N_val, out_dim, n_threads);
+    return { static_cast<double>(N_val - correct) / N_val, "Val error", false };
   }
   if (m == "macro_f1" || m == "f1_macro" || m == "macro-f1" || m == "f1-macro") {
     int tp_s[64], fp_s[64], fn_s[64];
@@ -453,21 +553,58 @@ inline MetricResult compute_val_metric(
       fp_arr = fp_v.data();
       fn_arr = fn_v.data();
     }
-    for (int i = 0; i < N_val; ++i) {
-      int best_c = 0;
-      double max_p = val_preds(i, 0);
-      for (int c = 1; c < out_dim; ++c) {
-        if (val_preds(i, c) > max_p) {
-          max_p = val_preds(i, c);
-          best_c = c;
+    if (n_threads > 1 && N_val >= 65536) {
+#if defined(_OPENMP)
+#pragma omp parallel num_threads(n_threads)
+      {
+        std::vector<int> l_tp(out_dim, 0), l_fp(out_dim, 0), l_fn(out_dim, 0);
+#pragma omp for schedule(static) nowait
+        for (int i = 0; i < N_val; ++i) {
+          int best_c = 0;
+          double max_p = p0[i];
+          for (int c = 1; c < out_dim; ++c) {
+            double pc = p0[static_cast<size_t>(c) * stride + i];
+            if (pc > max_p) {
+              max_p = pc;
+              best_c = c;
+            }
+          }
+          int tc = std::clamp(static_cast<int>(y_v_ptr[i]), 0, out_dim - 1);
+          if (best_c == tc) {
+            l_tp[tc]++;
+          } else {
+            l_fp[best_c]++;
+            l_fn[tc]++;
+          }
+        }
+#pragma omp critical
+        {
+          for (int c = 0; c < out_dim; ++c) {
+            tp_arr[c] += l_tp[c];
+            fp_arr[c] += l_fp[c];
+            fn_arr[c] += l_fn[c];
+          }
         }
       }
-      int tc = std::clamp(static_cast<int>(y_v_ptr[i]), 0, out_dim - 1);
-      if (best_c == tc) {
-        tp_arr[tc]++;
-      } else {
-        fp_arr[best_c]++;
-        fn_arr[tc]++;
+#endif
+    } else {
+      for (int i = 0; i < N_val; ++i) {
+        int best_c = 0;
+        double max_p = p0[i];
+        for (int c = 1; c < out_dim; ++c) {
+          double pc = p0[static_cast<size_t>(c) * stride + i];
+          if (pc > max_p) {
+            max_p = pc;
+            best_c = c;
+          }
+        }
+        int tc = std::clamp(static_cast<int>(y_v_ptr[i]), 0, out_dim - 1);
+        if (best_c == tc) {
+          tp_arr[tc]++;
+        } else {
+          fp_arr[best_c]++;
+          fn_arr[tc]++;
+        }
       }
     }
     double f1_sum = 0.0;
@@ -484,11 +621,15 @@ inline MetricResult compute_val_metric(
   if (m == "qwk" || m == "quadratic_weighted_kappa" || m == "kappa") {
     double sum_err2 = 0.0, sum_y = 0.0, sum_p = 0.0, sum_y2 = 0.0, sum_p2 = 0.0;
     double max_c = static_cast<double>(std::max(1, out_dim - 1));
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:sum_err2, sum_y, sum_p, sum_y2, sum_p2) schedule(static) if (n_threads > 1 && N_val >= 32768)
+#endif
     for (int i = 0; i < N_val; ++i) {
       double yi = std::clamp(std::round(y_v_ptr[i]), 0.0, max_c);
       double p_sum = 0.0, exp_c = 0.0;
       for (int c = 0; c < out_dim; ++c) {
-        double pc = std::isfinite(val_preds(i, c)) ? std::max(0.0, val_preds(i, c)) : 0.0;
+        double raw_pc = p0[static_cast<size_t>(c) * stride + i];
+        double pc = std::isfinite(raw_pc) ? std::max(0.0, raw_pc) : 0.0;
         p_sum += pc;
         exp_c += static_cast<double>(c) * pc;
       }
@@ -503,32 +644,20 @@ inline MetricResult compute_val_metric(
     double qwk = compute_qwk_concordance_cpp(sum_err2, sum_y, sum_p, sum_y2, sum_p2, N_val);
     return { qwk, "Val QWK", true };
   }
-  if (m == "error" || m == "err") {
-    int errors = 0;
-    for (int i = 0; i < N_val; ++i) {
-      int best_c = 0;
-      double max_p = val_preds(i, 0);
-      for (int c = 1; c < out_dim; ++c) {
-        if (val_preds(i, c) > max_p) {
-          max_p = val_preds(i, c);
-          best_c = c;
-        }
-      }
-      if (best_c != static_cast<int>(y_v_ptr[i])) errors++;
-    }
-    return { static_cast<double>(errors) / N_val, "Val error", false };
-  }
   if (m == "ts_refinement" || m == "eval-ts-refinement" || m == "ts-refinement" || m == "eval_ts_refinement") {
-    double score = evofe::compute_ts_refinement_multiclass_impl(y_v_ptr, val_preds.data(), N_val, out_dim, 1.0, false, threads);
+    double score = evofe::compute_ts_refinement_multiclass_impl(y_v_ptr, p0, N_val, out_dim, 1.0, false, threads);
     return { score, "Val TS-Refinement", false };
   }
   // Default for multiclass: multi-logloss
   double ll_sum = 0.0;
+#if defined(_OPENMP)
+#pragma omp parallel for num_threads(n_threads) reduction(+:ll_sum) schedule(static) if (n_threads > 1 && N_val >= 32768)
+#endif
   for (int i = 0; i < N_val; ++i) {
     int true_c = static_cast<int>(y_v_ptr[i]);
     double p = 1e-15;
     if (true_c >= 0 && true_c < out_dim) {
-      p = std::clamp(val_preds(i, true_c), 1e-15, 1.0);
+      p = std::clamp(p0[static_cast<size_t>(true_c) * stride + i], 1e-15, 1.0);
     }
     ll_sum -= std::log(p);
   }
