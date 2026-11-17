@@ -22,69 +22,98 @@ using evofe::nn::cosine_warmup_schedule;
 using evofe::nn::to_eigen_vec;
 using evofe::nn::to_rcpp;
 using evofe::nn::to_rcpp_vec;
+using evofe::tabm::PLEBinMatrix;
 using evofe::tabm::PLEFeature;
+using evofe::tabm::TabMBlasSingleThreadGuard;
 using evofe::tabm::TabMInferWorkspace;
 using evofe::tabm::TabMModel;
 using evofe::tabm::TabMWorkspace;
 
 namespace {
 
+inline NumericMatrix mat_to_r_fast(const Eigen::MatrixXf& emat) {
+  int r = static_cast<int>(emat.rows());
+  int c = static_cast<int>(emat.cols());
+  NumericMatrix mat(no_init(r, c));
+  if (r > 0 && c > 0) {
+    Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat.cast<double>();
+  }
+  return mat;
+}
+
 List tabm_model_to_list(const TabMModel& m) {
   int n_num = static_cast<int>(m.num_col_indices.size());
-  IntegerVector num_cols_1based(n_num);
-  NumericVector num_means_r(n_num);
-  NumericVector num_stds_r(n_num);
+  IntegerVector num_cols_1based(no_init(n_num));
+  NumericVector num_means_r(no_init(n_num));
+  NumericVector num_stds_r(no_init(n_num));
   for (int j = 0; j < n_num; ++j) {
     num_cols_1based[j] = m.num_col_indices[j] + 1;
-    num_means_r[j] = m.num_means[j];
-    num_stds_r[j] = m.num_stds[j];
+  }
+  if (n_num > 0) {
+    std::memcpy(num_means_r.begin(), m.num_means.data(), static_cast<size_t>(n_num) * sizeof(double));
+    std::memcpy(num_stds_r.begin(), m.num_stds.data(), static_cast<size_t>(n_num) * sizeof(double));
   }
 
   int n_ple = static_cast<int>(m.ple_features.size());
-  LogicalVector ple_active(n_ple);
-  IntegerVector ple_offsets(n_ple);
-  List ple_edges(n_ple);
-  List ple_W(n_ple);
-  List ple_b(n_ple);
+  IntegerVector ple_bins(no_init(n_ple));
+  IntegerVector ple_offsets(no_init(n_ple));
+  size_t total_edges = 0, total_ple_W = 0, total_ple_b = 0;
   for (int j = 0; j < n_ple; ++j) {
     const PLEFeature& pf = m.ple_features[j];
-    ple_active[j] = pf.active;
+    ple_bins[j] = pf.active ? pf.n_bins : 0;
     ple_offsets[j] = pf.out_col_offset;
     if (pf.active) {
-      NumericVector ev(pf.edges.size());
-      for (size_t k = 0; k < pf.edges.size(); ++k) ev[k] = static_cast<double>(pf.edges[k]);
-      ple_edges[j] = ev;
-      ple_W[j] = to_rcpp(pf.W.val);
-      ple_b[j] = to_rcpp(pf.b.val);
-    } else {
-      ple_edges[j] = NumericVector(0);
-      ple_W[j] = NumericMatrix(0, 0);
-      ple_b[j] = NumericMatrix(0, 0);
+      total_edges += pf.edges.size();
+      total_ple_W += static_cast<size_t>(pf.W.val.size());
+      total_ple_b += static_cast<size_t>(pf.b.val.size());
     }
   }
 
+  NumericVector ple_edges_packed(no_init(total_edges));
+  NumericVector ple_W_packed(no_init(total_ple_W));
+  NumericVector ple_b_packed(no_init(total_ple_b));
+  size_t off_e = 0, off_w = 0, off_b = 0;
+  for (int j = 0; j < n_ple; ++j) {
+    const PLEFeature& pf = m.ple_features[j];
+    if (!pf.active) continue;
+    size_t ne = pf.edges.size();
+    Eigen::Map<Eigen::VectorXd>(ple_edges_packed.begin() + off_e, static_cast<Eigen::Index>(ne)) =
+        Eigen::Map<const Eigen::VectorXf>(pf.edges.data(), static_cast<Eigen::Index>(ne)).cast<double>();
+    off_e += ne;
+    size_t nw = static_cast<size_t>(pf.W.val.size());
+    Eigen::Map<Eigen::VectorXd>(ple_W_packed.begin() + off_w, static_cast<Eigen::Index>(nw)) =
+        Eigen::Map<const Eigen::VectorXf>(pf.W.val.data(), static_cast<Eigen::Index>(nw)).cast<double>();
+    off_w += nw;
+    size_t nb = static_cast<size_t>(pf.b.val.size());
+    Eigen::Map<Eigen::VectorXd>(ple_b_packed.begin() + off_b, static_cast<Eigen::Index>(nb)) =
+        Eigen::Map<const Eigen::VectorXf>(pf.b.val.data(), static_cast<Eigen::Index>(nb)).cast<double>();
+    off_b += nb;
+  }
+
   int n_cat = static_cast<int>(m.cat_col_indices.size());
-  IntegerVector cat_cols_1based(n_cat);
-  IntegerVector cat_cards_r(n_cat);
-  List cat_tables_r(n_cat);
+  IntegerVector cat_cols_1based(no_init(n_cat));
+  IntegerVector cat_cards_r(no_init(n_cat));
+  size_t total_cat = 0;
   for (int c = 0; c < n_cat; ++c) {
     cat_cols_1based[c] = m.cat_col_indices[c] + 1;
     cat_cards_r[c] = m.cat_cardinalities[c];
-    cat_tables_r[c] = to_rcpp(m.cat_tables[c].val);
+    total_cat += static_cast<size_t>(m.cat_tables[c].val.size());
+  }
+  NumericVector cat_tables_packed(no_init(total_cat));
+  size_t off_c = 0;
+  for (int c = 0; c < n_cat; ++c) {
+    size_t nc = static_cast<size_t>(m.cat_tables[c].val.size());
+    Eigen::Map<Eigen::VectorXd>(cat_tables_packed.begin() + off_c, static_cast<Eigen::Index>(nc)) =
+        Eigen::Map<const Eigen::VectorXf>(m.cat_tables[c].val.data(), static_cast<Eigen::Index>(nc)).cast<double>();
+    off_c += nc;
   }
 
   int n_blks = static_cast<int>(m.blocks.size());
   List blocks_W(n_blks);
   List blocks_b(n_blks);
   for (int l = 0; l < n_blks; ++l) {
-    blocks_W[l] = to_rcpp(m.blocks[l].W.val);
-    blocks_b[l] = to_rcpp(m.blocks[l].b.val);
-  }
-
-  int K = static_cast<int>(m.W_out.size());
-  List W_out_r(K);
-  for (int k = 0; k < K; ++k) {
-    W_out_r[k] = to_rcpp(m.W_out[k].val);
+    blocks_W[l] = mat_to_r_fast(m.blocks[l].W.val);
+    blocks_b[l] = mat_to_r_fast(m.blocks[l].b.val);
   }
 
   return List::create(
@@ -107,19 +136,19 @@ List tabm_model_to_list(const TabMModel& m) {
     Named("num_cols") = num_cols_1based,
     Named("num_means") = num_means_r,
     Named("num_stds") = num_stds_r,
-    Named("ple_active") = ple_active,
+    Named("ple_bins") = ple_bins,
     Named("ple_offsets") = ple_offsets,
-    Named("ple_edges") = ple_edges,
-    Named("ple_W") = ple_W,
-    Named("ple_b") = ple_b,
+    Named("ple_edges_packed") = ple_edges_packed,
+    Named("ple_W_packed") = ple_W_packed,
+    Named("ple_b_packed") = ple_b_packed,
     Named("cat_cols") = cat_cols_1based,
     Named("cat_cards") = cat_cards_r,
-    Named("cat_tables") = cat_tables_r,
-    Named("R_in") = to_rcpp(m.R_in.val),
+    Named("cat_tables_packed") = cat_tables_packed,
+    Named("R_in") = mat_to_r_fast(m.R_in.val),
     Named("blocks_W") = blocks_W,
     Named("blocks_b") = blocks_b,
-    Named("W_out") = W_out_r,
-    Named("b_out") = to_rcpp(m.b_out.val)
+    Named("W_out") = mat_to_r_fast(m.W_out.val),
+    Named("b_out") = mat_to_r_fast(m.b_out.val)
   );
 }
 
@@ -150,45 +179,68 @@ TabMModel list_to_tabm_model(const List& lst) {
   m.num_means.resize(n_num);
   m.num_stds.resize(n_num);
   m.num_inv_stds.resize(n_num);
+  if (n_num > 0) {
+    std::memcpy(m.num_means.data(), num_means_r.begin(), static_cast<size_t>(n_num) * sizeof(double));
+    std::memcpy(m.num_stds.data(), num_stds_r.begin(), static_cast<size_t>(n_num) * sizeof(double));
+  }
   for (int j = 0; j < n_num; ++j) {
     m.num_col_indices[j] = num_cols_r[j] - 1;
-    m.num_means[j] = num_means_r[j];
-    double s = num_stds_r[j];
-    m.num_stds[j] = s;
+    double s = m.num_stds[j];
     m.num_inv_stds[j] = (s < 1e-5 || !std::isfinite(s)) ? 1.0 : (1.0 / s);
   }
 
-  LogicalVector ple_active = lst["ple_active"];
+  IntegerVector ple_bins = lst["ple_bins"];
   IntegerVector ple_offsets = lst["ple_offsets"];
-  List ple_edges = lst["ple_edges"];
-  List ple_W = lst["ple_W"];
-  List ple_b = lst["ple_b"];
-  int n_ple = ple_active.size();
+  NumericVector ple_edges_packed = lst["ple_edges_packed"];
+  NumericVector ple_W_packed = lst["ple_W_packed"];
+  NumericVector ple_b_packed = lst["ple_b_packed"];
+  int n_ple = ple_bins.size();
   m.ple_features.resize(n_ple);
+  size_t off_e = 0, off_w = 0, off_b = 0;
   for (int j = 0; j < n_ple; ++j) {
-    if (ple_active[j]) {
-      NumericVector ev = ple_edges[j];
-      std::vector<float> fv(ev.size());
-      for (int k = 0; k < ev.size(); ++k) fv[k] = static_cast<float>(ev[k]);
-      NumericMatrix Wm = ple_W[j];
-      NumericMatrix bm = ple_b[j];
-      m.ple_features[j].init_from_saved(fv, copy_eigen_fast(Wm), copy_eigen_fast(bm));
+    int nb = ple_bins[j];
+    if (nb > 0) {
+      size_t ne = static_cast<size_t>(nb + 1);
+      std::vector<float> fv(ne);
+      Eigen::Map<Eigen::VectorXf>(fv.data(), static_cast<Eigen::Index>(ne)) =
+          Eigen::Map<const Eigen::VectorXd>(ple_edges_packed.begin() + off_e, static_cast<Eigen::Index>(ne)).cast<float>();
+      off_e += ne;
+
+      size_t nw = static_cast<size_t>(nb) * static_cast<size_t>(m.d_embedding);
+      Eigen::MatrixXf Wm(nb, m.d_embedding);
+      Eigen::Map<Eigen::VectorXf>(Wm.data(), static_cast<Eigen::Index>(nw)) =
+          Eigen::Map<const Eigen::VectorXd>(ple_W_packed.begin() + off_w, static_cast<Eigen::Index>(nw)).cast<float>();
+      off_w += nw;
+
+      size_t n_b = static_cast<size_t>(m.d_embedding);
+      Eigen::MatrixXf bm(m.d_embedding, 1);
+      Eigen::Map<Eigen::VectorXf>(bm.data(), static_cast<Eigen::Index>(n_b)) =
+          Eigen::Map<const Eigen::VectorXd>(ple_b_packed.begin() + off_b, static_cast<Eigen::Index>(n_b)).cast<float>();
+      off_b += n_b;
+
+      m.ple_features[j].init_from_saved(fv, Wm, bm);
       m.ple_features[j].out_col_offset = ple_offsets[j];
     }
   }
 
   IntegerVector cat_cols_r = lst["cat_cols"];
   IntegerVector cat_cards_r = lst["cat_cards"];
-  List cat_tables_r = lst["cat_tables"];
+  NumericVector cat_tables_packed = lst["cat_tables_packed"];
   int n_cat = cat_cols_r.size();
   m.cat_col_indices.resize(n_cat);
   m.cat_cardinalities.resize(n_cat);
   m.cat_tables.resize(n_cat);
+  size_t off_c = 0;
   for (int c = 0; c < n_cat; ++c) {
     m.cat_col_indices[c] = cat_cols_r[c] - 1;
-    m.cat_cardinalities[c] = cat_cards_r[c];
-    NumericMatrix tm = cat_tables_r[c];
-    m.cat_tables[c].val = copy_eigen_fast(tm);
+    int card = cat_cards_r[c];
+    m.cat_cardinalities[c] = card;
+    int n_rows = card + 1;
+    m.cat_tables[c].val.resize(n_rows, m.d_embedding);
+    size_t nc = static_cast<size_t>(n_rows) * static_cast<size_t>(m.d_embedding);
+    Eigen::Map<Eigen::VectorXf>(m.cat_tables[c].val.data(), static_cast<Eigen::Index>(nc)) =
+        Eigen::Map<const Eigen::VectorXd>(cat_tables_packed.begin() + off_c, static_cast<Eigen::Index>(nc)).cast<float>();
+    off_c += nc;
   }
 
   NumericMatrix r_mat = lst["R_in"];
@@ -207,13 +259,8 @@ TabMModel list_to_tabm_model(const List& lst) {
     m.blocks[l].d_out = static_cast<int>(m.blocks[l].W.val.cols());
   }
 
-  List W_out_r = lst["W_out"];
-  int K = W_out_r.size();
-  m.W_out.resize(K);
-  for (int k = 0; k < K; ++k) {
-    NumericMatrix Wm = W_out_r[k];
-    m.W_out[k].val = copy_eigen_fast(Wm);
-  }
+  NumericMatrix w_out_r = lst["W_out"];
+  m.W_out.val = copy_eigen_fast(w_out_r);
   NumericMatrix b_out_r = lst["b_out"];
   m.b_out.val = copy_eigen_fast(b_out_r);
 
@@ -375,6 +422,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
   int actual_n_bins = std::max(1, n_bins);
 
   ThreadGuard thread_guard(threads);
+  TabMBlasSingleThreadGuard blas_guard(actual_K >= 2);
 
   // Target preprocessing
   Eigen::MatrixXf Y_tr(N, out_dim);
@@ -457,8 +505,8 @@ List rcpp_tabm_train(NumericMatrix x_train,
     }
   }
 
-  // Precompute static PLE bin indices & fractions once across train and validation matrices
-  Eigen::MatrixXi B_tr, B_val;
+  // Precompute static compact PLE bin indices (uint8/uint16) & fractions once across train and validation matrices
+  PLEBinMatrix B_tr, B_val;
   Eigen::MatrixXf F_tr, F_val;
   if (model.num_emb == "pwl" && !model.num_col_indices.empty()) {
     model.encode_ple_matrix(X_num_tr, B_tr, F_tr);
@@ -474,7 +522,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
       actual_B = (N >= 64) ? std::min(128, std::max(16, N / 4)) : std::max(1, N);
     } else if (N < 4096) {
       actual_B = 64;
-    } else if (N < 16384) {
+    } else if (N < 12288) {
       actual_B = 128;
     } else if (N < 65536) {
       actual_B = 256;
@@ -490,17 +538,26 @@ List rcpp_tabm_train(NumericMatrix x_train,
   int total_steps = std::max(1, actual_epochs * n_batches);
   int max_epochs = (stop_epoch > 0 && stop_epoch < actual_epochs) ? stop_epoch : actual_epochs;
 
+  int max_omp_threads = 1;
+#if defined(_OPENMP)
+  max_omp_threads = std::max(1, omp_get_max_threads());
+#endif
+  int max_bins = model.max_ple_bins();
+
   TabMWorkspace ws;
-  ws.allocate(actual_B, actual_K, model.D_in, actual_d_block, actual_n_blocks, out_dim,
+  ws.allocate(N, actual_B, actual_K, model.D_in, actual_d_block, actual_n_blocks, out_dim,
               static_cast<int>(model.num_col_indices.size()),
               static_cast<int>(model.cat_col_indices.size()),
-              actual_d_emb, model.ple_features, model.cat_cardinalities);
+              actual_d_emb, model.num_emb, max_bins,
+              model.ple_features, model.cat_cardinalities,
+              max_omp_threads);
 
   TabMInferWorkspace val_ws;
   if (has_x_val && N_val > 0) {
     val_ws.allocate(N_val, actual_K, model.D_in, actual_d_block, actual_n_blocks, out_dim,
                     static_cast<int>(model.num_col_indices.size()),
-                    static_cast<int>(model.cat_col_indices.size()));
+                    static_cast<int>(model.cat_col_indices.size()),
+                    max_bins, max_omp_threads);
   }
 
   std::mt19937 shuffle_rng(static_cast<unsigned int>(seed + 701));
@@ -532,14 +589,15 @@ List rcpp_tabm_train(NumericMatrix x_train,
     R_FlushConsole();
   }
 
-  const Eigen::MatrixXi* B_tr_ptr = (B_tr.rows() == N) ? &B_tr : nullptr;
+  const PLEBinMatrix* B_tr_ptr = (B_tr.rows() == N) ? &B_tr : nullptr;
   const Eigen::MatrixXf* F_tr_ptr = (F_tr.rows() == N) ? &F_tr : nullptr;
-  const Eigen::MatrixXi* B_val_ptr = (has_x_val && N_val > 0 && B_val.rows() == N_val) ? &B_val : nullptr;
+  const PLEBinMatrix* B_val_ptr = (has_x_val && N_val > 0 && B_val.rows() == N_val) ? &B_val : nullptr;
   const Eigen::MatrixXf* F_val_ptr = (has_x_val && N_val > 0 && F_val.rows() == N_val) ? &F_val : nullptr;
 
   int step = 0;
   for (int epoch = 0; epoch < max_epochs; ++epoch) {
     std::shuffle(perm.begin(), perm.end(), shuffle_rng);
+    model.shuffle_epoch_data(X_num_tr, B_tr_ptr, F_tr_ptr, X_cat_tr, Y_tr, perm, ws);
     double epoch_loss_sum = 0.0;
 
     for (int b = 0; b < n_batches; ++b) {
@@ -548,12 +606,10 @@ List rcpp_tabm_train(NumericMatrix x_train,
       int cur_B = std::min(actual_B, N - start);
       if (cur_B <= 0) break;
 
-      double t_norm = static_cast<double>(step) / static_cast<double>(total_steps);
-      double cur_lr = base_lr * cosine_warmup_schedule(t_norm, lr_warmup_frac, 0.0);
-      epoch_loss_sum += model.train_step(
-        X_num_tr, X_cat_tr, Y_tr, perm, start, cur_B,
-        step, cur_lr, wd, beta1, beta2, eps, ws,
-        B_tr_ptr, F_tr_ptr
+      double t_norm = (static_cast<double>(step) - 0.5) / static_cast<double>(total_steps);
+      double cur_lr = base_lr * cosine_warmup_schedule(t_norm, lr_warmup_frac, 0.01);
+      epoch_loss_sum += model.train_step_shuffled(
+        start, cur_B, step, cur_lr, wd, beta1, beta2, eps, ws
       );
     }
 
@@ -568,12 +624,14 @@ List rcpp_tabm_train(NumericMatrix x_train,
       val_metric_nm = m_res.name;
 
       if (early_stopping_rounds > 0) {
-        if (std::isnan(best_val_score)) {
-          best_val_score = m_res.higher_is_better ? -std::numeric_limits<double>::infinity()
-                                                  : std::numeric_limits<double>::infinity();
+        bool is_better = false;
+        if (!std::isfinite(best_val_score)) {
+          is_better = std::isfinite(val_score);
+        } else {
+          double tol = 1e-7 * std::max(1.0, std::abs(best_val_score));
+          is_better = m_res.higher_is_better ? (val_score > best_val_score + tol)
+                                             : (val_score < best_val_score - tol);
         }
-        bool is_better = m_res.higher_is_better ? (val_score > best_val_score + 1e-6)
-                                                : (val_score < best_val_score - 1e-6);
         if (is_better) {
           best_val_score = val_score;
           best_snapshot.capture_from(model);
@@ -646,7 +704,9 @@ List rcpp_tabm_train(NumericMatrix x_train,
     if (N_eval <= 0) {
       importances.assign(D, 1.0 / std::max(1, D));
     } else if (N_eval == N_avail) {
-      importances = model.compute_importances(X_num_imp_src, X_cat_imp_src, y_imp_ptr, N_eval);
+      const PLEBinMatrix* B_imp_ptr = use_val_imp ? B_val_ptr : B_tr_ptr;
+      const Eigen::MatrixXf* F_imp_ptr = use_val_imp ? F_val_ptr : F_tr_ptr;
+      importances = model.compute_importances(X_num_imp_src, X_cat_imp_src, y_imp_ptr, N_eval, B_imp_ptr, F_imp_ptr);
     } else {
       std::vector<int> imp_idx(N_avail);
       for (int i = 0; i < N_avail; ++i) imp_idx[i] = i;
@@ -705,6 +765,7 @@ List rcpp_tabm_train(NumericMatrix x_train,
 NumericMatrix rcpp_tabm_predict(List model_state, NumericMatrix x_new, int threads = 0) {
   ThreadGuard guard(threads);
   TabMModel model = list_to_tabm_model(model_state);
+  TabMBlasSingleThreadGuard blas_guard(model.k_ensemble >= 2);
   TabMInferWorkspace ws;
   model.predict_raw_chunked(x_new.begin(), x_new.nrow(), x_new.ncol(), ws);
   return to_rcpp(ws.preds);
