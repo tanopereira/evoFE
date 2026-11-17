@@ -12,9 +12,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#if !defined(_WIN32)
-#include <dlfcn.h>
-#endif
 #if defined(__ARM_NEON) || defined(__aarch64__)
 #include <arm_neon.h>
 #endif
@@ -29,63 +26,17 @@ using evofe::nn::cosine_warmup_schedule;
 using evofe::nn::gemm_f32_raw;
 
 constexpr double MAX_FLOAT32_VAL = 3.402823e38;
+constexpr int MAX_CAT_CARDINALITY = 1000000;
 
-// RAII guard forcing single-threaded BLAS/Eigen inside TabM so outer OpenMP over k_ensemble
-// drives Apple AMX / multi-core execution without Accelerate GCD or OpenBLAS thread contention.
-struct TabMBlasSingleThreadGuard {
-  int old_eigen = -1;
-  int old_openblas = -1;
-  int old_accelerate = -1;
-  bool active = false;
-
-  explicit TabMBlasSingleThreadGuard(bool enable = true) noexcept {
-    if (!enable) return;
-    active = true;
-    old_eigen = Eigen::nbThreads();
-    if (old_eigen != 1) Eigen::setNbThreads(1);
-#if !defined(_WIN32)
-    typedef int (*ob_get_fn)();
-    typedef void (*ob_set_fn)(int);
-    ob_get_fn g_ob = reinterpret_cast<ob_get_fn>(dlsym(RTLD_DEFAULT, "openblas_get_num_threads"));
-    ob_set_fn s_ob = reinterpret_cast<ob_set_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"));
-    if (g_ob && s_ob) {
-      old_openblas = g_ob();
-      if (old_openblas != 1) s_ob(1);
-    }
-#endif
-#if defined(__APPLE__)
-    typedef int (*acc_get_fn)();
-    typedef int (*acc_set_fn)(int);
-    acc_get_fn g_acc = reinterpret_cast<acc_get_fn>(dlsym(RTLD_DEFAULT, "BLASGetThreading"));
-    acc_set_fn s_acc = reinterpret_cast<acc_set_fn>(dlsym(RTLD_DEFAULT, "BLASSetThreading"));
-    if (g_acc && s_acc) {
-      old_accelerate = g_acc();
-      if (old_accelerate != 1) s_acc(1);  // BLAS_THREADING_SINGLE_THREADED = 1
-    }
-#endif
+// Map a raw 1-based categorical value to a 0-based code in [0, card), or `card` (missing/OOD bucket).
+// The range check runs before std::lround so NaN/Inf/huge values (e.g. 1e100) never hit lround's UB domain;
+// v in [0.5, card + 0.5) is exactly the set where lround(v) lies in [1, card].
+static inline int decode_cat_code(double v, int card) noexcept {
+  if (v >= 0.5 && v < static_cast<double>(card) + 0.5) {
+    return static_cast<int>(std::lround(v)) - 1;
   }
-
-  ~TabMBlasSingleThreadGuard() {
-    if (!active) return;
-    if (old_eigen > 0 && old_eigen != 1) {
-      Eigen::setNbThreads(old_eigen);
-    }
-#if !defined(_WIN32)
-    if (old_openblas > 0 && old_openblas != 1) {
-      typedef void (*ob_set_fn)(int);
-      ob_set_fn s_ob = reinterpret_cast<ob_set_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"));
-      if (s_ob) s_ob(old_openblas);
-    }
-#endif
-#if defined(__APPLE__)
-    if (old_accelerate >= 0 && old_accelerate != 1) {
-      typedef int (*acc_set_fn)(int);
-      acc_set_fn s_acc = reinterpret_cast<acc_set_fn>(dlsym(RTLD_DEFAULT, "BLASSetThreading"));
-      if (s_acc) s_acc(old_accelerate);
-    }
-#endif
-  }
-};
+  return card;
+}
 
 // Deterministic fast xorshift32 PRNG for thread-safe dropout masks
 static inline uint32_t hash_seed32(uint32_t a, uint32_t b, uint32_t c, uint32_t d) noexcept {
@@ -1034,11 +985,8 @@ struct TabMModel {
           const double* col_ptr = x_ptr + static_cast<size_t>(cat_col_indices[c]) * static_cast<size_t>(N);
           int max_code = 1;
           for (int i = 0; i < N; ++i) {
-            double v = col_ptr[i];
-            if (std::isfinite(v)) {
-              int iv = static_cast<int>(std::lround(v));
-              if (iv > max_code && iv <= 1000000) max_code = iv;
-            }
+            int code0 = decode_cat_code(col_ptr[i], MAX_CAT_CARDINALITY);
+            if (code0 != MAX_CAT_CARDINALITY && code0 + 1 > max_code) max_code = code0 + 1;
           }
           cat_cardinalities[c] = max_code;
         }
@@ -1056,15 +1004,7 @@ struct TabMModel {
         const double* col_ptr = x_ptr + static_cast<size_t>(cat_col_indices[c]) * static_cast<size_t>(N);
         int* dst = X_cat_out.col(c).data();
         for (int i = 0; i < N; ++i) {
-          double v = col_ptr[i];
-          int code = card;  // missing / OOD
-          if (std::isfinite(v)) {
-            long iv = std::lround(v);
-            if (iv >= 1 && iv <= card) {
-              code = static_cast<int>(iv) - 1;
-            }
-          }
-          dst[i] = code;
+          dst[i] = decode_cat_code(col_ptr[i], card);
         }
       }
 
@@ -1235,15 +1175,7 @@ struct TabMModel {
       const double* col_ptr = x_raw_ptr + static_cast<size_t>(cat_col_indices[c]) * static_cast<size_t>(N_total) + start_row;
       int* dst = X_cat_buf.col(c).data();
       for (int i = 0; i < cur_B; ++i) {
-        double v = col_ptr[i];
-        int code = card;
-        if (std::isfinite(v)) {
-          long iv = std::lround(v);
-          if (iv >= 1 && iv <= card) {
-            code = static_cast<int>(iv) - 1;
-          }
-        }
-        dst[i] = code;
+        dst[i] = decode_cat_code(col_ptr[i], card);
       }
     }
   }
@@ -2031,7 +1963,7 @@ struct TabMModel {
       ts.has_work = false;
 
 #if defined(_OPENMP)
-#pragma omp for schedule(static)
+#pragma omp for schedule(static) nowait
 #endif
       for (int k = 0; k < K; ++k) {
         forward_mlp_member(ws.E_batch, cur_B, k, do_drop, inv_keep, drop_thresh8, step_id, ws.H_k[k], ws.Out_k[k]);

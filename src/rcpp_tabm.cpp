@@ -24,22 +24,11 @@ using evofe::nn::to_rcpp;
 using evofe::nn::to_rcpp_vec;
 using evofe::tabm::PLEBinMatrix;
 using evofe::tabm::PLEFeature;
-using evofe::tabm::TabMBlasSingleThreadGuard;
 using evofe::tabm::TabMInferWorkspace;
 using evofe::tabm::TabMModel;
 using evofe::tabm::TabMWorkspace;
 
 namespace {
-
-inline NumericMatrix mat_to_r_fast(const Eigen::MatrixXf& emat) {
-  int r = static_cast<int>(emat.rows());
-  int c = static_cast<int>(emat.cols());
-  NumericMatrix mat(no_init(r, c));
-  if (r > 0 && c > 0) {
-    Eigen::Map<Eigen::MatrixXd>(mat.begin(), r, c) = emat.cast<double>();
-  }
-  return mat;
-}
 
 List tabm_model_to_list(const TabMModel& m) {
   int n_num = static_cast<int>(m.num_col_indices.size());
@@ -112,8 +101,8 @@ List tabm_model_to_list(const TabMModel& m) {
   List blocks_W(n_blks);
   List blocks_b(n_blks);
   for (int l = 0; l < n_blks; ++l) {
-    blocks_W[l] = mat_to_r_fast(m.blocks[l].W.val);
-    blocks_b[l] = mat_to_r_fast(m.blocks[l].b.val);
+    blocks_W[l] = to_rcpp(m.blocks[l].W.val);
+    blocks_b[l] = to_rcpp(m.blocks[l].b.val);
   }
 
   return List::create(
@@ -144,11 +133,11 @@ List tabm_model_to_list(const TabMModel& m) {
     Named("cat_cols") = cat_cols_1based,
     Named("cat_cards") = cat_cards_r,
     Named("cat_tables_packed") = cat_tables_packed,
-    Named("R_in") = mat_to_r_fast(m.R_in.val),
+    Named("R_in") = to_rcpp(m.R_in.val),
     Named("blocks_W") = blocks_W,
     Named("blocks_b") = blocks_b,
-    Named("W_out") = mat_to_r_fast(m.W_out.val),
-    Named("b_out") = mat_to_r_fast(m.b_out.val)
+    Named("W_out") = to_rcpp(m.W_out.val),
+    Named("b_out") = to_rcpp(m.b_out.val)
   );
 }
 
@@ -421,8 +410,8 @@ List rcpp_tabm_train(NumericMatrix x_train,
   int actual_d_emb = std::max(1, d_embedding);
   int actual_n_bins = std::max(1, n_bins);
 
-  ThreadGuard thread_guard(threads);
-  TabMBlasSingleThreadGuard blas_guard(actual_K >= 2);
+  // K >= 2: single-threaded BLAS/Eigen so outer OpenMP over ensemble members drives AMX without GCD contention
+  ThreadGuard thread_guard(threads, actual_K >= 2, actual_K >= 2);
 
   // Target preprocessing
   Eigen::MatrixXf Y_tr(N, out_dim);
@@ -763,9 +752,9 @@ List rcpp_tabm_train(NumericMatrix x_train,
 //' @keywords internal
 // [[Rcpp::export]]
 NumericMatrix rcpp_tabm_predict(List model_state, NumericMatrix x_new, int threads = 0) {
-  ThreadGuard guard(threads);
   TabMModel model = list_to_tabm_model(model_state);
-  TabMBlasSingleThreadGuard blas_guard(model.k_ensemble >= 2);
+  const bool single_blas = (model.k_ensemble >= 2);
+  ThreadGuard guard(threads, single_blas, single_blas);
   TabMInferWorkspace ws;
   model.predict_raw_chunked(x_new.begin(), x_new.nrow(), x_new.ncol(), ws);
   return to_rcpp(ws.preds);
