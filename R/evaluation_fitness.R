@@ -317,6 +317,7 @@ evaluate_fitness <- function(ind, data, target_col, task = "classification",
         train_fold <- dt[train_idx, ]
         val_fold <- dt[val_idx, ]
         data.table::setattr(train_fold, ".row_id", train_idx)
+        .attach_oof_folds(train_fold, folds[train_idx])
         data.table::setattr(val_fold, ".row_id", val_idx)
         tr_idx_off <- train_idx
         va_idx_off <- val_idx

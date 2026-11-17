@@ -91,6 +91,7 @@ train_model <- function(x_train = NULL, y_train = NULL, x_val = NULL, y_val = NU
     tr_dt <- shallow_copy_dt(data.table::as.data.table(data_dt[tr_idx, ]))
     va_dt <- shallow_copy_dt(data.table::as.data.table(data_dt[va_idx, ]))
     data.table::setattr(tr_dt, ".row_id", tr_idx)
+    .attach_oof_folds(tr_dt, fold_ids[tr_idx])
     data.table::setattr(va_dt, ".row_id", va_idx)
 
     res_f <- apply_individual(

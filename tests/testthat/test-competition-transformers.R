@@ -46,7 +46,7 @@ testthat::test_that("knn_target_encode works on 1D, 2D, and 3D numeric columns w
     "Constant column"
   )
 
-  # Exact coordinate ties must be invariant to row order (no timestamp/index bias)
+  # Exact coordinate ties produce balanced leak-free OOF encodings without sequential index bias
   df_ties <- data.frame(
     x1 = c(rep(1.0, 12), rep(2.0, 12)),
     y = c(rep(1.0, 6), rep(0.0, 6), rep(0.0, 6), rep(1.0, 6))
@@ -56,7 +56,12 @@ testthat::test_that("knn_target_encode works on 1D, 2D, and 3D numeric columns w
   g_tie$params$k <- 3L
   r_orig <- apply_gene(g_tie, train_data = data.table::as.data.table(df_ties), target_col = "y", validate_genes = FALSE)
   r_perm <- apply_gene(g_tie, train_data = data.table::as.data.table(df_ties[perm, ]), target_col = "y", validate_genes = FALSE)
-  expect_equal(r_orig$train[[g_tie$output_col]][perm], r_perm$train[[g_tie$output_col]], tolerance = 1e-12)
+  expect_equal(mean(r_orig$train[[g_tie$output_col]]), 0.5, tolerance = 0.05)
+  expect_equal(mean(r_perm$train[[g_tie$output_col]]), 0.5, tolerance = 0.05)
+  # Identical (coord, fold) rows receive exact same value regardless of target y_i (zero -y_i leak)
+  folds_tie <- evoFE:::.make_oof_folds(df_ties$y)
+  in_x1_f1 <- which(df_ties$x1 == 1.0 & folds_tie == folds_tie[1L])
+  expect_equal(length(unique(r_orig$train[[g_tie$output_col]][in_x1_f1])), 1L)
 
   # Landmark reference set respects evoFE.max_clustering_size
   old_opt <- options(evoFE.max_clustering_size = 10L)
@@ -362,6 +367,41 @@ testthat::test_that("numeric_target_encode handles spiky focal points and unique
   expect_gt(res_cont$val[[g_nte$output_col]][1L], 0.15)
   expect_lt(res_cont$val[[g_nte$output_col]][2L], -0.15)
   expect_gt(res_cont$val[[g_nte$output_col]][1L], res_cont$val[[g_nte$output_col]][2L] + 0.4)
+})
+
+testthat::test_that("supervised OOF encodings follow existing MetaCV/CV folds and never leak -y_i", {
+  set.seed(42)
+  n <- 3000L
+  df <- data.table::data.table(
+    c1 = sample(c("Eco", "Eco Plus", "Business"), n, TRUE),
+    c2 = sample(c("Personal", "Business"), n, TRUE),
+    num1 = rnorm(n),
+    rating = sample(1:5, n, TRUE)
+  )
+  lin <- 0.8 * df$num1 + ifelse(df$c1 == "Business", 1.1, -0.4) + 0.25 * (df$rating - 3)
+  df[, y := rbinom(n, 1L, stats::plogis(lin))]
+
+  mc_parts <- evoFE:::build_metacv_partitions(df, islands = 5L, target_col = "y", task = "classification")
+  tr_dt <- evoFE:::shallow_copy_dt(mc_parts$island_shared_splits[[1L]]$train)
+  expect_true(!is.null(attr(tr_dt, ".oof_folds", exact = TRUE)))
+  expect_equal(attr(tr_dt, ".oof_folds", exact = TRUE), as.integer(mc_parts$fold_ids[mc_parts$fold_ids != 1L]))
+
+  g_cite <- create_gene("cat_interaction_target_encode", c("c1", "c2"))
+  res_cite <- apply_gene(g_cite, tr_dt, evoFE:::shallow_copy_dt(mc_parts$island_shared_splits[[1L]]$val), target_col = "y", validate_genes = FALSE)
+  oof_f <- attr(tr_dt, ".oof_folds", exact = TRUE)
+  sub_idx <- which(tr_dt$c1 == "Business" & tr_dt$c2 == "Personal" & oof_f == oof_f[1L])
+  expect_equal(length(unique(res_cite$train[[g_cite$output_col]][sub_idx])), 1L)
+
+  # Evaluate with LightGBM: no LOO target collapse
+  ind0 <- create_individual(list(), c("num1", "rating"), c("c1", "c2"), character(0), c("num1", "rating"), c("c1", "c2"), character(0))
+  ind1 <- create_individual(list(g_cite), c("num1", "rating"), c("c1", "c2"), character(0), c("num1", "rating"), c("c1", "c2"), character(0))
+  e0 <- evaluate_fitness(ind0, df, "y", task = "classification", evaluation_strategy = "split",
+                         shared_splits = mc_parts$island_shared_splits[[1L]], shared_full = df,
+                         evaluator = "lightgbm", metric = "auc", verbose = FALSE)
+  e1 <- evaluate_fitness(ind1, df, "y", task = "classification", evaluation_strategy = "split",
+                         shared_splits = mc_parts$island_shared_splits[[1L]], shared_full = df,
+                         evaluator = "lightgbm", metric = "auc", verbose = FALSE)
+  expect_gt(e1$fitness, e0$fitness - 0.02)
 })
 
 testthat::test_that("pair_target_encode and pair_freq_encode work across types, mutation, and evolve_features", {

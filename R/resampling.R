@@ -314,6 +314,17 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
   sample(f)
 }
 
+#' Attach existing CV/MetaCV fold IDs onto a training slice for downstream OOF encodings
+#' @keywords internal
+#' @noRd
+.attach_oof_folds <- function(dt, sub_folds) {
+  if (!is.null(sub_folds) && length(sub_folds) == nrow(dt) &&
+      !anyNA(sub_folds) && length(unique(sub_folds)) >= 2L) {
+    data.table::setattr(dt, ".oof_folds", as.integer(sub_folds))
+  }
+  dt
+}
+
 #' Materialize pre-sliced train/val data.tables with .row_id tags from fold_ids
 #' @keywords internal
 #' @noRd
@@ -327,6 +338,7 @@ stratified_split <- function(y, ratio, group = NULL, weights = NULL) {
     tr_dt <- data.table::as.data.table(data[tr_idx, ])
     va_dt <- data.table::as.data.table(data[va_idx, ])
     data.table::setattr(tr_dt, ".row_id", tr_idx)
+    .attach_oof_folds(tr_dt, fold_ids[tr_idx])
     data.table::setattr(va_dt, ".row_id", va_idx)
     shared_folds[[idx]] <- list(train = tr_dt, val = va_dt)
   }

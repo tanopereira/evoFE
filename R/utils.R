@@ -190,9 +190,11 @@ shallow_copy_dt <- function(dt) {
   if (is.null(dt)) return(NULL)
   if (!data.table::is.data.table(dt)) return(dt)
   row_id <- attr(dt, ".row_id", exact = TRUE)
+  oof_folds <- attr(dt, ".oof_folds", exact = TRUE)
   gcache <- attr(dt, ".global_state_cache", exact = TRUE)
   out <- data.table::setDT(as.list(dt))
   if (!is.null(row_id)) data.table::setattr(out, ".row_id", row_id)
+  if (!is.null(oof_folds)) data.table::setattr(out, ".oof_folds", oof_folds)
   if (!is.null(gcache)) data.table::setattr(out, ".global_state_cache", gcache)
   out
 }

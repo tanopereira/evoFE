@@ -1,7 +1,55 @@
 # Supervised (target-based) encoders: mean/WoE/quantile target encodings.
 # Split out of transformers.R; loaded after it (alphabetical file order).
 
-.fit_smoothed_mean_te <- function(x_key, y_raw, smoothing = 10, key_col = "x") {
+.make_oof_folds <- function(y, data = NULL, n_folds = 5L) {
+  n <- length(y)
+  if (n <= 1L) return(rep(1L, n))
+  if (!is.null(data)) {
+    preset <- attr(data, ".oof_folds", exact = TRUE)
+    if (!is.null(preset) && length(preset) == n && !anyNA(preset) && length(unique(preset)) >= 2L) {
+      return(as.integer(preset))
+    }
+  }
+  k <- min(as.integer(n_folds), n)
+  if (k < 2L) return(rep(1L, n))
+  idx <- seq_len(n)
+  tie <- (as.numeric(idx) * 2654435761.0) %% 4294967296.0
+  ord <- if (is.numeric(y) || is.logical(y)) {
+    order(as.numeric(y), tie, method = "radix", na.last = TRUE)
+  } else {
+    order(as.character(y), tie, method = "radix", na.last = TRUE)
+  }
+  folds <- integer(n)
+  folds[ord] <- ((seq_len(n) - 1L) %% k) + 1L
+  folds
+}
+
+.compute_oof_mean_from_dt <- function(dt_xy, stats, smoothing, global_mean, folds) {
+  if (!is.finite(smoothing)) return(NULL)
+  y <- dt_xy$y
+  has_y <- !is.na(y)
+  dt_f <- data.table::data.table(
+    x = dt_xy$x,
+    f = folds,
+    y_clean = ifelse(has_y, y, 0.0),
+    y_obs = as.integer(has_y)
+  )
+  f_stats <- dt_f[, .(f_sum = sum(y_clean), f_n = sum(y_obs)), by = .(x, f)]
+  f_stats[stats, `:=`(
+    oof_sum = i.sum_y - f_sum,
+    oof_n   = pmax(0, i.n - f_n)
+  ), on = "x"]
+  f_stats[, oof_val := ifelse(
+    oof_n > 0,
+    (oof_sum + smoothing * global_mean) / (oof_n + smoothing),
+    global_mean
+  )]
+  oof_vals <- f_stats[dt_f[, .(x, f)], on = .(x, f)]$oof_val
+  oof_vals[!is.finite(oof_vals)] <- global_mean
+  if (length(unique(oof_vals)) > 1L) oof_vals else NULL
+}
+
+.fit_smoothed_mean_te <- function(x_key, y_raw, smoothing = 10, key_col = "x", folds = NULL, data = NULL) {
   y <- .normalize_target_for_encoding(y_raw)
   if (is.null(y) || sum(!is.na(y)) == 0L) {
     return(list(mapping = NULL, global_mean = 0, valid = FALSE))
@@ -18,12 +66,8 @@
   }
   data.table::setkeyv(mapping, key_col)
 
-  mapped <- stats[dt, on = "x"]
-  n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
-  sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
-  loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
-  loo_vals[is.na(loo_vals)] <- global_mean
-  loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+  if (is.null(folds)) folds <- .make_oof_folds(y, data = data)
+  loo_train <- .compute_oof_mean_from_dt(dt, stats, smoothing, global_mean, folds)
 
   list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
 }
@@ -106,7 +150,7 @@ evo_transformers$target_encode <- create_transformer(
     input_cols <- gene$input_cols
     x <- as.character(data[[input_cols[1]]])
     x[is.na(x)] <- ".__NA__"
-    .fit_smoothed_mean_te(x, data[[target_col]], smoothing = 10, key_col = "x")
+    .fit_smoothed_mean_te(x, data[[target_col]], smoothing = 10, key_col = "x", data = data)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -172,14 +216,11 @@ evo_transformers$pooled_target_encode <- create_transformer(
     mapping <- stats[, .(x, smoothed)]
     data.table::setkey(mapping, x)
 
-    loo_train <- NULL
-    if (is.finite(k)) {
-      mapped <- stats[dt, on = "x"]
-      n_loo <- pmax(0, mapped$n - as.integer(!is.na(y)))
-      sum_loo <- mapped$sum_y - ifelse(is.na(y), 0, y)
-      loo_vals <- ifelse(n_loo > 0, (sum_loo + k * global_mean) / (n_loo + k), global_mean)
-      loo_vals[!is.finite(loo_vals)] <- global_mean
-      if (length(unique(loo_vals)) > 1L) loo_train <- loo_vals
+    loo_train <- if (is.finite(k)) {
+      folds <- .make_oof_folds(y, data = data)
+      .compute_oof_mean_from_dt(dt, stats, k, global_mean, folds)
+    } else {
+      NULL
     }
     
     list(mapping = mapping, global_mean = global_mean, loo_train = loo_train)
@@ -222,26 +263,22 @@ evo_transformers$target_encode_multiclass <- create_transformer(
     global_means <- list()
     loo_train_list <- list()
     smoothing <- 10
-    
+    folds <- .make_oof_folds(y, data = data)
+
     for (k in seq_along(classes)) {
       y_bin <- as.numeric(y == classes[k])
       global_mean <- mean(y_bin, na.rm = TRUE)
       global_means[[k]] <- global_mean
-      
+
       dt <- data.table::data.table(x = x, y = y_bin)
       stats <- dt[, .(mean = mean(y, na.rm = TRUE), sum_y = sum(y, na.rm = TRUE), n = sum(!is.na(y))), by = x]
       stats[, smoothed := (n * mean + smoothing * global_mean) / (n + smoothing)]
-      
+
       mapping <- stats[, .(x, smoothed)]
       data.table::setkey(mapping, x)
       mappings[[k]] <- mapping
 
-      mapped <- stats[dt, on = "x"]
-      n_loo <- pmax(0, mapped$n - as.integer(!is.na(y_bin)))
-      sum_loo <- mapped$sum_y - ifelse(is.na(y_bin), 0, y_bin)
-      loo_vals <- (sum_loo + smoothing * global_mean) / (n_loo + smoothing)
-      loo_vals[is.na(loo_vals)] <- global_mean
-      loo_train_list[[k]] <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
+      loo_train_list[[k]] <- .compute_oof_mean_from_dt(dt, stats, smoothing, global_mean, folds)
     }
     
     list(mappings = mappings, global_means = global_means, classes = classes, loo_train_list = loo_train_list)
@@ -309,14 +346,27 @@ evo_transformers$woe_encode <- create_transformer(
     mapping <- stats[, .(x, woe)]
     data.table::setkey(mapping, x)
 
-    mapped <- stats[dt, on = "x"]
-    is_ev <- !is.na(y_bin) & y_bin == 1
-    is_nev <- !is.na(y_bin) & y_bin == 0
-    ev_loo <- pmax(0, mapped$n_events - ifelse(is_ev, 1, 0))
-    nev_loo <- pmax(0, mapped$n_nonevents - ifelse(is_nev, 1, 0))
-    tot_ev_loo <- pmax(1, total_events - ifelse(is_ev, 1, 0))
-    tot_nev_loo <- pmax(1, total_nonevents - ifelse(is_nev, 1, 0))
-    loo_woe <- log(((ev_loo + eps) / (tot_ev_loo + 2 * eps)) / ((nev_loo + eps) / (tot_nev_loo + 2 * eps)))
+    folds <- .make_oof_folds(y_bin, data = data)
+    has_y <- !is.na(y_bin)
+    dt_f <- data.table::data.table(
+      x = x,
+      f = folds,
+      ev = as.numeric(has_y & y_bin == 1),
+      nev = as.numeric(has_y & y_bin == 0)
+    )
+    f_tot <- dt_f[, .(f_tot_ev = sum(ev), f_tot_nev = sum(nev)), by = f]
+    f_stats <- dt_f[, .(f_ev = sum(ev), f_nev = sum(nev)), by = .(x, f)]
+    f_stats[stats, `:=`(
+      oof_ev = pmax(0, i.n_events - f_ev),
+      oof_nev = pmax(0, i.n_nonevents - f_nev)
+    ), on = "x"]
+    f_stats[f_tot, `:=`(
+      oof_tot_ev = pmax(1, total_events - i.f_tot_ev),
+      oof_tot_nev = pmax(1, total_nonevents - i.f_tot_nev)
+    ), on = "f"]
+    f_stats[, oof_woe := log(((oof_ev + eps) / (oof_tot_ev + 2 * eps)) / ((oof_nev + eps) / (oof_tot_nev + 2 * eps)))]
+    f_stats[!is.finite(oof_woe), oof_woe := 0]
+    loo_woe <- f_stats[dt_f[, .(x, f)], on = .(x, f)]$oof_woe
     loo_woe[!is.finite(loo_woe)] <- 0
     loo_train <- if (length(unique(loo_woe)) > 1L) loo_woe else NULL
 
@@ -397,40 +447,23 @@ evo_transformers$target_quantile_encode <- create_transformer(
     mapping <- stats_dt[, .(x, smoothed)]
     data.table::setkey(mapping, x)
 
-    # Exact O(N log N) Type-7 leave-one-out quantiles per category
+    # K-fold out-of-fold quantile target encoding
     N_rows <- length(y)
+    folds <- .make_oof_folds(y, data = data)
     loo_vals <- rep(global_q, N_rows)
-    grp_idx <- split(seq_len(N_rows), addNA(factor(x)))
-    for (idx in grp_idx) {
-      y_g <- y[idx]
-      fin <- !is.na(y_g)
-      nc <- sum(fin)
-      if (nc == 0L) next
-      if (nc == 1L) {
-        if (any(!fin)) {
-          cat_q1 <- y_g[fin][1L]
-          loo_vals[idx[!fin]] <- (1.0 * cat_q1 + smoothing * global_q) / (1.0 + smoothing)
-        }
-        next
-      }
-      fin_idx <- idx[fin]
-      y_sub <- y_g[fin]
-      ord <- order(y_sub)
-      v <- y_sub[ord]
-      m <- nc - 1L
-      h <- 1.0 + (m - 1.0) * q
-      j0 <- as.integer(floor(h))
-      j1 <- min(m, j0 + 1L)
-      gam <- h - j0
-      r_seq <- seq_len(nc)
-      q_sorted <- (1.0 - gam) * v[j0 + (j0 >= r_seq)] + gam * v[j1 + (j1 >= r_seq)]
-      q_loo <- numeric(nc)
-      q_loo[ord] <- q_sorted
-      loo_vals[fin_idx] <- (m * q_loo + smoothing * global_q) / (m + smoothing)
-      if (any(!fin)) {
-        cat_qf <- as.numeric(stats::quantile(y_sub, probs = q, names = FALSE))
-        loo_vals[idx[!fin]] <- (nc * cat_qf + smoothing * global_q) / (nc + smoothing)
-      }
+    dt_f <- data.table::data.table(x = x, y = y, f = folds)
+    for (fk in sort(unique(folds))) {
+      in_fk <- which(folds == fk)
+      oof_stats <- dt_f[f != fk, .(
+        cat_q = as.numeric(stats::quantile(y, probs = q, na.rm = TRUE)),
+        n = sum(!is.na(y))
+      ), by = x]
+      oof_stats[n > 0, oof_val := (n * cat_q + smoothing * global_q) / (n + smoothing)]
+      oof_stats[n == 0, oof_val := global_q]
+      dt_q <- data.table::data.table(x = x[in_fk])
+      res_fk <- oof_stats[dt_q, on = "x"]$oof_val
+      res_fk[is.na(res_fk) | !is.finite(res_fk)] <- global_q
+      loo_vals[in_fk] <- res_fk
     }
     loo_vals[!is.finite(loo_vals)] <- global_q
     loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
@@ -464,7 +497,7 @@ evo_transformers$cat_interaction_target_encode <- create_transformer(
     x1 <- as.character(data[[input_cols[1]]])
     x2 <- as.character(data[[input_cols[2]]])
     x_joint <- paste0(x1, "___", x2)
-    .fit_smoothed_mean_te(x_joint, data[[target_col]], smoothing = 10, key_col = "x_joint")
+    .fit_smoothed_mean_te(x_joint, data[[target_col]], smoothing = 10, key_col = "x_joint", data = data)
   },
   apply_func = function(data, gene, state) {
     if (is.null(state) || isTRUE(state$valid == FALSE) || is.null(state$mapping)) {
@@ -533,12 +566,6 @@ evo_transformers$numeric_target_encode <- create_transformer(
       global_mean
     )
 
-    row_b_slot <- b_idx + 1L
-    n_b_loo <- pmax(0, bin_n[row_b_slot] - y_obs)
-    s_b_loo <- bin_sum[row_b_slot] - y_clean
-    bin_loo <- (s_b_loo + smoothing * global_mean) / (n_b_loo + smoothing)
-    bin_loo[!is.finite(bin_loo)] <- global_mean
-
     x_key <- rep(".__NA__", length(x))
     x_key[fin_x] <- as.character(signif(x[fin_x], 12))
 
@@ -554,10 +581,29 @@ evo_transformers$numeric_target_encode <- create_transformer(
     mapping <- ex_stats[, .(x_key, smoothed)]
     data.table::setkey(mapping, x_key)
 
-    mapped <- ex_stats[dt_ex, on = "x_key"]
-    n_ex_loo <- pmax(0, mapped$n - y_obs)
-    s_ex_loo <- mapped$sum_y - y_clean
-    loo_vals <- (s_ex_loo + smoothing * bin_loo) / (n_ex_loo + smoothing)
+    folds <- .make_oof_folds(y, data = data)
+    dt_oof <- data.table::data.table(x_key = x_key, b_idx = b_idx, f = folds, y_clean = y_clean, y_obs = y_obs)
+    bf_stats <- dt_oof[, .(fb_sum = sum(y_clean), fb_n = sum(y_obs)), by = .(b_idx, f)]
+    bf_stats[, `:=`(
+      oof_b_sum = bin_sum[b_idx + 1L] - fb_sum,
+      oof_b_n   = pmax(0, bin_n[b_idx + 1L] - fb_n)
+    )]
+    bf_stats[, bin_oof := ifelse(
+      oof_b_n > 0,
+      (oof_b_sum + smoothing * global_mean) / (oof_b_n + smoothing),
+      global_mean
+    )]
+
+    ef_stats <- dt_oof[, .(fe_sum = sum(y_clean), fe_n = sum(y_obs), b_idx = b_idx[1L]), by = .(x_key, f)]
+    ef_stats[ex_stats, `:=`(
+      oof_sum = i.sum_y - fe_sum,
+      oof_n   = pmax(0, i.n - fe_n)
+    ), on = "x_key"]
+    ef_stats[bf_stats, bin_oof := i.bin_oof, on = .(b_idx, f)]
+    ef_stats[!is.finite(bin_oof), bin_oof := global_mean]
+    ef_stats[, oof_val := (oof_sum + smoothing * bin_oof) / (oof_n + smoothing)]
+
+    loo_vals <- ef_stats[dt_oof[, .(x_key, f)], on = .(x_key, f)]$oof_val
     loo_vals[!is.finite(loo_vals)] <- global_mean
     loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
 
@@ -628,7 +674,7 @@ evo_transformers$pair_target_encode <- create_transformer(
     k1 <- .apply_col_discretizer(data[[cols[1L]]], d1)
     k2 <- .apply_col_discretizer(data[[cols[2L]]], d2)
     x_joint <- paste0(k1, "___", k2)
-    te_state <- .fit_smoothed_mean_te(x_joint, data[[target_col]], smoothing = 10, key_col = "x_joint")
+    te_state <- .fit_smoothed_mean_te(x_joint, data[[target_col]], smoothing = 10, key_col = "x_joint", data = data)
     loo_train <- te_state$loo_train
     te_state$loo_train <- NULL
     list(
@@ -694,18 +740,31 @@ evo_transformers$target_sd_encode <- create_transformer(
     mapping <- stats_dt[, .(x, smoothed)]
     data.table::setkey(mapping, x)
 
-    mapped <- stats_dt[dt, on = "x"]
+    folds <- .make_oof_folds(y, data = data)
     has_y <- !is.na(y_c)
-    n_loo <- pmax(0L, mapped$n - as.integer(has_y))
-    yc_clean <- ifelse(has_y, y_c, 0.0)
-    s1_loo <- mapped$sum_yc - yc_clean
-    s2_loo <- mapped$sum_yc2 - yc_clean * yc_clean
-    sd_loo <- ifelse(
-      n_loo >= 2L,
-      sqrt(pmax(0.0, (s2_loo - (s1_loo * s1_loo) / pmax(1L, n_loo)) / pmax(1.0, n_loo - 1.0))),
-      global_sd
+    dt_f <- data.table::data.table(
+      x = x,
+      f = folds,
+      yc_clean = ifelse(has_y, y_c, 0.0),
+      y_obs = as.integer(has_y)
     )
-    loo_vals <- (n_loo * sd_loo + smoothing * global_sd) / (n_loo + smoothing)
+    f_stats <- dt_f[, .(
+      f_s1 = sum(yc_clean),
+      f_s2 = sum(yc_clean * yc_clean),
+      f_n  = sum(y_obs)
+    ), by = .(x, f)]
+    f_stats[stats_dt, `:=`(
+      oof_n  = pmax(0L, i.n - f_n),
+      oof_s1 = i.sum_yc - f_s1,
+      oof_s2 = i.sum_yc2 - f_s2
+    ), on = "x"]
+    f_stats[, sd_oof := ifelse(
+      oof_n >= 2L,
+      sqrt(pmax(0.0, (oof_s2 - (oof_s1 * oof_s1) / pmax(1L, oof_n)) / pmax(1.0, oof_n - 1.0))),
+      global_sd
+    )]
+    f_stats[, oof_val := (oof_n * sd_oof + smoothing * global_sd) / (oof_n + smoothing)]
+    loo_vals <- f_stats[dt_f[, .(x, f)], on = .(x, f)]$oof_val
     loo_vals[!is.finite(loo_vals)] <- global_sd
     loo_train <- if (length(unique(loo_vals)) > 1L) loo_vals else NULL
 
@@ -770,8 +829,9 @@ evo_transformers$knn_target_encode <- create_transformer(
     y_clean[is.na(y_clean) | !is.finite(y_clean)] <- global_mean
 
     # Collapse exact duplicate coordinates so ties are 100% invariant to row order
+    coord_cols <- paste0(".__c", seq_len(ncol(X_query)))
     dt_u <- data.table::as.data.table(X_query)
-    coord_cols <- names(dt_u)
+    data.table::setnames(dt_u, coord_cols)
     dt_u[, `:=`(.y = y_clean, .orig_row = seq_len(N))]
     u_stats <- dt_u[, .(.cnt = .N, .sum_y = sum(.y)), by = coord_cols]
     M <- nrow(u_stats)
@@ -811,8 +871,21 @@ evo_transformers$knn_target_encode <- create_transformer(
       return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
     }
 
+    folds <- .make_oof_folds(y_clean, data = data)
+    dt_gf <- data.table::data.table(gid = grp_id, f = folds, y = y_clean)
+    gf_stats <- dt_gf[, .(f_cnt = .N, f_sum = sum(y)), by = .(gid, f)]
+    row_gf <- gf_stats[dt_gf[, .(gid, f)], on = .(gid, f)]
+    c_self <- pmax(0, u_cnt[grp_id] - row_gf$f_cnt)
+    s_self <- u_sum[grp_id] - row_gf$f_sum
+
+    min_c_self_m <- integer(M)
+    if (any(u_cnt > 1L)) {
+      max_f_per_g <- gf_stats[, .(max_fc = max(f_cnt)), by = gid]
+      min_c_self_m[max_f_per_g$gid] <- pmax(0L, u_cnt[max_f_per_g$gid] - max_f_per_g$max_fc)
+    }
+
     nn_idx <- matrix(nn_res$nn.index, nrow = M, ncol = k_u)
-    rem_g <- pmax(0.0, as.numeric(k_eff - (u_cnt - 1L)))
+    rem_g <- pmax(0.0, as.numeric(k_eff - min_c_self_m))
     other_sum <- numeric(M)
     other_cnt <- numeric(M)
     if (any(rem_g > 0)) {
@@ -829,13 +902,16 @@ evo_transformers$knn_target_encode <- create_transformer(
       }
     }
 
-    c_self <- u_cnt[grp_id] - 1L
-    s_self <- u_sum[grp_id] - y_clean
-    tot_cnt <- c_self + other_cnt[grp_id]
+    o_cnt_row <- other_cnt[grp_id]
+    o_sum_row <- other_sum[grp_id]
+    need_other <- pmax(0.0, as.numeric(k_eff) - c_self)
+    take_other <- pmin(need_other, o_cnt_row)
+    other_part_sum <- ifelse(o_cnt_row > 0, take_other * (o_sum_row / o_cnt_row), 0.0)
+    tot_cnt <- c_self + take_other
     mean_nn <- ifelse(
       c_self >= k_eff,
-      s_self / pmax(1L, c_self),
-      ifelse(tot_cnt > 0, (s_self + other_sum[grp_id]) / tot_cnt, global_mean)
+      s_self / pmax(1, c_self),
+      ifelse(tot_cnt > 0, (s_self + other_part_sum) / tot_cnt, global_mean)
     )
 
     s <- 2.0

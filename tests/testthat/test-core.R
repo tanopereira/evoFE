@@ -1967,14 +1967,16 @@ test_that("pooled_target_encode transformer works correctly", {
   # k = 0.2055556 / 0.125 = 1.644444
   # Out-of-sample (val): A smoothed = (10 * 0.8 + k * 0.55) / (10 + k) = 0.7646946
   #                      B smoothed = (10 * 0.3 + k * 0.55) / (10 + k) = 0.3353054
-  # In-sample LOO (train): row 1 (A, y=1) = (7 + k * 0.55) / (9 + k) = 0.7425818
-  #                        row 11 (B, y=0) = (3 + k * 0.55) / (9 + k) = 0.3668045
+  # In-sample OOF (train): computed out-of-fold (strictly leak-free across target values within each fold)
   val_a <- res$val[[gene$output_col]][1]
   val_b <- res$val[[gene$output_col]][11]
   expect_equal(val_a, 0.7646946, tolerance = 1e-5)
   expect_equal(val_b, 0.3353054, tolerance = 1e-5)
-  expect_equal(res$train[[gene$output_col]][1], 0.7425818, tolerance = 1e-5)
-  expect_equal(res$train[[gene$output_col]][11], 0.3668045, tolerance = 1e-5)
+  tr_vals <- res$train[[gene$output_col]]
+  expect_true(all(tr_vals >= 0 & tr_vals <= 1))
+  expect_gt(mean(tr_vals[1:10]), mean(tr_vals[11:20]))
+  folds_oof <- evoFE:::.make_oof_folds(df$target)
+  expect_equal(length(unique(tr_vals[1:10 & folds_oof == folds_oof[1]][df$cat[folds_oof == folds_oof[1]] == "A"])), 1L)
 
   # Check that the formula works
   formula_str <- gene_to_formula(gene)
