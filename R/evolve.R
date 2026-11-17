@@ -1204,9 +1204,16 @@ evolve_features <- function(data, target_col, task = "classification",
     if (islands > 1L && length(unique(island_evaluators)) > 1L &&
         exists("pop_list") && !is.null(pop_list) &&
         exists("island_best_individual") && length(island_best_individual) == islands) {
+      show_pool_msg <- isTRUE(verbose) || (is.numeric(verbose) && verbose >= 1L)
+      if (show_pool_msg) {
+        message(sprintf("\nPooling all genes across %d islands...", islands))
+      }
       for (j in seq_len(islands)) {
         isl_ind_j <- island_best_individual[[j]]
         isl_eval_j <- if (!is.null(isl_ind_j$evaluator)) isl_ind_j$evaluator else island_evaluators[j]
+        if (show_pool_msg) {
+          message(sprintf("  [Island %d/%d] (%s) Pooling all genes...", j, islands, isl_eval_j))
+        }
         isl_base_j <- if (length(island_baseline_inds) >= j && !is.null(island_baseline_inds[[j]]$fitness)) {
           island_baseline_inds[[j]]$fitness
         } else {
@@ -1231,6 +1238,9 @@ evolve_features <- function(data, target_col, task = "classification",
           oof_preds = isl_ind_j$val_preds, ...
         )
         if (isTRUE(isl_pool_res$adopted_pooled)) {
+          if (show_pool_msg) {
+            message(sprintf("    -> Adopted pooled genes for Island %d (fitness: %.4f)", j, isl_pool_res$best_ind$fitness))
+          }
           island_best_individual[[j]] <- isl_pool_res$best_ind
           if (exists("island_best_fitness") && length(island_best_fitness) >= j) {
             island_best_fitness[j] <- isl_pool_res$best_ind$fitness
