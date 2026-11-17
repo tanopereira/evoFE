@@ -107,15 +107,17 @@ struct ThreadGuard {
   int old_eigen = -1;
   BlasThreadGuard blas_guard;
 
-  explicit ThreadGuard(int threads, bool blas_single_thread = false)
+  explicit ThreadGuard(int threads, bool blas_single_thread = false, bool eigen_single_thread = false)
     : blas_guard(blas_single_thread ? 1 : threads) {
+    if (eigen_single_thread || threads > 0) {
+      old_eigen = Eigen::nbThreads();
+      Eigen::setNbThreads(eigen_single_thread ? 1 : threads);
+    }
     if (threads <= 0) return;
 #ifdef _OPENMP
     old_omp = omp_get_max_threads();
     omp_set_num_threads(threads);
 #endif
-    old_eigen = Eigen::nbThreads();
-    Eigen::setNbThreads(threads);
   }
 
   ~ThreadGuard() {
