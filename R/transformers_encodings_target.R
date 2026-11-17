@@ -1048,22 +1048,46 @@ evo_transformers$ridge_oof_encode <- create_transformer(
     y_centered <- y_fit - global_mean
 
     d <- ncol(Phi_fit)
-    A <- crossprod(Phi_fit) + diag(rep(lambda, d), nrow = d, ncol = d)
+    P_diag <- diag(rep(lambda, d), nrow = d, ncol = d)
+    XtX_fit <- crossprod(Phi_fit)
+    Xty_fit <- crossprod(Phi_fit, y_centered)
+    A <- XtX_fit + P_diag
     R_chol <- tryCatch(chol(A), error = function(e) NULL)
     if (is.null(R_chol)) {
       return(list(valid = FALSE, global_mean = global_mean, loo_train = NULL))
     }
     A_inv <- chol2inv(R_chol)
-    beta <- as.numeric(A_inv %*% crossprod(Phi_fit, y_centered))
+    beta <- as.numeric(A_inv %*% Xty_fit)
 
-    r_hat_fit <- as.numeric(Phi_fit %*% beta)
-    h_diag <- rowSums((Phi_fit %*% A_inv) * Phi_fit)
-    denom <- 1.0 - h_diag
-    # Centering y by fixed global_mean prevents -y_i / (N - 1) intercept leakage as lambda -> Inf
-    loo_fit <- global_mean + ifelse(denom > 1e-4, (r_hat_fit - h_diag * y_centered) / denom, 0.0)
-
+    # K-fold OOF predictions (follows existing CV/MetaCV folds when attached)
+    all_folds <- .make_oof_folds(y, data = data)
+    folds_fit <- all_folds[valid_y]
+    u_f <- sort(unique(folds_fit))
     loo_vals <- global_mean + as.numeric(Phi_all %*% beta)
-    loo_vals[valid_y] <- loo_fit
+    if (length(u_f) >= 2L) {
+      valid_idx <- which(valid_y)
+      sum_y_fit <- sum(y_fit)
+      n_fit <- length(y_fit)
+      for (fk in u_f) {
+        in_k <- which(folds_fit == fk)
+        n_oof <- n_fit - length(in_k)
+        if (n_oof < 1L) next
+        Phi_k <- Phi_fit[in_k, , drop = FALSE]
+        A_k <- (XtX_fit - crossprod(Phi_k)) + P_diag
+        Xty_k <- Xty_fit - crossprod(Phi_k, y_centered[in_k])
+        beta_k <- tryCatch({
+          Rk <- chol(A_k)
+          as.numeric(chol2inv(Rk) %*% Xty_k)
+        }, error = function(e) {
+          Phi_oof <- Phi_fit[-in_k, , drop = FALSE]
+          Ak2 <- crossprod(Phi_oof) + P_diag
+          Rk2 <- tryCatch(chol(Ak2), error = function(e2) NULL)
+          if (is.null(Rk2)) beta else as.numeric(chol2inv(Rk2) %*% crossprod(Phi_oof, y_centered[-in_k]))
+        })
+        g_oof <- (sum_y_fit - sum(y_fit[in_k])) / n_oof
+        loo_vals[valid_idx[in_k]] <- g_oof + as.numeric(Phi_k %*% beta_k)
+      }
+    }
 
     is_bin <- all(y_fit == 0.0 | y_fit == 1.0)
     clip_bounds <- if (is_bin) {

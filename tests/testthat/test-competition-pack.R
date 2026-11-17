@@ -219,7 +219,7 @@ test_that("Item 5: frac_part extracts exact fractional part and preserves NA", {
   expect_true(is.na(out[5]))
 })
 
-test_that("Item 5: ridge_oof_encode matches brute-force LOO to machine precision and avoids noise memorization", {
+test_that("Item 5: ridge_oof_encode matches brute-force fold-OOF to machine precision, avoids discrete -y_i leakage, and avoids noise memorization", {
   expect_true("ridge_oof_encode" %in% names(evo_transformers))
   expect_true(is_supervised_transformer("ridge_oof_encode"))
   expect_true("ridge_oof_encode" %in% evoFE:::resolve_allowed_transformers("basic"))
@@ -245,19 +245,21 @@ test_that("Item 5: ridge_oof_encode matches brute-force LOO to machine precision
     expect_true(st_full$valid)
     expect_length(st_full$loo_train, n)
 
-    # Verify Sherman-Morrison LOO matches brute-force leave-one-out slope refit on sample rows
+    # Verify fold-OOF matches brute-force out-of-fold ridge solve per fold
     Z <- scale(as.matrix(dt[, .(x1, x2, x3)]), center = st_full$mu, scale = st_full$sigma)
     Z <- pmin(pmax(Z, -10.0), 10.0)
     B <- if (deg == 2L) cbind(Z, (Z * Z - 1.0) * sqrt(0.5)) else Z
     Phi <- sweep(B, 2L, st_full$phi_mean, "-")
     P <- diag(1.0, ncol(Phi))
     yc <- dt$y - st_full$global_mean
-    for (i in c(1L, 17L, 42L, 80L)) {
-      Phi_mi <- Phi[-i, , drop = FALSE]
-      beta_mi <- solve(crossprod(Phi_mi) + P, crossprod(Phi_mi, yc[-i]))
-      pred_mi <- st_full$global_mean + sum(Phi[i, ] * beta_mi)
-      pred_mi <- min(max(pred_mi, st_full$clip_bounds[1]), st_full$clip_bounds[2])
-      expect_equal(st_full$loo_train[i], pred_mi, tolerance = 1e-10)
+    folds <- evoFE:::.make_oof_folds(dt$y, data = dt)
+    for (fk in 1:2) {
+      in_k <- which(folds == fk)
+      Phi_oof <- Phi[-in_k, , drop = FALSE]
+      beta_oof <- solve(crossprod(Phi_oof) + P, crossprod(Phi_oof, yc[-in_k]))
+      pred_k <- mean(dt$y[-in_k]) + as.numeric(Phi[in_k, , drop = FALSE] %*% beta_oof)
+      pred_k <- pmin(pmax(pred_k, st_full$clip_bounds[1]), st_full$clip_bounds[2])
+      expect_equal(st_full$loo_train[in_k], pred_k, tolerance = 1e-10)
     }
 
     if (deg == 2L) {
@@ -265,6 +267,19 @@ test_that("Item 5: ridge_oof_encode matches brute-force LOO to machine precision
     }
     expect_match(gene_to_formula(g), "^ridge_oof_d[12]_l")
   }
+
+  # Zero -y_i leak on repeated discrete integer coordinates
+  set.seed(123)
+  dt_disc <- data.table::data.table(
+    d1 = sample(1:5, 2000L, TRUE),
+    d2 = sample(1:5, 2000L, TRUE)
+  )
+  dt_disc[, y := rbinom(.N, 1L, stats::plogis(0.4 * (d1 - 3) + 0.3 * (d2 - 3)))]
+  gd <- create_gene("ridge_oof_encode", c("d1", "d2"))
+  st_d <- evo_transformers$ridge_oof_encode$fit_func(dt_disc, gd, "y")
+  folds_d <- evoFE:::.make_oof_folds(dt_disc$y, data = dt_disc)
+  m_d <- which(dt_disc$d1 == 3L & dt_disc$d2 == 3L & folds_d == 1L)
+  expect_equal(length(unique(st_d$loo_train[m_d])), 1L)
 
   # Zero target memorization on pure independent noise
   dt_noise <- data.table::data.table(x1 = rnorm(200), x2 = rnorm(200), y = rnorm(200))
