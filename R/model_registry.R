@@ -2971,7 +2971,8 @@ register_evaluator(
 
     y_val <- extra_params$y_val
     es_flag <- extra_params$early_stopping
-    es_disabled <- !is.null(es_flag) && (is.logical(es_flag) || is.character(es_flag)) &&
+    es_disabled <- !is.null(es_flag) && length(es_flag) >= 1L && !is.na(es_flag[[1L]]) &&
+      (is.logical(es_flag) || is.character(es_flag)) &&
       !.parse_bool_flag(es_flag, default = TRUE)
     es_raw <- .pick_first_param(
       extra_params,
@@ -2980,9 +2981,11 @@ register_evaluator(
     )
     es_rounds <- if (es_disabled) {
       0L
+    } else if (length(es_raw) == 0L || is.na(es_raw[[1L]])) {
+      16L
     } else if (is.logical(es_raw) || is.character(es_raw)) {
-      if (.parse_bool_flag(es_raw, default = FALSE)) 16L else 0L
-    } else if (is.numeric(es_raw) && length(es_raw) >= 1L && is.finite(es_raw[[1L]])) {
+      if (.parse_bool_flag(es_raw, default = TRUE)) 16L else 0L
+    } else if (is.numeric(es_raw) && is.finite(es_raw[[1L]])) {
       max(0L, as.integer(es_raw[[1L]]))
     } else {
       0L
