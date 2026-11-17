@@ -2970,13 +2970,25 @@ register_evaluator(
     metric_arg <- as.character(.pick_first_param(extra_params, "metric", "default"))
 
     y_val <- extra_params$y_val
+    es_flag <- extra_params$early_stopping
+    es_disabled <- !is.null(es_flag) && (is.logical(es_flag) || is.character(es_flag)) &&
+      !.parse_bool_flag(es_flag, default = TRUE)
     es_raw <- .pick_first_param(
       extra_params,
       c("early_stopping_rounds", "early_stopping_round", "early_stop_round", "early_stopping"),
       16L
     )
-    use_es <- !is.null(x_val) && !is.null(y_val) && is.numeric(es_raw) && is.finite(es_raw) && es_raw > 0
-    es_rounds <- if (use_es) as.integer(es_raw) else 0L
+    es_rounds <- if (es_disabled) {
+      0L
+    } else if (is.logical(es_raw) || is.character(es_raw)) {
+      if (.parse_bool_flag(es_raw, default = FALSE)) 16L else 0L
+    } else if (is.numeric(es_raw) && length(es_raw) >= 1L && is.finite(es_raw[[1L]])) {
+      max(0L, as.integer(es_raw[[1L]]))
+    } else {
+      0L
+    }
+    use_es <- !is.null(x_val) && !is.null(y_val) && NROW(x_val) > 0L && es_rounds > 0L
+    if (!use_es) es_rounds <- 0L
 
     verbose_int <- .nn_verbose_level(
       extra_params,
@@ -2984,9 +2996,16 @@ register_evaluator(
       param_keys = c("tabm_verbose", "nn_verbose")
     )
 
-    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    if (!(is.matrix(x_train) && is.double(x_train))) {
+      x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    }
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
+    if (is.null(cs) && !is.null(extra_params$cat_schema)) {
+      cs <- extra_params$cat_schema
+    }
+    if (!is.null(x_val) && !(is.matrix(x_val) && is.double(x_val))) {
+      x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
+    }
 
     cat_info <- .resolve_cat_cols(x_train, extra_args = extra_params, cat_schema = cs)
     cat_cols_arg <- if (length(cat_info$cols) > 0L) as.integer(cat_info$cols) else NULL
@@ -3087,7 +3106,11 @@ register_evaluator(
     } else {
       default_threads()
     }
-    x_san <- .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    x_san <- if (is.matrix(x_new) && is.double(x_new)) {
+      x_new
+    } else {
+      .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    }
     raw_preds <- fn_predict(model$model_state, x_san, threads = n_threads)
     if (identical(task, "multiclass")) {
       probs <- as.matrix(raw_preds)

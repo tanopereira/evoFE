@@ -272,10 +272,15 @@
     } else if (base_ev == "rff") {
       list(alpha = 0.0, s = "lambda.min", n_components = 128L)
     } else if (base_ev == "tabm") {
+      bs <- if (n_rows >= 65536L) 512L else if (n_rows >= 8192L) 256L else -1L
+      s2_n_blocks <- if (cfg$s2_mlp_epochs <= 16L || cfg$s4_mlp_hidden <= 64L) 1L else 2L
       list(
         epochs = cfg$s2_mlp_epochs,
         early_stopping_rounds = cfg$s2_mlp_es,
-        batch_size = -1L
+        d_block = 128L,
+        n_blocks = s2_n_blocks,
+        lr = if (bs >= 256L) 0.003 else 0.002,
+        batch_size = bs
       )
     } else {
       list(nrounds = cfg$s2_nrounds, early_stopping_rounds = cfg$s2_es)
@@ -361,10 +366,16 @@
           mbo_init_design = mbo_id
         )
       } else if (base_ev == "tabm") {
+        bs <- if (n_rows >= 65536L) 512L else if (n_rows >= 8192L) 256L else -1L
+        s4_es <- if (cfg$s4_mlp_es < cfg$s4_mlp_epochs) {
+          as.integer(cfg$s4_mlp_es)
+        } else {
+          min(as.integer(cfg$s4_mlp_es), max(24L, as.integer(ceiling(cfg$s4_mlp_epochs * 0.25))))
+        }
         list(
           epochs = cfg$s4_mlp_epochs,
-          early_stopping_rounds = cfg$s4_mlp_es,
-          batch_size = -1L,
+          early_stopping_rounds = s4_es,
+          batch_size = bs,
           mbo_iters = max(2L, as.integer(ceiling(mbo_it * 0.7))),
           mbo_init_design = max(3L, as.integer(ceiling(mbo_id * 0.75)))
         )
@@ -453,10 +464,19 @@
           n_components = 256L
         )
       } else if (base_ev == "tabm") {
+        bs <- if (n_rows >= 65536L) 512L else if (n_rows >= 8192L) 256L else -1L
+        s4_es <- if (cfg$s4_mlp_es < cfg$s4_mlp_epochs) {
+          as.integer(cfg$s4_mlp_es)
+        } else {
+          min(as.integer(cfg$s4_mlp_es), max(24L, as.integer(ceiling(cfg$s4_mlp_epochs * 0.25))))
+        }
         list(
           epochs = cfg$s4_mlp_epochs,
-          early_stopping_rounds = cfg$s4_mlp_es,
-          batch_size = -1L
+          early_stopping_rounds = s4_es,
+          d_block = as.integer(cfg$s4_mlp_hidden),
+          n_blocks = 2L,
+          lr = if (bs >= 256L) 0.003 else 0.002,
+          batch_size = bs
         )
       } else {
         list(nrounds = cfg$s4_xgb_nrounds, early_stopping_rounds = cfg$s4_xgb_es)

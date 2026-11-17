@@ -121,11 +121,11 @@ make_tunable(
 make_tunable(
   base_model_name = "tabm",
   param_ranges = list(
-    lr = list(type = "numeric", lower = 1e-4, upper = 1e-2, log = TRUE),
+    lr = list(type = "numeric", lower = 3e-4, upper = 1e-2, log = TRUE),
     d_block = list(type = "integer", lower = 64L, upper = 384L),
-    n_blocks = list(type = "integer", lower = 1L, upper = 4L),
+    n_blocks = list(type = "integer", lower = 1L, upper = 3L),
     dropout = list(type = "numeric", lower = 0.0, upper = 0.4),
-    k_ensemble = list(type = "integer", lower = 8L, upper = 32L)
+    k_ensemble = list(type = "integer", lower = 8L, upper = 24L)
   ),
   tuner_name = "tabm_mbo"
 )
@@ -133,15 +133,14 @@ make_tunable(
 make_tunable(
   base_model_name = "tabm",
   param_ranges = list(
-    lr = list(type = "numeric", lower = 1e-4, upper = 1e-2, log = TRUE),
+    lr = list(type = "numeric", lower = 3e-4, upper = 1e-2, log = TRUE),
     d_block = list(type = "discrete", values = c(64L, 128L, 256L, 384L)),
-    n_blocks = list(type = "integer", lower = 1L, upper = 4L),
+    n_blocks = list(type = "integer", lower = 1L, upper = 3L),
     dropout = list(type = "numeric", lower = 0.0, upper = 0.45),
     weight_decay = list(type = "numeric", lower = 1e-6, upper = 1e-2, log = TRUE),
-    k_ensemble = list(type = "discrete", values = c(8L, 16L, 32L)),
-    batch_size = list(type = "discrete", values = c(256L, 512L, 1024L, 2048L)),
-    n_bins = list(type = "discrete", values = c(16L, 32L, 48L, 64L)),
-    d_embedding = list(type = "discrete", values = c(4L, 8L, 16L, 32L))
+    k_ensemble = list(type = "discrete", values = c(8L, 16L, 24L)),
+    batch_size = list(type = "discrete", values = c(128L, 256L, 512L)),
+    num_emb = list(type = "discrete", values = c("pwl", "none"))
   ),
   tuner_name = "tabm_tabarena"
 )
