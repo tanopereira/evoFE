@@ -270,7 +270,7 @@
     } else if (base_ev == "spline_lm") {
       list(alpha = 0.5, s = "lambda.min")
     } else if (base_ev == "rff") {
-      list(alpha = 0.0, s = "lambda.min", n_components = 128L)
+      list(n_features = 256L)
     } else if (base_ev == "tabm") {
       bs <- if (n_rows >= 65536L) 512L else if (n_rows >= 8192L) 256L else -1L
       s2_n_blocks <- if (cfg$s2_mlp_epochs <= 16L || cfg$s4_mlp_hidden <= 64L) 1L else 2L
@@ -359,9 +359,7 @@
         )
       } else if (base_ev == "rff") {
         list(
-          alpha = 0.0,
-          s = "lambda.min",
-          n_components = 256L,
+          n_features = 512L,
           mbo_iters = mbo_it,
           mbo_init_design = mbo_id
         )
@@ -459,9 +457,7 @@
         )
       } else if (base_ev == "rff") {
         list(
-          alpha = 0.0,
-          s = "lambda.min",
-          n_components = 256L
+          n_features = 512L
         )
       } else if (base_ev == "tabm") {
         bs <- if (n_rows >= 65536L) 512L else if (n_rows >= 8192L) 256L else -1L

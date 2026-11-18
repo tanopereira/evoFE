@@ -1087,3 +1087,128 @@ test_that("tabm stop_epoch caps training cleanly across tasks and num_emb modes"
     expect_true(all(is.finite(p_mc)))
   }
 })
+
+test_that("rff avoids GC use-after-free on high-capacity Nystrom/RFF and achieves strong accuracy across tasks", {
+  set.seed(42)
+
+  # 1. High-capacity Nystrom (n_features = 1024) + repeated RFF under explicit GC pressure
+  n_big <- 1200L
+  d_big <- 16L
+  x_big <- matrix(stats::rnorm(n_big * d_big), nrow = n_big, ncol = d_big)
+  colnames(x_big) <- paste0("b", seq_len(d_big))
+  y_big <- 1.5 * x_big[, 1L] - sin(x_big[, 2L]) + stats::rnorm(n_big, sd = 0.25)
+
+  fit_nys_big <- train_model(
+    x_big, y_big,
+    x_val = x_big[1:150, , drop = FALSE], y_val = y_big[1:150],
+    task = "regression", evaluator = "rff",
+    approx_method = "nystrom", n_features = 1024L,
+    threads = 2L, seed = 42L
+  )
+  expect_length(fit_nys_big$predictions, 150L)
+  expect_true(all(is.finite(fit_nys_big$predictions)))
+  expect_true(is.numeric(fit_nys_big$model$best_lambda) && fit_nys_big$model$best_lambda > 0)
+  expect_length(fit_nys_big$model$model$ard_weights, d_big)
+
+  x_gc <- matrix(stats::rnorm(350L * 40L), nrow = 350L, ncol = 40L)
+  y_gc <- stats::rnorm(350L)
+  for (iter in seq_len(15L)) {
+    fit_iter <- train_model(
+      x_gc, y_gc,
+      x_val = x_gc[1:60, , drop = FALSE], y_val = y_gc[1:60],
+      task = "regression", evaluator = "rff",
+      approx_method = "rff", n_features = 1024L,
+      threads = 1L, seed = iter
+    )
+    expect_length(fit_iter$predictions, 60L)
+    expect_true(all(is.finite(fit_iter$predictions)))
+    expect_true(fit_iter$model$best_lambda > 0)
+    expect_length(fit_iter$model$model$ard_weights, 40L)
+    if (iter %% 5L == 0L) gc(FALSE)
+  }
+
+  # 2. Nonlinear + noisy regression across approx_method x kernel + ARD ranking check
+  n_tr <- 600L
+  n_va <- 300L
+  d_reg <- 15L
+  x_tr <- matrix(stats::rnorm(n_tr * d_reg), nrow = n_tr, ncol = d_reg)
+  x_va <- matrix(stats::rnorm(n_va * d_reg), nrow = n_va, ncol = d_reg)
+  colnames(x_tr) <- colnames(x_va) <- paste0("x", seq_len(d_reg))
+  f_sig <- function(m) 2.0 * m[, 1L] - 1.5 * m[, 2L] + sin(2.0 * m[, 3L]) + 0.8 * m[, 1L] * m[, 2L]
+  y_tr <- f_sig(x_tr) + stats::rnorm(n_tr, sd = 0.3)
+  y_va <- f_sig(x_va) + stats::rnorm(n_va, sd = 0.3)
+
+  fit_lm <- train_model(x_tr, y_tr, x_val = x_va, y_val = y_va,
+                        task = "regression", evaluator = "lm", threads = 1L, seed = 42L)
+  rmse_lm <- sqrt(mean((fit_lm$predictions - y_va)^2))
+
+  for (am in c("rff", "nystrom")) {
+    for (kr in c("rbf", "laplacian")) {
+      fit_rff <- train_model(
+        x_tr, y_tr, x_val = x_va, y_val = y_va,
+        task = "regression", evaluator = "rff",
+        approx_method = am, kernel = kr, threads = 1L, seed = 42L
+      )
+      rmse_rff <- sqrt(mean((fit_rff$predictions - y_va)^2))
+      expect_lt(rmse_rff, 0.70 * rmse_lm)
+      ard <- fit_rff$model$model$ard_weights
+      expect_length(ard, d_reg)
+      expect_true(all(ard[1:3] > stats::median(ard[4:15])))
+    }
+  }
+
+  # 3. Binary classification accuracy (LogLoss < 0.55)
+  yb_tr <- stats::rbinom(n_tr, 1L, stats::plogis(f_sig(x_tr)))
+  yb_va <- stats::rbinom(n_va, 1L, stats::plogis(f_sig(x_va)))
+  fit_bin <- train_model(
+    x_tr, yb_tr, x_val = x_va, y_val = yb_va,
+    task = "classification", evaluator = "rff", threads = 1L, seed = 42L
+  )
+  p_bin <- pmin(pmax(fit_bin$predictions, 1e-15), 1.0 - 1e-15)
+  logloss_bin <- -mean(yb_va * log(p_bin) + (1.0 - yb_va) * log(1.0 - p_bin))
+  expect_lt(logloss_bin, 0.55)
+
+  # 4. Multiclass classification accuracy (MultiLogLoss < 0.72)
+  logits_mc <- function(m) {
+    cbind(2.0 * m[, 1L] - m[, 2L],
+          -m[, 1L] + 1.5 * m[, 3L] + 0.5 * m[, 1L] * m[, 2L],
+          sin(2.0 * m[, 2L]) - m[, 3L])
+  }
+  sample_mc <- function(lmat) {
+    ex <- exp(lmat)
+    pr <- ex / rowSums(ex)
+    apply(pr, 1L, function(p) sample(0:2, 1L, prob = p))
+  }
+  ym_tr <- sample_mc(logits_mc(x_tr))
+  ym_va <- sample_mc(logits_mc(x_va))
+  fit_mc <- train_model(
+    x_tr, ym_tr, x_val = x_va, y_val = ym_va,
+    task = "multiclass", num_class = 3L, evaluator = "rff", threads = 1L, seed = 42L
+  )
+  p_mc <- pmin(pmax(matrix(fit_mc$predictions, nrow = n_va, ncol = 3L), 1e-15), 1.0 - 1e-15)
+  p_mc <- p_mc / rowSums(p_mc)
+  mll_mc <- -mean(log(p_mc[cbind(seq_len(n_va), ym_va + 1L)]))
+  expect_lt(mll_mc, 0.72)
+
+  # 5. Mixed numeric + categorical data.frame regression (RMSE < 0.45)
+  make_mixed_df <- function(m) {
+    df <- as.data.frame(m[, 1:8])
+    df$cat1 <- factor(sample(paste0("L", 1:15), nrow(m), replace = TRUE), levels = paste0("L", 1:15))
+    df$cat2 <- factor(sample(paste0("G", 1:10), nrow(m), replace = TRUE), levels = paste0("G", 1:10))
+    df
+  }
+  df_tr <- make_mixed_df(x_tr)
+  df_va <- make_mixed_df(x_va)
+  cat_eff <- seq(-1.5, 1.5, length.out = 15L)
+  y_df_tr <- 2.0 * df_tr$x1 - 1.5 * df_tr$x2 + sin(2.0 * df_tr$x3) +
+    cat_eff[as.integer(df_tr$cat1)] + stats::rnorm(n_tr, sd = 0.3)
+  y_df_va <- 2.0 * df_va$x1 - 1.5 * df_va$x2 + sin(2.0 * df_va$x3) +
+    cat_eff[as.integer(df_va$cat1)] + stats::rnorm(n_va, sd = 0.3)
+
+  fit_mix <- train_model(
+    df_tr, y_df_tr, x_val = df_va, y_val = y_df_va,
+    task = "regression", evaluator = "rff", threads = 1L, seed = 42L
+  )
+  rmse_mix <- sqrt(mean((fit_mix$predictions - y_df_va)^2))
+  expect_lt(rmse_mix, 0.45)
+})

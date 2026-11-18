@@ -149,8 +149,8 @@ make_tunable(
 make_tunable(
   base_model_name = "rff",
   param_ranges = list(
-    sigma = list(type = "numeric", lower = 0.05, upper = 20.0, log = TRUE),
-    lambda = list(type = "numeric", lower = 1e-5, upper = 100.0, log = TRUE),
+    sigma = list(type = "numeric", lower = 0.25, upper = 15.0, log = TRUE),
+    lambda = list(type = "numeric", lower = 1e-4, upper = 20.0, log = TRUE),
     n_features = list(type = "integer", lower = 128L, upper = 1024L)
   ),
   tuner_name = "rff_mbo"
@@ -159,9 +159,9 @@ make_tunable(
 make_tunable(
   base_model_name = "rff",
   param_ranges = list(
-    sigma = list(type = "numeric", lower = 0.05, upper = 25.0, log = TRUE),
-    lambda = list(type = "numeric", lower = 1e-5, upper = 100.0, log = TRUE),
-    n_features = list(type = "discrete", values = c(256L, 512L, 1024L, 2048L)),
+    sigma = list(type = "numeric", lower = 0.25, upper = 15.0, log = TRUE),
+    lambda = list(type = "numeric", lower = 1e-4, upper = 20.0, log = TRUE),
+    n_features = list(type = "discrete", values = c(256L, 512L, 1024L)),
     kernel = list(type = "discrete", values = c("rbf", "laplacian")),
     approx_method = list(type = "discrete", values = c("rff", "nystrom"))
   ),

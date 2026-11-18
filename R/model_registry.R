@@ -2772,9 +2772,16 @@ register_evaluator(
     th <- .pick_first_param(extra_params, c("threads", "nthreads", "nthread", "num_threads", "n_jobs"), threads)
     threads <- max(1L, as.integer(th))
 
-    x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    if (!(is.matrix(x_train) && is.double(x_train))) {
+      x_train <- .sanitize_feature_matrix(x_train, threads = threads)
+    }
     cs <- attr(x_train, "cat_schema", exact = TRUE)
-    x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
+    if (is.null(cs) && !is.null(extra_params$cat_schema)) {
+      cs <- extra_params$cat_schema
+    }
+    if (!is.null(x_val) && !(is.matrix(x_val) && is.double(x_val))) {
+      x_val <- .sanitize_feature_matrix(x_val, threads = threads, cat_schema = cs)
+    }
 
     max_cat_levels <- as.integer(.pick_first_param(extra_params, "max_cat_levels", 32L))
     ohe_tr <- .build_categorical_ohe_or_matrix(
@@ -2805,7 +2812,12 @@ register_evaluator(
     } else {
       -1.0
     }
-    lambda_val <- as.numeric(.pick_first_param(extra_params, c("lambda", "l2_reg"), 1e-2))
+    lam_raw <- .pick_first_param(extra_params, c("lambda", "l2_reg"), -1.0)
+    lambda_val <- if (is.numeric(lam_raw) && length(lam_raw) == 1L && is.finite(lam_raw) && lam_raw > 0) {
+      as.numeric(lam_raw)
+    } else {
+      -1.0
+    }
     n_features <- max(16L, as.integer(.pick_first_param(extra_params, c("n_features", "n_components"), 512L)))
     approx_method <- as.character(.pick_first_param(extra_params, c("approx_method", "feature_map"), "rff"))
     kernel_str <- as.character(.pick_first_param(extra_params, "kernel", "rbf"))
@@ -2886,9 +2898,15 @@ register_evaluator(
       levels_target = target$levels_target,
       num_class = target$num_classes_int,
       uses_offset = !is.null(offs$train),
+      best_lambda = fit_res$best_lambda,
       threads = threads
     )
-    list(model = wrapped, predictions = preds, importances = importances)
+    list(
+      model = wrapped,
+      predictions = preds,
+      importances = importances,
+      best_lambda = fit_res$best_lambda
+    )
   },
   predict_func = function(model, x_new, task, ...) {
     fn_predict <- get0("rcpp_rff_predict", mode = "function")
@@ -2904,7 +2922,11 @@ register_evaluator(
     } else {
       default_threads()
     }
-    x_san <- .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    x_san <- if (is.matrix(x_new) && is.double(x_new)) {
+      x_new
+    } else {
+      .sanitize_feature_matrix(x_new, threads = n_threads, cat_schema = model$cat_schema)
+    }
     x_num <- .build_categorical_ohe_or_matrix(x_san, state = model$ohe_state, threads = n_threads)
     off_new <- .resolve_offset_args(
       extra_args,
