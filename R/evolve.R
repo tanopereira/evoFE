@@ -1215,6 +1215,7 @@ evolve_features <- function(data, target_col, task = "classification",
       if (show_pool_msg) {
         message(sprintf("\nPooling all genes across %d islands...", islands))
       }
+      any_adopted <- FALSE
       for (j in seq_len(islands)) {
         isl_ind_j <- island_best_individual[[j]]
         isl_eval_j <- if (!is.null(isl_ind_j$evaluator)) isl_ind_j$evaluator else island_evaluators[j]
@@ -1245,6 +1246,7 @@ evolve_features <- function(data, target_col, task = "classification",
           oof_preds = isl_ind_j$val_preds, ...
         )
         if (isTRUE(isl_pool_res$adopted_pooled)) {
+          any_adopted <- TRUE
           if (show_pool_msg) {
             message(sprintf("    -> Adopted pooled genes for Island %d (fitness: %.4f)", j, isl_pool_res$best_ind$fitness))
           }
@@ -1254,33 +1256,51 @@ evolve_features <- function(data, target_col, task = "classification",
           }
           if (!is.na(isl_pool_res$best_ind$fitness) && (is.na(best_ind$fitness) || isl_pool_res$best_ind$fitness > best_ind$fitness)) {
             best_ind <- isl_pool_res$best_ind
+            winner_idx <- j
             best_ind_source <- paste0("Island ", j, " (Pooled)")
             oof_preds <- isl_pool_res$oof_preds
           }
         }
       }
+      if (isTRUE(record)) {
+        if (is.null(evolution_log)) evolution_log <- list()
+        evolution_log$pooled <- list(
+          n_genes = length(best_ind$genes),
+          fitness = best_ind$fitness,
+          adopted = any_adopted,
+          recipe = individual_to_recipe_string(best_ind),
+          baseline_fitness = baseline_ind$fitness,
+          improvement = if (!is.null(baseline_ind$fitness) && is.finite(baseline_ind$fitness) && is.finite(best_ind$fitness)) {
+            best_ind$fitness - baseline_ind$fitness
+          } else {
+            NULL
+          }
+        )
+        viewer_send(viewer, "pooled", evolution_log$pooled)
+      }
+    } else {
+      pool_res <- pool_final_genes(
+        pop = pop, best_ind = best_ind, data = data, target_col = target_col,
+        task = task, cv_folds = cv_folds,
+        evaluation_strategy = evaluation_strategy,
+        split_ids_val = split_ids_val, shared_splits = shared_splits,
+        evaluator_main = evaluator_main, fold_ids = fold_ids,
+        island_shared_splits = island_shared_splits, shared_folds = shared_folds,
+        shared_full = shared_full, state_cache = state_cache,
+        threads = threads, metric = metric, verbose = verbose,
+        complexity_penalty = complexity_penalty,
+        complexity_mode = complexity_mode,
+        complexity_floor = complexity_floor,
+        complexity_target = complexity_target,
+        baseline_fitness = baseline_ind$fitness, islands = islands,
+        record = record, evolution_log = evolution_log, viewer = viewer,
+        best_ind_source = best_ind_source, oof_preds = oof_preds, ...
+      )
+      best_ind <- pool_res$best_ind
+      best_ind_source <- pool_res$best_ind_source
+      oof_preds <- pool_res$oof_preds
+      evolution_log <- pool_res$evolution_log
     }
-    pool_res <- pool_final_genes(
-      pop = pop, best_ind = best_ind, data = data, target_col = target_col,
-      task = task, cv_folds = cv_folds,
-      evaluation_strategy = evaluation_strategy,
-      split_ids_val = split_ids_val, shared_splits = shared_splits,
-      evaluator_main = evaluator_main, fold_ids = fold_ids,
-      island_shared_splits = island_shared_splits, shared_folds = shared_folds,
-      shared_full = shared_full, state_cache = state_cache,
-      threads = threads, metric = metric, verbose = verbose,
-      complexity_penalty = complexity_penalty,
-      complexity_mode = complexity_mode,
-      complexity_floor = complexity_floor,
-      complexity_target = complexity_target,
-      baseline_fitness = baseline_ind$fitness, islands = islands,
-      record = record, evolution_log = evolution_log, viewer = viewer,
-      best_ind_source = best_ind_source, oof_preds = oof_preds, ...
-    )
-    best_ind <- pool_res$best_ind
-    best_ind_source <- pool_res$best_ind_source
-    oof_preds <- pool_res$oof_preds
-    evolution_log <- pool_res$evolution_log
   }
 
   # Historical feature pooling

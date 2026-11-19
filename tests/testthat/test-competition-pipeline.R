@@ -1140,6 +1140,64 @@ test_that("train_final_model = FALSE and train_models = FALSE skip throwaway Sta
   expect_true(all(is.finite(pipe$predictions)))
 })
 
+test_that("multi-evaluator pooling runs per-island without redundant global cross-island pass", {
+  skip_if_not_installed("glmnet")
+  skip_if_not_installed("lightgbm")
+
+  set.seed(818)
+  n_tr <- 100L
+  train_dt <- data.table::data.table(
+    x1 = stats::rnorm(n_tr),
+    x2 = stats::rnorm(n_tr),
+    x3 = stats::rnorm(n_tr),
+    y = as.integer(stats::rbinom(n_tr, 1L, 0.5))
+  )
+
+  msgs_multi <- testthat::capture_messages(
+    rec_multi <- evolve_features(
+      data = train_dt,
+      target_col = "y",
+      task = "classification",
+      evaluator = c("lm", "lightgbm"),
+      islands = 2L,
+      generations = 1L,
+      pop_size = 3L,
+      cv_folds = 2L,
+      model_all_final_genes = TRUE,
+      train_final_model = FALSE,
+      threads = 1L,
+      seed = 818L,
+      verbose = TRUE
+    )
+  )
+  all_msg_multi <- paste(msgs_multi, collapse = "\n")
+  expect_true(grepl("Pooling all genes across 2 islands", all_msg_multi, fixed = TRUE))
+  expect_false(grepl("Evaluating pooled features (all final genes)", all_msg_multi, fixed = TRUE))
+  expect_s3_class(rec_multi, "evo_recipe")
+
+  # Single-evaluator run still runs global cross-island pooling
+  msgs_single <- testthat::capture_messages(
+    rec_single <- evolve_features(
+      data = train_dt,
+      target_col = "y",
+      task = "classification",
+      evaluator = "lm",
+      islands = 2L,
+      generations = 1L,
+      pop_size = 3L,
+      cv_folds = 2L,
+      model_all_final_genes = TRUE,
+      train_final_model = FALSE,
+      threads = 1L,
+      seed = 818L,
+      verbose = TRUE
+    )
+  )
+  all_msg_single <- paste(msgs_single, collapse = "\n")
+  expect_true(grepl("Evaluating pooled features (all final genes)", all_msg_single, fixed = TRUE))
+  expect_s3_class(rec_single, "evo_recipe")
+})
+
 
 
 
