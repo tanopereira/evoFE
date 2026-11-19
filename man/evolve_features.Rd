@@ -62,6 +62,7 @@ evolve_features(
   seed_genes = NULL,
   global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
   tune_final = c("none", "mbo", "tabarena"),
+  train_final_model = TRUE,
   ...
 )
 }
@@ -252,6 +253,13 @@ the highest normalized headroom closed).}
 \item{global_unsupervised}{Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.}
 
 \item{tune_final}{Optional post-evolution Bayesian optimization pass applied once to each winning island recipe after feature evolution completes: \code{"none"} (default), \code{"mbo"}, or \code{"tabarena"}. Useful for discovering features fast with untuned (or \code{"_mbo"}) evaluators across multi-evaluator CV islands and then tuning each island winner with \code{"_mbo"} or \code{"_tabarena"} on its own evolved feature view before final refit or \code{\link{ensemble_islands}} stacking.}
+
+\item{train_final_model}{Logical (default \code{TRUE}). When \code{FALSE}, skips
+fitting the full-dataset \code{best_model}, K-fold bagged \code{fold_models},
+post-calibrator, and confirmation holdout evaluation after evolution completes
+(while still ensuring unsupervised gene states are populated for
+\code{predict()}). Useful for pure feature-discovery stages such as Stage 2
+of \code{\link{run_competition_pipeline}}.}
 
 \item{...}{Additional arguments passed to the underlying evaluator training
 functions.}

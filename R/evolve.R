@@ -130,6 +130,12 @@
 #' @param seed_genes Optional list of gene definitions, an \code{evo_individual}, or an \code{evo_recipe} whose symbolic gene formulas (with all fitted \code{$state} entries stripped) seed Individual 1 and initial island populations. Ideal for searching supervised encoders fast and refitting the winning formulas per fold in 1-gen (\code{generations = 1, pop_size = 1}) deep training without target leakage.
 #' @param global_unsupervised Logical. If TRUE (default), unsupervised stateful transformers (e.g. UMAP, PCA, Lumbermark, Genie) are fit globally on the full input feature matrix X to ensure invariant cluster IDs and manifold coordinates across CV folds with zero target leakage, while supervised transformers remain strictly per-fold. Set to FALSE for strict per-fold unsupervised fitting.
 #' @param tune_final Optional post-evolution Bayesian optimization pass applied once to each winning island recipe after feature evolution completes: \code{"none"} (default), \code{"mbo"}, or \code{"tabarena"}. Useful for discovering features fast with untuned (or \code{"_mbo"}) evaluators across multi-evaluator CV islands and then tuning each island winner with \code{"_mbo"} or \code{"_tabarena"} on its own evolved feature view before final refit or \code{\link{ensemble_islands}} stacking.
+#' @param train_final_model Logical (default \code{TRUE}). When \code{FALSE}, skips
+#'   fitting the full-dataset \code{best_model}, K-fold bagged \code{fold_models},
+#'   post-calibrator, and confirmation holdout evaluation after evolution completes
+#'   (while still ensuring unsupervised gene states are populated for
+#'   \code{predict()}). Useful for pure feature-discovery stages such as Stage 2
+#'   of \code{\link{run_competition_pipeline}}.
 #' @param ... Additional arguments passed to the underlying evaluator training
 #'   functions.
 #' @importFrom utils tail head
@@ -206,7 +212,8 @@ evolve_features <- function(data, target_col, task = "classification",
                             confirm_top_k = 0L,
                             seed_genes = NULL,
                             global_unsupervised = getOption("evoFE.global_unsupervised", TRUE),
-                            tune_final = c("none", "mbo", "tabarena"), ...) {
+                            tune_final = c("none", "mbo", "tabarena"),
+                            train_final_model = TRUE, ...) {
   # Normalize thread aliases passed via ... (e.g. nthreads, nthread, num_threads, n_jobs)
   extra_args_top <- list(...)
   threads <- resolve_thread_count(threads, extra_args_top)
@@ -451,7 +458,7 @@ evolve_features <- function(data, target_col, task = "classification",
   # Carve a confirmation holdout that is excluded from the entire search and
   # only scored once, after evolution completes (see holdout_frac).
   confirmation_dt <- NULL
-  if (holdout_frac > 0) {
+  if (holdout_frac > 0 && isTRUE(train_final_model)) {
     if (!evaluation_strategy %in% c("cv", "metacv")) {
       warning("'holdout_frac' is ignored with evaluation_strategy = 'split'. Use split_ids or a 3-part split_ratio instead.")
     } else {
@@ -1410,27 +1417,39 @@ evolve_features <- function(data, target_col, task = "classification",
     }
   }
 
-  if (verbose) {
-    message("Training final model on full dataset...")
-  }
   best_params <- best_ind$best_params
   best_iteration <- best_ind$best_iteration
   train_size <- best_ind$train_size
   cal_y_val <- best_ind$y_val
   cal_val_preds <- best_ind$val_preds
   cal_val_preds_trans <- best_ind$val_preds_trans
-  train_full_dt <- if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
-    tr_ho_idx <- which(split_ids_val != "holdout")
-    tr_ho_dt <- data.table::as.data.table(data[tr_ho_idx, ])
-    data.table::setattr(tr_ho_dt, ".row_id", tr_ho_idx)
-    tr_ho_dt
-  } else {
-    data.table::copy(shared_full)
+
+  best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
+  use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
+  use_smear <- metric_uses_smearing(metric, task)
+  best_model <- NULL
+  fold_models <- NULL
+  full_cat_schema <- NULL
+  target_transform_state <- NULL
+  calibrator <- NULL
+  target_iters <- NULL
+  res_full <- NULL
+
+  if (isTRUE(train_final_model) || isTRUE(record) || .individual_needs_state_fit(best_ind)) {
+    train_full_dt <- if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
+      tr_ho_idx <- which(split_ids_val != "holdout")
+      tr_ho_dt <- data.table::as.data.table(data[tr_ho_idx, ])
+      data.table::setattr(tr_ho_dt, ".row_id", tr_ho_idx)
+      tr_ho_dt
+    } else {
+      data.table::copy(shared_full)
+    }
+    res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col,
+                                 state_cache = state_cache, full_data = shared_full,
+                                 validate_genes = FALSE)
+    best_ind <- res_full$ind
   }
-  res_full <- apply_individual(best_ind, train_full_dt, NULL, target_col,
-                               state_cache = state_cache, full_data = shared_full,
-                               validate_genes = FALSE)
-  best_ind <- strip_loo_state(res_full$ind)
+  best_ind <- strip_loo_state(best_ind)
   if (!is.null(best_iteration)) {
     best_ind$best_iteration <- best_iteration
   }
@@ -1444,173 +1463,172 @@ evolve_features <- function(data, target_col, task = "classification",
     best_ind$mean_cv_fitness <- mean_cv_fitness_val
   }
 
-  features <- extract_individual_features(best_ind, target_col = target_col)
-
-  x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE], threads = threads)
-  full_cat_schema <- attr(x_full, "cat_schema", exact = TRUE)
-  if (!is.null(full_cat_schema)) {
-    best_ind$cat_schema <- full_cat_schema
-  }
-  y_full <- res_full$train[[target_col]]
-  if (task == "multiclass") {
-    y_full <- encode_multiclass_target(y_full, classes)
-  } else if (task == "classification") {
-    y_full <- encode_binary_target(y_full)
-  }
-
-  best_evaluator <- if (!is.null(best_ind$evaluator)) best_ind$evaluator else evaluator_main
-  final_model_args <- .expand_evaluator_extra_args(best_evaluator, list(...))
-  if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
-    final_model_args <- .slice_offset_extra_args(final_model_args, tr_ho_idx, NULL, nrow(data))
-  }
-  target_iters <- NULL
-  if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
-      is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
-    total_data_size <- nrow(x_full)
-    training_size <- if (!is.null(best_ind$train_size) && is.numeric(best_ind$train_size) && best_ind$train_size > 0) {
-      as.numeric(best_ind$train_size)
-    } else if (evaluation_strategy == "cv" && !is.null(cv_folds) && cv_folds > 1) {
-      round(total_data_size * (cv_folds - 1) / cv_folds)
-    } else if (!is.null(split_ratio) && length(split_ratio) >= 2) {
-      round(total_data_size * split_ratio[1] / sum(split_ratio[1:2]))
-    } else {
-      total_data_size
-    }
-
-    target_iters <- if (.evaluator_scales_iterations(best_evaluator)) {
-      scale_evaluator_iterations(best_evaluator, best_ind$best_iteration, training_size, total_data_size)
-    } else {
-      as.integer(best_ind$best_iteration)
-    }
+  if (isTRUE(train_final_model)) {
     if (verbose) {
-      scale_factor <- if (training_size > 0 && total_data_size > training_size) total_data_size / training_size else 1.0
-      if (.evaluator_scales_iterations(best_evaluator) && scale_factor > 1.0 && target_iters != as.integer(best_ind$best_iteration)) {
-        message(sprintf("  Using best validation iterations scaled by data size (%.2fx: %d -> %d) for final model",
-                        scale_factor, best_ind$best_iteration, target_iters))
+      message("Training final model on full dataset...")
+    }
+    features <- extract_individual_features(best_ind, target_col = target_col)
+
+    x_full <- .sanitize_feature_matrix(res_full$train[, features, with = FALSE], threads = threads)
+    full_cat_schema <- attr(x_full, "cat_schema", exact = TRUE)
+    if (!is.null(full_cat_schema)) {
+      best_ind$cat_schema <- full_cat_schema
+    }
+    y_full <- res_full$train[[target_col]]
+    if (task == "multiclass") {
+      y_full <- encode_multiclass_target(y_full, classes)
+    } else if (task == "classification") {
+      y_full <- encode_binary_target(y_full)
+    }
+
+    final_model_args <- .expand_evaluator_extra_args(best_evaluator, list(...))
+    if (evaluation_strategy == "split" && !is.null(split_ids_val) && "holdout" %in% split_ids_val) {
+      final_model_args <- .slice_offset_extra_args(final_model_args, tr_ho_idx, NULL, nrow(data))
+    }
+    if (!is.null(best_ind$best_iteration) && is.numeric(best_ind$best_iteration) &&
+        is.finite(best_ind$best_iteration) && best_ind$best_iteration > 0) {
+      total_data_size <- nrow(x_full)
+      training_size <- if (!is.null(best_ind$train_size) && is.numeric(best_ind$train_size) && best_ind$train_size > 0) {
+        as.numeric(best_ind$train_size)
+      } else if (evaluation_strategy == "cv" && !is.null(cv_folds) && cv_folds > 1) {
+        round(total_data_size * (cv_folds - 1) / cv_folds)
+      } else if (!is.null(split_ratio) && length(split_ratio) >= 2) {
+        round(total_data_size * split_ratio[1] / sum(split_ratio[1:2]))
       } else {
-        iter_label <- if (unwrap_evaluator(best_evaluator) %in% c("realmlp", "tabm")) "epochs" else "iterations/rounds"
-        message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
+        total_data_size
       }
-    }
-    final_model_args <- apply_iteration_target(final_model_args, target_iters, best_evaluator)
-  } else if (unwrap_evaluator(best_evaluator) %in% c("realmlp", "tabm")) {
-    final_model_args <- apply_iteration_target(final_model_args, NULL, best_evaluator)
-  }
 
-  resolved_final <- resolve_tuned_evaluator(best_evaluator, best_params, final_model_args, always_unwrap = TRUE)
-  final_evaluator <- resolved_final$evaluator
-  final_model_args <- resolved_final$extra_args
-
-  use_tt <- identical(task, "regression") && !is.null(target_transform) && !identical(target_transform, "none")
-  use_smear <- metric_uses_smearing(metric, task)
-  target_transform_state <- NULL
-  y_full_raw <- y_full
-  if (use_tt) {
-    tt_full_fit <- .fit_target_transform(y_full, target_transform)
-    y_full <- tt_full_fit$y_trans
-    target_transform_state <- tt_full_fit$state
-  }
-
-  final_model_args$compute_importances <- FALSE
-  res_model <- do.call(train_model, .merge_call_args(
-    list(
-      x_train = x_full, y_train = y_full,
-      task = task, evaluator = final_evaluator,
-      threads = threads, num_class = num_class, metric = metric,
-      verbose = verbose, best_params = best_params, seed = seed
-    ),
-    final_model_args
-  ))
-  best_model <- res_model$model
-  if (use_tt && !is.null(target_transform_state) && identical(target_transform_state$method, "log1p")) {
-    if (!is.null(cal_val_preds_trans) && !is.null(cal_y_val) && length(cal_val_preds_trans) == length(cal_y_val)) {
-      target_transform_state <- .update_target_transform_smearing(target_transform_state, cal_y_val, cal_val_preds_trans)
-    } else {
-      in_preds_tr <- tryCatch(
-        get_evaluator(final_evaluator)$predict_func(best_model, x_full, task = task, threads = threads),
-        error = function(e) NULL
-      )
-      if (!is.null(in_preds_tr)) {
-        target_transform_state <- .update_target_transform_smearing(target_transform_state, y_full_raw, in_preds_tr)
+      target_iters <- if (.evaluator_scales_iterations(best_evaluator)) {
+        scale_evaluator_iterations(best_evaluator, best_ind$best_iteration, training_size, total_data_size)
+      } else {
+        as.integer(best_ind$best_iteration)
       }
+      if (verbose) {
+        scale_factor <- if (training_size > 0 && total_data_size > training_size) total_data_size / training_size else 1.0
+        if (.evaluator_scales_iterations(best_evaluator) && scale_factor > 1.0 && target_iters != as.integer(best_ind$best_iteration)) {
+          message(sprintf("  Using best validation iterations scaled by data size (%.2fx: %d -> %d) for final model",
+                          scale_factor, best_ind$best_iteration, target_iters))
+        } else {
+          iter_label <- if (unwrap_evaluator(best_evaluator) %in% c("realmlp", "tabm")) "epochs" else "iterations/rounds"
+          message(sprintf("  Using best validation %s for final model: %d", iter_label, target_iters))
+        }
+      }
+      final_model_args <- apply_iteration_target(final_model_args, target_iters, best_evaluator)
+    } else if (unwrap_evaluator(best_evaluator) %in% c("realmlp", "tabm")) {
+      final_model_args <- apply_iteration_target(final_model_args, NULL, best_evaluator)
     }
-  }
-  fold_models <- NULL
-  if (isTRUE(bag_folds) && evaluation_strategy %in% c("cv", "metacv") && !is.null(fold_ids)) {
-    if (verbose) {
-      message(sprintf("Training %d-fold bagged model ensemble...", length(unique(fold_ids))))
-    }
-    fold_models <- .fit_fold_models_bag(
-      ind = best_ind, data_dt = train_full_dt, fold_ids = fold_ids,
-      target_col = target_col, task = task, classes = classes,
-      num_class = num_class, metric = metric, evaluator = best_evaluator,
-      best_params = best_params, extra_args = list(...), threads = threads,
-      seed = seed, state_cache = state_cache, shared_full = shared_full,
-      target_transform = target_transform, verbose = verbose
-    )
-  }
-  calibrator <- fit_post_calibrator(
-    y_true = cal_y_val,
-    y_pred = cal_val_preds,
-    task = task,
-    metric = metric,
-    num_class = num_class,
-    threads = threads
-  )
 
-  if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
-    if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
-    conf_fitness <- NA_real_
-    preds_conf <- NULL
-    if (!is.null(fold_models) && length(fold_models) > 0) {
-      preds_conf <- tryCatch(
-        .predict_fold_models_bag(
-          fold_models, data.table::copy(confirmation_dt),
-          target_col = target_col, task = task, classes = NULL,
-          threads = threads, state_cache = state_cache
-        ),
-        error = function(e) NULL
-      )
+    resolved_final <- resolve_tuned_evaluator(best_evaluator, best_params, final_model_args, always_unwrap = TRUE)
+    final_evaluator <- resolved_final$evaluator
+    final_model_args <- resolved_final$extra_args
+
+    y_full_raw <- y_full
+    if (use_tt) {
+      tt_full_fit <- .fit_target_transform(y_full, target_transform)
+      y_full <- tt_full_fit$y_trans
+      target_transform_state <- tt_full_fit$state
     }
-    if (is.null(preds_conf)) {
-      res_conf <- tryCatch(
-        apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
-        error = function(e) NULL
-      )
-      if (!is.null(res_conf)) {
-        conf_features <- extract_individual_features(res_conf$ind, target_col = target_col)
-        x_conf <- .sanitize_feature_matrix(
-          res_conf$train[, conf_features, with = FALSE],
-          threads = threads,
-          cat_schema = full_cat_schema
-        )
-        preds_conf <- tryCatch(
-          get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
+
+    final_model_args$compute_importances <- FALSE
+    res_model <- do.call(train_model, .merge_call_args(
+      list(
+        x_train = x_full, y_train = y_full,
+        task = task, evaluator = final_evaluator,
+        threads = threads, num_class = num_class, metric = metric,
+        verbose = verbose, best_params = best_params, seed = seed
+      ),
+      final_model_args
+    ))
+    best_model <- res_model$model
+    if (use_tt && !is.null(target_transform_state) && identical(target_transform_state$method, "log1p")) {
+      if (!is.null(cal_val_preds_trans) && !is.null(cal_y_val) && length(cal_val_preds_trans) == length(cal_y_val)) {
+        target_transform_state <- .update_target_transform_smearing(target_transform_state, cal_y_val, cal_val_preds_trans)
+      } else {
+        in_preds_tr <- tryCatch(
+          get_evaluator(final_evaluator)$predict_func(best_model, x_full, task = task, threads = threads),
           error = function(e) NULL
         )
-        if (!is.null(preds_conf) && !is.null(target_transform_state)) {
-          preds_conf <- .invert_target_transform(preds_conf, target_transform_state, use_smearing = use_smear)
+        if (!is.null(in_preds_tr)) {
+          target_transform_state <- .update_target_transform_smearing(target_transform_state, y_full_raw, in_preds_tr)
         }
       }
     }
-    if (!is.null(preds_conf)) {
-      if (!is.null(calibrator)) {
-        preds_conf <- apply_post_calibrator(preds_conf, calibrator)
+    if (isTRUE(bag_folds) && evaluation_strategy %in% c("cv", "metacv") && !is.null(fold_ids)) {
+      if (verbose) {
+        message(sprintf("Training %d-fold bagged model ensemble...", length(unique(fold_ids))))
       }
-      y_conf <- confirmation_dt[[target_col]]
-      if (task == "multiclass") {
-        y_conf_enc <- encode_multiclass_target(y_conf, classes)
-        preds_conf <- format_multiclass_predictions(preds_conf, classes)
-        conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
-      } else if (task == "classification") {
-        y_conf_enc <- encode_binary_target(y_conf)
-        conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, threads = threads)
-      } else {
-        conf_fitness <- compute_metric(y_conf, preds_conf, task, metric, threads = threads)
-      }
-      best_ind$holdout_fitness <- conf_fitness
+      fold_models <- .fit_fold_models_bag(
+        ind = best_ind, data_dt = train_full_dt, fold_ids = fold_ids,
+        target_col = target_col, task = task, classes = classes,
+        num_class = num_class, metric = metric, evaluator = best_evaluator,
+        best_params = best_params, extra_args = list(...), threads = threads,
+        seed = seed, state_cache = state_cache, shared_full = shared_full,
+        target_transform = target_transform, verbose = verbose
+      )
     }
-    if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
+    calibrator <- fit_post_calibrator(
+      y_true = cal_y_val,
+      y_pred = cal_val_preds,
+      task = task,
+      metric = metric,
+      num_class = num_class,
+      threads = threads
+    )
+
+    if (!is.null(confirmation_dt) && nrow(confirmation_dt) > 0) {
+      if (verbose) message("Scoring final recipe on the untouched confirmation holdout...")
+      conf_fitness <- NA_real_
+      preds_conf <- NULL
+      if (!is.null(fold_models) && length(fold_models) > 0) {
+        preds_conf <- tryCatch(
+          .predict_fold_models_bag(
+            fold_models, data.table::copy(confirmation_dt),
+            target_col = target_col, task = task, classes = NULL,
+            threads = threads, state_cache = state_cache
+          ),
+          error = function(e) NULL
+        )
+      }
+      if (is.null(preds_conf)) {
+        res_conf <- tryCatch(
+          apply_individual(best_ind, data.table::copy(confirmation_dt), NULL, NULL, state_cache = state_cache),
+          error = function(e) NULL
+        )
+        if (!is.null(res_conf)) {
+          conf_features <- extract_individual_features(res_conf$ind, target_col = target_col)
+          x_conf <- .sanitize_feature_matrix(
+            res_conf$train[, conf_features, with = FALSE],
+            threads = threads,
+            cat_schema = full_cat_schema
+          )
+          preds_conf <- tryCatch(
+            get_evaluator(best_evaluator)$predict_func(best_model, x_conf, task = task, threads = threads),
+            error = function(e) NULL
+          )
+          if (!is.null(preds_conf) && !is.null(target_transform_state)) {
+            preds_conf <- .invert_target_transform(preds_conf, target_transform_state, use_smearing = use_smear)
+          }
+        }
+      }
+      if (!is.null(preds_conf)) {
+        if (!is.null(calibrator)) {
+          preds_conf <- apply_post_calibrator(preds_conf, calibrator)
+        }
+        y_conf <- confirmation_dt[[target_col]]
+        if (task == "multiclass") {
+          y_conf_enc <- encode_multiclass_target(y_conf, classes)
+          preds_conf <- format_multiclass_predictions(preds_conf, classes)
+          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, num_class, threads = threads)
+        } else if (task == "classification") {
+          y_conf_enc <- encode_binary_target(y_conf)
+          conf_fitness <- compute_metric(y_conf_enc, preds_conf, task, metric, threads = threads)
+        } else {
+          conf_fitness <- compute_metric(y_conf, preds_conf, task, metric, threads = threads)
+        }
+        best_ind$holdout_fitness <- conf_fitness
+      }
+      if (!verbose && is.na(conf_fitness)) message("Warning: confirmation scoring failed on the holdout.")
+    }
   }
 
   effective_fitness <- best_ind$fitness

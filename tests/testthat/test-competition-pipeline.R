@@ -1053,6 +1053,93 @@ test_that("Stage 3 View Tournament prunes redundant supervised seed genes cleanl
   expect_true(all(is.finite(pipe_none$predictions)))
 })
 
+test_that("train_final_model = FALSE and train_models = FALSE skip throwaway Stage 2 and Stage 3 model fits", {
+  skip_if_not_installed("glmnet")
+  skip_if_not_installed("lightgbm")
+
+  set.seed(717)
+  n_tr <- 120L
+  n_te <- 25L
+  mk_df <- function(n) {
+    x1 <- stats::rnorm(n)
+    x2 <- stats::rnorm(n)
+    x3 <- stats::rnorm(n)
+    data.table::data.table(
+      x1 = x1,
+      x2 = x2,
+      x3 = x3,
+      y = as.integer(stats::rbinom(n, 1L, stats::plogis(0.8 * x1 - 0.6 * x2 + 0.3 * x3)))
+    )
+  }
+  train_dt <- mk_df(n_tr)
+  test_dt <- mk_df(n_te)[, .(x1, x2, x3)]
+
+  # 1. Standalone evolve_features(..., train_final_model = FALSE)
+  rec_nomod <- evolve_features(
+    data = train_dt,
+    target_col = "y",
+    task = "classification",
+    evaluator = "lm",
+    islands = 2L,
+    generations = 1L,
+    pop_size = 3L,
+    cv_folds = 2L,
+    holdout_frac = 0.1,
+    bag_folds = TRUE,
+    train_final_model = FALSE,
+    threads = 1L,
+    seed = 717L,
+    verbose = FALSE
+  )
+  expect_null(rec_nomod$best_model)
+  expect_null(rec_nomod$fold_models)
+  feat_rec <- stats::predict(rec_nomod, newdata = test_dt)
+  expect_equal(nrow(feat_rec), n_te)
+  expect_error(predict_model(rec_nomod, newdata = test_dt), "No model was trained")
+
+  # 2. Standalone ensemble_islands(..., train_models = FALSE)
+  ens_nomod <- ensemble_islands(
+    recipe = rec_nomod,
+    data = train_dt,
+    target_col = "y",
+    method = "equal",
+    train_models = FALSE,
+    threads = 1L,
+    verbose = FALSE
+  )
+  expect_length(ens_nomod$active_models, 0L)
+  expect_null(ens_nomod$active_fold_models)
+  feat_ens <- stats::predict(ens_nomod, newdata = test_dt)
+  expect_equal(nrow(feat_ens), n_te)
+  expect_error(predict_model(ens_nomod, newdata = test_dt), "No active models available")
+
+  # 3. End-to-end run_competition_pipeline skips Stage 2 best_model and Stage 3 scout_ensemble active_models
+  pipe <- run_competition_pipeline(
+    train = train_dt,
+    test = test_dt,
+    target_col = "y",
+    task = "classification",
+    evaluators = c("lm", "lightgbm"),
+    islands_per_evaluator = 1L,
+    preset = "fast",
+    preset_overrides = list(s2_gen = 1L, s2_pop = 2L),
+    cv_folds = 2L,
+    threads = 1L,
+    seed = 717L,
+    verbose = FALSE
+  )
+  expect_null(pipe$stage2_recipes[["lm"]]$best_model)
+  expect_null(pipe$stage2_recipes[["lm"]]$fold_models)
+  expect_null(pipe$stage2_recipes[["lightgbm"]]$best_model)
+  expect_null(pipe$stage2_recipes[["lightgbm"]]$fold_models)
+  expect_s3_class(pipe$scout_ensemble, "evo_ensemble")
+  expect_length(pipe$scout_ensemble$active_models, 0L)
+  expect_false(is.null(pipe$stage4_recipes[["lm"]]$best_model))
+  expect_false(is.null(pipe$stage4_recipes[["lightgbm"]]$best_model))
+  expect_length(pipe$predictions, n_te)
+  expect_true(all(is.finite(pipe$predictions)))
+})
+
 
 
 

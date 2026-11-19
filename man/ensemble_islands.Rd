@@ -22,6 +22,7 @@ ensemble_islands(
   seed = NULL,
   threads = NULL,
   verbose = TRUE,
+  train_models = TRUE,
   ...
 )
 }
@@ -86,6 +87,11 @@ the user's global RNG state.}
 \item{threads}{Integer. Number of threads to use for model training.}
 
 \item{verbose}{Logical. Whether to print progress messages.}
+
+\item{train_models}{Logical (default \code{TRUE}). When \code{FALSE}, skips
+lazy final model fitting, fold-model bagging, post-calibration, and residual
+blending, while keeping \code{active_recipes} with fitted feature states
+ready for \code{predict()} feature extraction.}
 
 \item{...}{Additional arguments passed to \code{train_model}.}
 }

@@ -101,6 +101,23 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
   list(tainted = tainted, tainted_cols = unique(tainted_cols))
 }
 
+#' Check whether an individual contains any stateful gene lacking a fitted state
+#'
+#' @param ind An \code{evo_individual} object.
+#' @return Logical scalar.
+#' @keywords internal
+#' @noRd
+.individual_needs_state_fit <- function(ind) {
+  if (is.null(ind) || length(ind$genes) == 0L) return(FALSE)
+  for (g in ind$genes) {
+    t_def <- evo_transformers[[g$transformer_name]]
+    if (!is.null(t_def) && !is.null(t_def$fit_func) && is.null(g$state)) {
+      return(TRUE)
+    }
+  }
+  FALSE
+}
+
 #' Strip fitted transformer state and fitness from an individual
 #'
 #' Resets fitness, raw_fitness, predictions, and clears fitted states

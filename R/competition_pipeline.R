@@ -1365,6 +1365,7 @@ run_competition_pipeline <- function(
     max_clustering_size = min(cfg$clust_cap, n_discovery),
     seed = base_seed + 100L,
     evaluator_extra_args = s2_ev_args_map,
+    train_final_model = FALSE,
     verbose = verbose
   )
   stage2_unified_recipe <- do.call(evolve_features, s2_common)
@@ -1458,6 +1459,7 @@ run_competition_pipeline <- function(
       target_col = target_col,
       method = "equal",
       threads = threads,
+      train_models = FALSE,
       verbose = FALSE
     )
     train_mega <- stats::predict(scout_ens, newdata = train_dt)

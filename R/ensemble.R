@@ -50,6 +50,10 @@
 #'   the user's global RNG state.
 #' @param threads Integer. Number of threads to use for model training.
 #' @param verbose Logical. Whether to print progress messages.
+#' @param train_models Logical (default \code{TRUE}). When \code{FALSE}, skips
+#'   lazy final model fitting, fold-model bagging, post-calibration, and residual
+#'   blending, while keeping \code{active_recipes} with fitted feature states
+#'   ready for \code{predict()} feature extraction.
 #' @param ... Additional arguments passed to \code{train_model}.
 #'
 #' @return An \code{evo_ensemble} object containing:
@@ -107,7 +111,8 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
                              bag_folds = NULL,
                              seed = NULL,
                              threads = NULL,
-                             verbose = TRUE, ...) {
+                             verbose = TRUE,
+                             train_models = TRUE, ...) {
   # Normalize recipe input: single evo_recipe or list of evo_recipe objects
   if (inherits(recipe, "evo_recipe")) {
     recipe_list <- list(recipe1 = recipe)
@@ -589,6 +594,19 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
 
     active_evaluators[[name]] <- eval_i
 
+    if (!isTRUE(train_models)) {
+      if (.individual_needs_state_fit(ind_i)) {
+        dt_i <- data.table::copy(dt_full)
+        res_full <- apply_individual(ind_i, dt_i, NULL, target_col, state_cache = state_cache,
+                                     allow_prune = TRUE, full_data = dt_full, validate_genes = FALSE)
+        if (!is.null(res_full$full)) dt_full <- res_full$full
+        active_recipes[[name]] <- strip_loo_state(res_full$ind)
+      } else {
+        active_recipes[[name]] <- strip_loo_state(ind_i)
+      }
+      next
+    }
+
     user_args_passed <- list(...)
     has_user_override <- length(user_args_passed) > 0 ||
       (!is.null(threads) && !is.null(rec_i$threads) && as.integer(threads) != as.integer(rec_i$threads))
@@ -811,7 +829,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   calibrator <- NULL
-  if (!isTRUE(rank_average) && is.character(metric) && length(metric) == 1L &&
+  if (isTRUE(train_models) && !isTRUE(rank_average) && is.character(metric) && length(metric) == 1L &&
       metric %in% c("ts_refinement", "cal_rmse", "cal_mae", "f1", "mcc", "balanced_accuracy", "accuracy", "qwk") &&
       length(active_names) > 0) {
     ens_val_preds <- .blend_ensemble_preds(
@@ -830,7 +848,7 @@ ensemble_islands <- function(recipe, data, target_col = NULL,
   }
 
   res_blender <- NULL
-  if (!identical(residual_blender, "none") && length(active_names) > 0L) {
+  if (isTRUE(train_models) && !identical(residual_blender, "none") && length(active_names) > 0L) {
     preds_for_rb <- if (isTRUE(rank_average)) {
       lapply(val_preds_list[active_names], rank_transform_predictions)
     } else {
