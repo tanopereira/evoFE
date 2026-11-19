@@ -63,7 +63,8 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       gene_num <- c(gene_num, gene$output_col)
     }
   }
-  
+  tainted_cols <- .classify_tainted_genes(ind$genes)$tainted_cols
+
   weighted_sample <- function(cols, size, replace = FALSE) {
     if (length(cols) == 0) return(character(0))
     if (length(cols) == 1) return(rep(cols, size))
@@ -157,6 +158,11 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
     avail_num <- c(ind$all_numeric_cols, gene_num_ex)
     avail_cat <- c(ind$all_categorical_cols, gene_cat)
     avail_date <- c(ind$all_datetime_cols, gene_date)
+    if (.requires_unsupervised_inputs(t_name) && length(tainted_cols) > 0L) {
+      avail_num <- setdiff(avail_num, tainted_cols)
+      avail_cat <- setdiff(avail_cat, tainted_cols)
+      avail_date <- setdiff(avail_date, tainted_cols)
+    }
     is_bgpca <- identical(t_name, "between_group_pca")
     is_mixed_pair <- identical(t_def$input_type, "mixed") && t_def$type %in% c("binary", "supervised_binary")
     avail_for_type <- if (t_def$input_type == "numeric") {
@@ -313,7 +319,9 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       existing_out_cols <- sapply(ind$genes, function(g) g$output_col)
       valid_inputs <- c(ind$all_numeric_cols, ind$all_categorical_cols, ind$all_datetime_cols, existing_out_cols)
       
-      if (all(selected_mig_gene$input_cols %in% valid_inputs)) {
+      blocks_tainted <- .requires_unsupervised_inputs(selected_mig_gene$transformer_name) &&
+        any(selected_mig_gene$input_cols %in% tainted_cols)
+      if (!blocks_tainted && all(selected_mig_gene$input_cols %in% valid_inputs)) {
         existing_formulas <- vapply(ind$genes, gene_to_formula, character(1))
         mig_formula <- gene_to_formula(selected_mig_gene)
         
@@ -347,42 +355,47 @@ mutate <- function(ind, verbose = FALSE, force_add = FALSE, importances = numeri
       for (add_attempt in seq_len(max_add_attempts)) {
         t_name <- .sample_one(allowed_t)
         t_def <- evo_transformers[[t_name]]
-        
+
+        req_unsup <- .requires_unsupervised_inputs(t_name) && length(tainted_cols) > 0L
+        cand_num <- if (req_unsup) setdiff(avail_num, tainted_cols) else avail_num
+        cand_cat <- if (req_unsup) setdiff(avail_cat, tainted_cols) else avail_cat
+        cand_date <- if (req_unsup) setdiff(avail_date, tainted_cols) else avail_date
+
         # Select available columns based on input_type
         available_cols <- if (t_def$input_type == "numeric") {
-          avail_num
+          cand_num
         } else if (t_def$input_type == "categorical") {
-          avail_cat
+          cand_cat
         } else if (t_def$input_type == "datetime") {
-          avail_date
+          cand_date
         } else if (t_def$input_type == "mixed") {
-          c(avail_cat, avail_num) # Placeholder to pass length check
+          c(cand_cat, cand_num) # Placeholder to pass length check
         } else if (t_def$input_type == "any") {
-          c(avail_cat, avail_num)
+          c(cand_cat, cand_num)
         } else {
           character(0)
         }
-        
+
         # If no columns available for this type, continue to next attempt
         if (t_def$input_type == "mixed") {
-          if (length(avail_num) == 0 || length(avail_cat) == 0) next
+          if (length(cand_num) == 0 || length(cand_cat) == 0) next
         } else {
           if (length(available_cols) == 0) next
         }
-        
+
         # Select random columns
         if (t_def$input_type == "mixed") {
           if (t_name %in% c("famd", "supervised_famd")) {
-            num_cat <- min(sample(1:3, 1), length(avail_cat))
-            num_num <- min(sample(1:5, 1), length(avail_num))
-            cols <- c(weighted_sample(avail_cat, num_cat), weighted_sample(avail_num, num_num))
+            num_cat <- min(sample(1:3, 1), length(cand_cat))
+            num_num <- min(sample(1:5, 1), length(cand_num))
+            cols <- c(weighted_sample(cand_cat, num_cat), weighted_sample(cand_num, num_num))
           } else if (t_name == "between_group_pca") {
-            if (length(avail_num) < 2) next
-            num_num <- min(sample(2:5, 1), length(avail_num))
-            cols <- c(weighted_sample(avail_cat, 1), weighted_sample(avail_num, num_num))
+            if (length(cand_num) < 2) next
+            num_num <- min(sample(2:5, 1), length(cand_num))
+            cols <- c(weighted_sample(cand_cat, 1), weighted_sample(cand_num, num_num))
           } else {
-            col_cat <- weighted_sample(avail_cat, 1)
-            col_num <- weighted_sample(avail_num, 1)
+            col_cat <- weighted_sample(cand_cat, 1)
+            col_num <- weighted_sample(cand_num, 1)
             cols <- c(col_cat, col_num)
           }
         } else if (t_def$type %in% c("unary", "supervised_unary")) {

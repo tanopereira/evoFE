@@ -493,6 +493,124 @@ test_that("bagged fold and ensemble predictions isolate per-model encoder states
   expect_equal(names(test_dt), orig_cols)
 })
 
+test_that("clustering and manifold transformers never select supervised or tainted inputs during mutation", {
+  g_unsup <- create_gene("log", "x1")
+  g_sup <- create_gene("target_encode", "cat")
+  g_child <- create_gene("sqrt", g_sup$output_col)
+  g_grandchild <- create_gene("log", g_child$output_col)
+
+  # 1. .classify_tainted_genes detects direct and transitive downstream genes
+  expect_equal(.classify_tainted_genes(list()), list(tainted = logical(0), tainted_cols = character(0)))
+  clf <- .classify_tainted_genes(list(g_unsup, g_sup, g_child, g_grandchild))
+  expect_equal(clf$tainted, c(FALSE, TRUE, TRUE, TRUE))
+  expect_equal(clf$tainted_cols, c(g_sup$output_col, g_child$output_col, g_grandchild$output_col))
+
+  # 2. Force-add clustering/manifold transformers with only tainted + raw columns available
+  tainted_set <- c(g_sup$output_col, g_child$output_col)
+  ind_base <- create_individual(
+    genes = list(g_unsup, g_sup, g_child),
+    numeric_cols = c("x1", "x2"),
+    categorical_cols = "cat",
+    all_numeric_cols = c("x1", "x2"),
+    all_categorical_cols = "cat"
+  )
+
+  clust_transformers <- intersect(
+    c("pca", "umap", "umap_genie", "umap_lumbermark", "deadwood", "mst_score", "famd"),
+    names(evo_transformers)
+  )
+  set.seed(707)
+  for (tr_name in clust_transformers) {
+    for (rep_i in seq_len(15L)) {
+      m <- mutate(
+        ind_base,
+        force_add = TRUE,
+        allowed_transformers = tr_name,
+        raw_toggle_prob = 0,
+        recalculate_mask_prob = 0
+      )
+      expect_true(length(m$genes) >= length(ind_base$genes))
+      added <- m$genes[!(vapply(m$genes, `[[`, character(1L), "output_col") %in%
+        vapply(ind_base$genes, `[[`, character(1L), "output_col"))]
+      for (ag in added) {
+        expect_false(any(ag$input_cols %in% tainted_set),
+          info = sprintf("Transformer '%s' selected tainted input: %s", tr_name, paste(ag$input_cols, collapse = ", "))
+        )
+      }
+    }
+  }
+
+  # 3. Lightweight transforms are still permitted to chain onto supervised outputs
+  ind_only_tainted <- create_individual(
+    genes = list(g_sup),
+    numeric_cols = character(0),
+    categorical_cols = "cat",
+    all_numeric_cols = character(0),
+    all_categorical_cols = "cat"
+  )
+  m_light <- mutate(
+    ind_only_tainted,
+    force_add = TRUE,
+    allowed_transformers = "log",
+    raw_toggle_prob = 0,
+    recalculate_mask_prob = 0
+  )
+  expect_length(m_light$genes, 2L)
+  expect_true(g_sup$output_col %in% m_light$genes[[2L]]$input_cols)
+
+  # 4. Modify mutations (swap_col / add_col) must not wire tainted columns into clustering/manifold genes
+  g_pca <- create_gene("pca", c("x1", "x2"))
+  g_pca$params$comp_idx <- 1L
+  g_pca$output_col <- evo_transformers$pca$name_generator(g_pca)
+  ind_mod <- create_individual(
+    genes = list(g_sup, g_child, g_pca),
+    numeric_cols = c("x1", "x2", "x3"),
+    categorical_cols = "cat",
+    all_numeric_cols = c("x1", "x2", "x3"),
+    all_categorical_cols = "cat"
+  )
+  set.seed(808)
+  for (i in seq_len(40L)) {
+    m2 <- mutate(
+      ind_mod,
+      allowed_transformers = "pca",
+      raw_toggle_prob = 0,
+      recalculate_mask_prob = 0
+    )
+    pca_genes <- Filter(function(g) identical(g$transformer_name, "pca"), m2$genes)
+    for (pg in pca_genes) {
+      expect_false(any(pg$input_cols %in% tainted_set))
+    }
+  }
+
+  # 5. Migrated clustering gene taking a tainted column must not be injected
+  g_mig_mst <- create_gene("mst_score", c("x1", g_sup$output_col))
+  set.seed(909)
+  m_mig_blocked <- mutate(
+    ind_base,
+    force_add = TRUE,
+    allowed_transformers = "log",
+    migrated_genes = list(g_mig_mst),
+    gene_migration_prob = 1.0,
+    raw_toggle_prob = 0,
+    recalculate_mask_prob = 0
+  )
+  expect_false(any(vapply(m_mig_blocked$genes, `[[`, character(1L), "output_col") == g_mig_mst$output_col))
+
+  g_mig_log <- create_gene("log", g_sup$output_col)
+  m_mig_ok <- mutate(
+    ind_base,
+    force_add = TRUE,
+    allowed_transformers = "log",
+    migrated_genes = list(g_mig_log),
+    gene_migration_prob = 1.0,
+    raw_toggle_prob = 0,
+    recalculate_mask_prob = 0
+  )
+  expect_true(any(vapply(m_mig_ok$genes, `[[`, character(1L), "output_col") == g_mig_log$output_col))
+})
+
+
 
 
 

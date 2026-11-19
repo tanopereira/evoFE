@@ -77,6 +77,30 @@ create_individual <- function(genes = list(), numeric_cols = character(0), categ
   )
 }
 
+#' Identify supervised and transitively downstream (tainted) genes
+#'
+#' @param genes List of gene objects (in topological evaluation order).
+#' @return List with logical vector \code{tainted} and character vector \code{tainted_cols}.
+#' @keywords internal
+#' @noRd
+.classify_tainted_genes <- function(genes) {
+  n_g <- length(genes)
+  if (n_g == 0L) {
+    return(list(tainted = logical(0), tainted_cols = character(0)))
+  }
+  tainted <- logical(n_g)
+  tainted_cols <- character(0)
+  for (i in seq_len(n_g)) {
+    g <- genes[[i]]
+    is_tainted <- is_supervised_transformer(g) || any(g$input_cols %in% tainted_cols)
+    tainted[i] <- is_tainted
+    if (is_tainted && !is.null(g$output_col) && nzchar(g$output_col)) {
+      tainted_cols <- c(tainted_cols, g$output_col)
+    }
+  }
+  list(tainted = tainted, tainted_cols = unique(tainted_cols))
+}
+
 #' Strip fitted transformer state and fitness from an individual
 #'
 #' Resets fitness, raw_fitness, predictions, and clears fitted states
@@ -100,14 +124,9 @@ strip_individual_state <- function(ind, keep_unsupervised = getOption("evoFE.glo
   ind$val_preds_trans <- NULL
   ind$y_val <- NULL
   if (length(ind$genes) > 0) {
-    tainted_cols <- character(0)
+    clf <- .classify_tainted_genes(ind$genes)
     for (i in seq_along(ind$genes)) {
-      g <- ind$genes[[i]]
-      is_tainted <- is_supervised_transformer(g) || any(g$input_cols %in% tainted_cols)
-      if (is_tainted && !is.null(g$output_col)) {
-        tainted_cols <- c(tainted_cols, g$output_col)
-      }
-      if (!isTRUE(keep_unsupervised) || is_tainted) {
+      if (!isTRUE(keep_unsupervised) || clf$tainted[i]) {
         ind$genes[[i]]$state <- NULL
       }
     }

@@ -580,18 +580,15 @@
       sup_input_cols = character(0)
     ))
   }
-  tainted_cols <- character(0)
+  clf <- .classify_tainted_genes(ind$genes)
   unsup_genes <- list()
   sup_genes <- list()
   sup_input_cols <- character(0)
 
-  for (g in ind$genes) {
-    is_tainted <- is_supervised_transformer(g) || any(g$input_cols %in% tainted_cols)
-    if (is_tainted) {
-      if (!is.null(g$output_col) && nzchar(g$output_col)) {
-        tainted_cols <- c(tainted_cols, g$output_col)
-      }
-      sup_input_cols <- c(sup_input_cols, setdiff(g$input_cols, tainted_cols))
+  for (i in seq_along(ind$genes)) {
+    g <- ind$genes[[i]]
+    if (clf$tainted[i]) {
+      sup_input_cols <- c(sup_input_cols, setdiff(g$input_cols, clf$tainted_cols))
       g_clean <- g
       g_clean$state <- NULL
       sup_genes <- c(sup_genes, list(g_clean))
@@ -599,6 +596,7 @@
       unsup_genes <- c(unsup_genes, list(g))
     }
   }
+  tainted_cols <- clf$tainted_cols
 
   sup_input_cols <- unique(sup_input_cols)
   unsup_ind <- ind

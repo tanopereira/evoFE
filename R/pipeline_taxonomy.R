@@ -1,3 +1,24 @@
+.CLUSTERING_MANIFOLD_TRANSFORMERS <- c(
+  "genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist",
+  "mst_score", "deadwood", "umap", "random_projection", "truncated_svd",
+  "pca", "umap_genie", "umap_lumbermark", "mca", "famd", "between_group_pca"
+)
+
+#' Check whether a transformer requires untainted (unsupervised) inputs
+#'
+#' Global clustering, manifold, and projection transformers fit once on full
+#' input features under \code{global_unsupervised = TRUE} and must never
+#' consume target-encoded or downstream tainted columns.
+#'
+#' @param t_name Character scalar transformer name.
+#' @return Logical scalar.
+#' @keywords internal
+#' @noRd
+.requires_unsupervised_inputs <- function(t_name) {
+  is.character(t_name) && length(t_name) == 1L &&
+    t_name %in% c(.CLUSTERING_MANIFOLD_TRANSFORMERS, "similarity_encode", "minhash_encode", "gap_encode")
+}
+
 #' Resolve allowed transformers against registry
 #'
 #' @param at Vector of transformer names or preset keyword ("all", "basic", "clustering", "robust")
@@ -24,11 +45,7 @@ resolve_allowed_transformers <- function(at, all_t = names(evo_transformers)) {
         "groupby_mean", "groupby_min", "groupby_max", "groupby_diff", "groupby_nunique", "concat"
       ))
     } else if (at == "clustering") {
-      at <- intersect(all_t, c(
-        "genie", "genie_centroid_dist", "lumbermark", "lumbermark_centroid_dist",
-        "mst_score", "deadwood", "umap", "random_projection", "truncated_svd",
-        "pca", "umap_genie", "umap_lumbermark", "mca", "famd", "between_group_pca"
-      ))
+      at <- intersect(all_t, .CLUSTERING_MANIFOLD_TRANSFORMERS)
     } else if (at == "robust") {
       at <- intersect(all_t, c(
         "log", "sqrt", "reciprocal", "power", "displaced_log", "rank_transform",
